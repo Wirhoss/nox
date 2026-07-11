@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-import { asTextToolResponse, renderTool } from "../utils";
+import { BM25 } from "../../../utils/bm25";
+import { asTextToolResponse, renderTool } from "../../utils";
 
-import { ToolSet } from "./../tool";
-import { BM25 } from "../../utils/bm25";
+import { ToolSet } from "../../toolSet";
 
-import type { SyncTool, Tool, ToolResponse } from "../../types";
+import type { SyncTool, Tool, ToolResponse } from "../../../types";
 
 // NOTE, when we create the documentation we need to leave it clear that using this router does not work with all models the model needs to be trained with flexible tool calling, gemma 4 worked qwen 3.6 is broken
 
@@ -103,7 +103,7 @@ class ToolRouter extends ToolSet {
     if (!tool) {
       throw new Error(`Tool "${name}" not found. Use search_tool to discover available tools.`);
     }
-    let parsed = tool.parameters.safeParse(params);
+    const parsed = tool.parameters.safeParse(params);
     if (!parsed.success) {
       throw new Error(
         `Invalid params for ${name}:\n${z.prettifyError(parsed.error)}\n\n` +

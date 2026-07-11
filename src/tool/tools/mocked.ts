@@ -1,11 +1,12 @@
-import { z } from "zod";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { asTextToolResponse } from "./utils";
-import { ToolSet } from "./tool";
+import { z } from "zod";
 
-import type { SyncTool, Tool } from "../types";
+import { ToolSet } from "../toolSet";
+import { asTextToolResponse } from "../utils";
+
+import type { SyncTool, Tool } from "../../types";
 
 // ============================================================
 // FileSystemToolSet

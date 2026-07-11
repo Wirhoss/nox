@@ -1,4 +1,4 @@
-import type { ToolSet } from "../tools/tool";
+import type { ToolSet } from "../tool";
 import type { ToolResponse } from "./message";
 import type { z } from "zod";
 

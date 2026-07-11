@@ -6,6 +6,7 @@ import { EventLog } from "../utils";
 
 import { Context } from "./context";
 
+import type { ToolSet } from "../tool";
 import type {
   AgentConfig,
   AgentStreamEvent,
@@ -16,7 +17,6 @@ import type {
   RunLoopResult,
   ToolResponse,
 } from "../types";
-import type { ToolSet } from "../tools/tool";
 
 class Agent {
   private abortController?: AbortController;

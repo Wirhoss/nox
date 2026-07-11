@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-import { isAbortError } from "../utils";
-
-import { MessageContentStream } from "./messageContentStream";
-import { BaseProvider, providerBaseConfigSchema } from "./provider";
+import { isAbortError } from "../../utils";
+import { MessageContentStream } from "../messageContentStream";
+import { BaseProvider, providerBaseConfigSchema } from "../provider";
 
 import type {
   Message,
@@ -12,8 +11,8 @@ import type {
   MessageContentStreamEvent,
   Tool,
   Usage,
-} from "../types";
-import type { ChatProvider, TextGenerateOptions } from "./provider";
+} from "../../types";
+import type { ChatProvider, TextGenerateOptions } from "./../provider";
 
 const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
   type: z.literal("openai_completions"),

@@ -5,17 +5,20 @@ import { Agent } from "./src/agent";
 import { Config } from "./src/config";
 import logger from "./src/logger";
 import { ProviderManager, type ChatProvider } from "./src/provider";
-import { ToolRouter } from "./src/tools";
-import { sampleTools } from "./src/tools/mocked";
+import { ToolManager, ToolRouter, sampleTools } from "./src/tool";
+import { AgentManager } from "./src/agent/agentManager";
 
 async function main(): Promise<void> {
   logger.info("Starting nox...");
   await Config.init();
   await ProviderManager.instance.init(Config.get("providers"));
+  await ToolManager.instance.init();
+  await AgentManager.instance.init(Config.get("agents"));
+
 
   const provider = ProviderManager.instance.getProvider("llama") as ChatProvider;
-  console.log("model: "+"gemma4-12b")
-  const model = provider?.getModel("gemma4-12b");
+  console.log("model: "+"gemma4-e4b");
+  const model = provider?.getModel("gemma4-e4b");
   if (!provider || !model) {
     throw new Error("Provider or model not found");
   }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { Tool, ToolResponse } from "../types";
 
 function asTextToolResponse(result: unknown): ToolResponse {
@@ -59,19 +60,6 @@ function placeholders(schema: JsonSchema, depth = 0): unknown {
   return `<${typeName(schema)}>`;
 }
 
-function inlineJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(inlineJson).join(", ")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).map(
-      ([k, v]) => `${JSON.stringify(k)}: ${inlineJson(v)}`,
-    );
-    return `{ ${entries.join(", ")} }`;
-  }
-  return JSON.stringify(value);
-}
-
 function paramDocs(schema: JsonSchema, prefix = ""): string[] {
   const lines: string[] = [];
  
@@ -112,9 +100,7 @@ function renderTool(tool: Tool): string {
   return lines.join("\n");
 }
 
-
-
 export {
   asTextToolResponse,
-  renderTool
+  renderTool,
 };

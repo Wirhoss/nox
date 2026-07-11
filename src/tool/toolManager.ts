@@ -1,14 +1,11 @@
+import { FileSystemToolSet, ShellToolSet } from "./tools";
+
 import type { ToolSetClass } from "../types";
-import { FileSystemToolSet, ShellToolSet } from "./mocked";
-import type { ToolSet } from "./tool";
-import { ToolRouter } from "./toolRouter";
 
 const builtinToolSets: Record<string, ToolSetClass> = {
-  "tool_router": ToolRouter,
   "file_system": FileSystemToolSet,
   "shell": ShellToolSet,
-  
-}
+};
 
 class ToolManager {
   private static _instance: ToolManager;
@@ -35,11 +32,21 @@ class ToolManager {
     this.initialized = true;
   }
 
-  public getToolSet(toolSetId: string): ToolSet | null {
+  public getRouterToolSetClass(): ToolSetClass | null {
+    const toolRouterClass = this.toolSets["tool_router"];
+    if (!toolRouterClass) {
+      return null;
+    }
+    return toolRouterClass;
+  }
+
+  public getToolSet(toolSetId: string): ToolSetClass | null {
     const toolSetClass = this.toolSets[toolSetId];
     if (!toolSetClass) {
       return null;
     }
-    return new toolSetClass();
+    return toolSetClass;
   }
 }
+
+export { ToolManager };

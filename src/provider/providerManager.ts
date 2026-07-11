@@ -1,6 +1,6 @@
 import { createLogger } from '../logger';
 
-import { OpenAICompletions } from "./openAICompletions";
+import { OpenAICompletions } from "./providers";
 
 import type { Model, Provider } from "./provider";
 import type z from 'zod';
