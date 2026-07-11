@@ -15,6 +15,7 @@ import type {
   MessageContentToolResponse,
   RunLoopResult,
   Tool,
+  ToolResponse,
 } from "../types";
 
 class Agent {
@@ -58,7 +59,13 @@ class Agent {
         });
         toolResponse.isError = true;
       } else {
-        const response = await tool.call(toolCall.arguments);
+        const parsedArguments = tool.parameters.parse(toolCall.arguments);
+        let response: ToolResponse = [];
+        if (tool.type === "sync") {
+          response = await tool.call(parsedArguments);
+        } else if (tool.type === "async") {
+          // TODO: Handle async tool calls properly, including acknowledging the call and waiting for the result.
+        }
         toolResponse.response = response ?? [];
         toolResponse.isError = false;
       }

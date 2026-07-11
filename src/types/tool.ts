@@ -27,5 +27,7 @@ interface AsyncTool<S extends z.ZodObject = z.ZodObject> {
 type Tool = SyncTool | AsyncTool;
 
 export type {
+  SyncTool,
+  AsyncTool,
   Tool,
 };
