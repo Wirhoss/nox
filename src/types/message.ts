@@ -1,3 +1,9 @@
+interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+}
+
 interface MessageContentText {
   type: "text";
   text: string;
@@ -35,7 +41,7 @@ interface Message {
 }
 
 type MessageContentStreamEvent = 
-  | { type: "end"; content: MessageContent[]; aborted?: boolean }
+  | { type: "end"; content: MessageContent[]; aborted?: boolean; usage?: Usage }
   | { type: "error"; error: Error }
   | { type: "text"; text: string }
   | { type: "toolCall"; toolCall: MessageContentToolCall };
@@ -49,5 +55,6 @@ export type {
   MessageContentText,
   MessageContentToolCall,
   MessageContentToolResponse,
-  ToolResponse
+  ToolResponse,
+  Usage
 };

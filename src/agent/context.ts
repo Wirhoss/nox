@@ -5,6 +5,10 @@ class Context {
   private _chatHistory: Message[];
   private _tools: Record<string, Tool> = {};
 
+  private _inputTokens: number = 0;
+  private _outputTokens: number = 0;
+  private _cacheReadTokens: number = 0;
+
   constructor(systemPrompt: string, chatHistory: Message[], tools: Tool[]) {
     this._systemPrompt = systemPrompt;
     this._chatHistory = chatHistory;
@@ -27,19 +31,35 @@ class Context {
   }
 
   public get tools(): Record<string, Tool> {
-    return this.tools;
+    return this._tools;
+  }
+
+  public get inputTokens(): number {
+    return this._inputTokens;
+  }
+
+  public get outputTokens(): number {
+    return this._outputTokens;
+  }
+
+  public get cacheReadTokens(): number {
+    return this._cacheReadTokens;
+  }
+
+  public set inputTokens(value: number) {
+    this._inputTokens = value;
+  }
+
+  public set outputTokens(value: number) {
+    this._outputTokens = value;
+  }
+
+  public set cacheReadTokens(value: number) {
+    this._cacheReadTokens = value;
   }
 
   public addMessage(message: Message): void {
     this._chatHistory.push(message);
-  }
-
-  public copy(): Context {
-    return new Context(
-      this._systemPrompt,
-      structuredClone(this._chatHistory),
-      Object.values(this._tools).map(tool => structuredClone(tool))
-    );
   }
 }
 

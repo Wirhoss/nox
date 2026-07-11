@@ -11,7 +11,7 @@ import type {
   MessageContentToolCall,
   MessageContentStreamEvent,
   Tool,
-  ToolParameter,
+  Usage,
 } from "../types";
 import type { ChatProvider, TextGenerateOptions } from "./provider";
 
@@ -37,6 +37,12 @@ type OpenAIMessage =
   | { role: "user"; content: string | OpenAIContentPart[] }
   | { role: "assistant"; content: string | null; tool_calls?: OpenAIToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
+
+interface OpenAIUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+}
 
 interface OpenAIStreamDelta {
   content?: string | null;
@@ -158,6 +164,7 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
       model: modelId,
       messages: this.toOpenAIMessages(systemPrompt, messageHistory),
       stream: true,
+      stream_options: { include_usage: true },
     };
     if (tools.length > 0) body.tools = this.toOpenAITools(tools);
     if (sampling.maxTokens !== undefined) body.max_tokens = sampling.maxTokens;
@@ -257,33 +264,8 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     }));
   }
 
-  private toJsonSchema(parameters: Record<string, ToolParameter>): Record<string, unknown> {
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-    for (const [name, parameter] of Object.entries(parameters)) {
-      properties[name] = this.toParameterSchema(parameter);
-      if (parameter.isRequired) required.push(name);
-    }
-    return { type: "object", properties, required };
-  }
-
-  private toParameterSchema(parameter: ToolParameter): Record<string, unknown> {
-    if (parameter.type === "object") {
-      return { ...this.toJsonSchema(parameter.properties), description: parameter.description };
-    }
-    if (parameter.type === "array") {
-      return {
-        type: "array",
-        description: parameter.description,
-        items: this.toParameterSchema(parameter.items),
-      };
-    }
-    const schema: Record<string, unknown> = {
-      type: parameter.type,
-      description: parameter.description,
-    };
-    if (parameter.enum) schema.enum = parameter.enum;
-    return schema;
+  private toJsonSchema(parameters: z.ZodObject): Record<string, unknown> {
+    return parameters.toJSONSchema() as Record<string, unknown>;
   }
 
   private toToolCall(trackId: string, name: string, rawArguments: string): MessageContentToolCall {
@@ -307,6 +289,8 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     let buffer = "";
     let text = "";
     let aborted = false;
+    let usage: Usage | undefined;
+
     const pendingCalls: { id: string; name: string; arguments: string }[] = [];
 
     try {
@@ -324,7 +308,14 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
           const data = line.slice(5).trim();
           if (data === "[DONE]") break outer;
 
-          const parsed = JSON.parse(data) as { choices?: { delta?: OpenAIStreamDelta }[] };
+          const parsed = JSON.parse(data) as { choices?: { delta?: OpenAIStreamDelta }[], usage?: OpenAIUsage | null; };
+          if (parsed.usage) {
+            usage = {
+              inputTokens: parsed.usage.prompt_tokens,
+              outputTokens: parsed.usage.completion_tokens,
+              cacheReadTokens: parsed.usage.prompt_tokens_details?.cached_tokens,
+            };
+          }
           const delta = parsed.choices?.[0]?.delta;
           if (!delta) continue;
 
@@ -356,7 +347,7 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
         yield { type: "toolCall", toolCall };
       }
     }
-    yield { type: "end", content, aborted };
+    yield { type: "end", content, aborted, usage };
   }
 }
 

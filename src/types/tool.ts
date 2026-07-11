@@ -1,5 +1,5 @@
-import type { z } from "zod";
 import type { ToolResponse } from "./message";
+import type { z } from "zod";
 
 interface ToolContext {
   abortSignal: AbortSignal;
@@ -19,8 +19,8 @@ interface AsyncTool<S extends z.ZodObject = z.ZodObject> {
   description: string;
   parameters: S;
   start: (params: z.infer<S>, ctx: ToolContext) => Promise<{
-    ack: ToolResponse;          // lo que ve el modelo ya ("task abc123 iniciada")
-    result: Promise<ToolResponse>; // lo que llegará después
+    ack: ToolResponse;
+    result: Promise<ToolResponse>;
   }>;
 }
 

@@ -121,6 +121,11 @@ class Agent {
           });
           assistantContent.push(...event.content);
           aborted = event.aborted === true;
+          if (event.usage) {
+            this.context.inputTokens = event.usage.inputTokens;
+            this.context.outputTokens = (this.context.outputTokens ?? 0) + event.usage.outputTokens;
+            this.context.cacheReadTokens = event.usage.cacheReadTokens ?? 0;
+          }
         }
       }
 
