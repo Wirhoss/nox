@@ -1,4 +1,4 @@
-import { FileSystemToolSet, ShellToolSet } from "./tools";
+import { FileSystemToolSet, ShellToolSet, ToolRouter } from "./tools";
 
 import type { ToolSetClass } from "../types";
 
@@ -33,7 +33,7 @@ class ToolManager {
   }
 
   public getRouterToolSetClass(): ToolSetClass | null {
-    const toolRouterClass = this.toolSets["tool_router"];
+    const toolRouterClass = ToolRouter;
     if (!toolRouterClass) {
       return null;
     }

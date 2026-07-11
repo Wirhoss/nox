@@ -15,17 +15,7 @@ async function main(): Promise<void> {
   await ToolManager.instance.init();
   await AgentManager.instance.init(Config.get("agents"));
 
-
-  const provider = ProviderManager.instance.getProvider("llama") as ChatProvider;
-  console.log("model: "+"gemma4-e4b");
-  const model = provider?.getModel("gemma4-e4b");
-  if (!provider || !model) {
-    throw new Error("Provider or model not found");
-  }
-
-  const toolRouter = new ToolRouter(sampleTools);
-
-  const agent = new Agent("Eres un asistente", [], [toolRouter], {maxIterations: 25, provider, model});
+  const agent = AgentManager.instance.createAgent("default").agent;
   void (async () => {
     for await (const ev of agent.streamEvents()) {
       if (ev.type === "assistantTextFragment") process.stdout.write(ev.text);

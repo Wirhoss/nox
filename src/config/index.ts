@@ -1,7 +1,9 @@
 import { getAppConfig, appConfigSchema } from "./app";
+import { getAgentsConfig, agentsConfigSchema } from "./agent";
 import { getEnvConfig, envConfigSchema } from "./env";
 import { getProvidersConfig, providersConfigSchema } from "./provider";
 
+import type { AgentsConfig } from "./agent";
 import type { AppConfig } from "./app";
 import type { EnvConfig } from "./env";
 import type { ProvidersConfig } from "./provider";
@@ -10,6 +12,7 @@ export type ConfigType = {
   app: AppConfig;
   env: EnvConfig;
   providers: ProvidersConfig;
+  agents: AgentsConfig;
 };
 
 export class Config {
@@ -19,11 +22,13 @@ export class Config {
     const envConfig = getEnvConfig();
     const appConfig = await getAppConfig(envConfig);
     const providersConfig = await getProvidersConfig(envConfig);
+    const agentsConfig = await getAgentsConfig(envConfig);
     if (!Config.config) {
       Config.config = {
         env: envConfig,
         app: appConfig,
         providers: providersConfig,
+        agents: agentsConfig,
       };
     };
   }
@@ -36,5 +41,5 @@ export class Config {
   }
 }
 
-export { envConfigSchema, appConfigSchema, providersConfigSchema };
-export type { AppConfig, EnvConfig };
+export { envConfigSchema, appConfigSchema, providersConfigSchema, agentsConfigSchema };
+export type { AgentsConfig, AppConfig, EnvConfig };

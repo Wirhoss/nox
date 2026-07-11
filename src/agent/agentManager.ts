@@ -1,13 +1,12 @@
 import { nanoid } from 'nanoid';
-import { z } from "zod";
 
 import { createLogger } from "../logger";
 import { ProviderManager } from "../provider";
 import { ToolManager } from "../tool";
 
 import { Agent } from "./agent";
-
 import type { ToolSet } from "../tool";
+import { z } from 'zod';
 
 const logger = createLogger("agent");
 
@@ -27,11 +26,13 @@ const agentBlueprintSchema = z.object({
   }).describe("The configuration for the agent, including provider and model information."),
 });
 
+export type AgentBlueprint = z.infer<typeof agentBlueprintSchema>;
+
 class AgentManager {
   private static _instance: AgentManager;
 
   private agents: Map<string, {blueprintId: string, agent: Agent}> = new Map();
-  private agentBlueprints: Map<string, z.infer<typeof agentBlueprintSchema>> = new Map();
+  private agentBlueprints: Map<string, AgentBlueprint> = new Map();
 
   private initialized: boolean = false;
 
@@ -62,17 +63,16 @@ class AgentManager {
     return toolSets;
   }
 
-  public async init(agentBlueprints: z.infer<typeof agentBlueprintSchema>[]): Promise<void> {
+  public async init(agentBlueprints: AgentBlueprint[]): Promise<void> {
     if (this.initialized) {
       throw new Error("AgentManager already initialized.");
     }
     this.initialized = true;
     for (const blueprint of agentBlueprints) {
-      const parsed = agentBlueprintSchema.parse(blueprint);
-      if (this.agentBlueprints.has(parsed.id)) {
-        throw new Error(`Duplicate agent blueprint "${parsed.id}".`);
+      if (this.agentBlueprints.has(blueprint.id)) {
+        throw new Error(`Duplicate agent blueprint "${blueprint.id}".`);
       }
-      this.agentBlueprints.set(blueprint.id, parsed);
+      this.agentBlueprints.set(blueprint.id, blueprint);
     }
   }
 
@@ -87,7 +87,8 @@ class AgentManager {
     if (!toolRouter) {
       throw new Error("Tool router not found, cannot create agent.");
     }
-    coreToolSets.push(new toolRouter(lazyLoadedToolSets));
+
+    coreToolSets.push(new toolRouter(lazyLoadedToolSets.flatMap((toolSet) => Object.values(toolSet.tools))));
 
     const provider = this.providerManager.getProvider(agentBlueprint.config.providerId);
     if (!provider) {
@@ -113,4 +114,7 @@ class AgentManager {
   }
 }
 
-export { AgentManager }
+export {
+  AgentManager,
+  agentBlueprintSchema
+}
