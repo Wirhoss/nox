@@ -1,3 +1,4 @@
+import type { ToolSet } from "../tools/tool";
 import type { ToolResponse } from "./message";
 import type { z } from "zod";
 
@@ -26,8 +27,11 @@ interface AsyncTool<S extends z.ZodObject = z.ZodObject> {
 
 type Tool = SyncTool | AsyncTool;
 
+type ToolSetClass<T extends ToolSet = ToolSet> = new (...args: any[]) => T;
+
 export type {
-  SyncTool,
   AsyncTool,
+  SyncTool,
   Tool,
+  ToolSetClass
 };

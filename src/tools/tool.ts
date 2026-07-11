@@ -1,6 +1,6 @@
 import type { Tool } from "../types";
 
-abstract class ToolBox {
+abstract class ToolSet {
   protected _tools: Record<string, Tool> = {};
 
   public get tools(): Record<string, Tool> {
@@ -8,4 +8,4 @@ abstract class ToolBox {
   }
 }
 
-export { ToolBox };
+export { ToolSet };

@@ -14,14 +14,15 @@ async function main(): Promise<void> {
   await ProviderManager.instance.init(Config.get("providers"));
 
   const provider = ProviderManager.instance.getProvider("llama") as ChatProvider;
-  const model = provider?.getModel("gemma4-26b");
+  console.log("model: "+"gemma4-12b")
+  const model = provider?.getModel("gemma4-12b");
   if (!provider || !model) {
     throw new Error("Provider or model not found");
   }
 
   const toolRouter = new ToolRouter(sampleTools);
 
-  const agent = new Agent("Eres un asistente", [], Object.values(toolRouter.tools), {maxIterations: 5, provider, model});
+  const agent = new Agent("Eres un asistente", [], [toolRouter], {maxIterations: 25, provider, model});
   void (async () => {
     for await (const ev of agent.streamEvents()) {
       if (ev.type === "assistantTextFragment") process.stdout.write(ev.text);

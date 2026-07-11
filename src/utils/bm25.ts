@@ -77,7 +77,7 @@ class BM25 {
     return score;
   }
 
-  search(query: string, topK = 10): SearchResult[] {
+  search(query: string, topK = 5): SearchResult[] {
     const queryTokens = this.tokenize(query);
 
     const candidates = new Set<number>();

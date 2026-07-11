@@ -14,9 +14,9 @@ import type {
   MessageContentToolCall,
   MessageContentToolResponse,
   RunLoopResult,
-  Tool,
   ToolResponse,
 } from "../types";
+import type { ToolSet } from "../tools/tool";
 
 class Agent {
   private abortController?: AbortController;
@@ -24,12 +24,18 @@ class Agent {
   private idleResolve?: (value: void | PromiseLike<void>) => void;
   private state = AgentState.Idle;
 
+  private toolSets: ToolSet[] = [];
   private context: Context;
 
   private agentConfig: AgentConfig;
 
-  constructor(systemPrompt: string, chatHistory: Message[], tools: Tool[], agentConfig: AgentConfig) {
-    this.context = new Context(systemPrompt, chatHistory, tools);
+  constructor(systemPrompt: string, chatHistory: Message[], toolSets: ToolSet[], agentConfig: AgentConfig) {
+    this.toolSets = toolSets;
+    this.context = new Context(
+      systemPrompt,
+      chatHistory,
+      this.toolSets.flatMap((toolSet) => Object.values(toolSet.tools))
+    );
     this.agentConfig = agentConfig;
   }
 

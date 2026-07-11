@@ -1,473 +1,410 @@
 import { z } from "zod";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
-import type {
-  SyncTool,
-  AsyncTool,
-  Tool,
-  ToolResponse,
-  MessageContentImage,
-} from "../types";
+import { asTextToolResponse } from "./utils";
+import { ToolSet } from "./tool";
 
-interface ToolContext {
-  abortSignal: AbortSignal;
-}
+import type { SyncTool, Tool } from "../types";
 
-/* ------------------------------------------------------------------ */
-/*  Mock SyncTool                                                      */
-/* ------------------------------------------------------------------ */
+// ============================================================
+// FileSystemToolSet
+// Lectura, escritura y exploración del sistema de archivos.
+// Una LLM los usa para inspeccionar código, leer configs,
+// crear parches, navegar repos, etc.
+// ============================================================
 
-/**
- * Build a `SyncTool` whose `call` returns whatever the callback returns.
- * If no `fn` is given the tool resolves to `{ type: "text", text: name }`.
- */
-export function createMockSyncTool<
-  S extends z.ZodObject = z.ZodObject,
->(
-  name: string,
-  description: string,
-  parameters: S,
-  fn?: (params: z.infer<S>) => Promise<ToolResponse> | ToolResponse,
-): SyncTool<S> {
-  return {
-    type: "sync",
-    name,
-    description,
-    parameters,
-    call: async (params) => {
-      if (fn) {
-        const result = fn(params);
-        return result instanceof Promise ? result : result;
-      }
-      return [{ type: "text", text: name }];
-    },
-  };
-}
+const readFileSchema = z.object({
+  path: z.string().describe("Absolute or relative path to the file to read"),
+  offset: z.number().int().positive().optional().describe("Line number to start reading from (1-indexed). Useful for large files."),
+  limit: z.number().int().positive().optional().describe("Maximum number of lines to read. Useful for large files."),
+});
 
-/* ------------------------------------------------------------------ */
-/*  Mock AsyncTool                                                     */
-/* ------------------------------------------------------------------ */
+const writeFileSchema = z.object({
+  path: z.string().describe("Absolute or relative path where to write the file. Parent directories are created if needed."),
+  content: z.string().describe("Full content to write to the file. Existing content will be overwritten."),
+});
 
-export function createMockAsyncTool<
-  S extends z.ZodObject = z.ZodObject,
->(
-  name: string,
-  description: string,
-  parameters: S,
-  fn?: (params: z.infer<S>) => Promise<{
-    ack: ToolResponse;
-    result: Promise<ToolResponse>;
-  }>,
-): AsyncTool<S> {
-  return {
-    type: "async",
-    name,
-    description,
-    parameters,
-    start: async (params, _ctx: ToolContext) => {
-      if (fn) {
-        return fn(params);
-      }
-      return {
-        ack: [{ type: "text", text: `Accepted: ${name}` }],
-        result: Promise.resolve([{ type: "text", text: `Done: ${name}` }]),
-      };
-    },
-  };
-}
+const listDirectorySchema = z.object({
+  path: z.string().default(".").describe("Directory path to list. Defaults to current directory."),
+  recursive: z.boolean().default(false).describe("Whether to list files recursively."),
+});
 
-/* ------------------------------------------------------------------ */
-/*  Quick-tool helpers (no schema needed – use z.any() internally)     */
-/* ------------------------------------------------------------------ */
+const searchFilesSchema = z.object({
+  pattern: z.string().describe("Glob pattern or substring to match against file names (e.g. '*.ts', 'test', 'config')."),
+  rootPath: z.string().default(".").describe("Directory to search in."),
+  maxResults: z.number().int().positive().default(20).describe("Maximum number of results to return."),
+});
 
-/**
- * One-liner to create a sync tool that always returns `result`.
- * Useful for integration tests that only care about the response payload.
- */
-export function mockTool(
-  name: string,
-  description: string,
-  result: ToolResponse,
-): SyncTool {
-  return createMockSyncTool(name, description, z.object({}), () => result);
-}
+class FileSystemToolSet extends ToolSet {
+  constructor() {
+    super();
 
-/**
- * Create a sync tool that throws on call.
- */
-export function mockFailingTool(
-  name: string,
-  description: string,
-  error: string | Error,
-): SyncTool {
-  return createMockSyncTool(name, description, z.object({}), async () => {
-    throw typeof error === "string" ? new Error(error) : error;
-  });
-}
-
-/* ------------------------------------------------------------------ */
-/*  Parameterized mock helpers                                         */
-/* ------------------------------------------------------------------ */
-
-/**
- * Create a sync tool with a custom zod schema and callback.
- */
-export function mockToolFn<S extends z.ZodObject>(
-  name: string,
-  description: string,
-  parameters: S,
-  fn: (params: z.infer<S>) => Promise<ToolResponse> | ToolResponse,
-): SyncTool<S> {
-  return createMockSyncTool(name, description, parameters, fn);
-}
-
-/**
- * Create an async tool with a custom zod schema and callback.
- */
-export function mockAsyncToolFn<S extends z.ZodObject>(
-  name: string,
-  description: string,
-  parameters: S,
-  fn: (params: z.infer<S>) => Promise<{
-    ack: ToolResponse;
-    result: Promise<ToolResponse>;
-  }>,
-): AsyncTool<S> {
-  return createMockAsyncTool(name, description, parameters, fn);
-}
-
-/**
- * Create a sync tool that echoes back the input params as JSON text.
- */
-export function mockEchoTool<S extends z.ZodObject>(
-  name: string,
-  description: string,
-  parameters: S,
-): SyncTool<S> {
-  return createMockSyncTool(name, description, parameters, (params) => [
-    { type: "text", text: `Echo: ${JSON.stringify(params)}` },
-  ]);
-}
-
-/**
- * Create a sync tool that returns an image response.
- */
-export function mockImageTool(
-  name: string,
-  description: string,
-  imageSource: MessageContentImage["source"],
-): SyncTool {
-  return createMockSyncTool(name, description, z.object({}), () => [
-    { type: "image", source: imageSource },
-  ]);
-}
-
-/**
- * Create a sync tool that returns mixed text + image content.
- */
-export function mockMixedTool(
-  name: string,
-  description: string,
-  textPart: string,
-  imageSource: MessageContentImage["source"],
-): SyncTool {
-  return createMockSyncTool(name, description, z.object({}), () => [
-    { type: "text", text: textPart },
-    { type: "image", source: imageSource },
-  ]);
-}
-
-/**
- * Create a sync tool that delays for `ms` milliseconds before responding.
- */
-export function mockSlowTool(
-  name: string,
-  description: string,
-  result: ToolResponse,
-  ms: number,
-): SyncTool {
-  return createMockSyncTool(name, description, z.object({}), async () => {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-    return result;
-  });
-}
-
-/**
- * Create an async tool that simulates a long-running job.
- * `ackDelay` is the delay before the acknowledgement,
- * `resultDelay` is the delay before the final result resolves.
- */
-export function mockAsyncJobTool(
-  name: string,
-  description: string,
-  ackText: string,
-  resultText: string,
-  ackDelay = 0,
-  resultDelay = 0,
-): AsyncTool {
-  return createMockAsyncTool(name, description, z.object({}), async (_params) => {
-    const ack = async (): Promise<ToolResponse> => {
-      if (ackDelay > 0) await new Promise((r) => setTimeout(r, ackDelay));
-      return [{ type: "text", text: ackText }];
+    const readFile: SyncTool<typeof readFileSchema> = {
+      type: "sync",
+      name: "read_file",
+      description:
+        "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). " +
+        "For large files use offset/limit to read a portion. Returns truncated output for files > 50 KB.",
+      parameters: readFileSchema,
+      call: async ({ path: filePath, offset, limit }) => {
+        const resolved = path.resolve(filePath);
+        if (!fs.existsSync(resolved)) {
+          return asTextToolResponse({ error: `File not found: ${resolved}` });
+        }
+        const stat = fs.statSync(resolved);
+        if (!stat.isFile()) {
+          return asTextToolResponse({ error: `Not a file: ${resolved}` });
+        }
+        const raw = fs.readFileSync(resolved, "utf-8");
+        const lines = raw.split("\n");
+        const start = offset ? Math.max(0, offset - 1) : 0;
+        const end = limit ? start + limit : lines.length;
+        const slice = lines.slice(start, end);
+        return asTextToolResponse({
+          file: resolved,
+          totalLines: lines.length,
+          linesReturned: slice.length,
+          startLine: start + 1,
+          content: slice.join("\n"),
+          truncated: end < lines.length,
+        });
+      },
     };
-    const result = async (): Promise<ToolResponse> => {
-      if (resultDelay > 0) await new Promise((r) => setTimeout(r, resultDelay));
-      return [{ type: "text", text: resultText }];
+
+    const writeFile: SyncTool<typeof writeFileSchema> = {
+      type: "sync",
+      name: "write_file",
+      description:
+        "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. " +
+        "Automatically creates parent directories.",
+      parameters: writeFileSchema,
+      call: async ({ path: filePath, content }) => {
+        const resolved = path.resolve(filePath);
+        const dir = path.dirname(resolved);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(resolved, content, "utf-8");
+        return asTextToolResponse({ file: resolved, bytes: Buffer.byteLength(content, "utf-8") });
+      },
     };
-    return {
-      ack: await ack(),
-      result: result(),
+
+    const listDirectory: SyncTool<typeof listDirectorySchema> = {
+      type: "sync",
+      name: "list_directory",
+      description: "List the contents of a directory. Optionally recursive.",
+      parameters: listDirectorySchema,
+      call: async ({ path: dirPath, recursive }) => {
+        const resolved = path.resolve(dirPath);
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+          return asTextToolResponse({ error: `Directory not found: ${resolved}` });
+        }
+        if (!recursive) {
+          const entries = fs.readdirSync(resolved, { withFileTypes: true });
+          return asTextToolResponse({
+            directory: resolved,
+            entries: entries.map((e) => ({
+              name: e.name,
+              type: e.isDirectory() ? "directory" : e.isFile() ? "file" : "other",
+            })),
+          });
+        }
+        // simple recursive walk
+        const walk = (dir: string, prefix = ""): { name: string; type: string; path: string }[] => {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          const result: { name: string; type: string; path: string }[] = [];
+          for (const e of entries) {
+            const entryPath = path.join(dir, e.name);
+            result.push({
+              name: e.name,
+              type: e.isDirectory() ? "directory" : e.isFile() ? "file" : "other",
+              path: prefix + e.name,
+            });
+            if (e.isDirectory()) {
+              result.push(...walk(entryPath, prefix + e.name + "/"));
+            }
+          }
+          return result;
+        };
+        return asTextToolResponse({ directory: resolved, entries: walk(resolved) });
+      },
     };
-  });
-}
 
-/**
- * Create an async tool whose job fails after some time.
- */
-export function mockAsyncFailingTool(
-  name: string,
-  description: string,
-  ackText: string,
-  error: string | Error,
-  resultDelay = 0,
-): AsyncTool {
-  return createMockAsyncTool(name, description, z.object({}), async (_params) => {
-    return {
-      ack: [{ type: "text", text: ackText }],
-      result: (async () => {
-        if (resultDelay > 0) await new Promise((r) => setTimeout(r, resultDelay));
-        throw typeof error === "string" ? new Error(error) : error;
-      })(),
+    const searchFiles: SyncTool<typeof searchFilesSchema> = {
+      type: "sync",
+      name: "search_files",
+      description:
+        "Search for files by name pattern. Supports glob patterns like '*.ts' or simple substrings. " +
+        "Walks directories recursively and returns matching file paths.",
+      parameters: searchFilesSchema,
+      call: async ({ pattern, rootPath, maxResults }) => {
+        const resolved = path.resolve(rootPath);
+        const results: string[] = [];
+
+        const match = (name: string): boolean => {
+          if (pattern.includes("*")) {
+            const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+            return regex.test(name);
+          }
+          return name.includes(pattern);
+        };
+
+        const walk = (dir: string): void => {
+          if (results.length >= maxResults) return;
+          try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const e of entries) {
+              if (results.length >= maxResults) return;
+              const entryPath = path.join(dir, e.name);
+              if (e.isFile() && match(e.name)) {
+                results.push(entryPath);
+              } else if (e.isDirectory() && e.name !== "node_modules" && e.name !== ".git") {
+                walk(entryPath);
+              }
+            }
+          } catch {
+            // skip unreadable dirs
+          }
+        };
+
+        walk(resolved);
+        return asTextToolResponse({ pattern, root: resolved, count: results.length, files: results });
+      },
     };
-  });
+
+    this._tools = { readFile, writeFile, listDirectory, searchFiles };
+  }
 }
 
-/**
- * Create a sync tool that tracks how many times it has been called.
- */
-export function mockCallCountingTool(
-  name: string,
-  description: string,
-  result: ToolResponse,
-): { tool: SyncTool; getCount: () => number; resetCount: () => void } {
-  let count = 0;
-  return {
-    tool: createMockSyncTool(name, description, z.object({}), () => {
-      count++;
-      return result;
-    }),
-    getCount: () => count,
-    resetCount: () => { count = 0; },
-  };
-};
+// ============================================================
+// ShellToolSet
+// Ejecución de comandos en el sistema. Una LLM los usa para
+// compilar, correr tests, inspeccionar procesos, gestionar
+// paquetes, etc.
+// ============================================================
 
-/**
- * Create a sync tool that returns different results on each call
- * by cycling through the provided responses.
- */
-export function mockRotatingTool(
-  name: string,
-  description: string,
-  responses: ToolResponse[],
-): { tool: SyncTool; getCurrentIndex: () => number; reset: () => void } {
-  let index = 0;
-  return {
-    tool: createMockSyncTool(name, description, z.object({}), (_params) => {
-      const response = responses[index % responses.length] ?? [{ type: "text", text: "" }];
-      index++;
-      return response;
-    }),
-    getCurrentIndex: () => index,
-    reset: () => { index = 0; },
-  };
-};
+const executeCommandSchema = z.object({
+  command: z.string().describe("The shell command to execute (e.g. 'ls -la', 'npm test', 'git status')."),
+  timeout: z.number().int().positive().default(30).describe("Timeout in seconds. Default 30."),
+  cwd: z.string().optional().describe("Working directory for the command. Defaults to current working directory."),
+});
 
-/**
- * Create a sync tool that simulates a tool with side effects —
- * collects all call arguments in an array for test assertions.
- */
-export function mockRecordingTool<S extends z.ZodObject>(
-  name: string,
-  description: string,
-  parameters: S,
-  result: ToolResponse,
-): { tool: SyncTool<S>; getCalls: () => z.infer<S>[]; reset: () => void } {
-  const calls: z.infer<S>[] = [];
-  return {
-    tool: createMockSyncTool(name, description, parameters, (params) => {
-      calls.push(params);
-      return result;
-    }),
-    getCalls: () => calls,
-    reset: () => { calls.length = 0; },
-  };
-};
+const checkEnvSchema = z.object({
+  variable: z.string().optional().describe("Specific environment variable to check. If omitted, returns common vars."),
+});
 
-/**
- * Create a sync tool that returns a structured JSON response.
- */
-export function mockJsonTool(
-  name: string,
-  description: string,
-  data: unknown,
-): SyncTool {
-  return createMockSyncTool(name, description, z.object({}), () => [
-    { type: "text", text: JSON.stringify(data) },
-  ]);
+const checkProcessSchema = z.object({
+  pattern: z.string().describe("Pattern to match against running process names (e.g. 'node', 'python', 'postgres')."),
+});
+
+class ShellToolSet extends ToolSet {
+  constructor() {
+    super();
+
+    const executeCommand: SyncTool<typeof executeCommandSchema> = {
+      type: "sync",
+      name: "execute_command",
+      description:
+        "Execute a bash shell command and return stdout/stderr. " +
+        "Use this for running tests, building, checking git status, listing processes, etc.",
+      parameters: executeCommandSchema,
+      call: async ({ command, timeout, cwd }) => {
+        const { execSync } = await import("node:child_process");
+        try {
+          const output = execSync(command, {
+            cwd: cwd || process.cwd(),
+            timeout: timeout * 1000,
+            encoding: "utf-8",
+            maxBuffer: 50 * 1024 * 1024, // 50 MB
+          });
+          return asTextToolResponse({ exitCode: 0, stdout: output });
+        } catch (err: unknown) {
+          const e = err as { status?: number; stdout?: string; stderr?: string; message?: string };
+          return asTextToolResponse({
+            exitCode: e.status ?? -1,
+            stdout: e.stdout ?? "",
+            stderr: e.stderr ?? e.message ?? "Unknown error",
+          });
+        }
+      },
+    };
+
+    const checkEnv: SyncTool<typeof checkEnvSchema> = {
+      type: "sync",
+      name: "check_env",
+      description:
+        "Check environment variables. Returns the value of a specific variable or a set of common ones (HOME, PATH, NODE_ENV, etc.).",
+      parameters: checkEnvSchema,
+      call: async ({ variable }) => {
+        if (variable) {
+          return asTextToolResponse({ variable, value: process.env[variable] ?? "<not set>" });
+        }
+        const commonVars = ["HOME", "PATH", "NODE_ENV", "PWD", "USER", "SHELL", "LANG", "EDITOR", "TERM"];
+        const result: Record<string, string> = {};
+        for (const v of commonVars) {
+          result[v] = process.env[v] ?? "<not set>";
+        }
+        return asTextToolResponse(result);
+      },
+    };
+
+    const checkProcess: SyncTool<typeof checkProcessSchema> = {
+      type: "sync",
+      name: "check_process",
+      description:
+        "List running processes matching a name pattern. Useful for checking if a server, database or build process is running.",
+      parameters: checkProcessSchema,
+      call: async ({ pattern }) => {
+        const { execSync } = await import("node:child_process");
+        try {
+          const raw = execSync(`ps aux | grep -i '${pattern}' | grep -v grep`, {
+            encoding: "utf-8",
+          });
+          const lines = raw.trim().split("\n").filter(Boolean);
+          return asTextToolResponse({ pattern, count: lines.length, processes: lines });
+        } catch {
+          return asTextToolResponse({ pattern, count: 0, processes: [] });
+        }
+      },
+    };
+
+    this._tools = { executeCommand, checkEnv, checkProcess };
+  }
 }
 
-/**
- * Create a sync tool that returns the JSON-encoded params as a concatenated string.
- */
-export function mockConcatTool(
-  name: string,
-  description: string,
-  schema: z.ZodObject,
-): SyncTool<z.ZodObject> {
-  return createMockSyncTool(
-    name,
-    description,
-    schema,
-    (params) => [{ type: "text", text: Object.entries(params).map(([k, v]) => `${k}=${v}`).join(" | ") }],
-  );
+// ============================================================
+// WebToolSet
+// Búsqueda y extracción de información web. Una LLM los usa
+// para buscar documentación, leer artículos, verificar APIs,
+// obtener info actualizada, etc.
+// ============================================================
+
+const webSearchSchema = z.object({
+  query: z.string().describe("The search query. Be specific with keywords for better results."),
+  maxResults: z.number().int().min(1).max(20).default(10).describe("Number of results to return (max 20)."),
+  category: z.enum(["general", "news", "it", "science"]).default("general").describe("Search category filter."),
+  timeRange: z.enum(["day", "week", "month", "year"]).optional().describe("Time range filter for results."),
+});
+
+const webExtractSchema = z.object({
+  url: z.string().url().describe("The URL to extract content from."),
+  includeMarkdown: z.boolean().default(true).describe("Include extracted markdown content."),
+  includeLinks: z.boolean().default(false).describe("Include links found on the page."),
+  includeMetadata: z.boolean().default(true).describe("Include page metadata (title, description, author)."),
+});
+
+const checkUrlSchema = z.object({
+  url: z.string().url().describe("The URL to check."),
+  followRedirects: z.boolean().default(true).describe("Whether to follow redirects."),
+});
+
+class WebToolSet extends ToolSet {
+  constructor() {
+    super();
+
+    const webSearch: SyncTool<typeof webSearchSchema> = {
+      type: "sync",
+      name: "web_search",
+      description:
+        "Search the web using SearXNG. Returns titles, URLs and snippets. " +
+        "Use this to find documentation, articles, APIs, or any up-to-date information.",
+      parameters: webSearchSchema,
+      call: async ({ query, maxResults, category, timeRange }) => {
+      // Mocked: in production this would call SearXNG
+      return asTextToolResponse({
+          query,
+          category,
+          timeRange,
+          results: [
+            {
+              title: `[mock] First result for "${query}"`,
+              url: "https://example.com/1",
+              snippet: "This is a mocked search result for testing purposes.",
+            },
+            {
+              title: `[mock] Second result for "${query}"`,
+              url: "https://example.com/2",
+              snippet: "Another mocked search result to simulate real web search behavior.",
+            },
+            {
+              title: `[mock] Documentation for "${query}"`,
+              url: "https://docs.example.com",
+              snippet: "Official documentation page with API reference and examples.",
+            },
+          ],
+          mocked: true,
+        });
+      },
+    };
+
+    const webExtract: SyncTool<typeof webExtractSchema> = {
+      type: "sync",
+      name: "web_extract",
+      description:
+        "Extract clean content from a web page. Returns markdown text, links, media and metadata. " +
+        "Use this to read full articles, documentation pages or any URL content.",
+      parameters: webExtractSchema,
+      call: async ({ url, includeMarkdown, includeLinks, includeMetadata }) => {
+        // Mocked: in production this would use Crawl4AI
+        const result: Record<string, unknown> = { url };
+        if (includeMetadata) {
+          result.metadata = { title: `[mock] Page title`, description: "Mocked page description.", author: "Unknown" };
+        }
+        if (includeMarkdown) {
+          result.markdown = `# [mock] Page Content\n\nThis is mocked extracted content for testing.\n\nIn production this would contain the full cleaned markdown from ${url}.`;
+        }
+        if (includeLinks) {
+          result.links = ["https://example.com/link1", "https://example.com/link2"];
+        }
+        result.mocked = true;
+        return asTextToolResponse(result);
+      },
+    };
+
+    const checkUrl: SyncTool<typeof checkUrlSchema> = {
+      type: "sync",
+      name: "check_url",
+      description:
+        "Check if a URL is reachable. Returns the HTTP status code, final URL (after redirects) and response headers.",
+      parameters: checkUrlSchema,
+      call: async ({ url, followRedirects }) => {
+        try {
+          const response = await fetch(url, { redirect: followRedirects ? "follow" : "manual", signal: AbortSignal.timeout(5000) });
+          return asTextToolResponse({
+            url,
+            status: response.status,
+            statusText: response.statusText,
+            finalUrl: response.url,
+            redirected: response.url !== url,
+          });
+        } catch (err: unknown) {
+          return asTextToolResponse({
+            url,
+            error: (err as Error).message ?? "Failed to fetch URL",
+          });
+        }
+      },
+    };
+
+    this._tools = { webSearch, webExtract, checkUrl };
+  }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Pre-built sample tools (useful for quick test scaffolding)         */
-/* ------------------------------------------------------------------ */
+// ============================================================
+// Sample tools — array plana para testing con ToolRouter
+// ============================================================
 
-/** A collection of ready-to-use mock tools covering various response types. */
-export const sampleTools: Tool[] = [
-  mockTool("read_file", "Read the contents of a file.", [
-    { type: "text", text: "file contents here" },
-  ]),
-  mockTool("write_file", "Write content to a file.", [
-    { type: "text", text: "ok" },
-  ]),
-  mockTool("list_directory", "List files in a directory.", [
-    { type: "text", text: "a.txt, b.txt, c.txt" },
-  ]),
-  mockTool("run_command", "Execute a shell command.", [
-    { type: "text", text: "command output" },
-  ]),
-  mockTool("search_web", "Search the web for information.", [
-    { type: "text", text: JSON.stringify([{ title: "Result", url: "https://example.com" }]) },
-  ]),
-  mockFailingTool("crash_tool", "A tool that always fails.", "boom"),
-  mockImageTool("generate_image", "Generate an image from a prompt.", {
-    kind: "base64",
-    mediaType: "image/png",
-    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  }),
-  mockMixedTool("describe_and_show", "Describe something and show an image.", "Here is the result:", {
-    kind: "url",
-    url: "https://example.com/image.png",
-  }),
-  mockJsonTool("get_status", "Return the current system status.", {
-    status: "healthy",
-    uptime: 42,
-    version: "1.0.0",
-  }),
-  mockEchoTool("echo", "Echo back the provided parameters.", z.object({
-    message: z.string(),
-  })),
+const _fs = new FileSystemToolSet();
+const _shell = new ShellToolSet();
+const _web = new WebToolSet();
+
+const sampleTools: Tool[] = [
+  ...Object.values(_fs.tools),
+  ...Object.values(_shell.tools),
+  ...Object.values(_web.tools),
 ];
 
-/* ------------------------------------------------------------------ */
-/*  Async sample tools                                                 */
-/* ------------------------------------------------------------------ */
+// ============================================================
+// Exports
+// ============================================================
 
-/** A collection of ready-to-use mock async tools. */
-export const sampleAsyncTools: AsyncTool[] = [
-  mockAsyncJobTool(
-    "long_running_job",
-    "A job that takes a while to complete.",
-    "Job started, please wait...",
-    "Job completed successfully!",
-    0,
-    0,
-  ),
-  mockAsyncFailingTool(
-    "failing_job",
-    "A job that eventually fails.",
-    "Job started...",
-    "Job failed unexpectedly",
-    0,
-  ),
-];
-
-/** All sample tools combined (sync + async). */
-export const allSampleTools: Tool[] = [...sampleTools, ...sampleAsyncTools];
-
-/* ------------------------------------------------------------------ */
-/*  Tool factory helpers for test builders                             */
-/* ------------------------------------------------------------------ */
-
-/**
- * Build a `SyncTool` from a plain object definition for inline test use.
- *
- * @example
- *   const tool = sync({ name: "greet", desc: "Say hi", params: z.object({ name: z.string() }), fn: (p) => [{ type: "text", text: `Hello ${p.name}` }] });
- */
-export function sync<S extends z.ZodObject>(opts: {
-  name: string;
-  desc: string;
-  parameters: S;
-  fn: (params: z.infer<S>) => Promise<ToolResponse> | ToolResponse;
-}): SyncTool<S> {
-  return createMockSyncTool(opts.name, opts.desc, opts.parameters, opts.fn);
-}
-
-/**
- * Build an `AsyncTool` from a plain object definition for inline test use.
- */
-export function async_tool<S extends z.ZodObject>(opts: {
-  name: string;
-  desc: string;
-  parameters: S;
-  fn: (params: z.infer<S>) => Promise<{
-    ack: ToolResponse;
-    result: Promise<ToolResponse>;
-  }>;
-}): AsyncTool<S> {
-  return createMockAsyncTool(opts.name, opts.desc, opts.parameters, opts.fn);
-}
-
-/**
- * Build a failing `SyncTool` from a plain object definition.
- */
-export function failingSync(opts: {
-  name: string;
-  desc: string;
-  parameters?: z.ZodObject;
-  error?: string | Error;
-}): SyncTool {
-  return createMockSyncTool(
-    opts.name,
-    opts.desc,
-    opts.parameters ?? z.object({}),
-    async (_params) => {
-      throw typeof opts.error === "string" ? new Error(opts.error) : opts.error ?? new Error("mock error");
-    },
-  );
-}
-
-/**
- * Build a failing `AsyncTool` from a plain object definition.
- */
-export function failingAsync(opts: {
-  name: string;
-  desc: string;
-  parameters?: z.ZodObject;
-  ackText?: string;
-  error?: string | Error;
-}): AsyncTool {
-  return createMockAsyncTool(
-    opts.name,
-    opts.desc,
-    opts.parameters ?? z.object({}),
-    async (_params) => ({
-      ack: [{ type: "text", text: opts.ackText ?? "Accepted" }],
-      result: Promise.reject(typeof opts.error === "string" ? new Error(opts.error) : opts.error ?? new Error("mock error")),
-    }),
-  );
-}
+export { FileSystemToolSet, ShellToolSet, WebToolSet, sampleTools };

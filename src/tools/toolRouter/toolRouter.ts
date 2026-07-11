@@ -1,22 +1,15 @@
 import { z } from "zod";
 
-import { asTextToolResponse } from "../utils";
+import { asTextToolResponse, renderTool } from "../utils";
 
-import { ToolBox } from "./../tool";
-import { BM25 } from "./bm25";
+import { ToolSet } from "./../tool";
+import { BM25 } from "../../utils/bm25";
 
 import type { SyncTool, Tool, ToolResponse } from "../../types";
 
-const searchToolSchema = z.object({
-  query: z.string().describe("The query to search for the most relevant tool."),
-});
+// NOTE, when we create the documentation we need to leave it clear that using this router does not work with all models the model needs to be trained with flexible tool calling, gemma 4 worked qwen 3.6 is broken
 
-const callToolSchema = z.object({
-  name: z.string().describe("The name of the tool to call."),
-  params: z.record(z.string(), z.any()).describe("The parameters to pass to the tool."),
-});
-
-class ToolRouter extends ToolBox {
+class ToolRouter extends ToolSet {
   private registeredTools: Tool[] = [];
   private registeredToolsMap = new Map<string, Tool>();
   private bm25: BM25;
@@ -29,20 +22,37 @@ class ToolRouter extends ToolBox {
     }
     this.bm25 = new BM25(tools.map((tool) => this.buildBM25Document(tool)));
 
+    const searchToolSchema = z.object({
+      query: z.string().describe(
+        "A short capability search (1-6 words). Examples: " +
+        "'list files', 'read file', 'send email', 'postgres query'. " +
+        "Prefer one broad search instead of many narrow searches."
+      ),
+    });
+
+    const callToolSchema = z.object({
+      name: z.string().describe(
+        "Exact tool name returned by search_tool."
+      ),
+      params: z.string().describe(
+        "JSON string containing the tool arguments."
+      ),
+    });
+
     const searchTool: SyncTool<typeof searchToolSchema> = {
       type: "sync",
       name: "search_tool",
-      description: "Searches for the most relevant tool for a given query.",
+      description:
+        "Search for available tools by capability. Use this before calling a tool whose " +
+        "name or parameters you don't already know. Returns matching tools with their exact " +
+        "name, description and JSON parameter schema. Never guess a tool name or its parameters.",
       parameters: searchToolSchema,
       call: async (params) => {
         const { query } = params;
         const toolsFound = this.searchTool(query);
+        const renderedTools = toolsFound.map((tool) => renderTool(tool));
         return asTextToolResponse({
-          tools: toolsFound.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters.toJSONSchema(),
-          })),
+          tools: renderedTools.join("\n--------------------------------------------------\n")
         });
       }
     };
@@ -52,11 +62,13 @@ class ToolRouter extends ToolBox {
     const callTool: SyncTool<typeof callToolSchema> = {
       type: "sync",
       name: "call_tool",
-      description: "Calls a registered tool with the given parameters.",
+      description:
+        "Call a tool returned by search_tool. The params field MUST be a normal JSON object " +
+        "whose values directly match the tool schema. Never wrap values inside another object.",
       parameters: callToolSchema,
-      call: async (params) => {
-        const { name, params: toolParams } = params;
-        return this.callTool(name, toolParams);
+      call: async (_params) => {
+        const { name, params } = _params;
+        return this.callTool(name, params);
       }
     };
 
@@ -77,7 +89,7 @@ class ToolRouter extends ToolBox {
 
   public searchTool(query: string): Tool[] {
     const toolsFound: Tool[] = [];
-    for (const { docIndex, score } of this.bm25.search(query, 5)) {
+    for (const { docIndex, score } of this.bm25.search(query)) {
       if (score > 0 && this.registeredTools[docIndex]) {
         toolsFound.push(this.registeredTools[docIndex]);
       }
@@ -85,14 +97,22 @@ class ToolRouter extends ToolBox {
     return toolsFound;
   }
 
-  public callTool(name: string, params: unknown): Promise<ToolResponse> {
+  public callTool(name: string, params: string): Promise<ToolResponse> {
+    params = JSON.parse(params);
     const tool = this.registeredToolsMap.get(name);
     if (!tool) {
-      throw new Error(`Tool with name ${name} not found.`);
+      throw new Error(`Tool "${name}" not found. Use search_tool to discover available tools.`);
+    }
+    let parsed = tool.parameters.safeParse(params);
+    if (!parsed.success) {
+      throw new Error(
+        `Invalid params for ${name}:\n${z.prettifyError(parsed.error)}\n\n` +
+        `Expected signature:\n${renderTool(tool)}\n\n` +
+        `Params values must be plain JSON values (e.g. {"path": "/tmp"}), not wrapper objects.`
+      );
     }
     if (tool.type === "sync") {
-      const parsedParams = tool.parameters.parse(params);
-      return tool.call(parsedParams);
+      return tool.call(parsed.data);
     } else { // TODO: handle async tools
       throw new Error(`Async tool with name ${name} cannot be called directly.`);
     }
