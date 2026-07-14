@@ -1,68 +1,45 @@
 import type { Message, Tool } from "../types";
 
 class Context {
-  private _systemPrompt: string;
-  private _chatHistory: Message[];
-  private _tools: Record<string, Tool> = {};
+  public inputTokens: number = 0;
+  public outputTokens: number = 0;
+  public cacheReadTokens: number = 0;
 
-  private _inputTokens: number = 0;
-  private _outputTokens: number = 0;
-  private _cacheReadTokens: number = 0;
+  public systemPrompt: string;
 
-  constructor(systemPrompt: string, chatHistory: Message[], tools: Tool[]) {
-    this._systemPrompt = systemPrompt;
-    this._chatHistory = chatHistory;
-    this._tools = tools.reduce((acc, tool) => {
-      acc[tool.name] = tool;
-      return acc;
-    }, {} as Record<string, Tool>);
+  public messageHistory: Message[] = [];
+  public fullMessageHistory: Message[] = [];
+
+  public tools: Record<string, Tool> = {};
+
+  private checkpointIndex?: number;
+
+  constructor(systemPrompt: string, sessionId?: string) {
+    this.systemPrompt = systemPrompt;
+    this.messageHistory = [];
+    this.fullMessageHistory = [];
   }
-
-  public get systemPrompt(): string {
-    return this._systemPrompt;
-  }
-
-  public get chatHistory(): Message[] {
-    return this._chatHistory;
-  }
-
-  public set chatHistory(history: Message[]) {
-    this._chatHistory = history;
-  }
-
-  public get tools(): Record<string, Tool> {
-    return this._tools;
-  }
-
-  public get inputTokens(): number {
-    return this._inputTokens;
-  }
-
-  public get outputTokens(): number {
-    return this._outputTokens;
-  }
-
-  public get cacheReadTokens(): number {
-    return this._cacheReadTokens;
-  }
-
-  public set inputTokens(value: number) {
-    this._inputTokens = value;
-  }
-
-  public set outputTokens(value: number) {
-    this._outputTokens = value;
-  }
-
-  public set cacheReadTokens(value: number) {
-    this._cacheReadTokens = value;
-  }
-
+  
   public addMessage(message: Message): void {
-    this._chatHistory.push(message);
+    this.messageHistory.push(message);
+    this.fullMessageHistory.push(message);
+  }
+
+  public saveCheckpoint(): void {
+    this.checkpointIndex = this.messageHistory.length;
+  }
+
+  public restoreCheckpoint(): void {
+    if (this.checkpointIndex === undefined) {
+      throw new Error("No checkpoint to restore.");
+    }
+    this.messageHistory = this.messageHistory.slice(0, this.checkpointIndex);
+    this.checkpointIndex = undefined;
+  }
+
+  public compact(): void {
+    // NO-OP for now
   }
 }
 
-export {
-  Context
-};
+export { Context };

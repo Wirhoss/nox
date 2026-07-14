@@ -1,11 +1,10 @@
 import * as dotenv from "dotenv";
 dotenv.config({ quiet: true });
 
-import { Agent } from "./src/agent";
 import { Config } from "./src/config";
 import logger from "./src/logger";
-import { ProviderManager, type ChatProvider } from "./src/provider";
-import { ToolManager, ToolRouter, sampleTools } from "./src/tool";
+import { ProviderManager } from "./src/provider";
+import { ToolManager } from "./src/tool";
 import { AgentManager } from "./src/agent/agentManager";
 
 async function main(): Promise<void> {

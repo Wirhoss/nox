@@ -7,7 +7,7 @@ enum StopReason {
   MaxIterations,
 }
 
-enum AgentState {
+enum RunnerState {
   Idle,
   Running,
   Stopped
@@ -16,11 +16,6 @@ enum AgentState {
 interface RunLoopResult {
   stopReason: StopReason;
 }
-
-export {
-  AgentState,
-  StopReason
-};
 
 interface AgentConfig {
   maxIterations: number;
@@ -40,4 +35,9 @@ export type {
   AgentConfig,
   AgentStreamEvent,
   RunLoopResult
+};
+
+export {
+  RunnerState,
+  StopReason
 };
