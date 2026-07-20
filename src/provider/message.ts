@@ -24,10 +24,13 @@ interface ToolCallMessage {
   arguments: Record<string, unknown>;
 }
 
+type ToolResponseExecution = 'immediate' | 'deferredAck' | 'deferredResult';
+
 interface ToolResponseMessage {
   role: 'toolResponse';
   name: string;
   trackId: string;
+  execution: ToolResponseExecution;
   response: MessageContent[];
   isError?: boolean;
 }
@@ -39,6 +42,16 @@ interface UserMessage {
 
 type Message = AssistantMessage | UserMessage | ToolCallMessage | ToolResponseMessage;
 
+function toUserMessage(text: string): UserMessage {
+  return {
+    role: 'user',
+    content: [{
+      type: 'text',
+      text,
+    }],
+  };
+}
+
 export type {
   AssistantMessage,
   Message,
@@ -46,6 +59,9 @@ export type {
   MessageContentImage,
   MessageContentText,
   ToolCallMessage,
+  ToolResponseExecution,
   ToolResponseMessage,
   UserMessage,
 };
+
+export { toUserMessage };

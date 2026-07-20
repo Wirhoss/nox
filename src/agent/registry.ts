@@ -2,6 +2,8 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
 import { closeDatabase, openDatabase, SessionStore } from '../database';
+import { NotFoundError } from '../errors';
+import { ToolGate } from '../gate';
 import { createLogger } from '../logger';
 import { ProviderRegistry } from '../provider';
 import { ToolRegistry } from '../tool/registry';
@@ -10,6 +12,7 @@ import { Context } from './context';
 import { AgentSession } from './session';
 
 import type { NoxDatabase, SessionRecord } from '../database';
+import type { GateConfig } from '../gate';
 import type { ToolSet } from '../tool';
 
 const logger = createLogger('agent');
@@ -40,6 +43,7 @@ class AgentRegistry {
 
   private agentBlueprints = new Map<string, AgentBlueprint>();
   private sessions = new Map<string, AgentSession>();
+  private gateConfig: GateConfig = { rules: [], escalationTimeoutMs: 120_000 };
 
   private initialized: boolean = false;
 
@@ -52,11 +56,14 @@ class AgentRegistry {
     return AgentRegistry._instance;
   }
 
-  public async init(agentBlueprints: AgentBlueprint[], databaseFile: string): Promise<void> {
+  public async init(agentBlueprints: AgentBlueprint[], databaseFile: string, gateConfig?: GateConfig): Promise<void> {
     if (this.initialized) {
       throw new Error('AgentRegistry already initialized.');
     }
     this.initialized = true;
+    if (gateConfig) {
+      this.gateConfig = gateConfig;
+    }
 
     try {
       for (const blueprint of agentBlueprints) {
@@ -82,7 +89,7 @@ class AgentRegistry {
     const store = this.requireStore();
     const blueprint = this.agentBlueprints.get(blueprintId);
     if (!blueprint) {
-      throw new Error(`Agent blueprint with id ${blueprintId} not found.`);
+      throw new NotFoundError(`Agent blueprint with id ${blueprintId} not found.`);
     }
     const sessionId = nanoid();
     const context = new Context(blueprint.systemPrompt, sessionId);
@@ -105,11 +112,11 @@ class AgentRegistry {
     }
     const sessionRecord = store.getSession(sessionId);
     if (!sessionRecord) {
-      throw new Error(`Session with id ${sessionId} not found.`);
+      throw new NotFoundError(`Session with id ${sessionId} not found.`);
     }
     const blueprint = this.agentBlueprints.get(sessionRecord.blueprintId);
     if (!blueprint) {
-      throw new Error(`Agent blueprint with id ${sessionRecord.blueprintId} for session ${sessionId} no longer exists.`);
+      throw new NotFoundError(`Agent blueprint with id ${sessionRecord.blueprintId} for session ${sessionId} no longer exists.`);
     }
     const context = new Context(sessionRecord.systemPrompt, sessionId);
     for (const message of store.getMessages(sessionId)) {
@@ -121,12 +128,48 @@ class AgentRegistry {
     return session;
   }
 
+  public async deleteSession(sessionId: string): Promise<void> {
+    const store = this.requireStore();
+    const session = this.sessions.get(sessionId);
+    if (!session && !store.getSession(sessionId)) {
+      throw new NotFoundError(`Session with id ${sessionId} not found.`);
+    }
+    if (session) {
+      await session.stop();
+      this.sessions.delete(sessionId);
+    }
+    store.deleteSession(sessionId);
+    logger.info({ sessionId }, 'Session deleted.');
+  }
+
   public getSession(sessionId: string): AgentSession | null {
     return this.sessions.get(sessionId) ?? null;
   }
 
-  public listSessions(): SessionRecord[] {
-    return this.requireStore().listSessions();
+  public getBlueprint(blueprintId: string): AgentBlueprint | null {
+    return this.agentBlueprints.get(blueprintId) ?? null;
+  }
+
+  public listBlueprints(): AgentBlueprint[] {
+    return [...this.agentBlueprints.values()];
+  }
+
+  public upsertBlueprint(blueprint: AgentBlueprint): void {
+    this.agentBlueprints.set(blueprint.id, blueprint);
+    logger.info({ blueprintId: blueprint.id }, 'Agent blueprint upserted.');
+  }
+
+  public removeBlueprint(blueprintId: string): void {
+    this.agentBlueprints.delete(blueprintId);
+    logger.info({ blueprintId }, 'Agent blueprint removed.');
+  }
+
+  public listSessions(blueprintId?: string): SessionRecord[] {
+    return this.requireStore().listSessions(blueprintId);
+  }
+
+  public getSessionRecord(sessionId: string): SessionRecord | null {
+    return this.requireStore().getSession(sessionId);
   }
 
   public close(): void {
@@ -144,10 +187,6 @@ class AgentRegistry {
     return this.store;
   }
 
-  /**
-   * Persistence must never break a running session: storage errors are logged
-   * and swallowed so the in-memory context stays authoritative.
-   */
   private attachPersistence(sessionId: string, context: Context): void {
     const store = this.requireStore();
     context.listener = {
@@ -203,10 +242,18 @@ class AgentRegistry {
     if (!modelConfig) {
       throw new Error(`Model with id ${blueprint.config.modelId} not found in provider ${blueprint.config.providerId}.`);
     }
+
+    const gateRules = [
+      ...[...coreToolSets, ...lazyLoadedToolSets].flatMap((toolSet) => toolSet.gate ?? []),
+      ...this.gateConfig.rules,
+    ];
+
     return new AgentSession(context, {
       maxIterations: blueprint.config.maxIterations,
       modelConfig,
       provider,
+      gate: new ToolGate(gateRules),
+      escalationTimeoutMs: this.gateConfig.escalationTimeoutMs,
     });
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { EscalationHub, ToolGate } from '../gate';
 import { ProviderStream } from '../provider';
 import { EventLog } from '../utils';
 
@@ -15,8 +16,8 @@ import type {
   ToolCallMessage,
   UserMessage,
 } from '../provider';
-import type { ImmediateTool } from '../tool';
-import type { AgentStreamEvent } from './runner';
+import type { DeferredTool, ImmediateTool } from '../tool';
+import type { AgentStreamEvent, RunnerOptions } from './runner';
 
 const model = { type: 'text', modelId: 'test-model' } as ModelConfig;
 
@@ -42,11 +43,11 @@ function fakeProvider(scripts: StreamScript[]): Provider {
   } as unknown as Provider;
 }
 
-function setup(scripts: StreamScript[], tools: ImmediateTool[] = []) {
+function setup(scripts: StreamScript[], tools: ImmediateTool[] = [], options: Partial<RunnerOptions> = {}) {
   const context = new Context('system prompt');
   for (const tool of tools) context.tools[tool.name] = tool;
   const eventLog = new EventLog<AgentStreamEvent>();
-  const runner = new Runner(context, eventLog, fakeProvider(scripts), model, 5);
+  const runner = new Runner(context, eventLog, fakeProvider(scripts), model, { maxIterations: 5, ...options });
   return { context, eventLog, runner };
 }
 
@@ -125,28 +126,184 @@ describe('Runner', () => {
       .toEqual(['user', 'toolCall', 'toolResponse', 'assistant']);
   });
 
-  test('deferred tools report an error response instead of empty success', async () => {
-    const deferredCall = toolCallMessage('later', 'call-1');
-    const { context, runner } = setup([
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function assistant(text: string): Message {
+  return { role: 'assistant', content: [{ type: 'text', text }] };
+}
+
+async function waitForPermissionRequest(eventLog: EventLog<AgentStreamEvent>): Promise<string> {
+  for await (const event of eventLog.subscribe()) {
+    if (event.type === 'permissionRequest') return event.requestId;
+  }
+  throw new Error('Event log closed without a permission request');
+}
+
+function trackingTool(onCall: () => void): ImmediateTool {
+  return {
+    type: 'immediate',
+    name: 'echo',
+    description: 'echoes',
+    parameters: z.object({}),
+    call: async () => {
+      onCall();
+      return [{ type: 'text', text: 'done' }];
+    },
+  };
+}
+
+describe('Runner gate', () => {
+  const gatedScripts = (): StreamScript[] => {
+    const toolCall = toolCallMessage('echo', 'call-1');
+    return [
       async function* () {
-        yield { type: 'toolCall', toolCall: deferredCall };
-        yield { type: 'end', messages: [deferredCall] };
+        yield { type: 'toolCall', toolCall };
+        yield { type: 'end', messages: [toolCall] };
       },
       async function* () {
-        yield { type: 'end', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'bye' }] }] };
+        yield { type: 'end', messages: [assistant('bye')] };
       },
-    ]);
-    context.tools['later'] = {
-      type: 'deferred',
-      name: 'later',
-      description: 'deferred',
-      parameters: z.object({}),
-      start: async () => ({ ack: 'ack', result: Promise.resolve([]) }),
-    };
+    ];
+  };
+
+  test('deny blocks execution with a terminal error response', async () => {
+    let executed = false;
+    const { context, runner } = setup(gatedScripts(), [trackingTool(() => { executed = true; })], {
+      gate: new ToolGate([{ tools: ['echo'], verdict: 'deny', reason: 'Not allowed.' }]),
+    });
 
     expect(await runner.run(userMessage('go'))).toBe(StopReason.Completed);
 
+    expect(executed).toBe(false);
     const response = context.messageHistory.find((message) => message.role === 'toolResponse');
     expect(response?.isError).toBe(true);
+    expect(response?.response[0]?.type === 'text' && response.response[0].text).toContain('denied by policy');
+  });
+
+  test('approved escalation lets the tool run', async () => {
+    let executed = false;
+    const escalation = new EscalationHub();
+    const { eventLog, runner } = setup(gatedScripts(), [trackingTool(() => { executed = true; })], {
+      gate: new ToolGate([{ tools: ['echo'], verdict: 'escalate', reason: 'Needs approval.' }]),
+      escalation,
+    });
+
+    const running = runner.run(userMessage('go'));
+    const requestId = await waitForPermissionRequest(eventLog);
+    expect(escalation.resolve(requestId, true)).toBe(true);
+    expect(await running).toBe(StopReason.Completed);
+
+    expect(executed).toBe(true);
+    expect(eventLog.snapshot().some(
+      (event) => event.type === 'permissionResolved' && event.resolution === 'approved',
+    )).toBe(true);
+  });
+
+  test('denied escalation blocks execution', async () => {
+    let executed = false;
+    const escalation = new EscalationHub();
+    const { context, eventLog, runner } = setup(gatedScripts(), [trackingTool(() => { executed = true; })], {
+      gate: new ToolGate([{ tools: ['echo'], verdict: 'escalate', reason: 'Needs approval.' }]),
+      escalation,
+    });
+
+    const running = runner.run(userMessage('go'));
+    const requestId = await waitForPermissionRequest(eventLog);
+    escalation.resolve(requestId, false);
+    expect(await running).toBe(StopReason.Completed);
+
+    expect(executed).toBe(false);
+    const response = context.messageHistory.find((message) => message.role === 'toolResponse');
+    expect(response?.isError).toBe(true);
+  });
+
+  test('an unanswered escalation times out into a denial', async () => {
+    let executed = false;
+    const { context, eventLog, runner } = setup(gatedScripts(), [trackingTool(() => { executed = true; })], {
+      gate: new ToolGate([{ tools: ['echo'], verdict: 'escalate', reason: 'Needs approval.' }]),
+      escalation: new EscalationHub(),
+      escalationTimeoutMs: 15,
+    });
+
+    expect(await runner.run(userMessage('go'))).toBe(StopReason.Completed);
+
+    expect(executed).toBe(false);
+    const response = context.messageHistory.find((message) => message.role === 'toolResponse');
+    expect(response?.isError).toBe(true);
+    expect(eventLog.snapshot().some(
+      (event) => event.type === 'permissionResolved' && event.resolution === 'timeout',
+    )).toBe(true);
+  });
+});
+
+describe('Runner deferred tools', () => {
+  function deferredTool(resultDelayMs: number): DeferredTool {
+    return {
+      type: 'deferred',
+      name: 'job',
+      description: 'long job',
+      parameters: z.object({}),
+      start: async () => ({
+        ack: 'job started',
+        result: sleep(resultDelayMs).then(() => [{ type: 'text' as const, text: 'job finished' }]),
+      }),
+    };
+  }
+
+  test('acks immediately and injects the result into the ongoing loop', async () => {
+    const toolCall = toolCallMessage('job', 'call-1');
+    const { context, runner } = setup([
+      async function* () {
+        yield { type: 'toolCall', toolCall };
+        yield { type: 'end', messages: [toolCall] };
+      },
+      async function* () {
+        await sleep(60);
+        yield { type: 'end', messages: [assistant('working')] };
+      },
+      async function* () {
+        yield { type: 'end', messages: [assistant('done')] };
+      },
+    ]);
+    context.tools['job'] = deferredTool(20);
+
+    expect(await runner.run(userMessage('go'))).toBe(StopReason.Completed);
+
+    expect(context.messageHistory.map((message) => message.role))
+      .toEqual(['user', 'toolCall', 'toolResponse', 'assistant', 'toolResponse', 'assistant']);
+    const responses = context.messageHistory.filter((message) => message.role === 'toolResponse');
+    expect(responses.map((response) => response.execution)).toEqual(['deferredAck', 'deferredResult']);
+  });
+
+  test('a result landing while idle wakes the runner without a user message', async () => {
+    const toolCall = toolCallMessage('job', 'call-1');
+    const { context, runner } = setup([
+      async function* () {
+        yield { type: 'toolCall', toolCall };
+        yield { type: 'end', messages: [toolCall] };
+      },
+      async function* () {
+        yield { type: 'end', messages: [assistant('ok, running in background')] };
+      },
+      async function* () {
+        yield { type: 'end', messages: [assistant('job is done')] };
+      },
+    ]);
+    context.tools['job'] = deferredTool(40);
+
+    expect(await runner.run(userMessage('go'))).toBe(StopReason.Completed);
+    expect(context.messageHistory).toHaveLength(4);
+
+    await sleep(100);
+
+    expect(context.messageHistory.map((message) => message.role))
+      .toEqual(['user', 'toolCall', 'toolResponse', 'assistant', 'toolResponse', 'assistant']);
+    const result = context.messageHistory.filter((message) => message.role === 'toolResponse').at(-1);
+    expect(result?.execution).toBe('deferredResult');
+    expect(context.messageHistory.filter((message) => message.role === 'user')).toHaveLength(1);
   });
 });

@@ -65,7 +65,7 @@ describe('OpenAICompletions', () => {
       apiKey: 'secret',
       baseUrl: 'https://api.openai.test/v1',
       defaultModel: 'gpt-test',
-      models: [{
+      modelConfigs: [{
         maxTokens: 42,
         modelId: 'gpt-test',
         temperature: 0.2,
@@ -83,6 +83,7 @@ describe('OpenAICompletions', () => {
         trackId: 'previous_call',
       },
       {
+        execution: 'immediate',
         name: 'weather',
         response: [{ type: 'text', text: 'Sunny' }],
         role: 'toolResponse',
@@ -161,8 +162,8 @@ describe('OpenAICompletions', () => {
       type: 'function',
     }]);
     expect(events).toEqual([
-      { text: 'Hello ', type: 'text' },
-      { text: 'there', type: 'text' },
+      { text: 'Hello ', type: 'textFragment' },
+      { text: 'there', type: 'textFragment' },
       {
         toolCall: {
           arguments: { city: 'San José' },

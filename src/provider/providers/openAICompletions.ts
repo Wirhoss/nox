@@ -278,11 +278,24 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
         continue;
       }
 
+      const responseText = message.response
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
+
+      if (message.execution === 'deferredResult') {
+        // A late deferred result can't be a `tool` message: those must sit
+        // right after their tool_calls turn. Surface it as user content
+        // correlated by trackId instead.
+        messages.push({
+          content: `[deferred result for ${message.name} (${message.trackId})]\n${responseText}`,
+          role: 'user',
+        });
+        continue;
+      }
+
       messages.push({
-        content: message.response
-          .filter((part) => part.type === 'text')
-          .map((part) => part.text)
-          .join('\n'),
+        content: responseText,
         role: 'tool',
         tool_call_id: message.trackId,
       });

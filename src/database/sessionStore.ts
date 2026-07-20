@@ -25,12 +25,25 @@ class SessionStore {
       .get() ?? null;
   }
 
-  public listSessions(): SessionRecord[] {
+  public listSessions(blueprintId?: string): SessionRecord[] {
     return this.database
       .select()
       .from(sessionTable)
+      .where(blueprintId === undefined ? undefined : eq(sessionTable.blueprintId, blueprintId))
       .orderBy(desc(sessionTable.updatedAt))
       .all();
+  }
+
+  public deleteSession(sessionId: string): boolean {
+    this.database
+      .delete(messageTable)
+      .where(eq(messageTable.sessionId, sessionId))
+      .run();
+    const result = this.database
+      .delete(sessionTable)
+      .where(eq(sessionTable.sessionId, sessionId))
+      .run();
+    return result.changes > 0;
   }
 
   public getMessages(sessionId: string): Message[] {
@@ -40,16 +53,23 @@ class SessionStore {
       .where(eq(messageTable.sessionId, sessionId))
       .orderBy(messageTable.position)
       .all()
-      .map((row) => row.payload);
+      .map((row) => {
+        const message = row.payload;
+        if (message.role === 'toolResponse' && message.execution === undefined) {
+          message.execution = 'immediate';
+        }
+        return message;
+      });
   }
 
   public saveMessage(sessionId: string, position: number, message: Message): void {
+    const execution = message.role === 'toolResponse' ? message.execution : null;
     this.database
       .insert(messageTable)
-      .values({ sessionId, position, role: message.role, payload: message })
+      .values({ sessionId, position, role: message.role, execution, payload: message })
       .onConflictDoUpdate({
         target: [messageTable.sessionId, messageTable.position],
-        set: { role: message.role, payload: message },
+        set: { role: message.role, execution, payload: message },
       })
       .run();
     this.touchSession(sessionId);

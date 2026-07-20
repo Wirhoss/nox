@@ -1,15 +1,14 @@
 import { existsSync } from 'node:fs';
 
-import { Elysia } from 'elysia';
-import { cors } from '@elysia/cors'
-import { helmet } from 'elysia-helmet';
-import { openapi } from '@elysia/openapi'
+import { cors } from '@elysia/cors';
+import { openapi } from '@elysia/openapi';
 import { staticPlugin } from '@elysiajs/static';
+import { Elysia } from 'elysia';
+import { helmet } from 'elysia-helmet';
 
-
-import { AgentRegistry } from '../agent/registry';
 import { createLogger } from '../logger';
 
+import { routes } from './routes';
 
 const logger = createLogger('server');
 
@@ -32,12 +31,7 @@ async function createServer(options: ServerOptions) {
       }
       logger.error({ err: error, code, path }, 'Request failed.');
     })
-    .get('/api/health', () => ({ status: 'ok' }))
-    .group('/api/v1', (api) => api
-      .get('/sessions', () => AgentRegistry.instance.listSessions())
-      // TODO: POST /sessions (create from blueprint), GET /sessions/:id,
-      // POST /sessions/:id/messages, GET /sessions/:id/events (SSE stream)
-    );
+    .use(routes);
 
   if (existsSync(options.uiDir)) {
     app.use(await staticPlugin({

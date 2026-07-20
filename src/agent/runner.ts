@@ -1,5 +1,8 @@
+import { nanoid } from 'nanoid';
+
 import { EventLog } from '../utils';
 
+import type { EscalationHub, EscalationResolution, ToolGate } from '../gate';
 import type {
   Message,
   MessageContent,
@@ -29,13 +32,27 @@ enum StopReason {
 type AgentStreamEvent =
   | { type: 'assistantTextFragment', text: string }
   | { type: 'message', message: Message }
+  | { type: 'permissionRequest', requestId: string, toolName: string, toolArguments: Record<string, unknown>, reason: string }
+  | { type: 'permissionResolved', requestId: string, resolution: EscalationResolution }
   | { type: 'error'; error: Error };
+
+interface RunnerOptions {
+  maxIterations: number;
+  gate?: ToolGate;
+  escalation?: EscalationHub;
+  escalationTimeoutMs?: number;
+}
+
+const DEFAULT_ESCALATION_TIMEOUT_MS = 120_000;
 
 class Runner {
   private eventLog: EventLog<AgentStreamEvent>;
   private context: Context;
 
   private maxIterations: number;
+  private gate?: ToolGate;
+  private escalation?: EscalationHub;
+  private escalationTimeoutMs: number;
 
   private provider: Provider;
   private model: ModelConfig;
@@ -45,12 +62,17 @@ class Runner {
   private idlePromise: Promise<void> = Promise.resolve();
   private idleResolve: (() => void) | undefined;
 
-  constructor(context: Context, eventLog: EventLog<AgentStreamEvent>, provider: Provider, model: ModelConfig, maxIterations: number) {
+  private pendingInjections: ToolResponseMessage[] = [];
+
+  constructor(context: Context, eventLog: EventLog<AgentStreamEvent>, provider: Provider, model: ModelConfig, options: RunnerOptions) {
     this.context = context;
     this.eventLog = eventLog;
     this.provider = provider;
     this.model = model;
-    this.maxIterations = maxIterations;
+    this.maxIterations = options.maxIterations;
+    this.gate = options.gate;
+    this.escalation = options.escalation;
+    this.escalationTimeoutMs = options.escalationTimeoutMs ?? DEFAULT_ESCALATION_TIMEOUT_MS;
   }
 
   private getMessageStream(): ProviderStream {
@@ -63,11 +85,71 @@ class Runner {
     return stream;
   }
 
+  private toolContext(): ToolContext {
+    return {
+      abortSignal: this.abortController?.signal ?? new AbortController().signal,
+    };
+  }
+
   private handleText(text: string): void {
     this.eventLog.push({
       type: 'assistantTextFragment',
       text: text,
     });
+  }
+
+  private async checkPermission(toolCall: ToolCallMessage, toolResponse: ToolResponseMessage): Promise<boolean> {
+    const verdict = this.gate?.evaluate(toolCall) ?? { verdict: 'pass' as const };
+    if (verdict.verdict === 'pass') {
+      return true;
+    }
+    if (verdict.verdict === 'deny') {
+      toolResponse.response.push({
+        type: 'text',
+        text: `Tool call denied by policy: ${verdict.reason} This decision is final; do not retry this call.`,
+      });
+      toolResponse.isError = true;
+      return false;
+    }
+
+    if (!this.escalation) {
+      toolResponse.response.push({
+        type: 'text',
+        text: `Tool call not executed: ${verdict.reason} User approval is required but unavailable; do not retry this call.`,
+      });
+      toolResponse.isError = true;
+      return false;
+    }
+
+    const requestId = nanoid();
+    this.eventLog.push({
+      type: 'permissionRequest',
+      requestId,
+      toolName: toolCall.name,
+      toolArguments: toolCall.arguments,
+      reason: verdict.reason,
+    });
+    const resolution = await this.escalation.wait(requestId, this.escalationTimeoutMs, this.abortController?.signal, {
+      toolName: toolCall.name,
+      toolArguments: toolCall.arguments,
+      reason: verdict.reason,
+    });
+    this.eventLog.push({ type: 'permissionResolved', requestId, resolution });
+
+    if (resolution === 'approved') {
+      return true;
+    }
+    const explanation: Record<Exclude<EscalationResolution, 'approved'>, string> = {
+      denied: 'The user denied permission.',
+      timeout: 'The permission request timed out without an answer.',
+      aborted: 'The run was interrupted before permission was granted.',
+    };
+    toolResponse.response.push({
+      type: 'text',
+      text: `Tool call not executed: ${verdict.reason} ${explanation[resolution]} Do not retry this call unless the user asks for it.`,
+    });
+    toolResponse.isError = true;
+    return false;
   }
 
   private async handleToolCall(toolCall: ToolCallMessage): Promise<ToolResponseMessage> {
@@ -79,6 +161,7 @@ class Runner {
       role: 'toolResponse',
       name: toolCall.name,
       trackId: toolCall.trackId,
+      execution: 'immediate',
       response: [],
     };
     try {
@@ -89,21 +172,19 @@ class Runner {
           text: `Tool ${toolCall.name} not found.`,
         });
         toolResponse.isError = true;
-      } else if (tool.type === 'deferred') {
-        // TODO: Handle async tool calls properly, including acknowledging the call and waiting for the result.
-        toolResponse.response.push({
-          type: 'text',
-          text: `Tool ${toolCall.name} is deferred; deferred tools are not supported yet.`,
-        });
-        toolResponse.isError = true;
-      } else {
+      } else if (await this.checkPermission(toolCall, toolResponse)) {
         const parsedArguments = tool.parameters.parse(toolCall.arguments);
-        const ctx: ToolContext = {
-          abortSignal: this.abortController?.signal ?? new AbortController().signal,
-        };
-        const response: MessageContent[] = await tool.call(parsedArguments, ctx);
-        toolResponse.response = response ?? [];
-        toolResponse.isError = false;
+        if (tool.type === 'deferred') {
+          const { ack, result } = await tool.start(parsedArguments, this.toolContext());
+          toolResponse.execution = 'deferredAck';
+          toolResponse.response = [{ type: 'text', text: ack }];
+          toolResponse.isError = false;
+          this.trackDeferredResult(toolCall, result);
+        } else {
+          const response: MessageContent[] = await tool.call(parsedArguments, this.toolContext());
+          toolResponse.response = response ?? [];
+          toolResponse.isError = false;
+        }
       }
     } catch (error) {
       toolResponse.response.push({
@@ -117,6 +198,54 @@ class Runner {
       message: toolResponse,
     });
     return toolResponse;
+  }
+
+  private trackDeferredResult(toolCall: ToolCallMessage, result: Promise<MessageContent[]>): void {
+    result.then(
+      (content) => this.injectDeferredResult(toolCall, content ?? [], false),
+      (error) => this.injectDeferredResult(
+        toolCall,
+        [{ type: 'text', text: `Deferred tool ${toolCall.name} failed: ${(error as Error).message}` }],
+        true,
+      ),
+    );
+  }
+
+  /**
+   * Mid-run results ride the loop that is already paying for a model call;
+   * only an idle runner needs a fresh entry (resume). After stop the session
+   * is gone and the result is dropped.
+   */
+  private injectDeferredResult(toolCall: ToolCallMessage, response: MessageContent[], isError: boolean): void {
+    if (this.state === RunnerState.Stopped) {
+      return;
+    }
+    const message: ToolResponseMessage = {
+      role: 'toolResponse',
+      name: toolCall.name,
+      trackId: toolCall.trackId,
+      execution: 'deferredResult',
+      response,
+      isError,
+    };
+    if (this.state === RunnerState.Running) {
+      this.pendingInjections.push(message);
+      return;
+    }
+    this.commitInjection(message);
+    // Fire-and-forget wake-up; failures already land in the event log.
+    void this.resume().catch(() => undefined);
+  }
+
+  private commitInjection(message: ToolResponseMessage): void {
+    this.eventLog.push({ type: 'message', message });
+    this.context.addMessage(message);
+  }
+
+  private drainInjections(): void {
+    for (const message of this.pendingInjections.splice(0)) {
+      this.commitInjection(message);
+    }
   }
 
   private async commitAssistantMessage(messages: Message[], usage?: Usage): Promise<Message[]> {
@@ -137,11 +266,9 @@ class Runner {
     return messages;
   }
 
-  private async runLoop(userMessage: UserMessage): Promise<StopReason> {
-    this.context.addMessage(userMessage);
-    this.eventLog.push({ type: 'message', message: userMessage });
-
+  private async runLoop(): Promise<StopReason> {
     for (let i = 0; i < this.maxIterations; i++) {
+      this.drainInjections();
       const stream = this.getMessageStream();
       const toolCalls: Promise<ToolResponseMessage>[] = [];
       let streamError: Error | undefined;
@@ -164,7 +291,7 @@ class Runner {
         this.context.addMessage(toolResponse);
       }
       if (this.abortController?.signal.aborted) return StopReason.Aborted;
-      if (toolResponses.length === 0) return StopReason.Completed;
+      if (toolResponses.length === 0 && this.pendingInjections.length === 0) return StopReason.Completed;
     }
     this.context.addMessage({
       role: 'user',
@@ -173,7 +300,25 @@ class Runner {
     return StopReason.MaxIterations;
   }
 
+  public get isRunning(): boolean {
+    return this.state === RunnerState.Running;
+  }
+
+  /** Resolves when the current run finishes; already resolved while idle. */
+  public get idle(): Promise<void> {
+    return this.idlePromise;
+  }
+
   public async run(userMessage: UserMessage): Promise<StopReason> {
+    return this.execute(userMessage);
+  }
+
+  /** Re-enters the loop without a new user message (deferred result wake-up). */
+  public async resume(): Promise<StopReason> {
+    return this.execute();
+  }
+
+  private async execute(userMessage?: UserMessage): Promise<StopReason> {
     if (this.state === RunnerState.Running) {
       throw new Error('Agent is already running');
     } else if (this.state === RunnerState.Stopped) {
@@ -187,8 +332,13 @@ class Runner {
     this.state = RunnerState.Running;
     this.abortController = new AbortController();
 
+    if (userMessage) {
+      this.context.addMessage(userMessage);
+      this.eventLog.push({ type: 'message', message: userMessage });
+    }
+
     try {
-      return await this.runLoop(userMessage);
+      return await this.runLoop();
     } catch (error) {
       if (this.abortController?.signal.aborted) {
         return StopReason.Aborted;
@@ -204,6 +354,16 @@ class Runner {
       this.abortController = undefined;
       this.idleResolve?.();
     }
+  }
+
+  /** Aborts the in-flight run without queuing anything new; false while idle. */
+  public async abort(): Promise<boolean> {
+    if (this.state !== RunnerState.Running) {
+      return false;
+    }
+    this.abortController?.abort();
+    await this.idlePromise;
+    return true;
   }
 
   public async steer(userMessage: UserMessage): Promise<StopReason> {
@@ -232,5 +392,6 @@ export {
 };
 
 export type {
-  AgentStreamEvent
+  AgentStreamEvent,
+  RunnerOptions,
 };

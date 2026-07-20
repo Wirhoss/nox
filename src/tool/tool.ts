@@ -1,3 +1,4 @@
+import type { GateDeclaration } from '../gate';
 import type { MessageContent } from '../provider';
 import type { z } from 'zod';
 
@@ -28,6 +29,8 @@ type Tool = ImmediateTool | DeferredTool;
 
 abstract class ToolSet {
   protected _tools: Record<string, Tool> = {};
+
+  public readonly gate?: GateDeclaration;
 
   public get tools(): Record<string, Tool> {
     return this._tools;

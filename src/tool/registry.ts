@@ -38,6 +38,10 @@ class ToolRegistry {
     return toolRouterClass;
   }
 
+  public listToolSetIds(): string[] {
+    return Object.keys(this.toolSetClasses);
+  }
+
   public getToolSetClass(toolSetId: string): ToolSetClass | null {
     const toolSetClass = this.toolSetClasses[toolSetId];
     if (!toolSetClass) {

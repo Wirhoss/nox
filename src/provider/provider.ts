@@ -41,6 +41,10 @@ abstract class BaseProvider {
     return this.modelConfigs[modelId];
   }
 
+  public listModelConfigs(): ModelConfig[] {
+    return Object.values(this.modelConfigs);
+  }
+
   public get modelCount(): number {
     return Object.keys(this.modelConfigs).length;
   }
