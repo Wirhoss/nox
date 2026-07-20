@@ -1,6 +1,6 @@
 import { ToolRouter } from './tools';
 
-import type { ToolSetClass } from './tool';
+import type { Tool, ToolSetClass } from './tool';
 
 const builtinToolSets: Record<string, ToolSetClass> = {
 };
@@ -30,7 +30,7 @@ class ToolRegistry {
     this.initialized = true;
   }
 
-  public getRouterToolSetClass(): ToolSetClass | null {
+  public getRouterToolSetClass(): ToolSetClass<ToolRouter, [Tool[]]> | null {
     const toolRouterClass = ToolRouter;
     if (!toolRouterClass) {
       return null;

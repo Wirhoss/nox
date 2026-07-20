@@ -9,20 +9,22 @@ import { readConfigDirectory } from './utils';
 import type { AgentBlueprint } from '../agent/registry';
 import type { EnvConfig } from './env';
 
-export const agentsConfigSchema = z.array(agentBlueprintSchema);
+export const blueprintsConfigSchema = z.array(agentBlueprintSchema);
 
-export type AgentsConfig = z.infer<typeof agentsConfigSchema>;
+export type BlueprintsConfig = z.infer<typeof blueprintsConfigSchema>;
 
-let agentsConfig: AgentsConfig | null = null;
+let blueprintsConfig: BlueprintsConfig | null = null;
 
-export async function getAgentsConfig(envConfig: EnvConfig) {
+export async function getBlueprintsConfig(envConfig: EnvConfig) {
   try {
-    if (!agentsConfig) {
-      agentsConfig = agentsConfigSchema.parse(await readConfigDirectory(envConfig.configDirAgents, []));
+    if (!blueprintsConfig) {
+      blueprintsConfig = blueprintsConfigSchema.parse(
+        await readConfigDirectory(envConfig.configDirBlueprints, []),
+      );
     }
-    return agentsConfig;
+    return blueprintsConfig;
   } catch (error) {
-    throw new Error(`Error loading agents configuration: ${error}`, { cause: error });
+    throw new Error(`Error loading blueprints configuration: ${error}`, { cause: error });
   }
 }
 
@@ -39,19 +41,19 @@ async function findBlueprintFile(dirPath: string, blueprintId: string): Promise<
         return filePath;
       }
     } catch {
-      // Unparsable files are skipped at load time too.
+      // Unparseable files are reported by configuration loading.
     }
   }
   return null;
 }
 
-export async function upsertAgentConfig(
+export async function upsertBlueprintConfig(
   envConfig: EnvConfig,
   blueprint: AgentBlueprint,
 ): Promise<AgentBlueprint> {
-  const current = await getAgentsConfig(envConfig);
-  const dirPath = envConfig.configDirAgents;
-  await mkdir(dirPath, { recursive: true }).catch(() => {});
+  const current = await getBlueprintsConfig(envConfig);
+  const dirPath = envConfig.configDirBlueprints;
+  await mkdir(dirPath, { recursive: true });
 
   const filePath = await findBlueprintFile(dirPath, blueprint.id) ?? `${dirPath}/${blueprint.id}.json`;
   await Bun.write(filePath, JSON.stringify(blueprint, null, 2));
@@ -65,13 +67,13 @@ export async function upsertAgentConfig(
   return blueprint;
 }
 
-export async function deleteAgentConfig(envConfig: EnvConfig, blueprintId: string): Promise<void> {
-  const current = await getAgentsConfig(envConfig);
+export async function deleteBlueprintConfig(envConfig: EnvConfig, blueprintId: string): Promise<void> {
+  const current = await getBlueprintsConfig(envConfig);
   const index = current.findIndex(entry => entry.id === blueprintId);
   if (index < 0) {
-    throw new Error(`Agent blueprint with id ${blueprintId} not found.`);
+    throw new Error(`Blueprint with id ${blueprintId} not found.`);
   }
-  const filePath = await findBlueprintFile(envConfig.configDirAgents, blueprintId);
+  const filePath = await findBlueprintFile(envConfig.configDirBlueprints, blueprintId);
   if (filePath) {
     await unlink(filePath);
   }

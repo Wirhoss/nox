@@ -98,12 +98,7 @@ describe('OpenAICompletions', () => {
       },
     ];
     const tools: Tool[] = [{
-      call: async () => ({
-        name: 'weather',
-        response: [{ text: 'Sunny', type: 'text' }],
-        role: 'toolResponse',
-        trackId: 'unused',
-      }),
+      call: async () => [{ text: 'Sunny', type: 'text' }],
       description: 'Get the weather',
       name: 'weather',
       parameters: z.object({ city: z.string() }),

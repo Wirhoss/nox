@@ -1,0 +1,60 @@
+---
+import Icon from './Icon.astro';
+
+interface Props { activePath: string; }
+type IconName = 'overview' | 'agents' | 'workspaces' | 'conversations' | 'blueprints' | 'brokers' | 'providers' | 'tools' | 'runs' | 'statistics' | 'logs';
+type NavItem = { label: string; href: string; icon: IconName; available?: boolean };
+type NavGroup = { label?: string; items: NavItem[] };
+
+const { activePath } = Astro.props;
+const groups: NavGroup[] = [
+	{ items: [{ label: 'Overview', href: '/', icon: 'overview', available: true }] },
+	{ label: 'Operate', items: [
+		{ label: 'Agents', href: '/agents', icon: 'agents' },
+		{ label: 'Workspaces', href: '/workspaces', icon: 'workspaces' },
+		{ label: 'Conversations', href: '/conversations', icon: 'conversations' },
+	] },
+	{ label: 'Build', items: [
+		{ label: 'Blueprints', href: '/blueprints', icon: 'blueprints' },
+		{ label: 'Brokers', href: '/brokers', icon: 'brokers' },
+		{ label: 'Providers', href: '/providers', icon: 'providers' },
+		{ label: 'Tools', href: '/tools', icon: 'tools' },
+	] },
+	{ label: 'Observe', items: [
+		{ label: 'Runs', href: '/runs', icon: 'runs' },
+		{ label: 'Statistics', href: '/statistics', icon: 'statistics' },
+		{ label: 'Logs', href: '/logs', icon: 'logs' },
+	] },
+];
+---
+
+<aside class="sidebar" aria-label="Primary navigation">
+	<div class="brand-lockup">
+		<div class="brand-mark" aria-hidden="true"><span>N</span></div>
+		<div><div class="brand-name">Nox</div><div class="brand-subtitle">Workbench</div></div>
+	</div>
+	<nav class="sidebar-nav">
+		{groups.map((group) => (
+			<div class="nav-group">
+				{group.label && <div class="nav-label">{group.label}</div>}
+				{group.items.map((item) => item.available ? (
+					<a class:list={['nav-item', { active: activePath === item.href }]} href={item.href} aria-current={activePath === item.href ? 'page' : undefined}>
+						<Icon name={item.icon} /><span>{item.label}</span>
+					</a>
+				) : (
+					<span class="nav-item planned" aria-disabled="true" title={`${item.label} is planned`}>
+						<Icon name={item.icon} /><span>{item.label}</span><span class="planned-mark" aria-hidden="true"></span>
+					</span>
+				))}
+			</div>
+		))}
+	</nav>
+	<div class="sidebar-footer">
+		<span class="nav-item planned" aria-disabled="true"><Icon name="chat" /><span>Playground</span><span class="planned-mark"></span></span>
+		<span class="nav-item planned" aria-disabled="true"><Icon name="settings" /><span>Settings</span><span class="planned-mark"></span></span>
+		<div class="local-card">
+			<div class="local-card-icon" aria-hidden="true"><span></span></div>
+			<div><strong>Local-first</strong><span>Private by default</span></div>
+		</div>
+	</div>
+</aside>

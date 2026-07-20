@@ -34,13 +34,21 @@ export async function updateGateConfig(envConfig: EnvConfig, gate: GateConfig): 
 
 export async function getAppConfig(envConfig: EnvConfig) {
   if (!appConfig) {
-    appConfig = appConfigSchema.parse(await readConfigFile(envConfig.configFileApp, {
+    const raw = await readConfigFile(envConfig.configFileApp, {
       logLevel: process.env.LOG_LEVEL ?? 'info',
       server: {
-        host: process.env.HOST ?? '0.0.0.0',
+        host: process.env.HOST ?? '127.0.0.1',
         port: Number(process.env.PORT ?? 3000),
       },
-    }));
+    });
+    appConfig = appConfigSchema.parse({
+      ...raw,
+      server: {
+        ...raw.server,
+        host: process.env.HOST ?? raw.server.host,
+        port: process.env.PORT === undefined ? raw.server.port : Number(process.env.PORT),
+      },
+    });
   }
   return appConfig;
 }

@@ -1,43 +1,24 @@
-# Astro Starter Kit: Minimal
+# Nox Workbench UI
 
-```sh
-bun create astro@latest -- --template minimal
-```
+Astro 7 and Svelte 5 interface for the local Nox daemon.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+The product model, wireframes, and initial visual system live in
+[`docs/design`](./docs/design/README.md).
 
-## 🚀 Project Structure
+During local UI development, requests under `/api` are proxied to the Nox daemon
+at `http://localhost:3000`.
 
-Inside of your Astro project, you'll see the following folders and files:
+## Commands
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+Run these commands from `ui/`:
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+| Command | Action |
+| :--- | :--- |
+| `bun install` | Install dependencies |
+| `bun dev` | Start the UI at `localhost:4321` |
+| `bun build` | Build the static application into `dist/` |
+| `bun preview` | Preview the production build |
+| `bun astro ...` | Run Astro CLI commands |
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
-
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `bun install`             | Installs dependencies                            |
-| `bun dev`             | Starts local dev server at `localhost:4321`      |
-| `bun build`           | Build your production site to `./dist/`          |
-| `bun preview`         | Preview your build locally, before deploying     |
-| `bun astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `bun astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+For the complete local application, start the Nox daemon from the repository
+root before starting the UI development server.

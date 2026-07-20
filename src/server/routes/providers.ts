@@ -1,6 +1,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
+import { AgentRegistry } from '../../agent/registry';
 import { Config } from '../../config';
 import {
   deleteProviderConfig,
@@ -10,54 +11,62 @@ import {
 } from '../../config/provider';
 import { ProviderRegistry } from '../../provider';
 
+import { apiError } from './shared';
+
 import type { ProviderConfig } from '../../config/provider';
 
-type ProviderConfigView = Omit<ProviderConfig, 'apiKey'> & { hasApiKey: boolean };
+type ProviderConfigView = Omit<ProviderConfig, 'apiKey'> & {
+  hasApiKey: boolean;
+  id: string;
+  status: 'active' | 'inactive';
+};
 
-function redactProviderConfig(config: ProviderConfig): ProviderConfigView {
+function providerView(id: string, config: ProviderConfig): ProviderConfigView {
   const { apiKey, ...rest } = config;
-  return { ...rest, hasApiKey: apiKey !== undefined && apiKey !== '' };
+  return {
+    ...rest,
+    hasApiKey: apiKey !== undefined && apiKey !== '',
+    id,
+    status: ProviderRegistry.instance.getProvider(id) ? 'active' : 'inactive',
+  };
 }
 
 const providerRoutes = new Elysia({ prefix: '/api/v1' })
-  .get('/providers', () => {
-    const providers = Config.get('providers');
-    return Object.fromEntries(
-      Object.entries(providers).map(([id, config]) => [id, redactProviderConfig(config)])
-    );
-  })
-  .get('/providers/:id', ({ params, status }) => {
-    const config = Config.get('providers')[params.id];
+  .get('/providers', () => Object.entries(Config.get('providers'))
+    .map(([id, config]) => providerView(id, config)))
+  .get('/providers/:providerId', ({ params, status }) => {
+    const config = Config.get('providers')[params.providerId];
     if (!config) {
-      return status(404, { message: `Provider with id ${params.id} not found.` });
+      return status(404, apiError('not_found', `Provider with id ${params.providerId} not found.`));
     }
-    return redactProviderConfig(config);
+    return providerView(params.providerId, config);
   }, {
-    params: z.object({ id: providerIdSchema }),
+    params: z.object({ providerId: providerIdSchema }),
   })
-  .get('/providers/:id/models', ({ params, status }) => {
-    const provider = ProviderRegistry.instance.getProvider(params.id);
+  .get('/providers/:providerId/models', ({ params, status }) => {
+    const provider = ProviderRegistry.instance.getProvider(params.providerId);
     if (provider) {
       return provider.listModelConfigs();
     }
-    // Configured but not live: dropped as unreachable at startup, or added
-    // since the last restart (provider changes only apply on restart).
-    if (Config.get('providers')[params.id]) {
-      return status(503, { message: `Provider with id ${params.id} is configured but not active; a restart may be required.` });
+    if (Config.get('providers')[params.providerId]) {
+      return status(503, apiError(
+        'service_unavailable',
+        `Provider with id ${params.providerId} is configured but inactive; a restart or configuration change may be required.`,
+      ));
     }
-    return status(404, { message: `Provider with id ${params.id} not found.` });
+    return status(404, apiError('not_found', `Provider with id ${params.providerId} not found.`));
   }, {
-    params: z.object({ id: providerIdSchema }),
+    params: z.object({ providerId: providerIdSchema }),
   })
   .post('/providers', async ({ body, status }) => {
     if (Config.get('providers')[body.id]) {
-      return status(409, { message: `Provider with id ${body.id} already exists.` });
+      return status(409, apiError('conflict', `Provider with id ${body.id} already exists.`));
     }
     try {
       const saved = await upsertProviderConfig(Config.get('env'), body.id, body.config);
-      return status(201, { provider: redactProviderConfig(saved), restartRequired: true });
-    } catch (error) {
-      return status(500, { message: (error as Error).message });
+      return status(201, { provider: providerView(body.id, saved), restartRequired: true });
+    } catch {
+      return status(500, apiError('internal_error', 'Failed to persist the provider configuration.'));
     }
   }, {
     body: z.object({
@@ -65,36 +74,41 @@ const providerRoutes = new Elysia({ prefix: '/api/v1' })
       config: providerConfigSchema,
     }),
   })
-  .put('/providers/:id', async ({ params, body, status }) => {
-    if (!Config.get('providers')[params.id]) {
-      return status(404, { message: `Provider with id ${params.id} not found.` });
+  .put('/providers/:providerId', async ({ params, body, status }) => {
+    if (!Config.get('providers')[params.providerId]) {
+      return status(404, apiError('not_found', `Provider with id ${params.providerId} not found.`));
     }
     try {
-      const saved = await upsertProviderConfig(Config.get('env'), params.id, body);
-      return status(200, { provider: redactProviderConfig(saved), restartRequired: true });
-    } catch (error) {
-      return status(500, { message: (error as Error).message });
+      const saved = await upsertProviderConfig(Config.get('env'), params.providerId, body);
+      return { provider: providerView(params.providerId, saved), restartRequired: true };
+    } catch {
+      return status(500, apiError('internal_error', 'Failed to persist the provider configuration.'));
     }
   }, {
-    params: z.object({ id: providerIdSchema }),
+    params: z.object({ providerId: providerIdSchema }),
     body: providerConfigSchema,
   })
-  .delete('/providers/:id', async ({ params, status }) => {
-    const providers = Config.get('providers');
-    if (!providers[params.id]) {
-      return status(404, { message: `Provider with id ${params.id} not found.` });
+  .delete('/providers/:providerId', async ({ params, status }) => {
+    if (!Config.get('providers')[params.providerId]) {
+      return status(404, apiError('not_found', `Provider with id ${params.providerId} not found.`));
     }
-    if (Object.keys(providers).length <= 1) {
-      return status(409, { message: 'At least one provider must remain configured.' });
+    const dependentBlueprints = AgentRegistry.instance.listBlueprints()
+      .filter((blueprint) => blueprint.config.providerId === params.providerId)
+      .map((blueprint) => blueprint.id);
+    if (dependentBlueprints.length > 0) {
+      return status(409, apiError(
+        'conflict',
+        `Provider ${params.providerId} is used by blueprints: ${dependentBlueprints.join(', ')}.`,
+      ));
     }
     try {
-      await deleteProviderConfig(Config.get('env'), params.id);
-      return status(200, { restartRequired: true });
-    } catch (error) {
-      return status(500, { message: (error as Error).message });
+      await deleteProviderConfig(Config.get('env'), params.providerId);
+      return { restartRequired: true };
+    } catch {
+      return status(500, apiError('internal_error', 'Failed to delete the provider configuration.'));
     }
   }, {
-    params: z.object({ id: providerIdSchema }),
+    params: z.object({ providerId: providerIdSchema }),
   });
 
 export {

@@ -37,7 +37,10 @@ abstract class ToolSet {
   }
 }
 
-type ToolSetClass<T extends ToolSet = ToolSet> = new (...args: any[]) => T;
+type ToolSetClass<
+  T extends ToolSet = ToolSet,
+  TArguments extends unknown[] = [],
+> = new (...args: TArguments) => T;
 
 export type {
   DeferredTool,

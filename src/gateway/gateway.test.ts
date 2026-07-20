@@ -221,4 +221,19 @@ describe('MessageGateway', () => {
       { cursor: 1, event: { type: 'error', message: 'x' } },
     ]);
   });
+
+  test('a stale cursor from a previous process replays the current event log', async () => {
+    const { gateway, session } = setup();
+    const { sessionId } = gateway.createSession('default');
+    session.log.push({ type: 'message', message: assistantMessage });
+
+    const stream = gateway.subscribe(sessionId, 99);
+    const first = await stream.next();
+
+    expect(first.value).toEqual({
+      cursor: 0,
+      event: { type: 'message', message: assistantMessage },
+    });
+    await stream.return(undefined);
+  });
 });

@@ -1,0 +1,50 @@
+---
+import Sidebar from '../components/shell/Sidebar.astro';
+import Topbar from '../components/shell/Topbar.astro';
+import '../styles/global.css';
+
+interface Props {
+	title: string;
+	activePath: string;
+}
+
+const { title, activePath } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="description" content="Nox is a local-first workbench for building and operating AI agents." />
+		<meta name="theme-color" content="#0c0f0d" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<title>{title} · Nox Workbench</title>
+	</head>
+	<body>
+		<div class="app-shell" data-shell>
+			<Sidebar activePath={activePath} />
+			<div class="app-frame">
+				<Topbar title={title} />
+				<main class="app-content" id="main-content"><slot /></main>
+			</div>
+			<button class="sidebar-scrim" type="button" aria-label="Close navigation" data-nav-close></button>
+		</div>
+
+		<script>
+			const shell = document.querySelector<HTMLElement>('[data-shell]');
+			const openButton = document.querySelector<HTMLButtonElement>('[data-nav-open]');
+			const closeTargets = document.querySelectorAll<HTMLElement>('[data-nav-close]');
+			const setNavigation = (open: boolean) => {
+				shell?.toggleAttribute('data-nav-visible', open);
+				openButton?.setAttribute('aria-expanded', String(open));
+			};
+			openButton?.addEventListener('click', () => setNavigation(true));
+			closeTargets.forEach((target) => target.addEventListener('click', () => setNavigation(false)));
+			window.addEventListener('keydown', (event) => {
+				if (event.key === 'Escape') setNavigation(false);
+			});
+		</script>
+	</body>
+</html>

@@ -143,8 +143,9 @@ class MessageGateway {
   }
 
   private async *streamEvents(session: GatewaySession, from: number): AsyncGenerator<SessionEventEnvelope> {
-    let cursor = from;
-    for await (const event of session.subscribeToEvents(from)) {
+    const start = from > session.eventCursor ? 0 : from;
+    let cursor = start;
+    for await (const event of session.subscribeToEvents(start)) {
       yield { cursor: cursor++, event: serializeEvent(event) };
     }
   }

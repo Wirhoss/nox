@@ -5,7 +5,10 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "build": "bun build index.ts --outdir dist --target bun",
+    "build": "bun build index.ts --outdir dist --target bun && cp -r src/database/migrations dist/migrations",
+    "build:ui": "bun run --cwd ui build",
+    "build:all": "bun run build:ui && bun run build",
+    "start:all": "bun run build:all && bun dist/index.js",
     "lint": "eslint ."
   },
   "devDependencies": {
@@ -25,7 +28,6 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@elysia/cors": "^1.4.2",
     "@elysia/openapi": "^1.4.15",
     "@elysiajs/static": "^1.4.10",
     "dotenv": "^17.4.2",

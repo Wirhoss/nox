@@ -1,29 +1,51 @@
 import { z } from 'zod';
 
-import { NotFoundError } from '../../errors';
+import { isDomainError } from '../../errors';
 
-// Session ids (nanoid), permission request ids (nanoid) and agent blueprint
-// ids all draw from this alphabet; malformed ids get a 422 up front instead
-// of falling through to a 404 lookup.
 const resourceIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Invalid resource ID');
 
-const idParamsSchema = z.object({ id: resourceIdSchema });
+const blueprintParamsSchema = z.object({ blueprintId: resourceIdSchema });
+const sessionParamsSchema = z.object({ sessionId: resourceIdSchema });
 
-const agentParamsSchema = z.object({ agentId: resourceIdSchema });
+type ApiErrorCode =
+  | 'conflict'
+  | 'internal_error'
+  | 'not_found'
+  | 'service_unavailable'
+  | 'validation_error';
 
-const sessionParamsSchema = z.object({
-  agentId: resourceIdSchema,
-  sessionId: resourceIdSchema,
-});
+type ApiErrorBody = {
+  error: {
+    code: ApiErrorCode | string;
+    message: string;
+  };
+};
 
-function errorStatus(error: unknown): 404 | 500 {
-  return error instanceof NotFoundError ? 404 : 500;
+function apiError(code: ApiErrorCode | string, message: string): ApiErrorBody {
+  return { error: { code, message } };
+}
+
+function errorStatus(error: unknown): 404 | 409 | 500 | 503 {
+  return isDomainError(error) ? error.status : 500;
+}
+
+function errorBody(error: unknown): ApiErrorBody {
+  if (isDomainError(error)) {
+    return apiError(error.code, error.message);
+  }
+  return apiError('internal_error', 'An unexpected internal error occurred.');
 }
 
 export {
-  agentParamsSchema,
+  apiError,
+  blueprintParamsSchema,
+  errorBody,
   errorStatus,
-  idParamsSchema,
   resourceIdSchema,
   sessionParamsSchema,
+};
+
+export type {
+  ApiErrorBody,
+  ApiErrorCode,
 };

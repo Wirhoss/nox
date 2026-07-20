@@ -3,6 +3,7 @@ dotenv.config({ quiet: true });
 
 import { AgentRegistry } from './src/agent/registry';
 import { Config } from './src/config';
+import { BrokerRegistry, MessageGateway } from './src/gateway';
 import logger from './src/logger';
 import { ProviderRegistry } from './src/provider';
 import { startServer } from './src/server';
@@ -18,7 +19,9 @@ async function main(): Promise<void> {
   await Config.init();
   await ProviderRegistry.instance.init(Config.get('providers'));
   await ToolRegistry.instance.init();
-  await AgentRegistry.instance.init(Config.get('agents'), Config.get('env').databaseFile);
+  await AgentRegistry.instance.init(Config.get('blueprints'), Config.get('env').databaseFile, Config.get('app').gate);
+  // TODO: read broker configs from Config once the first concrete broker exists.
+  await BrokerRegistry.instance.init({}, MessageGateway.instance);
 
   const { host, port } = Config.get('app').server;
   server = await startServer({ host, port, uiDir: Config.get('env').uiDir });
@@ -31,6 +34,7 @@ async function shutdown(): Promise<void> {
   }
   shuttingDown = true;
   await server?.stop();
+  await BrokerRegistry.instance.stopAll();
   AgentRegistry.instance.close();
 }
 

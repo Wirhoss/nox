@@ -7,7 +7,7 @@ export const envConfigSchema = z.object({
   environment: z.enum(['development', 'test', 'production']),
   configFileApp: z.string(),
   configFileProviders: z.string(),
-  configDirAgents: z.string(),
+  configDirBlueprints: z.string(),
   databaseFile: z.string(),
   uiDir: z.string(),
 });
@@ -22,7 +22,11 @@ export function getEnvConfig() {
       environment: process.env.NODE_ENV ?? 'development',
       configFileApp: process.env.CONFIG_FILE_APP ?? `${defaultConfigPath}/app.json`,
       configFileProviders: process.env.CONFIG_FILE_PROVIDERS ?? `${defaultConfigPath}/providers.json`,
-      configDirAgents: process.env.CONFIG_DIR_AGENTS ?? `${defaultConfigPath}/agents`,
+      configDirBlueprints: process.env.CONFIG_DIR_BLUEPRINTS
+        ?? process.env.CONFIG_DIR_BLUEPRINTS
+        // Keep the legacy on-disk directory as a compatibility fallback; the
+        // public API and internal configuration model use blueprint naming.
+        ?? `${defaultConfigPath}/blueprints`,
       databaseFile: process.env.DATABASE_FILE ?? `${defaultDataPath}/nox.db`,
       uiDir: process.env.UI_DIR ?? '/usr/share/nox/ui',
     };

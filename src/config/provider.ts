@@ -24,9 +24,6 @@ export const providerConfigSchema = z.discriminatedUnion(
 export const providersConfigSchema = z.record(
   providerIdSchema,
   providerConfigSchema
-).refine(
-  providers => Object.keys(providers).length > 0,
-  'At least one provider must be configured.'
 );
 
 export type ProvidersConfig = z.infer<typeof providersConfigSchema>;
@@ -70,9 +67,6 @@ export async function deleteProviderConfig(envConfig: EnvConfig, providerId: str
   const current = await getProvidersConfig(envConfig);
   if (!current[providerId]) {
     throw new Error(`Provider with id ${providerId} not found.`);
-  }
-  if (Object.keys(current).length <= 1) {
-    throw new Error('At least one provider must remain configured.');
   }
   delete current[providerId];
   await Bun.write(envConfig.configFileProviders, JSON.stringify(current, null, 2));

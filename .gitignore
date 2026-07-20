@@ -47,7 +47,7 @@ Desktop.ini
 *.pid
 
 
-config
+/config/
 .vscode
 src_oldIGNORETHIS!!!!
 idk.md

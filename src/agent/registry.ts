@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
 import { closeDatabase, openDatabase, SessionStore } from '../database';
-import { NotFoundError } from '../errors';
+import { NotFoundError, ServiceUnavailableError } from '../errors';
 import { ToolGate } from '../gate';
 import { createLogger } from '../logger';
 import { ProviderRegistry } from '../provider';
@@ -13,6 +13,7 @@ import { AgentSession } from './session';
 
 import type { NoxDatabase, SessionRecord } from '../database';
 import type { GateConfig } from '../gate';
+import type { Message } from '../provider';
 import type { ToolSet } from '../tool';
 
 const logger = createLogger('agent');
@@ -172,6 +173,22 @@ class AgentRegistry {
     return this.requireStore().getSession(sessionId);
   }
 
+  public getSessionSnapshot(sessionId: string): {
+    eventCursor: number;
+    messages: readonly Message[];
+    session: SessionRecord;
+  } {
+    const record = this.requireStore().getSession(sessionId);
+    if (!record) {
+      throw new NotFoundError(`Session with id ${sessionId} not found.`);
+    }
+    return {
+      eventCursor: this.sessions.get(sessionId)?.eventCursor ?? 0,
+      messages: this.requireStore().getMessages(sessionId),
+      session: record,
+    };
+  }
+
   public close(): void {
     if (this.database) {
       closeDatabase(this.database);
@@ -236,11 +253,11 @@ class AgentRegistry {
 
     const provider = ProviderRegistry.instance.getProvider(blueprint.config.providerId);
     if (!provider) {
-      throw new Error(`Provider with id ${blueprint.config.providerId} not found.`);
+      throw new ServiceUnavailableError(`Provider with id ${blueprint.config.providerId} is not active.`);
     }
     const modelConfig = provider.getModelConfig(blueprint.config.modelId);
     if (!modelConfig) {
-      throw new Error(`Model with id ${blueprint.config.modelId} not found in provider ${blueprint.config.providerId}.`);
+      throw new ServiceUnavailableError(`Model with id ${blueprint.config.modelId} is not active in provider ${blueprint.config.providerId}.`);
     }
 
     const gateRules = [

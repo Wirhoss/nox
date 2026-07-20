@@ -52,22 +52,25 @@ class ProviderRegistry {
           this.providers[result.value.providerId] = result.value.provider;
         }
       }
-      if (!Object.values(this.providers).length) {
-        throw new Error('No valid providers after init.');
-      }
       const providerIds = Object.keys(this.providers);
       const modelCount = Object.values(this.providers)
         .reduce((total, provider) => total + provider.modelCount, 0);
-      logger.info(
-        { providers: providerIds, providerCount: providerIds.length, modelCount },
-        'Providers initialized successfully.',
-      );
+      const metadata = { providers: providerIds, providerCount: providerIds.length, modelCount };
+      if (providerIds.length === 0) {
+        logger.warn(metadata, 'No active providers; starting Nox in degraded configuration mode.');
+      } else {
+        logger.info(metadata, 'Providers initialized successfully.');
+      }
       return this.providers;
     } catch (error) {
       this.initialized = false;
       this.providers = {};
       throw error;
     }
+  }
+
+  public listProviderIds(): string[] {
+    return Object.keys(this.providers);
   }
 
   private async initProvider(providerId: string, providerConfig: ProviderConfig): Promise<{ providerId: string; provider: Provider } | null> {
