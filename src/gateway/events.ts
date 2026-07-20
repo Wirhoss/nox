@@ -7,7 +7,15 @@ type GatewayEvent =
   | { type: 'error'; message: string }
   | { type: 'message'; message: Message }
   | { type: 'permissionRequest'; requestId: string; toolName: string; toolArguments: Record<string, unknown>; reason: string }
-  | { type: 'permissionResolved'; requestId: string; resolution: 'approved' | 'denied' | 'timeout' | 'aborted' };
+  | { type: 'permissionResolved'; requestId: string; resolution: 'approved' | 'denied' | 'timeout' | 'aborted' }
+  | { type: 'runStarted'; runId: string; modelId: string; startedAt: string }
+  | {
+    type: 'runCompleted';
+    runId: string;
+    status: 'completed' | 'aborted' | 'maxIterations' | 'failed';
+    durationMs: number;
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+  };
 
 type SessionEventEnvelope = {
   cursor: number;

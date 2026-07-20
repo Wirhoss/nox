@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import Avatar from '../shared/Avatar.svelte';
 
 	type Blueprint = { id: string; description: string };
 	type Session = { sessionId: string; blueprintId: string; createdAt: string | number; updatedAt: string | number };
@@ -18,11 +19,11 @@
 	let lastUpdated: Date | null = null;
 	let snapshot: Snapshot = { blueprints: [], providers: [], sessions: [], tools: [] };
 
-	const apiGet = async <T,>(path: string): Promise<T> => {
+	async function apiGet<T>(path: string): Promise<T> {
 		const response = await fetch(path, { headers: { accept: 'application/json' } });
 		if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
 		return response.json() as Promise<T>;
-	};
+	}
 
 	const refresh = async () => {
 		refreshing = !loading;
@@ -86,7 +87,7 @@
 <section class="overview-page">
 	<header class="page-heading">
 		<div>
-			<div class="eyebrow">Local control plane</div>
+			<div class="eyebrow">Control plane</div>
 			<h1>Overview</h1>
 			<p>Configure and observe the parts of Nox that are available today.</p>
 		</div>
@@ -142,7 +143,7 @@
 			<div class="setup-list">
 				<div class:done={providerCount > 0} class="setup-item"><div class="setup-check">{providerCount > 0 ? '✓' : '1'}</div><div><strong>Configure a provider</strong><span>{providerCount > 0 ? `${providerCount} ${providerCount === 1 ? 'provider is' : 'providers are'} configured` : 'Connect a local or cloud model backend'}</span></div><span class="setup-state">{providerCount > 0 ? 'Ready' : 'Required'}</span></div>
 				<div class:done={snapshot.blueprints.length > 0} class="setup-item"><div class="setup-check">{snapshot.blueprints.length > 0 ? '✓' : '2'}</div><div><strong>Create a blueprint</strong><span>{snapshot.blueprints.length > 0 ? `${snapshot.blueprints.length} agent ${snapshot.blueprints.length === 1 ? 'definition' : 'definitions'} available` : 'Define instructions, tools, provider, and model'}</span></div><span class="setup-state">{snapshot.blueprints.length > 0 ? 'Ready' : 'Required'}</span></div>
-				<div class="setup-item future"><div class="setup-check">3</div><div><strong>Test in Playground</strong><span>Interactive chat and run inspection are the next UI surface</span></div><span class="setup-state">Next</span></div>
+				<a class="setup-item setup-link" href="/playground"><div class="setup-check">3</div><div><strong>Test in Playground</strong><span>Start a session and inspect model, tool, and permission events</span></div><span class="setup-state">Open →</span></a>
 			</div>
 		</section>
 
@@ -151,7 +152,7 @@
 			{#if loading}
 				<div class="session-list loading-list">{#each [1, 2, 3] as _}<div class="session-row"><div class="skeleton-avatar"></div><div class="skeleton-copy"><span></span><span></span></div></div>{/each}</div>
 			{:else if recentSessions.length > 0}
-				<div class="session-list">{#each recentSessions as session}<div class="session-row"><div class="session-avatar">{session.blueprintId.slice(0, 1).toUpperCase()}</div><div class="session-copy"><strong>{session.blueprintId}</strong><span><code>{shortId(session.sessionId)}</code> · {formatRelativeTime(session.updatedAt)}</span></div><span class="origin-badge">WEB</span></div>{/each}</div>
+				<div class="session-list">{#each recentSessions as session}<a class="session-row" href={`/playground?session=${encodeURIComponent(session.sessionId)}`}><Avatar kind="blueprint" seed={`blueprint:${session.blueprintId}`} label={session.blueprintId} size={29} /><div class="session-copy"><strong>{session.blueprintId}</strong><span><code>{shortId(session.sessionId)}</code> · {formatRelativeTime(session.updatedAt)}</span></div><span class="origin-badge">WEB</span></a>{/each}</div>
 			{:else}
 				<div class="empty-state compact"><div class="empty-mark"><span></span><span></span><span></span></div><strong>No sessions yet</strong><p>Your locally stored conversations will appear here.</p></div>
 			{/if}

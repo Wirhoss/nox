@@ -92,15 +92,15 @@ Operate
   Conversations
 Build
   Blueprints
-  Brokers
   Providers
-  Tools
 Observe
   Runs
   Statistics
   Logs
 Playground
 Settings
+  Brokers
+  Tools
 ```
 
 The visual sidebar should use section labels only when expanded. In compact
@@ -122,18 +122,24 @@ separated because it is a testing surface rather than the workbench's home.
 | `/blueprints` | Blueprint library | Current API |
 | `/blueprints/new` | Blueprint creation | Current API |
 | `/blueprints/:id` | Blueprint editor and usage | Current API |
-| `/brokers` | Connections, routing, and health | Future contract |
 | `/providers` | Provider configuration and health | Current API |
-| `/tools` | Tool availability and permissions | Current API |
 | `/runs` | Searchable execution history | Future contract |
 | `/runs/:id` | Run timeline/tree and context accounting | Future contract |
 | `/statistics` | Usage, latency, cost, and efficiency | Future contract |
 | `/logs` | Structured runtime logs | Future contract |
 | `/playground` | Web chat and controlled experiments | Current API |
-| `/settings` | Application-wide configuration | Current API/partial |
+| `/settings` | Application-wide, broker, and tool configuration | Current API/partial |
+| `/settings#brokers` | Installed broker connections and routing | Future extension contract |
+| `/settings#tools` | Installed tool inventory and permission policy | Current API/partial |
 
 “Current API” means an endpoint exists, not that every proposed field is
 currently exposed.
+
+Brokers and tools are installed capabilities, not workbench-authored objects.
+Their implementations come with Nox or an app extension; the UI only configures
+instances and policies that an installed implementation exposes. Consequently,
+these surfaces never offer “New broker” or “New tool” actions. Extension
+installation and management is a separate application-level workflow.
 
 ## Global application frame
 
@@ -250,4 +256,3 @@ must not be mixed with a one-time run approval.
   (`user`, `assistant`, `tool`) are an implementation detail.
 - Present broker types by recognizable names, but label the web interface
   `Web` rather than treating it as privileged.
-

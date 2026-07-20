@@ -62,6 +62,36 @@ describe('Runner', () => {
 
     await expect(runner.run(userMessage('hi'))).rejects.toThrow('Error in agent run loop: boom');
     expect(eventLog.snapshot().some((event) => event.type === 'error')).toBe(true);
+    expect(eventLog.snapshot().find((event) => event.type === 'runCompleted')).toMatchObject({
+      status: 'failed',
+      usage: { cacheReadTokens: 0, inputTokens: 0, outputTokens: 0 },
+    });
+  });
+
+  test('emits measured run lifecycle metadata', async () => {
+    const { eventLog, runner } = setup([
+      async function* () {
+        yield { type: 'textFragment', text: 'hello' };
+        yield {
+          type: 'end',
+          messages: [assistant('hello')],
+          usage: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 5 },
+        };
+      },
+    ]);
+
+    expect(await runner.run(userMessage('hi'))).toBe(StopReason.Completed);
+    const events = eventLog.snapshot();
+    const started = events.find((event) => event.type === 'runStarted');
+    const completed = events.find((event) => event.type === 'runCompleted');
+
+    expect(started).toMatchObject({ modelId: 'test-model', type: 'runStarted' });
+    expect(completed).toMatchObject({
+      runId: started?.type === 'runStarted' ? started.runId : undefined,
+      status: 'completed',
+      type: 'runCompleted',
+      usage: { cacheReadTokens: 5, inputTokens: 12, outputTokens: 3 },
+    });
   });
 
   test('steer keeps tool calls paired with responses in the history', async () => {

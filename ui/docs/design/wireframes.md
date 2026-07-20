@@ -19,9 +19,7 @@ actions but are not intended to reproduce the full three-column workbench.
 │               │                                                             │
 │ BUILD         │                                                             │
 │ Blueprints    │                                                             │
-│ Brokers       │                                                             │
 │ Providers     │                                                             │
-│ Tools         │                                                             │
 │               │                                                             │
 │ OBSERVE       │                                                             │
 │ Runs          │                                                             │
@@ -29,7 +27,7 @@ actions but are not intended to reproduce the full three-column workbench.
 │ Logs          │                                                             │
 │               │                                                             │
 │ Playground    │                                                             │
-│ Settings      │                                                             │
+│ Settings      │ Brokers and tools are configured here                      │
 │               │                                                             │
 │ Daemon      ● │                                                             │
 └───────────────┴─────────────────────────────────────────────────────────────┘
@@ -38,6 +36,39 @@ actions but are not intended to reproduce the full three-column workbench.
 The top bar is quiet until action is needed. Active runs and permission requests
 open a tray. Search becomes a command palette for navigation, agents, sessions,
 workspaces, and actions.
+
+## Settings: brokers and tools
+
+Brokers and tools are runtime capabilities supplied by Nox or app extensions.
+They are configured here, never created from the UI.
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Settings                                                                    │
+├───────────────────┬─────────────────────────────────────────────────────────┤
+│ APPLICATION       │ Brokers                                  1 available    │
+│                   │                                                         │
+│ ⇄ Brokers         │ ◇ Broker types are supplied by extensions              │
+│   Connections     │                                                         │
+│                   │ Web        Built-in · Playground          ● Available   │
+│ ⌘ Tools           │ No broker settings exposed                            │
+│   Permissions     ├─────────────────────────────────────────────────────────┤
+│                   │ Tools                                   2 registered    │
+│                   │                                                         │
+│                   │ Registered tool sets                                   │
+│                   │ Shell       Installed                    ● Available    │
+│                   │ Search      Installed                    ● Available    │
+│                   │                                                         │
+│                   │ Global permission policies               Add policy    │
+│                   │ Tool calls       Action       Reason                    │
+│                   │ shell            Ask approval Protected command        │
+│                   │                                  Save tool settings     │
+└───────────────────┴─────────────────────────────────────────────────────────┘
+```
+
+The inventory is read-only because code availability is owned by the runtime
+and extension system. Configuration controls are rendered only for settings
+that the installed capability can persist.
 
 ## Overview
 
@@ -296,4 +327,3 @@ Each implemented screen must design and test:
 - Daemon disconnected/reconnecting.
 - Permission required.
 - Stale data and last-updated time.
-

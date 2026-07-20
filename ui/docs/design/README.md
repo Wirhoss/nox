@@ -67,12 +67,14 @@ supported by the current API:
 2. Blueprint list, create, edit, and delete.
 3. Session list and session inspection.
 4. Playground chat with streaming activity and permission handling.
-5. Provider and tool inspection/configuration.
+5. Provider configuration plus installed tool inspection and permission policy.
 
-Agents as persistent runtime instances, brokers, workspaces, research,
-deliberation, run graphs, and detailed usage metrics remain visible in the
-information architecture but should use honest empty or unavailable states
-until their backend contracts exist.
+Agents as persistent runtime instances, broker-specific settings, workspaces,
+research, deliberation, run graphs, and detailed usage metrics remain visible
+in the information architecture but should use honest empty or unavailable
+states until their backend contracts exist. Broker and tool implementations are
+supplied by Nox or app extensions; the workbench configures installed
+capabilities and never authors new implementations.
 
 ## API terminology
 

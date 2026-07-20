@@ -1,4 +1,7 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { openapi } from '@elysia/openapi';
 import { staticPlugin } from '@elysiajs/static';
@@ -13,6 +16,35 @@ import { apiError } from './routes/shared';
 
 const logger = createLogger('server');
 
+async function collectInlineScriptHashes(directory: string): Promise<string[]> {
+  const hashes = new Set<string>();
+
+  async function visit(currentDirectory: string): Promise<void> {
+    const entries = await readdir(currentDirectory, { withFileTypes: true });
+    await Promise.all(entries.map(async (entry) => {
+      const path = join(currentDirectory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path);
+        return;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.html')) {
+        return;
+      }
+
+      const html = await readFile(path, 'utf8');
+      for (const match of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+        const script = match[1];
+        if (!script) continue;
+        const digest = createHash('sha256').update(script).digest('base64');
+        hashes.add(`'sha256-${digest}'`);
+      }
+    }));
+  }
+
+  await visit(directory);
+  return [...hashes].sort();
+}
+
 type ServerOptions = {
   host: string;
   port: number;
@@ -22,8 +54,18 @@ type ServerOptions = {
 type NoxServer = Awaited<ReturnType<typeof createServer>>;
 
 async function createServer(options: ServerOptions) {
+  const uiExists = existsSync(options.uiDir);
+  const inlineScriptHashes = uiExists
+    ? await collectInlineScriptHashes(options.uiDir)
+    : [];
   const app = new Elysia()
-    .use(helmet())
+    .use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          scriptSrc: ['\'self\'', ...inlineScriptHashes],
+        },
+      },
+    }))
     .use(openapi())
     .onError(({ code, error, path, set }) => {
       if (code === 'NOT_FOUND') {
@@ -44,7 +86,7 @@ async function createServer(options: ServerOptions) {
     })
     .use(routes);
 
-  if (existsSync(options.uiDir)) {
+  if (uiExists) {
     app.use(await staticPlugin({
       assets: options.uiDir,
       prefix: '/',

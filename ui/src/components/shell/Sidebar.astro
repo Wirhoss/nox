@@ -2,7 +2,7 @@
 import Icon from './Icon.astro';
 
 interface Props { activePath: string; }
-type IconName = 'overview' | 'agents' | 'workspaces' | 'conversations' | 'blueprints' | 'brokers' | 'providers' | 'tools' | 'runs' | 'statistics' | 'logs';
+type IconName = 'overview' | 'agents' | 'workspaces' | 'conversations' | 'blueprints' | 'providers' | 'runs' | 'statistics' | 'logs';
 type NavItem = { label: string; href: string; icon: IconName; available?: boolean };
 type NavGroup = { label?: string; items: NavItem[] };
 
@@ -15,10 +15,8 @@ const groups: NavGroup[] = [
 		{ label: 'Conversations', href: '/conversations', icon: 'conversations' },
 	] },
 	{ label: 'Build', items: [
-		{ label: 'Blueprints', href: '/blueprints', icon: 'blueprints' },
-		{ label: 'Brokers', href: '/brokers', icon: 'brokers' },
-		{ label: 'Providers', href: '/providers', icon: 'providers' },
-		{ label: 'Tools', href: '/tools', icon: 'tools' },
+		{ label: 'Blueprints', href: '/blueprints', icon: 'blueprints', available: true },
+		{ label: 'Providers', href: '/providers', icon: 'providers', available: true },
 	] },
 	{ label: 'Observe', items: [
 		{ label: 'Runs', href: '/runs', icon: 'runs' },
@@ -50,8 +48,8 @@ const groups: NavGroup[] = [
 		))}
 	</nav>
 	<div class="sidebar-footer">
-		<span class="nav-item planned" aria-disabled="true"><Icon name="chat" /><span>Playground</span><span class="planned-mark"></span></span>
-		<span class="nav-item planned" aria-disabled="true"><Icon name="settings" /><span>Settings</span><span class="planned-mark"></span></span>
+		<a class:list={['nav-item', { active: activePath === '/playground' }]} href="/playground" aria-current={activePath === '/playground' ? 'page' : undefined}><Icon name="chat" /><span>Playground</span></a>
+		<a class:list={['nav-item', { active: activePath === '/settings' }]} href="/settings" aria-current={activePath === '/settings' ? 'page' : undefined}><Icon name="settings" /><span>Settings</span></a>
 		<div class="local-card">
 			<div class="local-card-icon" aria-hidden="true"><span></span></div>
 			<div><strong>Local-first</strong><span>Private by default</span></div>

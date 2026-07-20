@@ -1,14 +1,16 @@
 ---
 import Sidebar from '../components/shell/Sidebar.astro';
 import Topbar from '../components/shell/Topbar.astro';
+import AsciiField from '../components/shell/AsciiField.astro';
 import '../styles/global.css';
 
 interface Props {
 	title: string;
 	activePath: string;
+	contentClass?: string;
 }
 
-const { title, activePath } = Astro.props;
+const { title, activePath, contentClass } = Astro.props;
 ---
 
 <!doctype html>
@@ -24,10 +26,11 @@ const { title, activePath } = Astro.props;
 	</head>
 	<body>
 		<div class="app-shell" data-shell>
+			<AsciiField />
 			<Sidebar activePath={activePath} />
 			<div class="app-frame">
 				<Topbar title={title} />
-				<main class="app-content" id="main-content"><slot /></main>
+				<main class:list={['app-content', contentClass]} id="main-content"><slot /></main>
 			</div>
 			<button class="sidebar-scrim" type="button" aria-label="Close navigation" data-nav-close></button>
 		</div>

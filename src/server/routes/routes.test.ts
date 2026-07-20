@@ -1,3 +1,8 @@
+import { createHash } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, test } from 'bun:test';
 
 import { createServer } from '../server';
@@ -37,6 +42,26 @@ describe('HTTP API contract', () => {
 
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
     expect(response.headers.get('access-control-allow-credentials')).toBeNull();
+  });
+
+  test('allows only the generated inline scripts required for UI hydration', async () => {
+    const uiDir = await mkdtemp(join(tmpdir(), 'nox-ui-csp-'));
+    const inlineScript = 'window.__hydrated = true;';
+    await writeFile(join(uiDir, 'index.html'), `<html><body><script>${inlineScript}</script></body></html>`);
+
+    try {
+      const app = await createServer({ ...serverOptions, uiDir });
+      const response = await app.handle(new Request('http://localhost/'));
+      const policy = response.headers.get('content-security-policy') ?? '';
+      const digest = createHash('sha256').update(inlineScript).digest('base64');
+
+      expect(response.status).toBe(200);
+      expect(policy).toContain(`script-src 'self' 'sha256-${digest}'`);
+      expect(policy).toContain('script-src-attr \'none\'');
+      expect(policy).not.toMatch(/(?:^|;)script-src\s[^;]*'unsafe-inline'/);
+    } finally {
+      await rm(uiDir, { recursive: true, force: true });
+    }
   });
 
   test('normalizes validation errors', async () => {

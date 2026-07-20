@@ -34,6 +34,14 @@ type AgentStreamEvent =
   | { type: 'message', message: Message }
   | { type: 'permissionRequest', requestId: string, toolName: string, toolArguments: Record<string, unknown>, reason: string }
   | { type: 'permissionResolved', requestId: string, resolution: EscalationResolution }
+  | { type: 'runStarted'; runId: string; modelId: string; startedAt: string }
+  | {
+    type: 'runCompleted';
+    runId: string;
+    status: 'completed' | 'aborted' | 'maxIterations' | 'failed';
+    durationMs: number;
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+  }
   | { type: 'error'; error: Error };
 
 interface RunnerOptions {
@@ -332,15 +340,49 @@ class Runner {
     this.state = RunnerState.Running;
     this.abortController = new AbortController();
 
+    const runId = nanoid();
+    const startedAt = Date.now();
+    const usageAtStart = {
+      inputTokens: this.context.inputTokens,
+      outputTokens: this.context.outputTokens,
+      cacheReadTokens: this.context.cacheReadTokens,
+    };
+    this.eventLog.push({
+      type: 'runStarted',
+      runId,
+      modelId: this.model.modelId,
+      startedAt: new Date(startedAt).toISOString(),
+    });
+    const completeRun = (status: Extract<AgentStreamEvent, { type: 'runCompleted' }>['status']) => {
+      this.eventLog.push({
+        type: 'runCompleted',
+        runId,
+        status,
+        durationMs: Date.now() - startedAt,
+        usage: {
+          inputTokens: this.context.inputTokens - usageAtStart.inputTokens,
+          outputTokens: this.context.outputTokens - usageAtStart.outputTokens,
+          cacheReadTokens: this.context.cacheReadTokens - usageAtStart.cacheReadTokens,
+        },
+      });
+    };
+
     if (userMessage) {
       this.context.addMessage(userMessage);
       this.eventLog.push({ type: 'message', message: userMessage });
     }
 
     try {
-      return await this.runLoop();
+      const reason = await this.runLoop();
+      completeRun(reason === StopReason.Completed
+        ? 'completed'
+        : reason === StopReason.Aborted
+          ? 'aborted'
+          : 'maxIterations');
+      return reason;
     } catch (error) {
       if (this.abortController?.signal.aborted) {
+        completeRun('aborted');
         return StopReason.Aborted;
       }
       const parsedError = error instanceof Error ? error : new Error(String(error));
@@ -348,6 +390,7 @@ class Runner {
         type: 'error',
         error: parsedError,
       });
+      completeRun('failed');
       throw new Error(`Error in agent run loop: ${parsedError.message}`, { cause: error });
     } finally {
       this.state = RunnerState.Idle;
