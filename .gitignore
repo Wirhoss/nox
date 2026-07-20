@@ -1,49 +1,53 @@
-# dependencies (bun install)
-node_modules
+# Dependencies
+node_modules/
+bun.lock.bak
 
-# output
-out
-dist
-*.tgz
-
-# code coverage
-coverage
-*.lcov
-
-# logs
-logs
-*.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# Claude local settings
-.claude
-
-# caches
-.eslintcache
-.cache
+# Build output
+dist/
+build/
 *.tsbuildinfo
 
-# IntelliJ based IDEs
-.idea
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
 
-# Finder (MacOS) folder config
+# IDE / Editor
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
 
-# IDEs
-.vscode
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Misc
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
 *.tmp
-*.bak
-*.swp
 
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Docker
+*.pid
+
+
+config
+.vscode
+src_oldIGNORETHIS!!!!
 idk.md
-
-/config

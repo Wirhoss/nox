@@ -28,8 +28,8 @@ class BM25 {
   private tokenize(text: string): string[] {
     return text
       .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
       .split(/[^a-z0-9ñ]+/)
       .filter(Boolean);
   }

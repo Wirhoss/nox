@@ -1,20 +1,20 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-import { builtinProviderBlueprints } from "../provider";
+import { builtinProvidersClasses } from '../provider';
 
-import { readConfigFile } from "./utils";
+import { readConfigFile } from './utils';
 
-import type { EnvConfig } from "./env";
+import type { EnvConfig } from './env';
 
-const schemas = Object.values(builtinProviderBlueprints).map(p => p.configSchema);
+const schemas = Object.values(builtinProvidersClasses).map(p => p.configSchema);
 
 const providerIdSchema = z.string().regex(
   /^[a-zA-Z0-9_-]+$/,
-  "Invalid provider ID"
+  'Invalid provider ID'
 );
 
 const providerConfigSchema = z.discriminatedUnion(
-  "type",
+  'type',
   schemas as [
     typeof schemas[number],
     ...typeof schemas[number][]
@@ -26,7 +26,7 @@ export const providersConfigSchema = z.record(
   providerConfigSchema
 ).refine(
   providers => Object.keys(providers).length > 0,
-  "At least one provider must be configured."
+  'At least one provider must be configured.'
 );
 
 export type ProvidersConfig = z.infer<typeof providersConfigSchema>;

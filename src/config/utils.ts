@@ -1,10 +1,10 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir } from 'node:fs/promises';
 
 export async function readConfigFile<T>( filePath: string, defaultConfig: T ): Promise<T> {
   const file = Bun.file(filePath);
 
   if (!(await file.exists())) {
-    await mkdir(filePath.substring(0, filePath.lastIndexOf("/")), {
+    await mkdir(filePath.substring(0, filePath.lastIndexOf('/')), {
       recursive: true,
     }).catch(() => {});
     await Bun.write(file, JSON.stringify(defaultConfig, null, 2));
@@ -22,7 +22,7 @@ export async function readConfigDirectory<T>( dirPath: string, defaultConfig: T[
 
   const entries = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
   const jsonFiles = entries
-    .filter(dirent => dirent.isFile() && dirent.name.endsWith(".json"))
+    .filter(dirent => dirent.isFile() && dirent.name.endsWith('.json'))
     .map(dirent => `${dirPath}/${dirent.name}`);
 
   const results: T[] = [];

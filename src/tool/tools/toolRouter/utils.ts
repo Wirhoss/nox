@@ -1,9 +1,9 @@
-import { z } from "zod";
+import { z } from 'zod';
+import type { MessageContentText } from '../../../provider';
+import type { Tool } from '../../tool';
 
-import type { Tool, ToolResponse } from "../types";
-
-function asTextToolResponse(result: unknown): ToolResponse {
-  return [{ type: "text", text: JSON.stringify(result) }];
+function asTextToolResponse(result: unknown): MessageContentText[] {
+  return [{ type: 'text', text: JSON.stringify(result) }];
 }
 
 type JsonSchema = {
@@ -24,26 +24,25 @@ const MAX_DEPTH = 3;
 const unique = (xs: string[]) => [...new Set(xs)];
 
 function typeName(schema: JsonSchema): string {
-  if (!schema || typeof schema !== "object") return "unknown";
+  if (!schema || typeof schema !== 'object') return 'unknown';
 
   if (schema.const !== undefined) return JSON.stringify(schema.const);
-  if (schema.enum) return schema.enum.map((v) => JSON.stringify(v)).join(" | ");
+  if (schema.enum) return schema.enum.map((v) => JSON.stringify(v)).join(' | ');
 
   const union = schema.anyOf ?? schema.oneOf;
-  if (union) return unique(union.map(typeName)).join(" | ");
+  if (union) return unique(union.map(typeName)).join(' | ');
 
   if (Array.isArray(schema.type)) {
-    return unique(schema.type.map((t) => typeName({ ...schema, type: t }))).join(" | ");
+    return unique(schema.type.map((t) => typeName({ ...schema, type: t }))).join(' | ');
   }
 
-  if (schema.type === "array") {
+  if (schema.type === 'array') {
     const inner = typeName(schema.items ?? {});
-    return inner.includes(" ") ? `(${inner})[]` : `${inner}[]`;
+    return inner.includes(' ') ? `(${inner})[]` : `${inner}[]`;
   }
 
-  return typeof schema.type === "string" ? schema.type : "unknown";
+  return typeof schema.type === 'string' ? schema.type : 'unknown';
 }
-
 
 function placeholders(schema: JsonSchema, depth = 0): unknown {
   if (schema.properties && depth < MAX_DEPTH) {
@@ -54,13 +53,13 @@ function placeholders(schema: JsonSchema, depth = 0): unknown {
       ]),
     );
   }
-  if (schema.type === "array" && schema.items && depth < MAX_DEPTH) {
+  if (schema.type === 'array' && schema.items && depth < MAX_DEPTH) {
     return [placeholders(schema.items, depth + 1)];
   }
   return `<${typeName(schema)}>`;
 }
 
-function paramDocs(schema: JsonSchema, prefix = ""): string[] {
+function paramDocs(schema: JsonSchema, prefix = ''): string[] {
   const lines: string[] = [];
  
   for (const [name, prop] of Object.entries(schema.properties ?? {})) {
@@ -68,7 +67,7 @@ function paramDocs(schema: JsonSchema, prefix = ""): string[] {
  
     if (prop.description) {
       const def =
-        prop.default !== undefined ? ` (default: ${JSON.stringify(prop.default)})` : "";
+        prop.default !== undefined ? ` (default: ${JSON.stringify(prop.default)})` : '';
       lines.push(`- ${path}: ${prop.description}${def}`);
     }
  
@@ -82,9 +81,8 @@ function paramDocs(schema: JsonSchema, prefix = ""): string[] {
   return lines;
 }
 
-
 function renderTool(tool: Tool): string {
-  const schema = z.toJSONSchema(tool.parameters, { io: "input" }) as JsonSchema;
+  const schema = z.toJSONSchema(tool.parameters, { io: 'input' }) as JsonSchema;
  
   const lines = [
     `Tool: ${tool.name}`,
@@ -94,10 +92,10 @@ function renderTool(tool: Tool): string {
  
   const docs = paramDocs(schema);
   if (docs.length > 0) {
-    lines.push("\nParameters:", ...docs);
+    lines.push('\nParameters:', ...docs);
   }
 
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 export {

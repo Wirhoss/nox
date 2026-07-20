@@ -5,7 +5,7 @@ class EventLog<T> {
 
   public push(event: T): void {
     if (this.closed) {
-      throw new Error("Cannot push to a closed event log.");
+      throw new Error('Cannot push to a closed event log.');
     }
     this.events.push(event);
     for (const waiter of this.waiters) {

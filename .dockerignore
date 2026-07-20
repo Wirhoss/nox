@@ -1,0 +1,10 @@
+target/
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+
+.idea/
+.vscode/
+
+old/

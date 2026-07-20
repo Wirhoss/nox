@@ -1,95 +1,114 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-import { isAbortError } from "../../utils";
-import { MessageContentStream } from "../messageContentStream";
-import { BaseProvider, providerBaseConfigSchema } from "../provider";
+import {
+  providerBaseConfigSchema,
+  type TextGenerateOptions,
+} from '../config';
+import {
+  BaseProvider,
+  type ChatProvider,
+} from '../provider';
+import {
+  ProviderStream,
+  type ProviderStreamEvent,
+} from '../stream';
 
+import type { Tool } from '../../tool';
 import type {
   Message,
   MessageContent,
-  MessageContentToolCall,
-  MessageContentStreamEvent,
-  Tool,
-  Usage,
-} from "../../types";
-import type { ChatProvider, TextGenerateOptions } from "./../provider";
+  ToolCallMessage,
+} from '../message';
 
 const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
-  type: z.literal("openai_completions"),
-  defaultModel: z.string().optional(),
+  type: z.literal('openai_completions'),
+  defaultModel: z.string().min(1).optional(),
 });
 
 type OpenAICompletionsConfig = z.infer<typeof openAICompletionsConfigSchema>;
 
 type OpenAIContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
 
 interface OpenAIToolCall {
   id: string;
-  type: "function";
-  function: { name: string; arguments: string };
+  type: 'function';
+  function: {
+    arguments: string;
+    name: string;
+  };
 }
 
 type OpenAIMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string | OpenAIContentPart[] }
-  | { role: "assistant"; content: string | null; tool_calls?: OpenAIToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | OpenAIContentPart[] }
+  | { role: 'assistant'; content: string | null; tool_calls?: OpenAIToolCall[] }
+  | { role: 'tool'; content: string; tool_call_id: string };
 
 interface OpenAIUsage {
-  prompt_tokens: number;
   completion_tokens: number;
-  prompt_tokens_details?: { cached_tokens?: number };
+  prompt_tokens: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+  };
 }
 
 interface OpenAIStreamDelta {
   content?: string | null;
-  tool_calls?: {
+  tool_calls?: Array<{
     index: number;
     id?: string;
-    function?: { name?: string; arguments?: string };
-  }[];
+    function?: {
+      arguments?: string;
+      name?: string;
+    };
+  }>;
+}
+
+interface OpenAIStreamChunk {
+  choices?: Array<{
+    delta?: OpenAIStreamDelta;
+  }>;
+  error?: {
+    message?: string;
+  };
+  usage?: OpenAIUsage | null;
+}
+
+interface PendingToolCall {
+  arguments: string;
+  id: string;
+  name: string;
 }
 
 class OpenAICompletions extends BaseProvider implements ChatProvider {
   static override readonly configSchema = openAICompletionsConfigSchema;
 
-  private defaultModel?: string;
+  private readonly defaultModel?: string;
 
   constructor(config: OpenAICompletionsConfig) {
     super(config);
     this.defaultModel = config.defaultModel;
   }
 
-  public override async fetchModels(): Promise<string[]> {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let signal: AbortSignal | undefined;
-    if (this.timeoutMs !== undefined) {
-      const timeout = new AbortController();
-      timeoutId = setTimeout(
-        () => timeout.abort(new Error(`no response after ${this.timeoutMs}ms`)),
-        this.timeoutMs,
-      );
-      signal = timeout.signal;
-    }
+  public override async fetchModelIds(): Promise<string[]> {
+    const response = await this.fetchWithTimeout(
+      `${this.normalizedBaseUrl}/models`,
+      {
+        headers: this.authHeaders,
+      },
+    );
 
-    try {
-      const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/models`, {
-        headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {},
-        signal,
-      });
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`model list request failed (${response.status}): ${detail.slice(0, 500)}`);
-      }
-      const parsed = await response.json() as { data?: { id?: string }[] };
-      return (parsed.data ?? [])
-        .map((entry) => entry.id)
-        .filter((id) => typeof id === "string");
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    await this.assertSuccessfulResponse(response, 'model list request');
+
+    const payload = await response.json() as {
+      data?: Array<{ id?: unknown }>;
+    };
+
+    return (payload.data ?? [])
+      .map(({ id }) => id)
+      .filter((id): id is string => typeof id === 'string');
   }
 
   public getMessageStream(
@@ -97,12 +116,62 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     messageHistory: Message[],
     tools: Tool[],
     opts?: TextGenerateOptions,
-  ): MessageContentStream {
-    const controller = new AbortController();
-    return new MessageContentStream(
-      this.readStream(systemPrompt, messageHistory, tools, opts, controller.signal),
-      opts?.signal,
+  ): ProviderStream {
+    const signal = opts?.signal ?? new AbortController().signal;
+
+    return new ProviderStream(
+      this.readStream(systemPrompt, messageHistory, tools, opts, signal),
+      signal,
     );
+  }
+
+  private get authHeaders(): Record<string, string> {
+    return this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {};
+  }
+
+  private get normalizedBaseUrl(): string {
+    return this.baseUrl.replace(/\/+$/, '');
+  }
+
+  private async fetchWithTimeout(
+    input: string,
+    init: RequestInit,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const timeoutController = this.timeoutMs === undefined
+      ? undefined
+      : new AbortController();
+    const timeoutId = timeoutController === undefined
+      ? undefined
+      : setTimeout(
+        () => timeoutController.abort(
+          new Error(`OpenAI request timed out after ${this.timeoutMs}ms`),
+        ),
+        this.timeoutMs,
+      );
+    const signals = [signal, timeoutController?.signal]
+      .filter((candidate): candidate is AbortSignal => candidate !== undefined);
+
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: signals.length === 0
+          ? undefined
+          : signals.length === 1
+            ? signals[0]
+            : AbortSignal.any(signals),
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  private async assertSuccessfulResponse(response: Response, operation: string): Promise<void> {
+    if (response.ok) return;
+
+    const detail = await response.text().catch(() => '');
+    const suffix = detail.length > 0 ? `: ${detail.slice(0, 500)}` : '';
+    throw new Error(`OpenAI ${operation} failed (${response.status})${suffix}`);
   }
 
   private async request(
@@ -110,41 +179,23 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     messageHistory: Message[],
     tools: Tool[],
     opts: TextGenerateOptions | undefined,
-    extraSignal: AbortSignal,
+    signal: AbortSignal,
   ): Promise<Response> {
-    const signals: AbortSignal[] = [extraSignal];
-    if (opts?.signal) signals.push(opts.signal);
-
-    // timeoutMs limits time-to-first-response; once headers arrive it no longer applies
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    if (this.timeoutMs !== undefined) {
-      const timeout = new AbortController();
-      timeoutId = setTimeout(
-        () => timeout.abort(new Error(`no response after ${this.timeoutMs}ms`)),
-        this.timeoutMs,
-      );
-      signals.push(timeout.signal);
-    }
-
-    try {
-      const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
-        },
+    const response = await this.fetchWithTimeout(
+      `${this.normalizedBaseUrl}/chat/completions`,
+      {
         body: JSON.stringify(this.buildBody(systemPrompt, messageHistory, tools, opts)),
-        signal: signals.length > 0 ? AbortSignal.any(signals) : undefined,
-      });
+        headers: {
+          ...this.authHeaders,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      },
+      signal,
+    );
 
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`request failed (${response.status}): ${detail.slice(0, 500)}`);
-      }
-      return response;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    await this.assertSuccessfulResponse(response, 'chat completion request');
+    return response;
   }
 
   private buildBody(
@@ -153,128 +204,166 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     tools: Tool[],
     opts: TextGenerateOptions | undefined,
   ): Record<string, unknown> {
-    const modelId = opts?.model?.modelId ?? this.defaultModel;
-    if (!modelId) throw new Error("no model: pass opts.model or defaultModel in the config");
+    const configuredModel = this.defaultModel === undefined
+      ? undefined
+      : this.getModelConfig(this.defaultModel);
+    const model = opts?.model ?? configuredModel;
+    const modelId = model?.modelId ?? this.defaultModel;
 
-    // sampling parameters set directly on opts override the model's defaults
-    const sampling = { ...opts?.model, ...opts };
+    if (modelId === undefined) {
+      throw new Error('No OpenAI model configured: pass opts.model or set defaultModel');
+    }
 
+    const sampling = { ...model, ...opts };
     const body: Record<string, unknown> = {
-      model: modelId,
       messages: this.toOpenAIMessages(systemPrompt, messageHistory),
+      model: modelId,
       stream: true,
       stream_options: { include_usage: true },
     };
+
     if (tools.length > 0) body.tools = this.toOpenAITools(tools);
-    if (sampling.maxTokens !== undefined) body.max_tokens = sampling.maxTokens;
+    if (sampling.maxTokens !== undefined) {
+      body.max_completion_tokens = sampling.maxTokens;
+    }
     if (sampling.temperature !== undefined) body.temperature = sampling.temperature;
     if (sampling.topP !== undefined) body.top_p = sampling.topP;
     if (sampling.stop !== undefined) body.stop = sampling.stop;
     if (sampling.seed !== undefined) body.seed = sampling.seed;
-    if (sampling.frequencyPenalty !== undefined) body.frequency_penalty = sampling.frequencyPenalty;
-    if (sampling.presencePenalty !== undefined) body.presence_penalty = sampling.presencePenalty;
-    // topK does not exist in the OpenAI API; it is ignored
+    if (sampling.frequencyPenalty !== undefined) {
+      body.frequency_penalty = sampling.frequencyPenalty;
+    }
+    if (sampling.presencePenalty !== undefined) {
+      body.presence_penalty = sampling.presencePenalty;
+    }
+
     return body;
   }
 
-  private toOpenAIMessages(systemPrompt: string, messageHistory: Message[]): OpenAIMessage[] {
-    const messages: OpenAIMessage[] = [{ role: "system", content: systemPrompt }];
+  private toOpenAIMessages(systemPrompt: string, history: Message[]): OpenAIMessage[] {
+    const messages: OpenAIMessage[] = [
+      { content: systemPrompt, role: 'system' },
+    ];
 
-    for (const message of messageHistory) {
-      if (message.role === "assistant") {
-        let text = "";
-        const toolCalls: OpenAIToolCall[] = [];
-        for (const block of message.content) {
-          if (block.type === "text") text += block.text;
-          else if (block.type === "tool_call") {
-            toolCalls.push({
-              id: block.trackId,
-              type: "function",
-              function: { name: block.name, arguments: JSON.stringify(block.arguments) },
-            });
-          }
-        }
+    for (const message of history) {
+      if (message.role === 'user') {
         messages.push({
-          role: "assistant",
-          content: text || null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          content: this.toOpenAIUserContent(message.content),
+          role: 'user',
         });
         continue;
       }
 
-      // tool_responses go as role:"tool" messages right after the assistant
-      for (const block of message.content) {
-        if (block.type !== "tool_response") continue;
+      if (message.role === 'assistant') {
         messages.push({
-          role: "tool",
-          tool_call_id: block.trackId,
-          content: block.response
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n"),
+          content: this.toAssistantText(message.content),
+          role: 'assistant',
         });
+        continue;
       }
 
-      const parts: OpenAIContentPart[] = [];
-      for (const block of message.content) {
-        if (block.type === "text") {
-          parts.push({ type: "text", text: block.text });
-        } else if (block.type === "image") {
-          const url = block.source.kind === "url"
-            ? block.source.url
-            : `data:${block.source.mediaType};base64,${block.source.data}`;
-          parts.push({ type: "image_url", image_url: { url } });
-        }
-      }
-      if (parts.length > 0) {
-        const onlyText = parts.every((part) => part.type === "text");
-        messages.push({
-          role: "user",
-          content: onlyText
-            ? parts.map((part) => (part.type === "text" ? part.text : "")).join("")
-            : parts,
-        });
-      }
-    }
+      if (message.role === 'toolCall') {
+        const toolCall = this.toOpenAIToolCall(message);
+        const previous = messages.at(-1);
 
-    const merged: OpenAIMessage[] = [];
-    for (const msg of messages) {
-      const prev = merged[merged.length - 1];
-      if (msg.role === "assistant" && prev?.role === "assistant") {
-        prev.content = [prev.content, msg.content].filter(Boolean).join("");
-        if (msg.tool_calls) {
-          prev.tool_calls = [...(prev.tool_calls ?? []), ...msg.tool_calls];
+        if (previous?.role === 'assistant') {
+          previous.tool_calls = [...(previous.tool_calls ?? []), toolCall];
+        } else {
+          messages.push({
+            content: null,
+            role: 'assistant',
+            tool_calls: [toolCall],
+          });
         }
         continue;
       }
-      merged.push(msg);
+
+      messages.push({
+        content: message.response
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n'),
+        role: 'tool',
+        tool_call_id: message.trackId,
+      });
     }
-    return merged;
+
+    return messages;
   }
 
-  private toOpenAITools(tools: Tool[]) {
-    return tools.map((tool) => ({
-      type: "function" as const,
+  private toOpenAIUserContent(content: MessageContent[]): string | OpenAIContentPart[] {
+    const parts = content.map((part): OpenAIContentPart => {
+      if (part.type === 'text') return part;
+
+      const url = part.source.kind === 'url'
+        ? part.source.url
+        : `data:${part.source.mediaType};base64,${part.source.data}`;
+      return { image_url: { url }, type: 'image_url' };
+    });
+
+    return parts.every((part) => part.type === 'text')
+      ? parts.map((part) => part.type === 'text' ? part.text : '').join('')
+      : parts;
+  }
+
+  private toAssistantText(content: MessageContent[]): string | null {
+    const text = content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('');
+    return text.length > 0 ? text : null;
+  }
+
+  private toOpenAIToolCall(toolCall: ToolCallMessage): OpenAIToolCall {
+    return {
       function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: this.toJsonSchema(tool.parameters),
+        arguments: JSON.stringify(toolCall.arguments),
+        name: toolCall.name,
       },
+      id: toolCall.trackId,
+      type: 'function',
+    };
+  }
+
+  private toOpenAITools(tools: Tool[]): Array<Record<string, unknown>> {
+    return tools.map((tool) => ({
+      function: {
+        description: tool.description,
+        name: tool.name,
+        parameters: z.toJSONSchema(tool.parameters, { io: 'input' }),
+      },
+      type: 'function',
     }));
   }
 
-  private toJsonSchema(parameters: z.ZodObject): Record<string, unknown> {
-    return parameters.toJSONSchema() as Record<string, unknown>;
-  }
-
-  private toToolCall(trackId: string, name: string, rawArguments: string): MessageContentToolCall {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = rawArguments ? JSON.parse(rawArguments) : {};
-    } catch {
-      throw new Error(`tool call "${name}" with unreadable arguments: ${rawArguments}`);
+  private toToolCall(pending: PendingToolCall): ToolCallMessage {
+    if (pending.id.length === 0 || pending.name.length === 0) {
+      throw new Error('OpenAI returned an incomplete tool call');
     }
-    return { type: "tool_call", name, trackId, arguments: parsed };
+
+    let parsed: unknown;
+    try {
+      parsed = pending.arguments.length > 0
+        ? JSON.parse(pending.arguments)
+        : {};
+    } catch {
+      throw new Error(
+        `OpenAI tool call "${pending.name}" returned invalid JSON arguments: ${pending.arguments}`,
+      );
+    }
+
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      throw new Error(
+        `OpenAI tool call "${pending.name}" returned non-object arguments`,
+      );
+    }
+
+    return {
+      arguments: parsed as Record<string, unknown>,
+      name: pending.name,
+      role: 'toolCall',
+      trackId: pending.id,
+    };
   }
 
   private async *readStream(
@@ -283,71 +372,118 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     tools: Tool[],
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
-  ): AsyncGenerator<MessageContentStreamEvent> {
+  ): AsyncGenerator<ProviderStreamEvent> {
+    const response = await this.request(systemPrompt, messageHistory, tools, opts, signal);
+    if (response.body === null) throw new Error('OpenAI response did not include a body');
+
     const decoder = new TextDecoder();
-    let buffer = "";
-    let text = "";
-    let aborted = false;
-    let usage: Usage | undefined;
+    const pendingToolCalls: Array<PendingToolCall | undefined> = [];
+    let buffer = '';
+    let text = '';
+    let usage: OpenAIUsage | undefined;
 
-    const pendingCalls: { id: string; name: string; arguments: string }[] = [];
+    const consumeData = (data: string): string | undefined => {
+      if (data === '[DONE]') return data;
 
-    try {
-      const response = await this.request(systemPrompt, messageHistory, tools, opts, signal);
-      if (!response.body) throw new Error("response without body");
+      let chunk: OpenAIStreamChunk;
+      try {
+        chunk = JSON.parse(data) as OpenAIStreamChunk;
+      } catch {
+        throw new Error(`OpenAI returned an invalid stream event: ${data.slice(0, 500)}`);
+      }
 
-      outer: for await (const chunk of response.body) {
-        buffer += decoder.decode(chunk, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+      if (chunk.error !== undefined) {
+        throw new Error(chunk.error.message ?? 'OpenAI returned a stream error');
+      }
+      if (chunk.usage !== null && chunk.usage !== undefined) usage = chunk.usage;
 
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") break outer;
+      const delta = chunk.choices?.[0]?.delta;
+      if (delta?.content) text += delta.content;
 
-          const parsed = JSON.parse(data) as { choices?: { delta?: OpenAIStreamDelta }[], usage?: OpenAIUsage | null; };
-          if (parsed.usage) {
-            usage = {
-              inputTokens: parsed.usage.prompt_tokens,
-              outputTokens: parsed.usage.completion_tokens,
-              cacheReadTokens: parsed.usage.prompt_tokens_details?.cached_tokens,
-            };
-          }
-          const delta = parsed.choices?.[0]?.delta;
-          if (!delta) continue;
+      for (const call of delta?.tool_calls ?? []) {
+        const pending = pendingToolCalls[call.index] ?? {
+          arguments: '',
+          id: '',
+          name: '',
+        };
+        pendingToolCalls[call.index] = pending;
 
-          if (delta.content) {
-            text += delta.content;
-            yield { type: "text", text: delta.content };
-          }
-          for (const call of delta.tool_calls ?? []) {
-            const slot = (pendingCalls[call.index] ??= { id: "", name: "", arguments: "" });
-            if (call.id) slot.id = call.id;
-            if (call.function?.name) slot.name += call.function.name;
-            if (call.function?.arguments) slot.arguments += call.function.arguments;
-          }
+        if (call.id !== undefined) pending.id += call.id;
+        if (call.function?.name !== undefined) pending.name += call.function.name;
+        if (call.function?.arguments !== undefined) {
+          pending.arguments += call.function.arguments;
         }
       }
-    } catch (e) {
-      if (!isAbortError(e)) throw e;
-      aborted = true;
+
+      return delta?.content ?? undefined;
+    };
+
+    let done = false;
+    for await (const bytes of response.body) {
+      buffer += decoder.decode(bytes, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) continue;
+
+        const fragment = consumeData(line.slice(5).trim());
+        if (fragment === '[DONE]') {
+          done = true;
+          break;
+        }
+        if (fragment) yield { text: fragment, type: 'textFragment' };
+      }
+
+      if (done) break;
     }
 
-    const content: MessageContent[] = [];
-    if (text) content.push({ type: "text", text });
-    if (!aborted) {
-      // on abort, pending tool calls are dropped: their arguments are truncated JSON
-      for (const slot of pendingCalls) {
-        if (!slot) continue;
-        const toolCall = this.toToolCall(slot.id, slot.name, slot.arguments);
-        content.push(toolCall);
-        yield { type: "toolCall", toolCall };
+    if (!done) {
+      buffer += decoder.decode();
+      const line = buffer.trim();
+      if (line.startsWith('data:')) {
+        const fragment = consumeData(line.slice(5).trim());
+        if (fragment && fragment !== '[DONE]') {
+          yield { text: fragment, type: 'textFragment' };
+        }
       }
     }
-    yield { type: "end", content, aborted, usage };
+
+    const messages: Message[] = [];
+    if (text.length > 0) {
+      messages.push({
+        content: [{ text, type: 'text' }],
+        role: 'assistant',
+      });
+    }
+
+    for (const pending of pendingToolCalls) {
+      if (pending === undefined) continue;
+      const toolCall = this.toToolCall(pending);
+      messages.push(toolCall);
+      yield { toolCall, type: 'toolCall' };
+    }
+
+    yield {
+      messages,
+      type: 'end',
+      usage: usage === undefined
+        ? undefined
+        : {
+          cacheReadTokens: usage.prompt_tokens_details?.cached_tokens,
+          inputTokens: usage.prompt_tokens,
+          outputTokens: usage.completion_tokens,
+        },
+    };
   }
 }
 
-export { OpenAICompletions };
+export {
+  OpenAICompletions,
+  openAICompletionsConfigSchema,
+};
+
+export type {
+  OpenAICompletionsConfig,
+};

@@ -1,7 +1,10 @@
-import { agentBlueprintSchema } from "../agent/agentManager";
-import { readConfigDirectory } from "./utils";
-import { z } from "zod";
-import type { EnvConfig } from "./env";
+import { z } from 'zod';
+
+import { agentBlueprintSchema } from '../agent/agentManager';
+
+import { readConfigDirectory } from './utils';
+
+import type { EnvConfig } from './env';
 
 export const agentsConfigSchema = z.array(agentBlueprintSchema);
 

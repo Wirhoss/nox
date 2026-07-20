@@ -1,5 +1,5 @@
-import type { Message, Tool } from "../types";
-
+import type { Message } from '../provider';
+import type { Tool } from '../tool';
 class Context {
   public inputTokens: number = 0;
   public outputTokens: number = 0;
@@ -31,7 +31,7 @@ class Context {
 
   public restoreCheckpoint(): void {
     if (this.checkpointIndex === undefined) {
-      throw new Error("No checkpoint to restore.");
+      throw new Error('No checkpoint to restore.');
     }
     this.messageHistory = this.messageHistory.slice(0, this.checkpointIndex);
     this.checkpointIndex = undefined;

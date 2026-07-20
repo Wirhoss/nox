@@ -1,1 +1,1 @@
-export * from "./openAICompletions";
+export * from './openAICompletions';

@@ -1,2 +1,1 @@
-export * from "./toolRouter";
-export * from "./mocked";
+export * from './toolRouter';

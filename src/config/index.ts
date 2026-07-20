@@ -1,12 +1,12 @@
-import { getAppConfig, appConfigSchema } from "./app";
-import { getAgentsConfig, agentsConfigSchema } from "./agent";
-import { getEnvConfig, envConfigSchema } from "./env";
-import { getProvidersConfig, providersConfigSchema } from "./provider";
+import { getAgentsConfig, agentsConfigSchema } from './agent';
+import { getAppConfig, appConfigSchema } from './app';
+import { getEnvConfig, envConfigSchema } from './env';
+import { getProvidersConfig, providersConfigSchema } from './provider';
 
-import type { AgentsConfig } from "./agent";
-import type { AppConfig } from "./app";
-import type { EnvConfig } from "./env";
-import type { ProvidersConfig } from "./provider";
+import type { AgentsConfig } from './agent';
+import type { AppConfig } from './app';
+import type { EnvConfig } from './env';
+import type { ProvidersConfig } from './provider';
 
 export type ConfigType = {
   app: AppConfig;
@@ -35,7 +35,7 @@ export class Config {
 
   public static get<K extends keyof ConfigType>(key: K): ConfigType[K] {
     if (!Config.config) {
-      throw new Error("Config not initialized. Call Config.init() before accessing config values.");
+      throw new Error('Config not initialized. Call Config.init() before accessing config values.');
     }
     return Config.config[key];
   }

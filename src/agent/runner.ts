@@ -1,17 +1,34 @@
-import type { MessageContentStream } from "../provider";
-import type { Model, Provider } from "../provider/provider";
+import { EventLog } from '../utils';
+
 import type {
-  AgentStreamEvent,
   Message,
   MessageContent,
-  MessageContentToolCall,
-  MessageContentToolResponse,
-  ToolResponse,
-  Usage
-} from "../types";
-import { RunnerState, StopReason } from "../types";
-import { EventLog } from "../utils/eventLog";
-import type { Context } from "./context";
+  ModelConfig,
+  Provider,
+  ProviderStream,
+  ToolCallMessage,
+  ToolResponseMessage,
+  Usage,
+  UserMessage,
+} from '../provider';
+import type { Context } from './context';
+
+enum RunnerState {
+  Idle,
+  Running,
+  Stopped
+}
+
+enum StopReason {
+  Completed,
+  Aborted,
+  MaxIterations,
+}
+
+type AgentStreamEvent =
+  | { type: 'assistantTextFragment', text: string }
+  | { type: 'message', message: Message }
+  | { type: 'error'; error: Error };
 
 class Runner {
   private eventLog: EventLog<AgentStreamEvent>;
@@ -20,14 +37,14 @@ class Runner {
   private maxIterations: number;
 
   private provider: Provider;
-  private model: Model;
+  private model: ModelConfig;
 
   private abortController?: AbortController;
   private state: RunnerState = RunnerState.Idle;
   private idlePromise: Promise<void> = Promise.resolve();
   private idleResolve: (() => void) | undefined;
 
-  constructor(context: Context, eventLog: EventLog<AgentStreamEvent>, provider: Provider, model: Model, maxIterations: number) {
+  constructor(context: Context, eventLog: EventLog<AgentStreamEvent>, provider: Provider, model: ModelConfig, maxIterations: number) {
     this.context = context;
     this.eventLog = eventLog;
     this.provider = provider;
@@ -35,8 +52,8 @@ class Runner {
     this.maxIterations = maxIterations;
   }
 
-  private getMessageStream(): MessageContentStream {
-    const stream: MessageContentStream = this.provider.getMessageStream(
+  private getMessageStream(): ProviderStream {
+    const stream: ProviderStream = this.provider.getMessageStream(
       this.context.systemPrompt,
       this.context.messageHistory,
       Object.values(this.context.tools),
@@ -47,18 +64,18 @@ class Runner {
 
   private handleText(text: string): void {
     this.eventLog.push({
-      type: "assistantTextFragment",
+      type: 'assistantTextFragment',
       text: text,
     });
   }
 
-  private async handleToolCall(toolCall: MessageContentToolCall): Promise<MessageContentToolResponse> {
+  private async handleToolCall(toolCall: ToolCallMessage): Promise<ToolResponseMessage> {
     this.eventLog.push({
-      type: "toolCall",
-      toolCall: toolCall,
+      type: 'message',
+      message: toolCall,
     });
-    const toolResponse: MessageContentToolResponse = {
-      type: "tool_response",
+    const toolResponse: ToolResponseMessage = {
+      role: 'toolResponse',
       name: toolCall.name,
       trackId: toolCall.trackId,
       response: [],
@@ -67,16 +84,16 @@ class Runner {
       const tool = this.context.tools[toolCall.name];
       if (!tool) {
         toolResponse.response.push({
-          type: "text",
+          type: 'text',
           text: `Tool ${toolCall.name} not found.`,
         });
         toolResponse.isError = true;
       } else {
         const parsedArguments = tool.parameters.parse(toolCall.arguments);
-        let response: ToolResponse = [];
-        if (tool.type === "sync") {
+        let response: MessageContent[] = [];
+        if (tool.type === 'immediate') {
           response = await tool.call(parsedArguments);
-        } else if (tool.type === "async") {
+        } else if (tool.type === 'deferred') {
           // TODO: Handle async tool calls properly, including acknowledging the call and waiting for the result.
         }
         toolResponse.response = response ?? [];
@@ -84,48 +101,48 @@ class Runner {
       }
     } catch (error) {
       toolResponse.response.push({
-        type: "text",
+        type: 'text',
         text: `Error executing tool ${toolCall.name}: ${(error as Error).message}`,
       });
       toolResponse.isError = true;
     }
     this.eventLog.push({
-      type: "toolResponse",
-      toolResponse,
+      type: 'message',
+      message: toolResponse,
     });
     return toolResponse;
   }
 
-  private async commitAssistantMessage(messageContent: MessageContent[], usage?: Usage): Promise<MessageContent[]> {
-    this.eventLog.push({
-      type: "assistantMessage",
-      message: messageContent,
-    });
+  private async commitAssistantMessage(messages: Message[], usage?: Usage): Promise<Message[]> {
+    for (const message of messages) {
+      this.eventLog.push({
+        type: 'message',
+        message: message,
+      });
+      this.context.addMessage(message);
+    }
     if (usage) {
       this.context.inputTokens = usage.inputTokens;
       this.context.outputTokens = (this.context.outputTokens ?? 0) + usage.outputTokens;
       this.context.cacheReadTokens = usage.cacheReadTokens ?? 0;
     }
-    if (messageContent.length > 0) {
-      this.context.addMessage({ role: "assistant", content: messageContent });
-    }
-    return messageContent;
+    return messages;
   }
 
-  private async runLoop(userMessage: Message): Promise<StopReason> {
+  private async runLoop(userMessage: UserMessage): Promise<StopReason> {
     this.context.addMessage(userMessage);
-    this.eventLog.push({ type: "userMessage", message: userMessage.content });
+    this.eventLog.push({ type: 'message', message: userMessage });
 
     for (let i = 0; i < this.maxIterations; i++) {
       const stream = this.getMessageStream();
-      const toolCalls: Promise<MessageContentToolResponse>[] = [];
+      const toolCalls: Promise<ToolResponseMessage>[] = [];
       for await (const event of stream) {
-        if (event.type === "text") {
+        if (event.type === 'textFragment') {
           this.handleText(event.text);
-        } else if (event.type === "toolCall") {
+        } else if (event.type === 'toolCall') {
           toolCalls.push(this.handleToolCall(event.toolCall));
-        } else if (event.type === "end") {
-          await this.commitAssistantMessage(event.content, event.usage);
+        } else if (event.type === 'end') {
+          await this.commitAssistantMessage(event.messages, event.usage);
         }
       }
 
@@ -134,20 +151,22 @@ class Runner {
       if (this.abortController?.signal.aborted) return StopReason.Aborted;
       if (toolResponses.length === 0) return StopReason.Completed;
 
-      this.context.addMessage({ role: "user", content: toolResponses });
+      for (const toolResponse of toolResponses) {
+        this.context.addMessage(toolResponse);
+      }
     }
     this.context.addMessage({
-      role: "user",
-      content: [{ type: "text", text: "Maximum tool iterations reached." }],
+      role: 'user',
+      content: [{ type: 'text', text: 'Maximum tool iterations reached.' }],
     });
     return StopReason.MaxIterations;
   }
 
-  public async run(userMessage: Message): Promise<StopReason> {
+  public async run(userMessage: UserMessage): Promise<StopReason> {
     if (this.state === RunnerState.Running) {
-      throw new Error("Agent is already running");
+      throw new Error('Agent is already running');
     } else if (this.state === RunnerState.Stopped) {
-      throw new Error("Agent has been stopped and cannot be restarted");
+      throw new Error('Agent has been stopped and cannot be restarted');
     }
 
     this.idlePromise = new Promise(resolve => {
@@ -165,7 +184,7 @@ class Runner {
       }
       const parsedError = error instanceof Error ? error : new Error(String(error));
       this.eventLog.push({
-        type: "error",
+        type: 'error',
         error: parsedError,
       });
       throw new Error(`Error in agent run loop: ${parsedError.message}`);
@@ -176,9 +195,9 @@ class Runner {
     }
   }
 
-  public async steer(userMessage: Message): Promise<StopReason> {
+  public async steer(userMessage: UserMessage): Promise<StopReason> {
     if (this.state !== RunnerState.Running) {
-      throw new Error("Cannot steer agent when it is not running.");
+      throw new Error('Cannot steer agent when it is not running.');
     }
     this.abortController?.abort();
     await this.idlePromise;
@@ -198,4 +217,8 @@ class Runner {
 
 export {
   Runner
+};
+
+export type {
+  AgentStreamEvent
 };
