@@ -9,6 +9,7 @@ export const envConfigSchema = z.object({
   configFileProviders: z.string(),
   configDirAgents: z.string(),
   databaseFile: z.string(),
+  uiDir: z.string(),
 });
 
 export type EnvConfig = z.infer<typeof envConfigSchema>;
@@ -23,6 +24,7 @@ export function getEnvConfig() {
       configFileProviders: process.env.CONFIG_FILE_PROVIDERS ?? `${defaultConfigPath}/providers.json`,
       configDirAgents: process.env.CONFIG_DIR_AGENTS ?? `${defaultConfigPath}/agents`,
       databaseFile: process.env.DATABASE_FILE ?? `${defaultDataPath}/nox.db`,
+      uiDir: process.env.UI_DIR ?? '/usr/share/nox/ui',
     };
     envConfig = envConfigSchema.parse(envConfigUnparsed);
   }

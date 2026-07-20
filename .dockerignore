@@ -8,3 +8,11 @@ Dockerfile
 .vscode/
 
 old/
+
+node_modules/
+ui/node_modules/
+ui/dist/
+ui/.astro/
+dist/
+data/
+.env
