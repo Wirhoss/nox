@@ -43,10 +43,15 @@ function toSessionSummary(record: SessionRecord) {
 
 const sessionRoutes = new Elysia({ prefix: '/api/v1' })
   .get('/sessions', ({ query }) => {
-    const sessions = AgentRegistry.instance.listSessions(query.blueprintId);
+    const sessions = AgentRegistry.instance.listSessionsWithStats(query.blueprintId);
     return sessions
       .slice(query.offset, query.offset + query.limit)
-      .map(toSessionSummary);
+      .map((session) => ({
+        ...toSessionSummary(session),
+        latestRun: session.latestRun,
+        runCount: session.runCount,
+        usage: session.usage,
+      }));
   }, {
     query: z.object({
       blueprintId: resourceIdSchema.optional(),
@@ -63,16 +68,18 @@ const sessionRoutes = new Elysia({ prefix: '/api/v1' })
   }, {
     body: z.object({ blueprintId: resourceIdSchema }),
   })
-  .get('/sessions/:sessionId', ({ params, status }) => {
+  .get('/sessions/:sessionId', ({ params, query, status }) => {
     try {
-      const snapshot = AgentRegistry.instance.getSessionSnapshot(params.sessionId);
+      const snapshot = AgentRegistry.instance.getSessionSnapshot(params.sessionId, query.activityLimit);
       return {
         activityCount: snapshot.activityCount,
         eventCursor: snapshot.eventCursor,
         isRunning: snapshot.isRunning,
         latestRun: snapshot.latestRun,
+        messageEntries: snapshot.messageEntries,
         messages: snapshot.messages,
         recentActivities: snapshot.recentActivities,
+        runs: snapshot.runs,
         session: toSessionSummary(snapshot.session),
       };
     } catch (error) {
@@ -80,6 +87,9 @@ const sessionRoutes = new Elysia({ prefix: '/api/v1' })
     }
   }, {
     params: sessionParamsSchema,
+    query: z.object({
+      activityLimit: z.coerce.number().int().min(1).max(500).default(50),
+    }),
   })
   .post('/sessions/:sessionId/messages', ({ body, params, status }) => {
     try {

@@ -1,16 +1,12 @@
-import { ToolRouter } from './tools';
+import { ToolRouter, WebTools } from './tools';
 
-import type { Tool, ToolSetClass } from './tool';
-
-const builtinToolSets: Record<string, ToolSetClass> = {
-};
+import type { ToolsConfig } from '../config/tools';
+import type { Tool, ToolSet, ToolSetClass, ToolSetFactory } from './tool';
 
 class ToolRegistry {
   private static _instance: ToolRegistry;
 
-  private toolSetClasses: Record <string, ToolSetClass> = {
-    ...builtinToolSets,
-  };
+  private toolSetFactories: Record<string, ToolSetFactory> = {};
 
   private initialized: boolean = false;
 
@@ -23,10 +19,11 @@ class ToolRegistry {
     return ToolRegistry._instance;
   }
 
-  public async init(): Promise<void> {
+  public async init(config: ToolsConfig): Promise<void> {
     if (this.initialized) {
       throw new Error('ToolRegistry already initialized.');
     }
+    this.toolSetFactories['web_tools'] = (): WebTools => new WebTools(config.web_tools ?? {});
     this.initialized = true;
   }
 
@@ -39,15 +36,19 @@ class ToolRegistry {
   }
 
   public listToolSetIds(): string[] {
-    return Object.keys(this.toolSetClasses);
+    return Object.keys(this.toolSetFactories);
   }
 
-  public getToolSetClass(toolSetId: string): ToolSetClass | null {
-    const toolSetClass = this.toolSetClasses[toolSetId];
-    if (!toolSetClass) {
+  public hasToolSet(toolSetId: string): boolean {
+    return this.toolSetFactories[toolSetId] !== undefined;
+  }
+
+  public createToolSet(toolSetId: string): ToolSet | null {
+    const factory = this.toolSetFactories[toolSetId];
+    if (!factory) {
       return null;
     }
-    return toolSetClass;
+    return factory();
   }
 }
 

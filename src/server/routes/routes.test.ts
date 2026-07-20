@@ -7,6 +7,8 @@ import { describe, expect, test } from 'bun:test';
 
 import { createServer } from '../server';
 
+import { webToolsConfigView } from './config';
+
 import { routes } from './index';
 
 const serverOptions = {
@@ -16,6 +18,30 @@ const serverOptions = {
 };
 
 describe('HTTP API contract', () => {
+  test('never exposes configured web service API keys', () => {
+    const view = webToolsConfigView({
+      web_extract: {
+        service: 'crawl4ai',
+        serviceConfig: { url: 'https://crawl.example.com', apiKey: 'secret' },
+        contract: {
+          maxUrls: { maximum: 2 },
+          maxCharactersPerPage: { default: 1000, maximum: 2000 },
+        },
+      },
+    });
+
+    expect(view.web_extract).toEqual({
+      service: 'crawl4ai',
+      serviceConfig: { url: 'https://crawl.example.com' },
+      contract: {
+        maxUrls: { maximum: 2 },
+        maxCharactersPerPage: { default: 1000, maximum: 2000 },
+      },
+      hasApiKey: true,
+    });
+    expect(JSON.stringify(view)).not.toContain('secret');
+  });
+
   test('registers blueprints and global sessions without the ambiguous agents route', () => {
     const registered = routes.routes.map((route) => `${route.method} ${route.path}`);
 
@@ -23,6 +49,10 @@ describe('HTTP API contract', () => {
     expect(registered).toContain('GET /api/v1/blueprints/:blueprintId');
     expect(registered).toContain('GET /api/v1/sessions');
     expect(registered).toContain('GET /api/v1/sessions/:sessionId');
+    expect(registered).toContain('GET /api/v1/runs');
+    expect(registered).toContain('GET /api/v1/logs');
+    expect(registered).toContain('GET /api/v1/config/tools/web_tools');
+    expect(registered).toContain('PUT /api/v1/config/tools/web_tools');
     expect(registered.some((route) => route.includes('/api/v1/agents'))).toBe(false);
   });
 

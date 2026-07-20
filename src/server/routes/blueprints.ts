@@ -26,7 +26,7 @@ function findInvalidReferences(
   }
 
   for (const toolSetId of [...blueprint.coreTools, ...blueprint.lazyLoadedTools]) {
-    if (!ToolRegistry.instance.getToolSetClass(toolSetId) && !allowedUnavailableTools.has(toolSetId)) {
+    if (!ToolRegistry.instance.hasToolSet(toolSetId) && !allowedUnavailableTools.has(toolSetId)) {
       errors.push(`Tool set with id ${toolSetId} is not available.`);
     }
   }

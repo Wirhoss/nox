@@ -42,12 +42,15 @@ type ToolSetClass<
   TArguments extends unknown[] = [],
 > = new (...args: TArguments) => T;
 
+type ToolSetFactory<T extends ToolSet = ToolSet> = () => T;
+
 export type {
   DeferredTool,
   ImmediateTool,
   Tool,
   ToolContext,
   ToolSetClass,
+  ToolSetFactory,
 };
 
 export {

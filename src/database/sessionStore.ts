@@ -17,6 +17,23 @@ type RunSummary = {
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
 };
 
+type RunListItem = RunSummary & {
+  blueprintId: string;
+  sessionId: string;
+};
+
+type SessionListItem = SessionRecord & {
+  latestRun: RunSummary | null;
+  runCount: number;
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+};
+
+type StoredMessage = {
+  createdAt: Date;
+  message: Message;
+  position: number;
+};
+
 type StoredActivity = {
   cursor: number;
   event: Exclude<GatewayEvent, { type: 'assistantReasoningFragment' | 'assistantTextFragment' }>;
@@ -51,6 +68,57 @@ class SessionStore {
       .all();
   }
 
+  public listSessionsWithStats(blueprintId?: string): SessionListItem[] {
+    const sessions = this.listSessions(blueprintId);
+    const runs = this.database
+      .select()
+      .from(runTable)
+      .orderBy(desc(runTable.startedAt))
+      .all();
+    const stats = new Map<string, {
+      latestRun: RunSummary;
+      runCount: number;
+      usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+    }>();
+
+    for (const run of runs) {
+      const existing = stats.get(run.sessionId);
+      const usage = {
+        inputTokens: run.inputTokens + (existing?.usage.inputTokens ?? 0),
+        outputTokens: run.outputTokens + (existing?.usage.outputTokens ?? 0),
+        cacheReadTokens: run.cacheReadTokens + (existing?.usage.cacheReadTokens ?? 0),
+      };
+      const summary: RunSummary = {
+        runId: run.runId,
+        modelId: run.modelId,
+        status: run.status,
+        startedAt: run.startedAt,
+        completedAt: run.completedAt,
+        durationMs: run.durationMs,
+        usage: {
+          inputTokens: run.inputTokens,
+          outputTokens: run.outputTokens,
+          cacheReadTokens: run.cacheReadTokens,
+        },
+      };
+      stats.set(run.sessionId, {
+        latestRun: existing?.latestRun ?? summary,
+        runCount: (existing?.runCount ?? 0) + 1,
+        usage,
+      });
+    }
+
+    return sessions.map((session) => {
+      const sessionStats = stats.get(session.sessionId);
+      return {
+        ...session,
+        latestRun: sessionStats?.latestRun ?? null,
+        runCount: sessionStats?.runCount ?? 0,
+        usage: sessionStats?.usage ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
+      };
+    });
+  }
+
   public deleteSession(sessionId: string): boolean {
     this.database
       .delete(messageTable)
@@ -64,8 +132,16 @@ class SessionStore {
   }
 
   public getMessages(sessionId: string): Message[] {
+    return this.getMessageEntries(sessionId).map((entry) => entry.message);
+  }
+
+  public getMessageEntries(sessionId: string): StoredMessage[] {
     return this.database
-      .select({ payload: messageTable.payload })
+      .select({
+        createdAt: messageTable.createdAt,
+        payload: messageTable.payload,
+        position: messageTable.position,
+      })
       .from(messageTable)
       .where(eq(messageTable.sessionId, sessionId))
       .orderBy(messageTable.position)
@@ -75,7 +151,7 @@ class SessionStore {
         if (message.role === 'toolResponse' && message.execution === undefined) {
           message.execution = 'immediate';
         }
-        return message;
+        return { createdAt: row.createdAt, message, position: row.position };
       });
   }
 
@@ -186,6 +262,59 @@ class SessionStore {
     };
   }
 
+  public listRuns(options: {
+    blueprintId?: string;
+    limit?: number;
+    offset?: number;
+    sessionId?: string;
+    status?: RunSummary['status'];
+  } = {}): RunListItem[] {
+    const { blueprintId, limit = 50, offset = 0, sessionId, status } = options;
+    const filters = [
+      blueprintId === undefined ? undefined : eq(sessionTable.blueprintId, blueprintId),
+      sessionId === undefined ? undefined : eq(runTable.sessionId, sessionId),
+      status === undefined ? undefined : eq(runTable.status, status),
+    ].filter((filter) => filter !== undefined);
+    const where = filters.length === 0 ? undefined : and(...filters);
+
+    return this.database
+      .select({
+        blueprintId: sessionTable.blueprintId,
+        cacheReadTokens: runTable.cacheReadTokens,
+        completedAt: runTable.completedAt,
+        durationMs: runTable.durationMs,
+        inputTokens: runTable.inputTokens,
+        modelId: runTable.modelId,
+        outputTokens: runTable.outputTokens,
+        runId: runTable.runId,
+        sessionId: runTable.sessionId,
+        startedAt: runTable.startedAt,
+        status: runTable.status,
+      })
+      .from(runTable)
+      .innerJoin(sessionTable, eq(runTable.sessionId, sessionTable.sessionId))
+      .where(where)
+      .orderBy(desc(runTable.startedAt))
+      .limit(limit)
+      .offset(offset)
+      .all()
+      .map((record) => ({
+        blueprintId: record.blueprintId,
+        sessionId: record.sessionId,
+        runId: record.runId,
+        modelId: record.modelId,
+        status: record.status,
+        startedAt: record.startedAt,
+        completedAt: record.completedAt,
+        durationMs: record.durationMs,
+        usage: {
+          inputTokens: record.inputTokens,
+          outputTokens: record.outputTokens,
+          cacheReadTokens: record.cacheReadTokens,
+        },
+      }));
+  }
+
   public getRecentActivities(sessionId: string, limit = 50): StoredActivity[] {
     return this.database.select().from(sessionEventTable)
       .where(eq(sessionEventTable.sessionId, sessionId))
@@ -220,6 +349,9 @@ export {
 };
 
 export type {
+  RunListItem,
   RunSummary,
+  SessionListItem,
   StoredActivity,
+  StoredMessage,
 };

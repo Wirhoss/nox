@@ -1,6 +1,8 @@
 import pino from 'pino';
 import pretty from 'pino-pretty';
 
+import { StructuredLogStore } from './logStore';
+
 import type { Logger } from 'pino';
 
 const LEVEL_BADGES: Record<string, string> = {
@@ -40,10 +42,23 @@ const prettyStream = pretty({
   },
 });
 
-const logger: Logger = process.env.NODE_ENV !== 'production'
-  ? pino({ level: process.env.LOG_LEVEL ?? 'info' }, prettyStream)
-  : pino({ level: process.env.LOG_LEVEL ?? 'info' });
+const logLevel = process.env.LOG_LEVEL ?? 'info';
+const logStore = new StructuredLogStore();
+const consoleStream = process.env.NODE_ENV !== 'production' ? prettyStream : process.stdout;
+const logger: Logger = pino(
+  { level: logLevel },
+  pino.multistream([
+    { level: logLevel, stream: consoleStream },
+    { level: logLevel, stream: logStore },
+  ]),
+);
 
 export const createLogger = (module: string): Logger => logger.child({ module });
+
+export {
+  logStore,
+};
+
+export type { LogEntry, LogLevel, LogQueryResult } from './logStore';
 
 export default logger;

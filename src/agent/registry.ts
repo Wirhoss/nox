@@ -11,7 +11,7 @@ import { ToolRegistry } from '../tool/registry';
 import { Context } from './context';
 import { AgentSession } from './session';
 
-import type { NoxDatabase, RunSummary, SessionRecord, StoredActivity } from '../database';
+import type { NoxDatabase, RunListItem, RunSummary, RunStatus, SessionListItem, SessionRecord, StoredActivity, StoredMessage } from '../database';
 import type { GateConfig } from '../gate';
 import type { GatewayEvent } from '../gateway';
 import type { Message } from '../provider';
@@ -171,17 +171,33 @@ class AgentRegistry {
     return this.requireStore().listSessions(blueprintId);
   }
 
+  public listSessionsWithStats(blueprintId?: string): SessionListItem[] {
+    return this.requireStore().listSessionsWithStats(blueprintId);
+  }
+
   public getSessionRecord(sessionId: string): SessionRecord | null {
     return this.requireStore().getSession(sessionId);
   }
 
-  public getSessionSnapshot(sessionId: string): {
+  public listRuns(options: {
+    blueprintId?: string;
+    limit?: number;
+    offset?: number;
+    sessionId?: string;
+    status?: RunStatus;
+  }): RunListItem[] {
+    return this.requireStore().listRuns(options);
+  }
+
+  public getSessionSnapshot(sessionId: string, activityLimit = 50): {
     activityCount: number;
     eventCursor: number;
     isRunning: boolean;
     latestRun: RunSummary | null;
+    messageEntries: StoredMessage[];
     messages: readonly Message[];
     recentActivities: StoredActivity[];
+    runs: RunListItem[];
     session: SessionRecord;
   } {
     const record = this.requireStore().getSession(sessionId);
@@ -190,13 +206,16 @@ class AgentRegistry {
     }
     const activeSession = this.sessions.get(sessionId);
     const store = this.requireStore();
+    const messageEntries = store.getMessageEntries(sessionId);
     return {
       activityCount: store.getActivityCount(sessionId),
       eventCursor: activeSession?.eventCursor ?? 0,
       isRunning: activeSession?.isRunning ?? false,
       latestRun: store.getLatestRun(sessionId),
-      messages: store.getMessages(sessionId),
-      recentActivities: store.getRecentActivities(sessionId),
+      messageEntries,
+      messages: messageEntries.map((entry) => entry.message),
+      recentActivities: store.getRecentActivities(sessionId, activityLimit),
+      runs: store.listRuns({ sessionId, limit: 500 }),
       session: record,
     };
   }
@@ -239,12 +258,12 @@ class AgentRegistry {
   private createToolSets(blueprintId: string, toolSetIds: string[]): ToolSet[] {
     const toolSets: ToolSet[] = [];
     for (const toolSetId of toolSetIds) {
-      const ToolSetClass = ToolRegistry.instance.getToolSetClass(toolSetId);
-      if (!ToolSetClass) {
+      const toolSet = ToolRegistry.instance.createToolSet(toolSetId);
+      if (!toolSet) {
         logger.warn({ blueprintId, toolSetId }, 'Tool set not found for agent blueprint, dropping it.');
         continue;
       }
-      toolSets.push(new ToolSetClass());
+      toolSets.push(toolSet);
     }
     return toolSets;
   }

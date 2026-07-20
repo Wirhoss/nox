@@ -61,6 +61,50 @@ describe('SessionStore', () => {
     closeDatabase(database);
   });
 
+  test('lists runs newest first and filters by status and blueprint', () => {
+    const { database, store } = setup();
+    store.insertSession({ sessionId: 's2', blueprintId: 'b2', systemPrompt: 'sys' });
+    store.recordEvent('s1', { type: 'runStarted', runId: 'r1', modelId: 'model-1', startedAt: '2026-07-20T10:00:00.000Z' });
+    store.recordEvent('s1', {
+      type: 'runCompleted',
+      runId: 'r1',
+      status: 'completed',
+      durationMs: 900,
+      usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2 },
+    });
+    store.recordEvent('s2', { type: 'runStarted', runId: 'r2', modelId: 'model-2', startedAt: '2026-07-20T11:00:00.000Z' });
+
+    expect(store.listRuns().map((run) => run.runId)).toEqual(['r2', 'r1']);
+    expect(store.listRuns({ status: 'running' })).toMatchObject([{
+      blueprintId: 'b2',
+      runId: 'r2',
+      sessionId: 's2',
+      status: 'running',
+    }]);
+    expect(store.listRuns({ blueprintId: 'b1' })).toMatchObject([{
+      blueprintId: 'b1',
+      runId: 'r1',
+      usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2 },
+    }]);
+    expect(store.listRuns({ sessionId: 's2' }).map((run) => run.runId)).toEqual(['r2']);
+
+    expect(store.listSessionsWithStats()).toMatchObject([
+      {
+        sessionId: 's1',
+        runCount: 1,
+        latestRun: { runId: 'r1', status: 'completed' },
+        usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2 },
+      },
+      {
+        sessionId: 's2',
+        runCount: 1,
+        latestRun: { runId: 'r2', status: 'running' },
+      },
+    ]);
+
+    closeDatabase(database);
+  });
+
   test('execution round-trips through payload and is queryable in SQL', () => {
     const { database, store } = setup();
     const messages: Message[] = [
@@ -72,6 +116,11 @@ describe('SessionStore', () => {
     messages.forEach((message, position) => store.saveMessage('s1', position, message));
 
     expect(store.getMessages('s1')).toEqual(messages);
+    expect(store.getMessageEntries('s1').map((entry) => ({
+      message: entry.message,
+      position: entry.position,
+      timestamped: entry.createdAt instanceof Date,
+    }))).toEqual(messages.map((message, position) => ({ message, position, timestamped: true })));
 
     const rows = database.$client
       .query('SELECT execution FROM message ORDER BY position')
