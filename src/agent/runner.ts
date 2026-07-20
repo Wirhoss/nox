@@ -11,6 +11,7 @@ import type {
   Usage,
   UserMessage,
 } from '../provider';
+import type { ToolContext } from '../tool';
 import type { Context } from './context';
 
 enum RunnerState {
@@ -88,14 +89,19 @@ class Runner {
           text: `Tool ${toolCall.name} not found.`,
         });
         toolResponse.isError = true;
+      } else if (tool.type === 'deferred') {
+        // TODO: Handle async tool calls properly, including acknowledging the call and waiting for the result.
+        toolResponse.response.push({
+          type: 'text',
+          text: `Tool ${toolCall.name} is deferred; deferred tools are not supported yet.`,
+        });
+        toolResponse.isError = true;
       } else {
         const parsedArguments = tool.parameters.parse(toolCall.arguments);
-        let response: MessageContent[] = [];
-        if (tool.type === 'immediate') {
-          response = await tool.call(parsedArguments);
-        } else if (tool.type === 'deferred') {
-          // TODO: Handle async tool calls properly, including acknowledging the call and waiting for the result.
-        }
+        const ctx: ToolContext = {
+          abortSignal: this.abortController?.signal ?? new AbortController().signal,
+        };
+        const response: MessageContent[] = await tool.call(parsedArguments, ctx);
         toolResponse.response = response ?? [];
         toolResponse.isError = false;
       }
@@ -115,16 +121,18 @@ class Runner {
 
   private async commitAssistantMessage(messages: Message[], usage?: Usage): Promise<Message[]> {
     for (const message of messages) {
-      this.eventLog.push({
-        type: 'message',
-        message: message,
-      });
+      if (message.role !== 'toolCall') {
+        this.eventLog.push({
+          type: 'message',
+          message: message,
+        });
+      }
       this.context.addMessage(message);
     }
     if (usage) {
-      this.context.inputTokens = usage.inputTokens;
-      this.context.outputTokens = (this.context.outputTokens ?? 0) + usage.outputTokens;
-      this.context.cacheReadTokens = usage.cacheReadTokens ?? 0;
+      this.context.inputTokens += usage.inputTokens;
+      this.context.outputTokens += usage.outputTokens;
+      this.context.cacheReadTokens += usage.cacheReadTokens ?? 0;
     }
     return messages;
   }
@@ -136,6 +144,7 @@ class Runner {
     for (let i = 0; i < this.maxIterations; i++) {
       const stream = this.getMessageStream();
       const toolCalls: Promise<ToolResponseMessage>[] = [];
+      let streamError: Error | undefined;
       for await (const event of stream) {
         if (event.type === 'textFragment') {
           this.handleText(event.text);
@@ -143,17 +152,19 @@ class Runner {
           toolCalls.push(this.handleToolCall(event.toolCall));
         } else if (event.type === 'end') {
           await this.commitAssistantMessage(event.messages, event.usage);
+        } else if (event.type === 'error') {
+          streamError = event.error;
         }
       }
+      if (streamError) throw streamError;
 
       const toolResponses = await Promise.all(toolCalls);
-
-      if (this.abortController?.signal.aborted) return StopReason.Aborted;
-      if (toolResponses.length === 0) return StopReason.Completed;
 
       for (const toolResponse of toolResponses) {
         this.context.addMessage(toolResponse);
       }
+      if (this.abortController?.signal.aborted) return StopReason.Aborted;
+      if (toolResponses.length === 0) return StopReason.Completed;
     }
     this.context.addMessage({
       role: 'user',
@@ -187,7 +198,7 @@ class Runner {
         type: 'error',
         error: parsedError,
       });
-      throw new Error(`Error in agent run loop: ${parsedError.message}`);
+      throw new Error(`Error in agent run loop: ${parsedError.message}`, { cause: error });
     } finally {
       this.state = RunnerState.Idle;
       this.abortController = undefined;
@@ -205,8 +216,8 @@ class Runner {
   }
 
   public async stop(): Promise<void> {
-    if (this.state === RunnerState.Idle) {
-      return Promise.resolve();
+    if (this.state === RunnerState.Stopped) {
+      return;
     }
     this.abortController?.abort();
     await this.idlePromise;
@@ -216,7 +227,8 @@ class Runner {
 }
 
 export {
-  Runner
+  Runner,
+  StopReason
 };
 
 export type {

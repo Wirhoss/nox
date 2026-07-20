@@ -12,10 +12,13 @@ class Context {
 
   public tools: Record<string, Tool> = {};
 
+  public readonly sessionId?: string;
+
   private checkpointIndex?: number;
 
   constructor(systemPrompt: string, sessionId?: string) {
     this.systemPrompt = systemPrompt;
+    this.sessionId = sessionId;
     this.messageHistory = [];
     this.fullMessageHistory = [];
   }

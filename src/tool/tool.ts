@@ -13,7 +13,7 @@ interface ToolBase<T extends z.ZodObject = z.ZodObject> {
 
 interface ImmediateTool<T extends z.ZodObject = z.ZodObject> extends ToolBase<T> {
   type: 'immediate';
-  call: (params: z.infer<T>) => Promise<MessageContent[]>;
+  call: (params: z.infer<T>, ctx: ToolContext) => Promise<MessageContent[]>;
 }
 
 interface DeferredTool<T extends z.ZodObject = z.ZodObject> extends ToolBase<T> {
@@ -40,6 +40,7 @@ export type {
   DeferredTool,
   ImmediateTool,
   Tool,
+  ToolContext,
   ToolSetClass,
 };
 

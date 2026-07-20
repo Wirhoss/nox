@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { BM25 } from '../../../utils';
-import { ToolSet, type ImmediateTool, type Tool } from '../../tool';
+import { ToolSet, type ImmediateTool, type Tool, type ToolContext } from '../../tool';
 
 import { asTextToolResponse, renderTool } from './utils';
 
@@ -66,9 +66,9 @@ class ToolRouter extends ToolSet {
         'Call a tool returned by search_tool. The params field MUST be a normal JSON object ' +
         'whose values directly match the tool schema. Never wrap values inside another object.',
       parameters: callToolSchema,
-      call: async (_params) => {
+      call: async (_params, ctx) => {
         const { name, params } = _params;
-        return this.callTool(name, params);
+        return this.callTool(name, params, ctx);
       }
     };
 
@@ -97,7 +97,7 @@ class ToolRouter extends ToolSet {
     return toolsFound;
   }
 
-  public callTool(name: string, params: string): Promise<MessageContent[]> {
+  public callTool(name: string, params: string, ctx?: ToolContext): Promise<MessageContent[]> {
     params = JSON.parse(params);
     const tool = this.registeredToolsMap.get(name);
     if (!tool) {
@@ -112,7 +112,7 @@ class ToolRouter extends ToolSet {
       );
     }
     if (tool.type === 'immediate') {
-      return tool.call(parsed.data);
+      return tool.call(parsed.data, ctx ?? { abortSignal: new AbortController().signal });
     } else { // TODO: handle async tools
       throw new Error(`Async tool with name ${name} cannot be called directly.`);
     }
