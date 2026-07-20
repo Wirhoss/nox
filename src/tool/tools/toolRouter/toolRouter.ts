@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 import { BM25 } from '../../../utils';
 import { ToolSet, type ImmediateTool, type Tool } from '../../tool';
+
 import { asTextToolResponse, renderTool } from './utils';
+
 import type { MessageContent } from '../../../provider';
 
 // NOTE, when we create the documentation we need to leave it clear that using this router does not work with all models the model needs to be trained with flexible tool calling, gemma 4 worked qwen 3.6 is broken
