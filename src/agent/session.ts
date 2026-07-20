@@ -15,10 +15,11 @@ interface AgentConfig {
   provider: ChatProvider;
   gate?: ToolGate;
   escalationTimeoutMs?: number;
+  onEvent?: (event: AgentStreamEvent, cursor: number) => void;
 }
 
 class AgentSession {
-  private readonly eventLog = new EventLog<AgentStreamEvent>();
+  private readonly eventLog: EventLog<AgentStreamEvent>;
   private readonly escalation = new EscalationHub();
 
   private agentConfig: AgentConfig;
@@ -28,6 +29,7 @@ class AgentSession {
   constructor(context: Context, agentConfig: AgentConfig) {
     this.context = context;
     this.agentConfig = agentConfig;
+    this.eventLog = new EventLog(agentConfig.onEvent);
     this.runner = new Runner(
       context,
       this.eventLog,

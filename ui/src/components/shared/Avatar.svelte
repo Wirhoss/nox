@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Avatar, Style } from "@dicebear/core";
 	import botttsNeutralDefinition from "@dicebear/styles/bottts-neutral.json";
-	import personasDefinition from "@dicebear/styles/personas.json";
+	import pixelArtNeutralDefinition from "@dicebear/styles/pixel-art-neutral.json";
 
 	export let seed: string;
 	export let kind: "blueprint" | "user" = "blueprint";
@@ -10,7 +10,7 @@
 	export let decorative = false;
 
 	const blueprintStyle = new Style(botttsNeutralDefinition);
-	const userStyle = new Style(personasDefinition);
+	const userStyle = new Style(pixelArtNeutralDefinition);
 
 	$: source = new Avatar(kind === "blueprint" ? blueprintStyle : userStyle, {
 		seed,

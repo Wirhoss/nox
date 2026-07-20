@@ -1,0 +1,211 @@
+/*
+ * The library-and-editor shell shared by the blueprint and provider
+ * workbenches: a searchable list view, and a three-column editor
+ * (section nav | form | validation).
+ *
+ * These were previously named `blueprint-*` even though the provider
+ * workbench uses them too; they are now `workbench-*`.
+ */
+
+/* ----------------------------------------------------------- library view */
+
+.workbench-heading { align-items: center; }
+
+.library-toolbar {
+	display: flex;
+	min-height: 55px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 9px 12px;
+	background: var(--surface-1);
+	border: 1px solid var(--border);
+	border-bottom: 0;
+	border-radius: 8px 8px 0 0;
+}
+.library-search {
+	display: flex;
+	width: min(390px, 65%);
+	height: 34px;
+	align-items: center;
+	gap: 8px;
+	padding: 0 10px;
+	background: var(--canvas);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--muted);
+}
+.library-search:focus-within {
+	border-color: #5a523e;
+	box-shadow: 0 0 0 2px rgb(208 164 92 / 8%);
+}
+.library-search svg {
+	width: 15px;
+	height: 15px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.7;
+}
+.library-search input {
+	width: 100%;
+	background: transparent;
+	border: 0;
+	outline: 0;
+	color: var(--text);
+	font-size: 12px;
+}
+.library-search input::placeholder { color: var(--muted); }
+.library-count {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 10px;
+}
+
+/* ------------------------------------------------------------ editor shell */
+
+.workbench-editor { margin: -6px 0 0; }
+
+.editor-titlebar {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 24px;
+	margin-bottom: 22px;
+}
+.back-link {
+	display: inline-block;
+	margin-bottom: 12px;
+	color: var(--muted);
+	font-size: 11px;
+}
+.back-link:hover { color: var(--text); }
+.editor-title {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.editor-title h1 {
+	margin: 2px 0 0;
+	font-size: 24px;
+	font-weight: 570;
+	letter-spacing: -.025em;
+}
+.editor-mark {
+	display: grid;
+	width: 39px;
+	height: 39px;
+	flex: 0 0 auto;
+	place-items: center;
+	background: var(--accent-soft);
+	border: 1px solid rgb(208 164 92 / 18%);
+	border-radius: 7px;
+	color: var(--accent-strong);
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: .03em;
+}
+.editor-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding-bottom: 2px;
+}
+
+.editor-grid {
+	display: grid;
+	grid-template-columns: 170px minmax(430px, 1fr) 230px;
+	align-items: start;
+	background: var(--surface-1);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+.editor-grid.editor-loading {
+	opacity: .62;
+	pointer-events: none;
+}
+
+.editor-sections {
+	position: sticky;
+	top: calc(var(--topbar-height) + 20px);
+	display: flex;
+	align-self: start;
+	flex-direction: column;
+	padding: 19px 12px;
+}
+.editor-nav-label {
+	margin: 0 8px 9px;
+	color: var(--muted);
+	font-size: 9px;
+	font-weight: 650;
+	letter-spacing: .09em;
+	text-transform: uppercase;
+}
+.editor-sections a {
+	display: flex;
+	height: 34px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 9px;
+	border-radius: 5px;
+	color: var(--muted);
+	font-size: 11px;
+}
+.editor-sections a:hover {
+	background: var(--surface-2);
+	color: var(--text);
+}
+.editor-sections a.active {
+	background: var(--accent-soft);
+	color: #ddbe82;
+}
+.editor-sections a span {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 9px;
+}
+
+.editor-form {
+	min-width: 0;
+	border-right: 1px solid var(--border);
+	border-left: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------------- breakpoints */
+
+@media (max-width: 1120px) {
+	.editor-grid { grid-template-columns: 145px minmax(430px, 1fr); }
+}
+
+@media (max-width: 900px) {
+	.editor-grid { grid-template-columns: 1fr; }
+	/* Section nav becomes a horizontal scroller above the form. */
+	.editor-sections {
+		position: static;
+		flex-direction: row;
+		gap: 3px;
+		overflow-x: auto;
+		padding: 9px;
+		border-bottom: 1px solid var(--border);
+	}
+	.editor-sections a { flex: 0 0 auto; }
+	.editor-nav-label { display: none; }
+	.editor-form { border: 0; }
+}
+
+@media (max-width: 620px) {
+	.workbench-heading { gap: 16px; }
+	.workbench-heading .button { width: 100%; }
+	.library-search { width: calc(100% - 52px); }
+	.editor-titlebar {
+		align-items: stretch;
+		flex-direction: column;
+	}
+	.editor-actions {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+	}
+	.editor-actions .button { width: 100%; }
+	.editor-actions .danger-outline {
+		grid-column: 1 / -1;
+		grid-row: 2;
+	}
+}

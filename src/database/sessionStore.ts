@@ -1,10 +1,27 @@
-import { and, desc, eq, gte } from 'drizzle-orm';
+import { and, count, desc, eq, gte } from 'drizzle-orm';
 
-import { messageTable, sessionTable } from './schema';
+import { messageTable, runTable, sessionEventTable, sessionTable } from './schema';
 
+import type { GatewayEvent } from '../gateway/events';
 import type { Message } from '../provider';
 import type { NoxDatabase } from './database';
 import type { NewSessionRecord, SessionRecord } from './schema';
+
+type RunSummary = {
+  runId: string;
+  modelId: string | null;
+  status: 'running' | 'completed' | 'aborted' | 'maxIterations' | 'failed';
+  startedAt: Date;
+  completedAt: Date | null;
+  durationMs: number | null;
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+};
+
+type StoredActivity = {
+  cursor: number;
+  event: Exclude<GatewayEvent, { type: 'assistantTextFragment' }>;
+  receivedAt: Date;
+};
 
 class SessionStore {
   private database: NoxDatabase;
@@ -86,6 +103,109 @@ class SessionStore {
     this.touchSession(sessionId);
   }
 
+  public recordEvent(sessionId: string, event: GatewayEvent): void {
+    if (event.type === 'assistantTextFragment') {
+      return;
+    }
+    this.database.insert(sessionEventTable).values({
+      sessionId,
+      type: event.type,
+      payload: event,
+    }).run();
+
+    if (event.type === 'runStarted') {
+      this.database.insert(runTable).values({
+        runId: event.runId,
+        sessionId,
+        modelId: event.modelId,
+        status: 'running',
+        startedAt: new Date(event.startedAt),
+      }).onConflictDoUpdate({
+        target: runTable.runId,
+        set: {
+          modelId: event.modelId,
+          status: 'running',
+          startedAt: new Date(event.startedAt),
+          completedAt: null,
+          durationMs: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+        },
+      }).run();
+      return;
+    }
+
+    if (event.type === 'runCompleted') {
+      const completedAt = new Date();
+      const result = this.database.update(runTable).set({
+        status: event.status,
+        completedAt,
+        durationMs: event.durationMs,
+        inputTokens: event.usage.inputTokens,
+        outputTokens: event.usage.outputTokens,
+        cacheReadTokens: event.usage.cacheReadTokens,
+      }).where(eq(runTable.runId, event.runId)).run();
+      if (result.changes === 0) {
+        this.database.insert(runTable).values({
+          runId: event.runId,
+          sessionId,
+          status: event.status,
+          startedAt: new Date(completedAt.getTime() - event.durationMs),
+          completedAt,
+          durationMs: event.durationMs,
+          inputTokens: event.usage.inputTokens,
+          outputTokens: event.usage.outputTokens,
+          cacheReadTokens: event.usage.cacheReadTokens,
+        }).run();
+      }
+    }
+  }
+
+  public getLatestRun(sessionId: string): RunSummary | null {
+    const record = this.database.select().from(runTable)
+      .where(eq(runTable.sessionId, sessionId))
+      .orderBy(desc(runTable.startedAt))
+      .limit(1)
+      .get();
+    if (!record) {
+      return null;
+    }
+    return {
+      runId: record.runId,
+      modelId: record.modelId,
+      status: record.status,
+      startedAt: record.startedAt,
+      completedAt: record.completedAt,
+      durationMs: record.durationMs,
+      usage: {
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+        cacheReadTokens: record.cacheReadTokens,
+      },
+    };
+  }
+
+  public getRecentActivities(sessionId: string, limit = 50): StoredActivity[] {
+    return this.database.select().from(sessionEventTable)
+      .where(eq(sessionEventTable.sessionId, sessionId))
+      .orderBy(desc(sessionEventTable.id))
+      .limit(limit)
+      .all()
+      .reverse()
+      .map((record) => ({
+        cursor: record.id,
+        event: record.payload as Exclude<GatewayEvent, { type: 'assistantTextFragment' }>,
+        receivedAt: record.createdAt,
+      }));
+  }
+
+  public getActivityCount(sessionId: string): number {
+    return this.database.select({ value: count() }).from(sessionEventTable)
+      .where(eq(sessionEventTable.sessionId, sessionId))
+      .get()?.value ?? 0;
+  }
+
   private touchSession(sessionId: string): void {
     this.database
       .update(sessionTable)
@@ -97,4 +217,9 @@ class SessionStore {
 
 export {
   SessionStore,
+};
+
+export type {
+  RunSummary,
+  StoredActivity,
 };

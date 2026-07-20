@@ -11,10 +11,12 @@ import { ToolRegistry } from '../tool/registry';
 import { Context } from './context';
 import { AgentSession } from './session';
 
-import type { NoxDatabase, SessionRecord } from '../database';
+import type { NoxDatabase, RunSummary, SessionRecord, StoredActivity } from '../database';
 import type { GateConfig } from '../gate';
+import type { GatewayEvent } from '../gateway';
 import type { Message } from '../provider';
 import type { ToolSet } from '../tool';
+import type { AgentStreamEvent } from './runner';
 
 const logger = createLogger('agent');
 
@@ -94,7 +96,7 @@ class AgentRegistry {
     }
     const sessionId = nanoid();
     const context = new Context(blueprint.systemPrompt, sessionId);
-    const session = this.buildSession(context, blueprint);
+    const session = this.buildSession(context, blueprint, sessionId);
     store.insertSession({
       sessionId,
       blueprintId: blueprint.id,
@@ -123,7 +125,7 @@ class AgentRegistry {
     for (const message of store.getMessages(sessionId)) {
       context.addMessage(message);
     }
-    const session = this.buildSession(context, blueprint);
+    const session = this.buildSession(context, blueprint, sessionId);
     this.attachPersistence(sessionId, context);
     this.sessions.set(sessionId, session);
     return session;
@@ -174,17 +176,27 @@ class AgentRegistry {
   }
 
   public getSessionSnapshot(sessionId: string): {
+    activityCount: number;
     eventCursor: number;
+    isRunning: boolean;
+    latestRun: RunSummary | null;
     messages: readonly Message[];
+    recentActivities: StoredActivity[];
     session: SessionRecord;
   } {
     const record = this.requireStore().getSession(sessionId);
     if (!record) {
       throw new NotFoundError(`Session with id ${sessionId} not found.`);
     }
+    const activeSession = this.sessions.get(sessionId);
+    const store = this.requireStore();
     return {
-      eventCursor: this.sessions.get(sessionId)?.eventCursor ?? 0,
-      messages: this.requireStore().getMessages(sessionId),
+      activityCount: store.getActivityCount(sessionId),
+      eventCursor: activeSession?.eventCursor ?? 0,
+      isRunning: activeSession?.isRunning ?? false,
+      latestRun: store.getLatestRun(sessionId),
+      messages: store.getMessages(sessionId),
+      recentActivities: store.getRecentActivities(sessionId),
       session: record,
     };
   }
@@ -237,7 +249,7 @@ class AgentRegistry {
     return toolSets;
   }
 
-  private buildSession(context: Context, blueprint: AgentBlueprint): AgentSession {
+  private buildSession(context: Context, blueprint: AgentBlueprint, sessionId: string): AgentSession {
     const coreToolSets = this.createToolSets(blueprint.id, blueprint.coreTools);
     const lazyLoadedToolSets = this.createToolSets(blueprint.id, blueprint.lazyLoadedTools);
     const RouterToolSetClass = ToolRegistry.instance.getRouterToolSetClass();
@@ -271,8 +283,22 @@ class AgentRegistry {
       provider,
       gate: new ToolGate(gateRules),
       escalationTimeoutMs: this.gateConfig.escalationTimeoutMs,
+      onEvent: (event) => {
+        try {
+          this.requireStore().recordEvent(sessionId, toGatewayEvent(event));
+        } catch (error) {
+          logger.error({ err: error, sessionId }, 'Failed to persist session event.');
+        }
+      },
     });
   }
+}
+
+function toGatewayEvent(event: AgentStreamEvent): GatewayEvent {
+  if (event.type === 'error') {
+    return { type: 'error', message: event.error.message };
+  }
+  return event;
 }
 
 export {

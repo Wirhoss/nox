@@ -56,3 +56,182 @@ const groups: NavGroup[] = [
 		</div>
 	</div>
 </aside>
+
+<style>
+	.sidebar {
+		position: fixed;
+		inset: 0 auto 0 0;
+		z-index: 30;
+		display: flex;
+		width: var(--sidebar-width);
+		flex-direction: column;
+		background: rgb(17 21 18 / 96%);
+		border-right: 1px solid var(--border);
+		backdrop-filter: blur(20px);
+	}
+
+	/* ------------------------------------------------------------- brand */
+
+	.brand-lockup {
+		display: flex;
+		height: var(--topbar-height);
+		align-items: center;
+		gap: 11px;
+		padding: 0 18px;
+		border-bottom: 1px solid var(--border);
+	}
+	.brand-mark {
+		position: relative;
+		display: grid;
+		width: 31px;
+		height: 31px;
+		place-items: center;
+		background: linear-gradient(145deg, #2b2a21, #191b18);
+		border: 1px solid #4c4230;
+		border-radius: 8px;
+		color: #e0b96f;
+		font-size: 13px;
+		font-weight: 700;
+	}
+	.brand-mark::after {
+		position: absolute;
+		inset: 4px;
+		border: 1px solid rgb(208 164 92 / 18%);
+		border-radius: 4px;
+		content: '';
+	}
+	.brand-mark span { z-index: 1; }
+	.brand-name {
+		font-size: 14px;
+		font-weight: 680;
+		letter-spacing: .02em;
+	}
+	.brand-subtitle {
+		margin-top: -1px;
+		color: var(--muted);
+		font-size: 11px;
+		letter-spacing: .035em;
+	}
+
+	/* -------------------------------------------------------- navigation */
+
+	.sidebar-nav {
+		flex: 1;
+		overflow-y: auto;
+		padding: 13px 10px;
+		scrollbar-width: thin;
+		scrollbar-color: var(--surface-3) transparent;
+	}
+	.nav-group + .nav-group { margin-top: 14px; }
+	.nav-label {
+		margin: 0 10px 5px;
+		color: #657069;
+		font-size: 10px;
+		font-weight: 650;
+		letter-spacing: .115em;
+		text-transform: uppercase;
+	}
+	.nav-item {
+		position: relative;
+		display: flex;
+		height: 34px;
+		align-items: center;
+		gap: 10px;
+		margin: 2px 0;
+		padding: 0 10px;
+		border: 1px solid transparent;
+		border-radius: 6px;
+		color: var(--secondary);
+		font-size: 13px;
+		font-weight: 500;
+	}
+	a.nav-item:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.nav-item.active {
+		background: var(--accent-soft);
+		border-color: rgb(208 164 92 / 12%);
+		color: #e8c989;
+	}
+	.nav-item.active::before {
+		position: absolute;
+		top: 8px;
+		bottom: 8px;
+		left: -1px;
+		width: 2px;
+		background: var(--accent);
+		border-radius: 2px;
+		content: '';
+	}
+	.nav-item svg { flex: 0 0 auto; }
+
+	/* Destinations that exist in the map but aren't built yet. */
+	.nav-item.planned {
+		cursor: default;
+		opacity: .72;
+	}
+	.planned-mark {
+		width: 4px;
+		height: 4px;
+		margin-left: auto;
+		background: var(--muted);
+		border-radius: 50%;
+		opacity: .5;
+	}
+
+	/* ------------------------------------------------------------ footer */
+
+	.sidebar-footer {
+		padding: 8px 10px 12px;
+		border-top: 1px solid var(--border);
+	}
+	.local-card {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 10px;
+		padding: 10px;
+		background: #131a15;
+		border: 1px solid #223027;
+		border-radius: 8px;
+	}
+	.local-card-icon {
+		display: grid;
+		width: 29px;
+		height: 29px;
+		place-items: center;
+		background: var(--healthy-soft);
+		border: 1px solid rgb(105 180 134 / 16%);
+		border-radius: 7px;
+	}
+	.local-card-icon span {
+		width: 7px;
+		height: 7px;
+		background: var(--healthy);
+		border-radius: 50%;
+		box-shadow: 0 0 0 3px rgb(105 180 134 / 10%);
+	}
+	.local-card strong,
+	.local-card span { display: block; }
+	.local-card strong {
+		font-size: 12px;
+		font-weight: 600;
+	}
+	.local-card span {
+		color: var(--muted);
+		font-size: 10px;
+	}
+
+	/* ------------------------------------------------------- breakpoints */
+
+	@media (max-width: 900px) {
+		/* Off-canvas. The open state lives on .app-shell in AppLayout, so the
+		   ancestor half of this selector is deliberately unscoped. */
+		.sidebar {
+			transform: translateX(-100%);
+			transition: transform 180ms ease;
+		}
+		:global(.app-shell[data-nav-visible]) .sidebar { transform: translateX(0); }
+	}
+</style>

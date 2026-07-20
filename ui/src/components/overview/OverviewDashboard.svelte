@@ -121,19 +121,19 @@
 	<div class="metric-grid" aria-label="Workbench inventory">
 		<div class="metric-card">
 			<div class="metric-icon amber"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" /></svg></div>
-			<div><span>Blueprints</span><strong>{loading ? '—' : snapshot.blueprints.length}</strong></div><span class="metric-note">Agent definitions</span>
+			<div class="metric-value"><span>Blueprints</span><strong>{loading ? '—' : snapshot.blueprints.length}</strong></div><span class="metric-note">Agent definitions</span>
 		</div>
 		<div class="metric-card">
 			<div class="metric-icon blue"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 2v4M16 2v4M6 6h12v5a6 6 0 0 1-12 0ZM12 17v5" /></svg></div>
-			<div><span>Providers</span><strong>{loading ? '—' : providerCount}</strong></div><span class="metric-note">Configured backends</span>
+			<div class="metric-value"><span>Providers</span><strong>{loading ? '—' : providerCount}</strong></div><span class="metric-note">Configured backends</span>
 		</div>
 		<div class="metric-card">
 			<div class="metric-icon green"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 9.6 6 7.3 3.7a4 4 0 0 0 5 5L4 17l3 3 8.3-8.3a4 4 0 0 0 5-5L18 9l-3-3Z" /></svg></div>
-			<div><span>Tool sets</span><strong>{loading ? '—' : snapshot.tools.length}</strong></div><span class="metric-note">Runtime capabilities</span>
+			<div class="metric-value"><span>Tool sets</span><strong>{loading ? '—' : snapshot.tools.length}</strong></div><span class="metric-note">Runtime capabilities</span>
 		</div>
 		<div class="metric-card">
 			<div class="metric-icon violet"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3v-7a4 4 0 0 1-1-2.65V7a4 4 0 0 1 4-4h11a4 4 0 0 1 4 4Z" /></svg></div>
-			<div><span>Sessions</span><strong>{loading ? '—' : snapshot.sessions.length}</strong></div><span class="metric-note">Stored locally</span>
+			<div class="metric-value"><span>Sessions</span><strong>{loading ? '—' : snapshot.sessions.length}</strong></div><span class="metric-note">Stored locally</span>
 		</div>
 	</div>
 
@@ -161,7 +161,7 @@
 		<section class="panel providers-panel">
 			<header class="panel-heading"><div><span class="panel-kicker">Execution</span><h2>Provider inventory</h2></div></header>
 			{#if !loading && providerCount > 0}
-				<div class="provider-list">{#each snapshot.providers as provider}<div class="provider-row"><div class="provider-logo">{provider.id.slice(0, 2).toUpperCase()}</div><div><strong>{provider.id}</strong><span>{provider.type.replaceAll('_', ' ')}</span></div><span class:inactive={provider.status === 'inactive'} class="origin-badge cloud">{provider.status}</span></div>{/each}</div>
+				<div class="provider-list">{#each snapshot.providers as provider}<div class="provider-row"><div class="provider-logo">{provider.id.slice(0, 2).toUpperCase()}</div><div class="provider-copy"><strong>{provider.id}</strong><span>{provider.type.replaceAll('_', ' ')}</span></div><span class:inactive={provider.status === 'inactive'} class="origin-badge cloud">{provider.status}</span></div>{/each}</div>
 			{:else if !loading}
 				<div class="empty-state compact"><div class="empty-provider">+</div><strong>No provider configured</strong><p>Add a model backend before creating runnable sessions.</p></div>
 			{/if}
@@ -174,3 +174,517 @@
 		</section>
 	</div>
 </section>
+
+<style>
+	/* ------------------------------------------------------- system strip */
+
+	.system-strip {
+		display: flex;
+		min-height: 70px;
+		align-items: center;
+		justify-content: space-between;
+		gap: 20px;
+		padding: 13px 16px;
+		background: linear-gradient(110deg, #141c16, var(--surface-raised));
+		border: 1px solid #27372c;
+		border-radius: 8px;
+	}
+	.system-strip.offline {
+		background: linear-gradient(110deg, #1c1413, #151211);
+		border-color: #3b2523;
+	}
+	.system-primary {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.system-primary strong,
+	.system-primary span { display: block; }
+	.system-primary strong {
+		font-size: 13px;
+		font-weight: 620;
+	}
+	.system-primary span:not(.status-orb) {
+		margin-top: 2px;
+		color: var(--muted);
+		font-size: 11px;
+	}
+	.status-orb {
+		width: 9px;
+		height: 9px;
+		background: var(--danger);
+		border-radius: 50%;
+		box-shadow: 0 0 0 5px rgb(216 120 114 / 8%);
+	}
+	.status-orb.healthy {
+		background: var(--healthy);
+		box-shadow: 0 0 0 5px rgb(105 180 134 / 9%);
+	}
+	.system-facts {
+		display: flex;
+		align-items: center;
+		color: var(--muted);
+		font-size: 11px;
+	}
+	.system-facts span {
+		padding: 0 16px;
+		border-left: 1px solid var(--border);
+	}
+	.system-facts strong {
+		margin-right: 3px;
+		color: var(--text);
+		font-family: var(--font-mono-explicit);
+		font-size: 12px;
+		font-weight: 550;
+	}
+
+	.inline-notice {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		margin-top: 10px;
+		padding: 8px 12px;
+		background: var(--accent-soft);
+		border: 1px solid rgb(208 164 92 / 15%);
+		border-radius: 6px;
+		color: #c9b184;
+		font-size: 11px;
+	}
+	.inline-notice > span {
+		display: grid;
+		width: 17px;
+		height: 17px;
+		place-items: center;
+		border: 1px solid rgb(208 164 92 / 35%);
+		border-radius: 50%;
+		font-size: 10px;
+		font-weight: 700;
+	}
+
+	/* ------------------------------------------------------- metric cards */
+
+	.metric-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 10px;
+		margin-top: 12px;
+	}
+	/* Icon spans both rows on the left; value and note stack on the right. */
+	.metric-card {
+		display: grid;
+		grid-template-columns: 38px 1fr;
+		grid-template-rows: auto auto;
+		column-gap: 11px;
+		min-height: 86px;
+		align-items: center;
+		padding: 13px 14px;
+		background: var(--surface-1);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+	}
+	.metric-value {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.metric-value span {
+		color: var(--secondary);
+		font-size: 12px;
+	}
+	.metric-value strong {
+		font-family: var(--font-mono-explicit);
+		font-size: 21px;
+		font-weight: 520;
+		letter-spacing: -.04em;
+	}
+	.metric-note {
+		align-self: start;
+		color: var(--muted);
+		font-size: 10px;
+	}
+	.metric-icon {
+		grid-row: 1 / 3;
+		display: grid;
+		width: 36px;
+		height: 36px;
+		place-items: center;
+		border: 1px solid;
+		border-radius: 7px;
+	}
+	.metric-icon svg {
+		width: 17px;
+		height: 17px;
+		fill: none;
+		stroke: currentColor;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+		stroke-width: 1.6;
+	}
+	.metric-icon.amber {
+		background: var(--accent-soft);
+		border-color: rgb(208 164 92 / 15%);
+		color: var(--accent);
+	}
+	.metric-icon.blue {
+		background: var(--cloud-soft);
+		border-color: rgb(118 162 206 / 15%);
+		color: var(--cloud);
+	}
+	.metric-icon.green {
+		background: var(--healthy-soft);
+		border-color: rgb(105 180 134 / 15%);
+		color: var(--healthy);
+	}
+	.metric-icon.violet {
+		background: #251d2b;
+		border-color: rgb(170 139 194 / 15%);
+		color: var(--violet);
+	}
+
+	/* ------------------------------------------------------------- panels */
+
+	.overview-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+		gap: 12px;
+		margin-top: 12px;
+	}
+	.panel {
+		min-width: 0;
+		background: var(--surface-1);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		overflow: hidden;
+	}
+	.panel-heading {
+		display: flex;
+		min-height: 67px;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 13px 16px;
+		border-bottom: 1px solid var(--border);
+	}
+	.panel-heading h2 {
+		margin: 0;
+		font-size: 14px;
+		font-weight: 590;
+		letter-spacing: -.01em;
+	}
+
+	.setup-count,
+	.subtle-count,
+	.planned-badge {
+		padding: 3px 7px;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		color: var(--muted);
+		font-family: var(--font-mono-explicit);
+		font-size: 9px;
+	}
+	.setup-count.complete {
+		background: var(--healthy-soft);
+		border-color: rgb(105 180 134 / 15%);
+		color: var(--healthy);
+	}
+
+	.setup-list,
+	.session-list,
+	.provider-list { padding: 6px 16px 9px; }
+
+	/* --------------------------------------------------------- setup list */
+
+	.setup-item {
+		display: grid;
+		grid-template-columns: 30px minmax(0, 1fr) auto;
+		min-height: 61px;
+		align-items: center;
+		gap: 10px;
+		border-bottom: 1px solid var(--border);
+	}
+	.setup-item:last-child,
+	.session-row:last-child,
+	.provider-row:last-child { border-bottom: 0; }
+	.setup-link { transition: background 120ms ease; }
+	.setup-link:hover { background: rgb(255 255 255 / 1.5%); }
+	.setup-link:hover .setup-state { color: var(--accent); }
+	.setup-check {
+		display: grid;
+		width: 26px;
+		height: 26px;
+		place-items: center;
+		background: var(--surface-2);
+		border: 1px solid var(--border-strong);
+		border-radius: 50%;
+		color: var(--secondary);
+		font-family: var(--font-mono);
+		font-size: 10px;
+	}
+	.setup-item.done .setup-check {
+		background: var(--healthy-soft);
+		border-color: rgb(105 180 134 / 20%);
+		color: var(--healthy);
+	}
+	.setup-item strong,
+	.setup-item span:not(.setup-state) { display: block; }
+	.setup-item strong {
+		font-size: 12px;
+		font-weight: 560;
+	}
+	.setup-item div > span {
+		margin-top: 2px;
+		color: var(--muted);
+		font-size: 10px;
+	}
+	.setup-state {
+		color: var(--muted);
+		font-size: 10px;
+	}
+	.setup-item.done .setup-state { color: var(--healthy); }
+
+	/* ----------------------------------------------- session/provider rows */
+
+	.session-row,
+	.provider-row {
+		display: flex;
+		min-height: 55px;
+		align-items: center;
+		gap: 10px;
+		border-bottom: 1px solid var(--border);
+	}
+	.provider-logo {
+		display: grid;
+		width: 29px;
+		height: 29px;
+		flex: 0 0 auto;
+		place-items: center;
+		background: var(--mark-bg);
+		border: 1px solid var(--mark-border);
+		border-radius: 6px;
+		color: #c7cec9;
+		font-size: 10px;
+		font-weight: 650;
+	}
+	.session-copy,
+	.provider-copy {
+		min-width: 0;
+		flex: 1;
+	}
+	.session-copy strong,
+	.session-copy span,
+	.provider-copy strong,
+	.provider-copy span { display: block; }
+	.session-copy strong,
+	.provider-copy strong {
+		overflow: hidden;
+		font-size: 11px;
+		font-weight: 570;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.session-copy span,
+	.provider-copy span {
+		margin-top: 2px;
+		color: var(--muted);
+		font-size: 10px;
+		text-transform: capitalize;
+	}
+	.session-copy code {
+		font-family: var(--font-mono);
+		font-size: 9px;
+	}
+
+	.origin-badge,
+	.planned-badge {
+		flex: 0 0 auto;
+		padding: 2px 6px;
+		background: var(--healthy-soft);
+		border: 1px solid rgb(105 180 134 / 13%);
+		border-radius: 4px;
+		color: #80b693;
+		font-family: var(--font-mono);
+		font-size: 8px;
+		letter-spacing: .04em;
+	}
+	.origin-badge.cloud {
+		background: var(--cloud-soft);
+		border-color: rgb(118 162 206 / 14%);
+		color: #8aafd2;
+	}
+	.origin-badge.inactive {
+		background: var(--danger-soft);
+		border-color: rgb(216 120 114 / 14%);
+		color: #d9908b;
+	}
+	.planned-badge {
+		background: var(--surface-2);
+		border-color: var(--border);
+		color: var(--muted);
+	}
+
+	/* -------------------------------------------------------- empty states */
+
+	.empty-state {
+		display: flex;
+		min-height: 170px;
+		align-items: center;
+		justify-content: center;
+		flex-direction: column;
+		padding: 20px;
+		text-align: center;
+	}
+	.empty-state strong {
+		margin-top: 10px;
+		font-size: 12px;
+		font-weight: 570;
+	}
+	.empty-state p {
+		max-width: 240px;
+		margin: 4px 0 0;
+		color: var(--muted);
+		font-size: 10px;
+	}
+	.empty-mark {
+		display: flex;
+		gap: 4px;
+		padding: 8px;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: 7px;
+	}
+	.empty-mark span {
+		width: 4px;
+		height: 4px;
+		background: var(--muted);
+		border-radius: 50%;
+	}
+	.empty-provider {
+		display: grid;
+		width: 32px;
+		height: 32px;
+		place-items: center;
+		background: var(--surface-2);
+		border: 1px dashed var(--border-strong);
+		border-radius: 7px;
+		color: var(--muted);
+	}
+
+	/* ---------------------------------------------------------- telemetry */
+
+	/* Static preview only — there is no measured data behind these bars yet. */
+	.telemetry-preview {
+		position: relative;
+		height: 105px;
+		margin: 15px 16px 0;
+		overflow: hidden;
+		opacity: .45;
+	}
+	.telemetry-axis {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		justify-content: space-between;
+		flex-direction: column;
+	}
+	.telemetry-axis span {
+		width: 100%;
+		border-top: 1px dashed var(--border-strong);
+	}
+	.telemetry-bars {
+		position: absolute;
+		inset: 0 5px;
+		display: flex;
+		align-items: flex-end;
+		gap: 6px;
+	}
+	.telemetry-bars span {
+		flex: 1;
+		background: linear-gradient(to top, #4b4230, var(--accent));
+		border-radius: 2px 2px 0 0;
+	}
+	.telemetry-note {
+		padding: 11px 16px 15px;
+		border-top: 1px solid var(--border);
+	}
+	.telemetry-note strong {
+		font-size: 11px;
+		font-weight: 560;
+	}
+	.telemetry-note p {
+		margin: 3px 0 0;
+		color: var(--muted);
+		font-size: 10px;
+	}
+
+	/* ---------------------------------------------------------- skeletons */
+
+	.skeleton-strip,
+	.skeleton-line,
+	.skeleton-avatar,
+	.skeleton-copy span {
+		background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+		background-size: 200% 100%;
+		animation: shimmer 1.35s infinite linear;
+	}
+	.skeleton-strip { flex-direction: row; }
+	.skeleton-line {
+		width: 100px;
+		height: 10px;
+		border-radius: 4px;
+	}
+	.skeleton-line.wide { width: 240px; }
+	.skeleton-avatar {
+		width: 29px;
+		height: 29px;
+		border-radius: 6px;
+	}
+	.skeleton-copy {
+		display: flex;
+		flex: 1;
+		gap: 7px;
+		flex-direction: column;
+	}
+	.skeleton-copy span {
+		width: 60%;
+		height: 8px;
+		border-radius: 3px;
+	}
+	.skeleton-copy span:last-child {
+		width: 35%;
+		height: 6px;
+	}
+
+	/* -------------------------------------------------------- breakpoints */
+
+	@media (max-width: 1120px) {
+		.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.overview-grid { grid-template-columns: 1fr; }
+	}
+
+	@media (max-width: 620px) {
+		.metric-grid { grid-template-columns: 1fr; }
+		.metric-card { min-height: 75px; }
+		.system-strip {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+		.system-facts { width: 100%; }
+		.system-facts span {
+			flex: 1;
+			padding: 0 8px;
+			text-align: center;
+		}
+		.system-facts span:first-child {
+			padding-left: 0;
+			border-left: 0;
+		}
+		/* Drop the trailing state column; the check mark already conveys it. */
+		.setup-item {
+			grid-template-columns: 30px minmax(0, 1fr);
+			padding: 7px 0;
+		}
+		.setup-state { display: none; }
+	}
+</style>

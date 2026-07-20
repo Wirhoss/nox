@@ -49,8 +49,12 @@ const sessionRoutes = new Elysia({ prefix: '/api/v1' })
     try {
       const snapshot = AgentRegistry.instance.getSessionSnapshot(params.sessionId);
       return {
+        activityCount: snapshot.activityCount,
         eventCursor: snapshot.eventCursor,
+        isRunning: snapshot.isRunning,
+        latestRun: snapshot.latestRun,
         messages: snapshot.messages,
+        recentActivities: snapshot.recentActivities,
         session: toSessionSummary(snapshot.session),
       };
     } catch (error) {

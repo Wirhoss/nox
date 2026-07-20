@@ -3,11 +3,15 @@ class EventLog<T> {
   private waiters = new Set<() => void>();
   private closed = false;
 
+  constructor(private readonly onPush?: (event: T, cursor: number) => void) {}
+
   public push(event: T): void {
     if (this.closed) {
       throw new Error('Cannot push to a closed event log.');
     }
+    const cursor = this.events.length;
     this.events.push(event);
+    this.onPush?.(event, cursor);
     for (const waiter of this.waiters) {
       waiter();
     }

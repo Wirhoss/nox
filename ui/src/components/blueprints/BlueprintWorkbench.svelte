@@ -254,7 +254,7 @@
 
 {#if view === "library"}
 	<section class="blueprints-page">
-		<header class="page-heading blueprint-heading">
+		<header class="page-heading workbench-heading">
 			<div>
 				<div class="eyebrow">Build</div>
 				<h1>Blueprints</h1>
@@ -382,7 +382,7 @@
 		{/if}
 	</section>
 {:else}
-	<section class="blueprint-editor">
+	<section class="workbench-editor">
 		<header class="editor-titlebar">
 			<div>
 				<a class="back-link" href="/blueprints">← Blueprints</a>
@@ -731,3 +731,248 @@
 			</div>{/if}
 	</section>
 {/if}
+
+<style>
+	/*
+	 * Blueprint-specific styles only. The library toolbar, editor grid, form
+	 * controls and validation panel are shared with the provider workbench and
+	 * live in src/styles/workbench.css and forms.css.
+	 */
+
+	/* ------------------------------------------------------- library table */
+
+	.blueprint-table {
+		background: var(--surface-1);
+		border: 1px solid var(--border);
+		border-radius: 0 0 8px 8px;
+		overflow: hidden;
+	}
+	/* Head and row share a track definition so columns stay aligned. */
+	.blueprint-table-head,
+	.blueprint-row {
+		display: grid;
+		grid-template-columns: minmax(250px, 1.5fr) minmax(180px, 1fr) minmax(135px, .7fr) 100px 28px;
+		align-items: center;
+		column-gap: 20px;
+	}
+	.blueprint-table-head {
+		min-height: 37px;
+		padding: 0 16px;
+		background: var(--surface-sunken);
+		border-bottom: 1px solid var(--border);
+		color: var(--muted);
+		font-size: 9px;
+		font-weight: 650;
+		letter-spacing: .075em;
+		text-transform: uppercase;
+	}
+	.blueprint-row {
+		min-height: 77px;
+		padding: 11px 16px;
+		border-bottom: 1px solid var(--border);
+		transition: background 120ms ease;
+	}
+	.blueprint-row:last-child { border-bottom: 0; }
+	a.blueprint-row:hover { background: var(--surface-hover); }
+	.blueprint-loading .blueprint-row { min-height: 77px; }
+
+	.blueprint-identity {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 11px;
+	}
+	.blueprint-identity > div:last-child { min-width: 0; }
+	.blueprint-identity strong,
+	.blueprint-identity span,
+	.provider-model strong,
+	.provider-model span,
+	.tool-summary strong,
+	.tool-summary span,
+	.iteration-value strong,
+	.iteration-value span { display: block; }
+	.blueprint-identity strong,
+	.provider-model strong {
+		overflow: hidden;
+		font-size: 12px;
+		font-weight: 580;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.blueprint-identity span {
+		max-width: 430px;
+		margin-top: 3px;
+		overflow: hidden;
+		color: var(--muted);
+		font-size: 10px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.provider-model span,
+	.tool-summary span,
+	.iteration-value span {
+		margin-top: 3px;
+		color: var(--muted);
+		font-size: 9px;
+	}
+	.tool-summary strong,
+	.iteration-value strong {
+		font-family: var(--font-mono);
+		font-size: 12px;
+		font-weight: 540;
+	}
+
+	.row-arrow {
+		color: var(--muted);
+		font-size: 15px;
+		transition: transform 120ms ease, color 120ms ease;
+	}
+	a.blueprint-row:hover .row-arrow {
+		color: var(--accent);
+		transform: translateX(2px);
+	}
+
+	/* Four tiles suggesting a blueprint grid; the last is dashed to read as
+	   "add one". Decorative — shown on the empty library. */
+	.blueprint-glyph {
+		display: grid;
+		grid-template-columns: 21px 21px;
+		grid-template-rows: 21px 21px;
+		gap: 4px;
+		margin-bottom: 20px;
+		padding: 12px;
+		background: var(--surface-hover);
+		border: 1px solid var(--border);
+		border-radius: 11px;
+		box-shadow: 0 12px 35px rgb(0 0 0 / 18%);
+	}
+	.blueprint-glyph span {
+		background: var(--accent-soft);
+		border: 1px solid rgb(208 164 92 / 18%);
+		border-radius: 4px;
+	}
+	.blueprint-glyph span:last-child {
+		background: transparent;
+		border-style: dashed;
+	}
+
+	/* ---------------------------------------------------------- tool picker */
+
+	.tool-list {
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+	.tool-list-head,
+	.tool-choice {
+		display: grid;
+		grid-template-columns: 1fr 145px;
+		align-items: center;
+	}
+	.tool-list-head {
+		min-height: 31px;
+		padding: 0 11px;
+		background: var(--surface-sunken);
+		border-bottom: 1px solid var(--border);
+		color: var(--muted);
+		font-size: 8px;
+		font-weight: 650;
+		letter-spacing: .07em;
+		text-transform: uppercase;
+	}
+	.tool-choice {
+		gap: 18px;
+		min-height: 61px;
+		padding: 8px 11px;
+		border-bottom: 1px solid var(--border);
+	}
+	.tool-choice:last-child { border-bottom: 0; }
+	/* Base control styling comes from .form-section select in forms.css; this
+	   only tightens the geometry for the narrow permission column. */
+	.tool-choice select {
+		height: 31px;
+		padding: 0 8px;
+		font-size: 9px;
+	}
+
+	.tool-name {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 9px;
+	}
+	.tool-name > div { min-width: 0; }
+	.tool-name strong,
+	.tool-name span { display: block; }
+	.tool-name strong {
+		overflow: hidden;
+		font-size: 10px;
+		font-weight: 570;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.tool-name div span {
+		margin-top: 2px;
+		color: var(--muted);
+		font-size: 8px;
+	}
+	.tool-icon {
+		display: grid;
+		width: 28px;
+		height: 28px;
+		flex: 0 0 auto;
+		place-items: center;
+		background: var(--healthy-soft);
+		border: 1px solid rgb(105 180 134 / 15%);
+		border-radius: 6px;
+		color: var(--healthy);
+		font-size: 10px;
+	}
+	.tool-empty {
+		padding: 16px;
+		background: var(--surface-sunken);
+		border: 1px dashed var(--border-strong);
+		border-radius: 6px;
+		color: var(--muted);
+		font-size: 10px;
+		text-align: center;
+	}
+
+	/* -------------------------------------------------------- breakpoints */
+
+	@media (max-width: 900px) {
+		/* Drop the iteration column. */
+		.blueprint-table-head,
+		.blueprint-row { grid-template-columns: minmax(220px, 1.5fr) minmax(160px, 1fr) 95px 24px; }
+		.blueprint-table-head span:nth-child(4),
+		.iteration-value { display: none; }
+	}
+
+	@media (max-width: 620px) {
+		/* Rows become two stacked lines with the arrow pinned right. */
+		.blueprint-table-head { display: none; }
+		.blueprint-table { border-radius: 0 0 8px 8px; }
+		.blueprint-row {
+			grid-template-columns: 1fr 22px;
+			gap: 10px;
+			min-height: 94px;
+		}
+		.blueprint-identity { grid-column: 1; }
+		.provider-model {
+			grid-column: 1;
+			margin-left: 46px;
+		}
+		.tool-summary,
+		.iteration-value { display: none; }
+		.row-arrow {
+			grid-row: 1 / 3;
+			grid-column: 2;
+		}
+		.tool-list-head { display: none; }
+		.tool-choice {
+			grid-template-columns: 1fr;
+			gap: 8px;
+			padding: 11px;
+		}
+	}
+</style>
