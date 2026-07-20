@@ -1,0 +1,8 @@
+---
+import DeliberationWorkbench from '../../components/deliberation/DeliberationWorkbench.svelte';
+import AppLayout from '../../layouts/AppLayout.astro';
+---
+
+<AppLayout title="New deliberation" activePath="/deliberation">
+	<DeliberationWorkbench client:load view="new" />
+</AppLayout>

@@ -7,11 +7,10 @@ Blueprint ──creates/configures──> Agent
                                     │
 Provider/model ─────serves──────────┤
 Tools/permissions ──constrain───────┤
-                                    ├──participates as Role──> Workspace
-Broker ──carries──> Conversation ───┤                         │
-                     │              └──owns──> Session         ├──contains──> Task
-                     │                           │              ├──produces──> Artifact
-                     └───────────────────────────┴──creates────> Run
+                                    ├──participates as Role──> Deep Research
+                                    ├──participates as Role──> Deliberation
+Broker ──carries──> Conversation ───┤
+                     │              └──owns──> Session ──creates──> Run
                                                                   │
                                                                   └──may create──> child Run
 ```
@@ -25,16 +24,16 @@ model, iteration limits, and eventually context/memory policies.
 ### Agent
 
 A configured runtime identity based on a blueprint. An agent may serve many
-conversations, participate in multiple workspaces, and use the same provider as
+conversations, participate in multiple research or deliberation activities, and use the same provider as
 other agents. Updating a blueprint must not silently mutate a running agent or
 historical session; version selection should be explicit.
 
 ### Role
 
-A workspace-scoped overlay describing an agent's responsibility, objective,
+An activity-scoped overlay describing an agent's responsibility, objective,
 participation rules, and task. A role may restrict capabilities but must never
 grant tools or permissions absent from the agent's blueprint. The same agent
-can have different roles in different workspaces.
+can have different roles in different research or deliberation activities.
 
 ### Team preset
 
@@ -54,14 +53,15 @@ agent context bound to that thread. They are initially close to one-to-one, but
 remain separate so group conversations, session replacement, and branching can
 be represented later.
 
-### Workspace
+### Deep Research
 
-A persistent multi-agent activity. Initial specialized modes are:
+A persistent investigation with its own objective, research team, evidence,
+tasks, depth and budget policy, runs, and final report.
 
-- **Research:** plan, parallel investigation, evidence checking, synthesis.
-- **Deliberation:** proposals, critique, rounds, consensus, minority opinion.
+### Deliberation
 
-Both use participants, roles, tasks, shared state, runs, budgets, and artifacts.
+A persistent decision process with its own question, participants, contextual
+roles, protocol, rounds, agreements, conflicts, runs, and decision artifact.
 
 ### Run
 
@@ -80,53 +80,50 @@ transcript by default.
 ### Artifact
 
 A durable output such as a report, decision, source collection, plan, table, or
-code patch. Artifacts remain inspectable after a workspace completes.
+code patch. Artifacts remain inspectable after an activity completes.
 
 ## Primary navigation
 
 ```text
 Overview
 Operate
-  Agents
-  Workspaces
-  Conversations
+  Playground
+  Deep Research
+  Deliberation
 Build
   Blueprints
   Providers
 Observe
-  Runs
+  Sessions
   Statistics
   Logs
-Playground
 Settings
   Brokers
   Tools
 ```
 
 The visual sidebar should use section labels only when expanded. In compact
-mode, icons retain tooltips and active-state labels. Playground is visually
-separated because it is a testing surface rather than the workbench's home.
+mode, icons retain tooltips and active-state labels.
 
 ## Route map
 
 | Route | Purpose | Initial availability |
 | --- | --- | --- |
 | `/` | Operational overview | Partial |
-| `/agents` | Runtime agents and health | Future contract |
-| `/agents/:id` | Agent activity and configuration | Future contract |
-| `/workspaces` | Research and deliberation workspaces | Future contract |
-| `/workspaces/new` | Create a research or deliberation workspace | Prototype |
-| `/workspaces/:id` | Workspace activity, tasks, artifacts, runs | Future contract |
-| `/conversations` | Threads across all brokers | Derived later |
-| `/conversations/:id` | Conversation plus technical timeline | Derived later |
+| `/deep-research` | Research activities and reports | Current API/partial |
+| `/deep-research/new` | Start a Deep Research activity | Current API/partial |
+| `/deliberation` | Structured group decisions | Current |
+| `/deliberation/new` | Configure a Deliberation | Current |
+| `/deliberation/detail?id=:id` | Run and inspect a Deliberation | Current |
 | `/blueprints` | Blueprint library | Current API |
 | `/blueprints/new` | Blueprint creation | Current API |
 | `/blueprints/:id` | Blueprint editor and usage | Current API |
 | `/providers` | Provider configuration and health | Current API |
-| `/runs` | Searchable execution history | Future contract |
-| `/runs/:id` | Run timeline/tree and context accounting | Future contract |
+| `/sessions` | Searchable conversation history and session-level observability | Current API |
+| `/sessions?session=:id` | Session timeline with nested run/tool inspection | Current API |
+| `/runs` | Legacy redirect to session observability | Compatibility route |
 | `/statistics` | Usage, latency, cost, and efficiency | Future contract |
-| `/logs` | Structured runtime logs | Future contract |
+| `/logs` | Structured runtime logs | Current API/partial |
 | `/playground` | Web chat and controlled experiments | Current API |
 | `/settings` | Application-wide, broker, and tool configuration | Current API/partial |
 | `/settings#brokers` | Installed broker connections and routing | Future extension contract |
@@ -179,9 +176,9 @@ navigational transitions.
 ### Start Deep Research
 
 ```text
-Workspaces → New → Research → Question/scope
-           → Choose existing agents and roles → Budget/depth
-           → Review plan → Start → Monitor/intervene → Final artifact
+Deep Research → New → Question/scope → Research team and roles
+              → Budget/depth → Review plan → Start
+              → Monitor/intervene → Final report
 ```
 
 The presets `Quick`, `Balanced`, and `Thorough` configure task fan-out,
@@ -191,14 +188,15 @@ available.
 ### Start a deliberation
 
 ```text
-Workspaces → New → Deliberation → Question
-           → Select existing agents → Assign contextual roles
-           → Select moderator/protocol/budget → Start
-           → Observe agreements/conflicts → Final decision artifact
+Deliberation → New → Question → Participant blueprints
+             → Moderator/rounds → Create → Start
+             → Observe proposals/critiques → Final synthesis
 ```
 
-The default protocol uses one moderator, three rounds, a compact shared board,
-and consensus with recorded minority disagreement.
+The initial protocol uses one moderator and two sequential rounds by default.
+Round one gathers independent proposals; later rounds expose the accumulated
+record for critique and revision. The moderator then records recommendation,
+agreements, remaining disagreement, risks, confidence, and next actions.
 
 ### Approve a protected tool call
 
@@ -216,7 +214,7 @@ must not be mixed with a one-time run approval.
 ### Overview answers
 
 - Is Nox healthy and local?
-- Which agents and workspaces are active?
+- Which research and deliberation activities are active?
 - Is anything blocked, waiting for permission, or failing?
 - Which brokers are receiving traffic?
 - What changed recently?
@@ -227,16 +225,23 @@ must not be mixed with a one-time run approval.
 - What is this agent configured to do?
 - Which blueprint version and provider/model does it use?
 - Where is it connected and what is it doing now?
-- Which conversations, workspaces, and runs belong to it?
+- Which conversations, collaborative activities, and runs belong to it?
 - Is its context/memory healthy and efficient?
 
-### Workspace detail answers
+### Deep Research detail answers
 
-- What is the goal and current phase?
-- Which existing agents participate, and in which contextual roles?
-- What tasks, conflicts, evidence, and artifacts exist?
+- What is the objective and current research phase?
+- Which researchers participate, and in which contextual roles?
+- What tasks, evidence, conflicts, and reports exist?
 - How much budget remains?
 - Where can the user intervene?
+
+### Deliberation detail answers
+
+- What decision question and round are active?
+- Who moderates, proposes, critiques, and supplies evidence?
+- What agreements, conflicts, minority positions, and artifacts exist?
+- How much budget remains, and where can the user intervene?
 
 ### Run detail answers
 
@@ -250,9 +255,9 @@ must not be mixed with a one-time run approval.
 
 - Use **Blueprint**, never “agent template” and never “agent” by itself.
 - Use **Agent** for a runtime identity, not a JSON configuration file.
-- Use **Workspace** for research/deliberation containers.
+- Use **Deep Research** and **Deliberation** as distinct resources.
 - Use **Run** for execution and **Session** for retained agent context.
-- Use **Role** only for workspace-scoped responsibility; provider message roles
+- Use **Role** only for activity-scoped responsibility; provider message roles
   (`user`, `assistant`, `tool`) are an implementation detail.
 - Present broker types by recognizable names, but label the web interface
   `Web` rather than treating it as privileged.

@@ -36,7 +36,7 @@ visible before and after execution.
 ### Inspect without drowning
 
 Every high-level status can be expanded into evidence: a conversation into its
-runs, a run into its steps, and a multi-agent workspace into its task tree.
+runs, a run into its steps, and a Deep Research or Deliberation activity into its task tree.
 Technical detail is progressively disclosed rather than permanently occupying
 the interface.
 
@@ -69,8 +69,8 @@ supported by the current API:
 4. Playground chat with streaming activity and permission handling.
 5. Provider configuration plus installed tool inspection and permission policy.
 
-Agents as persistent runtime instances, broker-specific settings, workspaces,
-research, deliberation, run graphs, and detailed usage metrics remain visible
+Agents as persistent runtime instances, broker-specific settings, Deep Research,
+Deliberation, run graphs, and detailed usage metrics remain visible
 in the information architecture but should use honest empty or unavailable
 states until their backend contracts exist. Broker and tool implementations are
 supplied by Nox or app extensions; the workbench configures installed

@@ -1,0 +1,8 @@
+---
+import SessionsWorkbench from '../components/sessions/SessionsWorkbench.svelte';
+import AppLayout from '../layouts/AppLayout.astro';
+---
+
+<AppLayout title="Sessions" activePath="/sessions">
+	<SessionsWorkbench client:load />
+</AppLayout>

@@ -2,7 +2,7 @@
 import Icon from './Icon.astro';
 
 interface Props { activePath: string; }
-type IconName = 'overview' | 'agents' | 'workspaces' | 'conversations' | 'blueprints' | 'providers' | 'runs' | 'statistics' | 'logs';
+type IconName = 'overview' | 'chat' | 'search' | 'conversations' | 'blueprints' | 'providers' | 'runs' | 'statistics' | 'logs';
 type NavItem = { label: string; href: string; icon: IconName; available?: boolean };
 type NavGroup = { label?: string; items: NavItem[] };
 
@@ -10,18 +10,18 @@ const { activePath } = Astro.props;
 const groups: NavGroup[] = [
 	{ items: [{ label: 'Overview', href: '/', icon: 'overview', available: true }] },
 	{ label: 'Operate', items: [
-		{ label: 'Agents', href: '/agents', icon: 'agents' },
-		{ label: 'Workspaces', href: '/workspaces', icon: 'workspaces' },
-		{ label: 'Conversations', href: '/conversations', icon: 'conversations' },
+		{ label: 'Playground', href: '/playground', icon: 'chat', available: true },
+		{ label: 'Deep Research', href: '/deep-research', icon: 'search', available: true },
+		{ label: 'Deliberation', href: '/deliberation', icon: 'conversations', available: true },
 	] },
 	{ label: 'Build', items: [
 		{ label: 'Blueprints', href: '/blueprints', icon: 'blueprints', available: true },
 		{ label: 'Providers', href: '/providers', icon: 'providers', available: true },
 	] },
 	{ label: 'Observe', items: [
-		{ label: 'Runs', href: '/runs', icon: 'runs' },
+		{ label: 'Sessions', href: '/sessions', icon: 'runs', available: true },
 		{ label: 'Statistics', href: '/statistics', icon: 'statistics' },
-		{ label: 'Logs', href: '/logs', icon: 'logs' },
+		{ label: 'Logs', href: '/logs', icon: 'logs', available: true },
 	] },
 ];
 ---
@@ -48,7 +48,6 @@ const groups: NavGroup[] = [
 		))}
 	</nav>
 	<div class="sidebar-footer">
-		<a class:list={['nav-item', { active: activePath === '/playground' }]} href="/playground" aria-current={activePath === '/playground' ? 'page' : undefined}><Icon name="chat" /><span>Playground</span></a>
 		<a class:list={['nav-item', { active: activePath === '/settings' }]} href="/settings" aria-current={activePath === '/settings' ? 'page' : undefined}><Icon name="settings" /><span>Settings</span></a>
 		<div class="local-card">
 			<div class="local-card-icon" aria-hidden="true"><span></span></div>

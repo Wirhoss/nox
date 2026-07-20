@@ -3,18 +3,24 @@
 	import botttsNeutralDefinition from "@dicebear/styles/bottts-neutral.json";
 	import pixelArtNeutralDefinition from "@dicebear/styles/pixel-art-neutral.json";
 
-	export let seed: string;
-	export let kind: "blueprint" | "user" = "blueprint";
-	export let label = "";
-	export let size = 32;
-	export let decorative = false;
+	type Props = {
+		/** Rendered without an accessible name, for a purely ornamental avatar. */
+		decorative?: boolean;
+		kind?: "blueprint" | "user";
+		label?: string;
+		/** Stable input for the generator: the same seed always draws the same face. */
+		seed: string;
+		size?: number;
+	};
+
+	let { decorative = false, kind = "blueprint", label = "", seed, size = 32 }: Props = $props();
 
 	const blueprintStyle = new Style(botttsNeutralDefinition);
 	const userStyle = new Style(pixelArtNeutralDefinition);
 
-	$: source = new Avatar(kind === "blueprint" ? blueprintStyle : userStyle, {
-		seed,
-	}).toDataUri();
+	const source = $derived(
+		new Avatar(kind === "blueprint" ? blueprintStyle : userStyle, { seed }).toDataUri(),
+	);
 </script>
 
 <img

@@ -14,7 +14,8 @@ actions but are not intended to reproduce the full three-column workbench.
 │               │                                                             │
 │ OPERATE       │                       PAGE CONTENT                          │
 │ Agents        │                                                             │
-│ Workspaces    │                                                             │
+│ Deep Research │                                                             │
+│ Deliberation  │                                                             │
 │ Conversations │                                                             │
 │               │                                                             │
 │ BUILD         │                                                             │
@@ -22,7 +23,7 @@ actions but are not intended to reproduce the full three-column workbench.
 │ Providers     │                                                             │
 │               │                                                             │
 │ OBSERVE       │                                                             │
-│ Runs          │                                                             │
+│ Sessions      │                                                             │
 │ Statistics    │                                                             │
 │ Logs          │                                                             │
 │               │                                                             │
@@ -35,7 +36,7 @@ actions but are not intended to reproduce the full three-column workbench.
 
 The top bar is quiet until action is needed. Active runs and permission requests
 open a tray. Search becomes a command palette for navigation, agents, sessions,
-workspaces, and actions.
+collaborative activities, and actions.
 
 ## Settings: brokers and tools
 
@@ -83,7 +84,7 @@ that the installed capability can persist.
 │                               │                                             │
 │ Research: Local RAG options   │ Context       184k  ▃▆▂▇▄                   │
 │ 4/7 tasks · 61% · 3 agents    │ Avoided       392k  +68%                    │
-│ [Open workspace]              │ Local runs      86%                         │
+│ [Open activity]               │ Local runs      86%                         │
 │                               │ Cloud cost    $0.24                          │
 │ Discord assistant             │                                             │
 │ responding · 00:12 · local    │ [View statistics]                           │
@@ -109,10 +110,10 @@ create blueprint, then test in Playground.
 │ 4 total · 2 active · 1 idle · 1 degraded                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ● Atlas        General assistant     Qwen 3 / Local       2 conversations  │
-│   default@3    Discord, Web           Active now           1 workspace      │
+│   default@3    Discord, Web           Active now           1 activity       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ● Ada          Critical reviewer      GPT / Cloud          No conversations │
-│   critic@7     Workspace only         Idle                 2 workspaces     │
+│   critic@7     Deliberation only      Idle                 2 activities     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ! Scout        Research agent         Llama / Local        Last run failed  │
 │   research@2   Web                    Degraded             Inspect →         │
@@ -126,7 +127,7 @@ Agent detail:
 │ ← Agents    Atlas  ● Healthy              Pause   Test in Playground   •••  │
 │ General assistant · default blueprint @ v3                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Overview   Conversations   Workspaces   Runs   Memory   Configuration       │
+│ Overview   Sessions   Research   Deliberation   Runs   Configuration         │
 ├───────────────────────────────┬─────────────────────────────────────────────┤
 │ Current activity              │ Runtime                                     │
 │ Discord response · 00:12      │ Provider/model   Local / Qwen 3             │
@@ -180,32 +181,34 @@ Blueprint editor:
 The right inspector prevents saving broken provider/model/tool references and
 shows the impact of editing a blueprint already in use.
 
-## Workspaces
+## Deep Research and Deliberation
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Workspaces                           All types ▾   Search…   New workspace  │
+│ Deep Research                                      Search…   New research  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ACTIVE                                                                      │
-│ ◉ Research      Local RAG options        4/7 tasks     3 agents      61%    │
-│ ◉ Deliberation  Memory architecture      round 2/3     4 agents      00:48  │
+│ ◉ Local RAG options                     4/7 tasks     3 agents      61%    │
 │                                                                             │
 │ RECENT                                                                      │
-│ ✓ Research      Bun SQLite comparison    report ready  2 agents      1 d    │
-│ ✓ Deliberation  Broker retry policy      consensus     3 agents      3 d    │
+│ ✓ Bun SQLite comparison                 report ready  2 agents      1 d    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Workspace creation uses four short stages:
+Deliberation has its own equivalent library focused on questions, rounds, and
+decision status.
+
+Deep Research retains the proposed four-stage creation flow:
 
 ```text
-Type → Goal → Participants & roles → Coordination & budget → Review
+Outcome → Participants & roles → Domain policy & budget → Review
 ```
 
-Agents are selected from the existing runtime registry. Role instructions are
-workspace-only and clearly separated from blueprint configuration.
+Deliberation currently configures its decision, participant blueprints,
+moderator, and one-to-five rounds in a single ready-room form. Instructions are
+activity-only and clearly separated from blueprint configuration.
 
-### Research workspace
+### Deep Research
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -224,50 +227,47 @@ workspace-only and clearly separated from blueprint configuration.
 └───────────────┴─────────────────────────────────────────┴───────────────────┘
 ```
 
-### Deliberation workspace
+### Deliberation
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Deliberation / Memory architecture   Round 2 of 3    Pause   End round     │
+│ Deliberation / Memory architecture       Round 2 of 3              Cancel │
 ├───────────────┬─────────────────────────────────────┬───────────────────────┤
-│ Participants  │ Discussion                          │ Shared board          │
-│ Maya Moderator│                                     │ Consensus       72%  │
-│ Ada  Critic   │ Turing · Proposal                   │                       │
-│ Turing Author │ Use a central append-only log…      │ Agreements            │
-│ Scout Evidence│                                     │ ✓ Event log           │
-│               │ Ada · Critique                      │ ✓ Isolated context    │
-│ Artifacts     │ This creates a single bottleneck…   │                       │
-│ Decision      │                                     │ Open conflicts        │
-│ Transcript    │ Scout · Evidence                    │ ! Shared memory       │
-│ Runs          │ Benchmark #4 supports…              │ ! Fallback behavior   │
-│               │                                     │                       │
-│               │ Ask the group…                      │ 3 proposals           │
+│ Record        │ Interventions                       │ Protocol              │
+│ Proposals     │ Turing · Proposal                   │ Moderator: Maya       │
+│ Critiques     │ Use a central append-only log…      │ Participants: 3       │
+│ Synthesis     │                                     │ Rounds: 3             │
+│               │ Ada · Critique                      │                       │
+│ Sessions      │ This creates a single bottleneck…   │ Progress              │
+│ Linked per    │                                     │ Round 2 of 3          │
+│ intervention  │ Maya · Final synthesis              │                       │
+│               │ Recommendation, dissent, risks…     │                       │
 └───────────────┴─────────────────────────────────────┴───────────────────────┘
 ```
 
 Agent identity color is an aid, never the only identifier. Every contribution
 also displays name and contextual role.
 
-## Observability: runs
+## Observability: sessions
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Runs       Agent ▾  Provider ▾  Status ▾  Broker ▾  Date ▾     Search…     │
+│ Sessions   Blueprint ▾  Status ▾  Date ▾                    Search…          │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ STATUS  TRIGGER              AGENT     MODEL       DURATION  CONTEXT  TIME  │
-│ ●       Discord / @alex      Atlas     Qwen local  running   12.4k    now   │
-│ ✓       Research task #4     Scout     Qwen local  18.2 s    28.1k    2 m   │
-│ !       WhatsApp / contact   Atlas     Qwen local  3.4 s     14.7k    8 m   │
+│ STATUS  SESSION              BLUEPRINT  LAST MODEL   RUNS  TOKENS     TIME  │
+│ ●       01K…                 default    Qwen local      3   12.4k      now  │
+│ ✓       01J…                 research   Qwen local      8   28.1k      2 m  │
+│ !       01H…                 default    Qwen local      2   14.7k      8 m  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Run detail:
+Session detail with nested runs:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Run 01K…  ● Running          Atlas · Qwen local       Abort   Retry   •••  │
+│ Session 01K…  ● Active       default · Qwen local       Open Playground   │
 ├───────────────────────┬───────────────────────────────────┬─────────────────┤
-│ Run tree              │ Timeline                          │ Context         │
+│ Runs                  │ Timeline                          │ Session totals  │
 │                       │                                   │                 │
 │ ◉ Atlas               │ 00:00 Message received            │ Instructions 2k │
 │ ├─ ✓ memory search    │ 00:01 Memory retrieval · 8 hits  │ Task        320 │

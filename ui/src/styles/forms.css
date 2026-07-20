@@ -326,3 +326,29 @@
 	.validation-list { grid-template-columns: 1fr; }
 	.validation-list > div { border-left: 0; }
 }
+
+/*
+ * Confirmation that a form saved, paired with .form-error above. Both are
+ * inline banners inside a form the user is still working in, as opposed to
+ * .error-state, which replaces a view that has no data.
+ */
+.form-saved {
+	display: flex;
+	align-items: flex-start;
+	gap: 9px;
+	margin-top: 13px;
+	padding: 10px 11px;
+	background: var(--healthy-soft);
+	border: 1px solid rgb(105 180 134 / 15%);
+	border-radius: 6px;
+}
+.form-saved > span { color: var(--healthy); }
+.form-saved strong {
+	font-size: 9px;
+	font-weight: 590;
+}
+.form-saved p {
+	margin: 2px 0 0;
+	color: var(--muted);
+	font-size: 8px;
+}

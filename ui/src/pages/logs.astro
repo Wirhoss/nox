@@ -1,0 +1,8 @@
+---
+import LogsWorkbench from '../components/logs/LogsWorkbench.svelte';
+import AppLayout from '../layouts/AppLayout.astro';
+---
+
+<AppLayout title="Logs" activePath="/logs">
+	<LogsWorkbench client:load />
+</AppLayout>

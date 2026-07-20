@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { renderMarkdown } from "../../utils/markdown";
 
-	export let source = "";
+	type Props = { source?: string };
 
-	$: rendered = renderMarkdown(source);
+	let { source = "" }: Props = $props();
+
+	const rendered = $derived(renderMarkdown(source));
 </script>
 
 <div class="markdown-body">{@html rendered}</div>

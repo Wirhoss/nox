@@ -22,6 +22,15 @@
 	border-bottom: 0;
 	border-radius: 8px 8px 0 0;
 }
+/*
+ * The toolbar normally sits flush against a table that continues below it, so
+ * it is open at the bottom. `standalone` closes it off for libraries whose
+ * results are separate cards rather than one joined table.
+ */
+.library-toolbar.standalone {
+	border-bottom: 1px solid var(--border);
+	border-radius: 8px;
+}
 .library-search {
 	display: flex;
 	width: min(390px, 65%);

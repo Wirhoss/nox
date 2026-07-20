@@ -147,6 +147,12 @@
 	font-size: 11px;
 }
 .compact-empty { min-height: 280px; }
+/* The same distinction as .library-toolbar.standalone: closed off on its own
+   rather than joined to the toolbar above it. */
+.library-empty.standalone {
+	margin-top: 12px;
+	border-radius: 8px;
+}
 
 .error-state {
 	min-height: 340px;

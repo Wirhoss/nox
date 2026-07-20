@@ -28,8 +28,8 @@ Initial dark-theme tokens:
 | `cloud` | `#76A2CE` | Cloud execution and remote resources |
 | `warning` | `#D2A85D` | Waiting, budget, attention |
 | `danger` | `#D87872` | Failures and destructive actions |
-| `research` | `#8E9FD1` | Research workspace identity |
-| `deliberation` | `#B18AC8` | Deliberation workspace identity |
+| `research` | `#8E9FD1` | Deep Research identity |
+| `deliberation` | `#B18AC8` | Deliberation identity |
 
 Semantic colors never communicate meaning alone. Status always includes an icon,
 shape, or label. Provider badges explicitly say `Local` or `Cloud`; color merely
@@ -190,4 +190,3 @@ Agent-authored conversational content may retain each configured personality.
   disruptive screen-reader announcements.
 - The three-column layout follows a logical DOM reading order: navigation,
   primary content, inspector.
-
