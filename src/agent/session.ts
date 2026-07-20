@@ -46,3 +46,7 @@ class AgentSession {
     await this.runner.steer(userMessage);
   }
 }
+
+export {
+  AgentSession,
+};

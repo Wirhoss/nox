@@ -40,6 +40,6 @@ export async function getProvidersConfig(envConfig: EnvConfig) {
     }
     return providersConfig;
   } catch (error) {
-    throw new Error(`Error loading providers configuration: ${error}`);
+    throw new Error(`Error loading providers configuration: ${error}`, { cause: error });
   }
 }

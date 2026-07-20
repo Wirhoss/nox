@@ -51,3 +51,5 @@ config
 .vscode
 src_oldIGNORETHIS!!!!
 idk.md
+# local sqlite database
+data/

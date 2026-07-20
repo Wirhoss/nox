@@ -1,12 +1,14 @@
 import { z } from 'zod';
 
 const defaultConfigPath = '/etc/nox/config';
+const defaultDataPath = '/var/lib/nox';
 
 export const envConfigSchema = z.object({
   environment: z.enum(['development', 'test', 'production']),
   configFileApp: z.string(),
   configFileProviders: z.string(),
   configDirAgents: z.string(),
+  databaseFile: z.string(),
 });
 
 export type EnvConfig = z.infer<typeof envConfigSchema>;
@@ -20,6 +22,7 @@ export function getEnvConfig() {
       configFileApp: process.env.CONFIG_FILE_APP ?? `${defaultConfigPath}/app.json`,
       configFileProviders: process.env.CONFIG_FILE_PROVIDERS ?? `${defaultConfigPath}/providers.json`,
       configDirAgents: process.env.CONFIG_DIR_AGENTS ?? `${defaultConfigPath}/agents`,
+      databaseFile: process.env.DATABASE_FILE ?? `${defaultDataPath}/nox.db`,
     };
     envConfig = envConfigSchema.parse(envConfigUnparsed);
   }

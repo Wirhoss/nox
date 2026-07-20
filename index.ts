@@ -1,27 +1,19 @@
 import * as dotenv from 'dotenv';
 dotenv.config({ quiet: true });
 
-import { AgentManager } from './src/agent/agentManager';
+import { AgentRegistry } from './src/agent/registry';
 import { Config } from './src/config';
 import logger from './src/logger';
-import { ProviderManager } from './src/provider';
-import { ToolManager } from './src/tool';
+import { ProviderRegistry } from './src/provider';
+import { ToolRegistry } from './src/tool/registry';
 
 async function main(): Promise<void> {
   logger.info('Starting nox...');
   await Config.init();
-  await ProviderManager.instance.init(Config.get('providers'));
-  await ToolManager.instance.init();
-  await AgentManager.instance.init(Config.get('agents'));
-
-  const agent = AgentManager.instance.createAgent('default').agent;
-  void (async () => {
-    for await (const ev of agent.streamEvents()) {
-      if (ev.type === 'assistantTextFragment') process.stdout.write(ev.text);
-      else if (ev.type === 'toolCall') console.log(`\n[tool: ${ev.toolCall.name}]`);
-    }
-  })();
-  await agent.run({ role: 'user', content: [{ type: 'text', text: 'List the files in /tmp, then read the first one you find.' }] });
+  await ProviderRegistry.instance.init(Config.get('providers'));
+  await ToolRegistry.instance.init();
+  await AgentRegistry.instance.init(Config.get('agents'), Config.get('env').databaseFile);
+  logger.info('nox started.');
 }
 
 process.on('unhandledRejection', (reason) => {

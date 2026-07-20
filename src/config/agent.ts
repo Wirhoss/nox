@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { agentBlueprintSchema } from '../agent/agentManager';
+import { agentBlueprintSchema } from '../agent/registry';
 
 import { readConfigDirectory } from './utils';
 
@@ -19,6 +19,6 @@ export async function getAgentsConfig(envConfig: EnvConfig) {
     }
     return agentsConfig;
   } catch (error) {
-    throw new Error(`Error loading agents configuration: ${error}`);
+    throw new Error(`Error loading agents configuration: ${error}`, { cause: error });
   }
 }
