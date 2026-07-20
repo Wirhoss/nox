@@ -4,6 +4,7 @@ import type { Message } from '../provider';
 /** Wire-safe projection of AgentStreamEvent (Error instances don't serialize). */
 type GatewayEvent =
   | { type: 'assistantTextFragment'; text: string }
+  | { type: 'assistantReasoningFragment'; text: string }
   | { type: 'error'; message: string }
   | { type: 'message'; message: Message }
   | { type: 'permissionRequest'; requestId: string; toolName: string; toolArguments: Record<string, unknown>; reason: string }

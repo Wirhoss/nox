@@ -9,7 +9,7 @@ export const messageTable = sqliteTable('message', {
   id: integer().primaryKey({ autoIncrement: true }),
   sessionId: text().notNull().references(() => sessionTable.sessionId, { onDelete: 'cascade' }),
   position: integer().notNull(),
-  role: text({ enum: ['user', 'assistant', 'toolCall', 'toolResponse'] }).notNull(),
+  role: text({ enum: ['user', 'assistant', 'reasoning', 'toolCall', 'toolResponse'] }).notNull(),
   execution: text({ enum: ['immediate', 'deferredAck', 'deferredResult'] }),
   payload: text({ mode: 'json' }).$type<Message>().notNull(),
   createdAt: integer({ mode: 'timestamp' }).default(sql`(unixepoch())`).notNull(),

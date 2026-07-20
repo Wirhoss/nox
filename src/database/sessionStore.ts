@@ -19,7 +19,7 @@ type RunSummary = {
 
 type StoredActivity = {
   cursor: number;
-  event: Exclude<GatewayEvent, { type: 'assistantTextFragment' }>;
+  event: Exclude<GatewayEvent, { type: 'assistantReasoningFragment' | 'assistantTextFragment' }>;
   receivedAt: Date;
 };
 
@@ -104,7 +104,7 @@ class SessionStore {
   }
 
   public recordEvent(sessionId: string, event: GatewayEvent): void {
-    if (event.type === 'assistantTextFragment') {
+    if (event.type === 'assistantTextFragment' || event.type === 'assistantReasoningFragment') {
       return;
     }
     this.database.insert(sessionEventTable).values({
@@ -195,7 +195,7 @@ class SessionStore {
       .reverse()
       .map((record) => ({
         cursor: record.id,
-        event: record.payload as Exclude<GatewayEvent, { type: 'assistantTextFragment' }>,
+        event: record.payload as Exclude<GatewayEvent, { type: 'assistantReasoningFragment' | 'assistantTextFragment' }>,
         receivedAt: record.createdAt,
       }));
   }

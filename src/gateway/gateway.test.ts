@@ -156,13 +156,14 @@ describe('MessageGateway', () => {
     const inbox = gateway.createInbox('fake', broker);
 
     inbox.openConversation('conv-1');
+    session.log.push({ type: 'assistantReasoningFragment', text: 'thinking' });
     session.log.push({ type: 'assistantTextFragment', text: 'ho' });
     session.log.push({ type: 'message', message: assistantMessage });
     session.log.push({ type: 'error', error: new Error('se rompió') });
     session.log.close();
     await sleep(20);
 
-    expect(broker.delivered.map((envelope) => envelope.cursor)).toEqual([1, 2]);
+    expect(broker.delivered.map((envelope) => envelope.cursor)).toEqual([2, 3]);
     expect(broker.delivered[0]?.event).toEqual({ type: 'message', message: assistantMessage });
     expect(broker.delivered[1]?.event).toEqual({ type: 'error', message: 'se rompió' });
   });

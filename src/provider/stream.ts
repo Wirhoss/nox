@@ -12,6 +12,7 @@ interface Usage {
 type ProviderStreamEvent =
   | { type: 'end'; aborted?: boolean; messages: Message[]; usage?: Usage }
   | { type: 'error'; error: Error }
+  | { type: 'reasoningFragment'; text: string }
   | { type: 'textFragment'; text: string }
   | { type: 'toolCall', toolCall: ToolCallMessage }
 
@@ -72,6 +73,7 @@ class ProviderStream {
   }
 
   private async pump(): Promise<void> {
+    let reasoningAccumulated = '';
     let textAccumulated = '';
     const messages: Message[] = [];
     const iterator = this.source[Symbol.asyncIterator]();
@@ -92,6 +94,9 @@ class ProviderStream {
 
         if (result === StreamStatus.ABORTED) {
           void iterator.return?.().catch(() => { });
+          if (reasoningAccumulated) {
+            messages.push({ role: 'reasoning', content: [{ type: 'text', text: reasoningAccumulated }] });
+          }
           if (textAccumulated) {
             const assistantMessage: Message = { role: 'assistant', content: [{ type: 'text', text: textAccumulated }] };
             messages.push(assistantMessage);
@@ -108,11 +113,19 @@ class ProviderStream {
         const event = result.value;
 
         if (event.type === 'end') {
-          this.finish(event.messages, false, event.usage);
+          const completedMessages = reasoningAccumulated.length > 0
+            ? [
+              { role: 'reasoning' as const, content: [{ type: 'text' as const, text: reasoningAccumulated }] },
+              ...event.messages,
+            ]
+            : event.messages;
+          this.finish(completedMessages, false, event.usage);
           return;
         } else if (event.type === 'error') {
           this.fail(messages, event.error);
           return;
+        } else if (event.type === 'reasoningFragment') {
+          reasoningAccumulated += event.text;
         } else if (event.type === 'textFragment') {
           textAccumulated += event.text;
         } else if (event.type === 'toolCall') {
@@ -123,6 +136,9 @@ class ProviderStream {
       }
     } catch (error) {
       if (this.abortSignal?.aborted || isAbortError(error)) {
+        if (reasoningAccumulated) {
+          messages.push({ role: 'reasoning', content: [{ type: 'text', text: reasoningAccumulated }] });
+        }
         if (textAccumulated) {
           const assistantMessage: Message = { role: 'assistant', content: [{ type: 'text', text: textAccumulated }] };
           messages.push(assistantMessage);

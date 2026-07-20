@@ -7,7 +7,7 @@
 		| { type: "text"; text: string }
 		| { type: "image"; source: { kind: "url"; url: string } | { kind: "base64"; mediaType: string; data: string } };
 	type Message =
-		| { role: "user" | "assistant"; content: Content[] }
+		| { role: "user" | "assistant" | "reasoning"; content: Content[] }
 		| { role: "toolCall"; name: string; trackId: string; arguments: Record<string, unknown> }
 		| { role: "toolResponse"; name: string; trackId: string; execution: "immediate" | "deferredAck" | "deferredResult"; response: Content[]; isError?: boolean };
 	type Blueprint = {
@@ -41,13 +41,14 @@
 	type Permission = { requestId: string; toolName: string; toolArguments: Record<string, unknown>; reason: string };
 	type GatewayEvent =
 		| { type: "assistantTextFragment"; text: string }
+		| { type: "assistantReasoningFragment"; text: string }
 		| { type: "error"; message: string }
 		| { type: "message"; message: Message }
 		| { type: "permissionRequest"; requestId: string; toolName: string; toolArguments: Record<string, unknown>; reason: string }
 		| { type: "permissionResolved"; requestId: string; resolution: "approved" | "denied" | "timeout" | "aborted" }
 		| { type: "runStarted"; runId: string; modelId: string; startedAt: string }
 		| { type: "runCompleted"; runId: string; status: "completed" | "aborted" | "maxIterations" | "failed"; durationMs: number; usage: RunUsage };
-	type ActivityEvent = Exclude<GatewayEvent, { type: "assistantTextFragment" }>;
+	type ActivityEvent = Exclude<GatewayEvent, { type: "assistantReasoningFragment" | "assistantTextFragment" }>;
 	type Activity = { cursor: number; event: ActivityEvent; receivedAt: Date };
 	type ApiError = { error?: { message?: string }; message?: string };
 
@@ -60,6 +61,8 @@
 	let activities: Activity[] = [];
 	let prompt = "";
 	let streamingText = "";
+	let reasoningText = "";
+	let reasoningCollapsed = false;
 	let loading = true;
 	let creating = false;
 	let sending = false;
@@ -79,6 +82,11 @@
 	let activitySequence = 0;
 	let optimisticUserText = "";
 	let eventSource: EventSource | null = null;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let reconnectAttempt = 0;
+	let lastStreamSignalAt = 0;
+	let lastReconcileAt = 0;
+	let reconciling = false;
 	let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 	let conversationElement: HTMLDivElement | null = null;
 
@@ -154,6 +162,8 @@
 		stopElapsedTimer();
 		errorMessage = "";
 		streamingText = "";
+		reasoningText = "";
+		reasoningCollapsed = false;
 		activities = [];
 		permissions = [];
 		running = false;
@@ -202,11 +212,15 @@
 
 	const connectStream = () => {
 		if (!currentSession) return;
-		closeStream();
+		if (reconnectTimer) clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+		eventSource?.close();
+		eventSource = null;
 		streamState = "connecting";
 		const source = new EventSource(`/api/v1/sessions/${encodeURIComponent(currentSession.sessionId)}/events?from=${cursor}`);
 		eventSource = source;
 		const consumeServerEvent = (messageEvent: MessageEvent<string>) => {
+			lastStreamSignalAt = Date.now();
 			if (typeof messageEvent.data !== "string" || !messageEvent.data.trim()) return;
 			try {
 				const event = JSON.parse(messageEvent.data) as GatewayEvent;
@@ -218,8 +232,13 @@
 			}
 		};
 		source.onopen = () => {
+			reconnectAttempt = 0;
+			lastStreamSignalAt = Date.now();
 			streamState = "connected";
 		};
+		source.addEventListener("heartbeat", () => {
+			if (eventSource === source) lastStreamSignalAt = Date.now();
+		});
 		source.onerror = (event) => {
 			// Nox uses a named SSE `error` event for agent failures. EventSource
 			// also dispatches a native `error` Event during reconnects; only the
@@ -228,9 +247,19 @@
 				consumeServerEvent(event as MessageEvent<string>);
 				return;
 			}
-			if (eventSource === source) streamState = "reconnecting";
+			if (eventSource === source) {
+				source.close();
+				eventSource = null;
+				streamState = "reconnecting";
+				const delay = Math.min(500 * (2 ** reconnectAttempt), 5_000);
+				reconnectAttempt += 1;
+				reconnectTimer = setTimeout(() => {
+					reconnectTimer = null;
+					connectStream();
+				}, delay);
+			}
 		};
-		for (const eventType of ["assistantTextFragment", "message", "permissionRequest", "permissionResolved", "runStarted", "runCompleted"]) {
+		for (const eventType of ["assistantTextFragment", "assistantReasoningFragment", "message", "permissionRequest", "permissionResolved", "runStarted", "runCompleted"]) {
 			source.addEventListener(eventType, (rawEvent) => {
 				if (rawEvent instanceof MessageEvent) consumeServerEvent(rawEvent as MessageEvent<string>);
 			});
@@ -238,17 +267,18 @@
 	};
 
 	const handleEvent = (event: GatewayEvent) => {
-		if (event.type !== "assistantTextFragment") {
+		if (event.type !== "assistantTextFragment" && event.type !== "assistantReasoningFragment") {
 			activitySequence += 1;
 			activities = [...activities.slice(-49), { cursor: activitySequence, event, receivedAt: new Date() }];
 		}
 		if (event.type === "runStarted") {
 			currentRunId = event.runId;
 			runStatus = "";
-			runUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
 			runDurationMs = 0;
 			runStartedAt = new Date(event.startedAt);
 			elapsedSeconds = 0;
+			reasoningText = "";
+			reasoningCollapsed = false;
 			running = true;
 			startElapsedTimer();
 			return;
@@ -262,11 +292,19 @@
 			running = false;
 			sending = false;
 			streamingText = "";
+			reasoningCollapsed = true;
 			stopElapsedTimer();
 			return;
 		}
 		if (event.type === "assistantTextFragment") {
+			if (reasoningText) reasoningCollapsed = true;
 			streamingText += event.text;
+			running = true;
+			void scrollConversation();
+			return;
+		}
+		if (event.type === "assistantReasoningFragment") {
+			reasoningText += event.text;
 			running = true;
 			void scrollConversation();
 			return;
@@ -276,6 +314,10 @@
 				optimisticUserText = "";
 			} else {
 				messages = [...messages, event.message];
+			}
+			if (event.message.role === "reasoning") {
+				reasoningText = "";
+				reasoningCollapsed = false;
 			}
 			if (event.message.role === "assistant") {
 				streamingText = "";
@@ -297,6 +339,7 @@
 			running = false;
 			sending = false;
 			streamingText = "";
+			reasoningCollapsed = true;
 			stopElapsedTimer();
 		}
 	};
@@ -309,8 +352,10 @@
 		sending = true;
 		running = true;
 		runStartedAt = new Date();
+		currentRunId = "";
+		reasoningText = "";
+		reasoningCollapsed = false;
 		runStatus = "";
-		runUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
 		runDurationMs = 0;
 		elapsedSeconds = 0;
 		startElapsedTimer();
@@ -396,14 +441,73 @@
 	};
 
 	const closeStream = () => {
+		if (reconnectTimer) clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+		reconnectAttempt = 0;
 		eventSource?.close();
 		eventSource = null;
 		streamState = "idle";
 	};
+	const reconcileActiveRun = async () => {
+		if (!currentSession || !running || reconciling) return;
+		const sessionId = currentSession.sessionId;
+		reconciling = true;
+		try {
+			const snapshot = await request<SessionSnapshot>(`/api/v1/sessions/${encodeURIComponent(sessionId)}`);
+			if (currentSession?.sessionId !== sessionId) return;
+			const latestRun = snapshot.latestRun;
+			if (!latestRun) return;
+			if (currentRunId && latestRun.runId !== currentRunId) return;
+			if (!currentRunId) {
+				const expectedAfter = (runStartedAt?.getTime() ?? Date.now()) - 1_000;
+				if (new Date(latestRun.startedAt).getTime() < expectedAfter) return;
+				currentRunId = latestRun.runId;
+			}
+			if (latestRun.status === "running") return;
+
+			messages = snapshot.messages;
+			activitySequence = Number.isFinite(snapshot.activityCount) ? snapshot.activityCount : snapshot.recentActivities.length;
+			const firstActivitySequence = activitySequence - snapshot.recentActivities.length + 1;
+			activities = snapshot.recentActivities.map((activity, index) => ({
+				...activity,
+				cursor: firstActivitySequence + index,
+				receivedAt: new Date(activity.receivedAt),
+			}));
+			runStatus = latestRun.status;
+			runUsage = latestRun.usage;
+			runDurationMs = latestRun.durationMs ?? 0;
+			elapsedSeconds = Math.max(0, Math.round(runDurationMs / 1000));
+			running = false;
+			sending = false;
+			streamingText = "";
+			reasoningText = "";
+			reasoningCollapsed = true;
+			stopElapsedTimer();
+		} catch {
+			// SSE remains the primary transport; reconciliation retries quietly.
+		} finally {
+			reconciling = false;
+		}
+	};
 	const startElapsedTimer = () => {
 		stopElapsedTimer();
 		elapsedTimer = setInterval(() => {
-			if (runStartedAt) elapsedSeconds = Math.floor((Date.now() - runStartedAt.getTime()) / 1000);
+			const now = Date.now();
+			if (runStartedAt) elapsedSeconds = Math.floor((now - runStartedAt.getTime()) / 1000);
+			if (running && now - lastReconcileAt >= 5_000) {
+				lastReconcileAt = now;
+				void reconcileActiveRun();
+			}
+			if (eventSource && streamState === "connected" && now - lastStreamSignalAt >= 40_000) {
+				const stalledSource = eventSource;
+				stalledSource.close();
+				eventSource = null;
+				streamState = "reconnecting";
+				reconnectTimer = setTimeout(() => {
+					reconnectTimer = null;
+					connectStream();
+				}, 500);
+			}
 		}, 1000);
 	};
 	const stopElapsedTimer = () => {
@@ -414,7 +518,7 @@
 		await tick();
 		conversationElement?.scrollTo({ top: conversationElement.scrollHeight, behavior: "smooth" });
 	};
-	const textContent = (message: Extract<Message, { role: "user" | "assistant" }>) =>
+	const textContent = (message: Extract<Message, { role: "user" | "assistant" | "reasoning" }>) =>
 		message.content.filter((item): item is Extract<Content, { type: "text" }> => item.type === "text").map((item) => item.text).join("\n");
 	const responseText = (message: Extract<Message, { role: "toolResponse" }>) =>
 		message.response.filter((item): item is Extract<Content, { type: "text" }> => item.type === "text").map((item) => item.text).join("\n");
@@ -434,6 +538,7 @@
 		if (event.message.role === "toolCall") return `Called ${event.message.name}`;
 		if (event.message.role === "toolResponse") return `${event.message.name} ${event.message.isError ? "failed" : "returned"}`;
 		if (event.message.role === "user") return "User message accepted";
+		if (event.message.role === "reasoning") return "Reasoning completed";
 		return "Assistant response completed";
 	};
 
@@ -491,8 +596,13 @@
 						<div class="conversation-empty"><div class="conversation-empty-orbit ready"><span></span></div><span class="panel-kicker">Session ready</span><h2>What should {selectedBlueprint?.id} work on?</h2><p>Messages and tool activity will appear here as they happen.</p></div>
 					{:else}
 						<div class="message-stack">
-							{#each messages as message}
-								{#if message.role === "user" || message.role === "assistant"}
+							{#each messages as message, messageIndex}
+								{#if message.role === "reasoning"}
+									{@const response = messages[messageIndex + 1]}
+									<article class="chat-message assistant"><div class="message-author"><Avatar kind="blueprint" seed={`blueprint:${selectedBlueprint?.id ?? "unknown"}`} size={28} decorative /><strong>{selectedBlueprint?.id}</strong></div><div class="message-body"><details class="reasoning-block completed"><summary><span>Reasoning</span><small>Show</small></summary><div><Markdown source={textContent(message)} /></div></details>{#if response?.role === "assistant"}<Markdown source={textContent(response)} />{#each response.content.filter((item) => item.type === "image") as image}<img src={image.source.kind === "url" ? image.source.url : `data:${image.source.mediaType};base64,${image.source.data}`} alt="Message attachment" />{/each}{/if}</div></article>
+								{:else if message.role === "assistant" && messages[messageIndex - 1]?.role === "reasoning"}
+									<!-- Rendered together with the preceding reasoning message. -->
+								{:else if message.role === "user" || message.role === "assistant"}
 									<article class:assistant={message.role === "assistant"} class="chat-message"><div class="message-author"><Avatar kind={message.role === "user" ? "user" : "blueprint"} seed={message.role === "user" ? "nox-local-user" : `blueprint:${selectedBlueprint?.id ?? "unknown"}`} size={28} decorative /><strong>{message.role === "user" ? "You" : selectedBlueprint?.id}</strong></div><div class="message-body"><Markdown source={textContent(message)} />{#each message.content.filter((item) => item.type === "image") as image}<img src={image.source.kind === "url" ? image.source.url : `data:${image.source.mediaType};base64,${image.source.data}`} alt="Message attachment" />{/each}</div></article>
 								{:else if message.role === "toolCall"}
 									<article class="tool-event call"><div class="tool-event-icon">⌘</div><div><span>Tool call</span><strong>{message.name}</strong><pre>{JSON.stringify(message.arguments, null, 2)}</pre></div></article>
@@ -500,7 +610,7 @@
 									<article class:error={message.isError} class="tool-event response"><div class="tool-event-icon">{message.isError ? "!" : "✓"}</div><div><span>{message.execution === "deferredAck" ? "Deferred tool accepted" : message.execution === "deferredResult" ? "Deferred result" : "Tool response"}</span><strong>{message.name}</strong><pre>{responseText(message) || "No textual output"}</pre></div></article>
 								{/if}
 							{/each}
-							{#if streamingText}<article class="chat-message assistant streaming"><div class="message-author"><Avatar kind="blueprint" seed={`blueprint:${selectedBlueprint?.id ?? "unknown"}`} size={28} decorative /><strong>{selectedBlueprint?.id}</strong><i></i></div><div class="message-body"><Markdown source={streamingText} /><span class="stream-caret"></span></div></article>{/if}
+							{#if streamingText || reasoningText}<article class="chat-message assistant streaming"><div class="message-author"><Avatar kind="blueprint" seed={`blueprint:${selectedBlueprint?.id ?? "unknown"}`} size={28} decorative /><strong>{selectedBlueprint?.id}</strong><i></i></div><div class="message-body">{#if reasoningText}<details class="reasoning-block live" open={!reasoningCollapsed}><summary><span>Reasoning</span><small>{reasoningCollapsed ? "Show" : "Thinking…"}</small></summary><div><Markdown source={reasoningText} /></div></details>{/if}{#if streamingText}<Markdown source={streamingText} /><span class="stream-caret"></span>{/if}</div></article>{/if}
 						</div>
 					{/if}
 				</div>
@@ -520,13 +630,13 @@
 				<div class="playground-panel-head inspector-head"><span class="panel-kicker">Inspector</span><h2>Current run</h2></div>
 				<div class="run-status-card"><div class="run-status-main"><span class:active={running} class="run-status-dot"></span><div><strong>{running ? permissions.length ? "Permission required" : "Agent responding" : runStatus ? `Run ${runStatus}` : currentSession ? "Session idle" : "Not started"}</strong><span>{running ? `${elapsedSeconds}s elapsed` : runDurationMs ? `${Math.round(runDurationMs)} ms · ${streamState === "connected" ? "stream connected" : "stream offline"}` : streamState === "connected" ? "Event stream connected" : "No active event stream"}</span></div></div>{#if currentRunId}<code>Run {shortId(currentRunId)}</code>{:else if currentSession}<code>Session {shortId(currentSession.sessionId)}</code>{/if}</div>
 				<div class="run-facts"><div><span>Messages</span><strong>{messages.length}</strong></div><div><span>Responses</span><strong>{assistantCount}</strong></div><div><span>Tool calls</span><strong>{toolCallCount}</strong></div></div>
-				<div class="run-usage"><div class="run-usage-head"><span>Measured usage</span><strong>{runUsage.inputTokens + runUsage.outputTokens} tokens</strong></div><div><span>Input</span><strong>{runUsage.inputTokens.toLocaleString()}</strong></div><div><span>Output</span><strong>{runUsage.outputTokens.toLocaleString()}</strong></div><div><span>Cache read</span><strong>{runUsage.cacheReadTokens.toLocaleString()}</strong></div></div>
+				<div class="run-usage"><div class="run-usage-head"><span>Last measured usage</span><strong>{runUsage.inputTokens + runUsage.outputTokens} tokens</strong></div><div><span>Input</span><strong>{runUsage.inputTokens.toLocaleString()}</strong></div><div><span>Output</span><strong>{runUsage.outputTokens.toLocaleString()}</strong></div><div><span>Cache read</span><strong>{runUsage.cacheReadTokens.toLocaleString()}</strong></div></div>
 				{#if permissions.length > 0}<div class="inspector-attention"><span>!</span><div><strong>Run paused</strong><p>A protected tool is waiting for your decision.</p></div></div>{/if}
 				<div class="activity-heading"><span>Live activity</span></div>
 				<div class="activity-timeline">
 					{#each activities.slice(-8).reverse() as activity}<div class:error={activity.event.type === "error"} class="activity-item"><span></span><div><strong>{activityLabel(activity)}</strong><small>{activity.receivedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · #{activity.cursor}</small></div></div>{:else}<div class="activity-empty"><span>···</span><p>Run events will appear here.</p></div>{/each}
 				</div>
-				<div class="inspector-contract"><strong>Run-local measurements</strong><p>Usage reflects provider-reported tokens for the latest run. Cost estimation is not configured.</p></div>
+				<div class="inspector-contract"><strong>Run-local measurements</strong><p>Usage reflects provider-reported tokens for the latest completed run. Cost estimation is not configured.</p></div>
 			</aside>
 		</div>
 	{/if}
@@ -1066,6 +1176,48 @@
 		border-radius: 7px;
 		object-fit: contain;
 	}
+	.reasoning-block {
+		margin: 0 0 14px 41px;
+		border-left: 1px solid rgb(154 167 158 / 24%);
+		color: var(--muted);
+		opacity: .68;
+	}
+	.message-body .reasoning-block { margin-left: 0; }
+	.reasoning-block summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 4px 9px;
+		cursor: pointer;
+		font-size: 8px;
+		list-style: none;
+		text-transform: uppercase;
+		letter-spacing: .08em;
+	}
+	.reasoning-block summary::-webkit-details-marker { display: none; }
+	.reasoning-block summary::before {
+		content: '›';
+		font-family: var(--font-mono);
+		transition: transform 120ms ease;
+	}
+	.reasoning-block[open] summary::before { transform: rotate(90deg); }
+	.reasoning-block summary span { margin-right: auto; }
+	.reasoning-block summary small {
+		font-size: 7px;
+		font-weight: 500;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+	.reasoning-block > div {
+		max-height: 220px;
+		overflow: auto;
+		padding: 3px 9px 8px 24px;
+		font-size: 10px;
+		font-style: italic;
+		line-height: 1.55;
+	}
+	.reasoning-block.live:not([open]) { margin-bottom: 8px; }
 
 	.chat-message.streaming { position: relative; }
 	.chat-message.streaming .message-author i {

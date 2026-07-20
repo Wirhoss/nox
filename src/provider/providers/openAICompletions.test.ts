@@ -47,6 +47,8 @@ describe('OpenAICompletions', () => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
 
       const sse = [
+        'data: {"choices":[{"delta":{"reasoning_content":"Think "}}]}',
+        'data: {"choices":[{"delta":{"reasoning":"carefully"}}]}',
         'data: {"choices":[{"delta":{"content":"Hello "}}]}',
         'data: {"choices":[{"delta":{"content":"there"}}]}',
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"weather","arguments":"{\\"city\\":"}}]}}]}',
@@ -76,6 +78,7 @@ describe('OpenAICompletions', () => {
     const history: Message[] = [
       { role: 'user', content: [{ type: 'text', text: 'Previous question' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'I\'ll check.' }] },
+      { role: 'reasoning', content: [{ type: 'text', text: 'Internal prior reasoning' }] },
       {
         arguments: { city: 'Cartago' },
         name: 'weather',
@@ -157,6 +160,8 @@ describe('OpenAICompletions', () => {
       type: 'function',
     }]);
     expect(events).toEqual([
+      { text: 'Think ', type: 'reasoningFragment' },
+      { text: 'carefully', type: 'reasoningFragment' },
       { text: 'Hello ', type: 'textFragment' },
       { text: 'there', type: 'textFragment' },
       {
@@ -171,6 +176,10 @@ describe('OpenAICompletions', () => {
       {
         aborted: false,
         messages: [
+          {
+            content: [{ text: 'Think carefully', type: 'text' }],
+            role: 'reasoning',
+          },
           {
             content: [{ text: 'Hello there', type: 'text' }],
             role: 'assistant',
@@ -191,6 +200,10 @@ describe('OpenAICompletions', () => {
       },
     ]);
     expect(await stream.completed).toEqual([
+      {
+        content: [{ text: 'Think carefully', type: 'text' }],
+        role: 'reasoning',
+      },
       {
         content: [{ text: 'Hello there', type: 'text' }],
         role: 'assistant',

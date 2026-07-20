@@ -17,6 +17,11 @@ interface AssistantMessage {
   content: MessageContent[];
 }
 
+interface ReasoningMessage {
+  role: 'reasoning';
+  content: MessageContent[];
+}
+
 interface ToolCallMessage {
   role: 'toolCall';
   name: string;
@@ -40,7 +45,7 @@ interface UserMessage {
   content: MessageContent[];
 }
 
-type Message = AssistantMessage | UserMessage | ToolCallMessage | ToolResponseMessage;
+type Message = AssistantMessage | ReasoningMessage | UserMessage | ToolCallMessage | ToolResponseMessage;
 
 function toUserMessage(text: string): UserMessage {
   return {
@@ -58,6 +63,7 @@ export type {
   MessageContent,
   MessageContentImage,
   MessageContentText,
+  ReasoningMessage,
   ToolCallMessage,
   ToolResponseExecution,
   ToolResponseMessage,

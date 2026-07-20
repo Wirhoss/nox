@@ -31,6 +31,7 @@ enum StopReason {
 
 type AgentStreamEvent =
   | { type: 'assistantTextFragment', text: string }
+  | { type: 'assistantReasoningFragment', text: string }
   | { type: 'message', message: Message }
   | { type: 'permissionRequest', requestId: string, toolName: string, toolArguments: Record<string, unknown>, reason: string }
   | { type: 'permissionResolved', requestId: string, resolution: EscalationResolution }
@@ -103,6 +104,13 @@ class Runner {
     this.eventLog.push({
       type: 'assistantTextFragment',
       text: text,
+    });
+  }
+
+  private handleReasoning(text: string): void {
+    this.eventLog.push({
+      type: 'assistantReasoningFragment',
+      text,
     });
   }
 
@@ -283,6 +291,8 @@ class Runner {
       for await (const event of stream) {
         if (event.type === 'textFragment') {
           this.handleText(event.text);
+        } else if (event.type === 'reasoningFragment') {
+          this.handleReasoning(event.text);
         } else if (event.type === 'toolCall') {
           toolCalls.push(this.handleToolCall(event.toolCall));
         } else if (event.type === 'end') {

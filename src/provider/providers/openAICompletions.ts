@@ -56,6 +56,8 @@ interface OpenAIUsage {
 
 interface OpenAIStreamDelta {
   content?: string | null;
+  reasoning?: string | null;
+  reasoning_content?: string | null;
   tool_calls?: Array<{
     index: number;
     id?: string;
@@ -262,6 +264,10 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
         continue;
       }
 
+      if (message.role === 'reasoning') {
+        continue;
+      }
+
       if (message.role === 'toolCall') {
         const toolCall = this.toOpenAIToolCall(message);
         const previous = messages.at(-1);
@@ -395,8 +401,8 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     let text = '';
     let usage: OpenAIUsage | undefined;
 
-    const consumeData = (data: string): string | undefined => {
-      if (data === '[DONE]') return data;
+    const consumeData = (data: string): { content?: string; done?: boolean; reasoning?: string } => {
+      if (data === '[DONE]') return { done: true };
 
       let chunk: OpenAIStreamChunk;
       try {
@@ -428,7 +434,10 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
         }
       }
 
-      return delta?.content ?? undefined;
+      return {
+        content: delta?.content ?? undefined,
+        reasoning: delta?.reasoning_content ?? delta?.reasoning ?? undefined,
+      };
     };
 
     let done = false;
@@ -441,12 +450,13 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
         const line = rawLine.trim();
         if (!line.startsWith('data:')) continue;
 
-        const fragment = consumeData(line.slice(5).trim());
-        if (fragment === '[DONE]') {
+        const fragments = consumeData(line.slice(5).trim());
+        if (fragments.done) {
           done = true;
           break;
         }
-        if (fragment) yield { text: fragment, type: 'textFragment' };
+        if (fragments.reasoning) yield { text: fragments.reasoning, type: 'reasoningFragment' };
+        if (fragments.content) yield { text: fragments.content, type: 'textFragment' };
       }
 
       if (done) break;
@@ -456,10 +466,9 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
       buffer += decoder.decode();
       const line = buffer.trim();
       if (line.startsWith('data:')) {
-        const fragment = consumeData(line.slice(5).trim());
-        if (fragment && fragment !== '[DONE]') {
-          yield { text: fragment, type: 'textFragment' };
-        }
+        const fragments = consumeData(line.slice(5).trim());
+        if (fragments.reasoning) yield { text: fragments.reasoning, type: 'reasoningFragment' };
+        if (fragments.content) yield { text: fragments.content, type: 'textFragment' };
       }
     }
 

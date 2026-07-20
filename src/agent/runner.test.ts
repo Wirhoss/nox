@@ -71,6 +71,7 @@ describe('Runner', () => {
   test('emits measured run lifecycle metadata', async () => {
     const { eventLog, runner } = setup([
       async function* () {
+        yield { type: 'reasoningFragment', text: 'thinking' };
         yield { type: 'textFragment', text: 'hello' };
         yield {
           type: 'end',
@@ -86,6 +87,11 @@ describe('Runner', () => {
     const completed = events.find((event) => event.type === 'runCompleted');
 
     expect(started).toMatchObject({ modelId: 'test-model', type: 'runStarted' });
+    expect(events).toContainEqual({ type: 'assistantReasoningFragment', text: 'thinking' });
+    expect(events).toContainEqual({
+      type: 'message',
+      message: { role: 'reasoning', content: [{ type: 'text', text: 'thinking' }] },
+    });
     expect(completed).toMatchObject({
       runId: started?.type === 'runStarted' ? started.runId : undefined,
       status: 'completed',

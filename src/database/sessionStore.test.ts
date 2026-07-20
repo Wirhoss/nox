@@ -50,8 +50,9 @@ describe('SessionStore', () => {
     closeDatabase(database);
   });
 
-  test('does not persist streaming text fragments as activity', () => {
+  test('does not persist streaming reasoning or text fragments as activity', () => {
     const { database, store } = setup();
+    store.recordEvent('s1', { type: 'assistantReasoningFragment', text: 'thinking' });
     store.recordEvent('s1', { type: 'assistantTextFragment', text: 'partial' });
 
     expect(store.getRecentActivities('s1')).toEqual([]);
@@ -64,6 +65,7 @@ describe('SessionStore', () => {
     const { database, store } = setup();
     const messages: Message[] = [
       { role: 'user', content: [{ type: 'text', text: 'go' }] },
+      { role: 'reasoning', content: [{ type: 'text', text: 'thinking' }] },
       { role: 'toolResponse', name: 'job', trackId: 't1', execution: 'deferredAck', response: [{ type: 'text', text: 'started' }] },
       { role: 'toolResponse', name: 'job', trackId: 't1', execution: 'deferredResult', response: [{ type: 'text', text: 'finished' }] },
     ];
@@ -74,7 +76,7 @@ describe('SessionStore', () => {
     const rows = database.$client
       .query('SELECT execution FROM message ORDER BY position')
       .all() as Array<{ execution: string | null }>;
-    expect(rows.map((row) => row.execution)).toEqual([null, 'deferredAck', 'deferredResult']);
+    expect(rows.map((row) => row.execution)).toEqual([null, null, 'deferredAck', 'deferredResult']);
 
     closeDatabase(database);
   });
@@ -82,6 +84,7 @@ describe('SessionStore', () => {
   test('deleteSession removes the session and its messages', () => {
     const { database, store } = setup();
     store.saveMessage('s1', 0, { role: 'user', content: [{ type: 'text', text: 'hola' }] });
+    store.saveMessage('s1', 1, { role: 'reasoning', content: [{ type: 'text', text: 'thinking' }] });
     store.recordEvent('s1', { type: 'runStarted', runId: 'r1', modelId: 'model-1', startedAt: new Date().toISOString() });
 
     expect(store.deleteSession('s1')).toBe(true);

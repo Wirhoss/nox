@@ -14,6 +14,24 @@ import {
 
 import type { SessionRecord } from '../../database';
 
+const SSE_HEARTBEAT_MS = 15_000;
+
+async function nextWithHeartbeat<T>(pending: Promise<IteratorResult<T>>): Promise<IteratorResult<T> | null> {
+  return await new Promise<IteratorResult<T> | null>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), SSE_HEARTBEAT_MS);
+    pending.then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function toSessionSummary(record: SessionRecord) {
   return {
     blueprintId: record.blueprintId,
@@ -118,15 +136,27 @@ const sessionRoutes = new Elysia({ prefix: '/api/v1' })
     params: z.object({ sessionId: resourceIdSchema, requestId: resourceIdSchema }),
     body: z.object({ approved: z.boolean() }),
   })
-  .get('/sessions/:sessionId/events', async function* ({ params, query, status }) {
+  .get('/sessions/:sessionId/events', async function* ({ params, query, set, status }) {
     let events;
     try {
       events = MessageGateway.instance.subscribe(params.sessionId, query.from ?? 0);
     } catch (error) {
       return status(errorStatus(error), errorBody(error));
     }
-    for await (const { cursor, event } of events) {
+    set.headers['cache-control'] = 'no-cache, no-transform';
+    set.headers['x-accel-buffering'] = 'no';
+
+    let pending = events.next();
+    while (true) {
+      const result = await nextWithHeartbeat(pending);
+      if (result === null) {
+        yield sse({ event: 'heartbeat', data: { timestamp: Date.now() } });
+        continue;
+      }
+      if (result.done) return;
+      const { cursor, event } = result.value;
       yield sse({ id: String(cursor), event: event.type, data: event });
+      pending = events.next();
     }
   }, {
     params: sessionParamsSchema,
