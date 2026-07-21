@@ -32,7 +32,7 @@
 
 	<form onsubmit={submit}>
 		<main>
-			<section class="setup-section">
+			<section class="form-section setup-section">
 				<header><span>01</span><div><h2>Decision</h2><p>Define one question whose outcome can be evaluated.</p></div></header>
 				<div class="field-grid">
 					<label><span>Title</span><input maxlength="120" placeholder="Memory architecture" value={draft.title} oninput={(event) => onfield("title", event.currentTarget.value)} /></label>
@@ -40,12 +40,12 @@
 				</div>
 			</section>
 
-			<section class="setup-section">
+			<section class="form-section setup-section">
 				<header><span>02</span><div><h2>Participants</h2><p>Select two to eight independent perspectives.</p></div></header>
 				<ParticipantPicker {blueprints} selected={draft.participantBlueprintIds} onchange={(selected: string[]) => onfield("participantBlueprintIds", selected)} />
 			</section>
 
-			<section class="setup-section">
+			<section class="form-section setup-section">
 				<header><span>03</span><div><h2>Protocol</h2><p>Choose the moderator and the maximum number of rounds.</p></div></header>
 				<div class="protocol-grid">
 					<label><span>Moderator blueprint <b>Required</b></span><select required value={draft.moderatorBlueprintId} onchange={(event) => onfield("moderatorBlueprintId", event.currentTarget.value)}><option value="">Select a moderator…</option>{#each blueprints as blueprint}<option value={blueprint.id}>{blueprint.id}</option>{/each}</select><small>The moderator evaluates consensus and produces the final synthesis.</small></label>

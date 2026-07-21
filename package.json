@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "build": "bun build index.ts --outdir dist --target bun && cp -r src/database/migrations dist/migrations",
+    "build": "bun build index.ts --outdir dist --target bun && bun run scripts/syncMigrations.ts",
     "build:ui": "bun run --cwd ui build",
     "build:all": "bun run build:ui && bun run build",
     "start:all": "bun run build:all && bun dist/index.js",

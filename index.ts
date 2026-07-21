@@ -3,6 +3,8 @@ dotenv.config({ quiet: true });
 
 import { AgentRegistry } from './src/agent/registry';
 import { Config } from './src/config';
+import { DeepResearchRegistry } from './src/deepResearch';
+import { DeliberationRegistry } from './src/deliberation';
 import { BrokerRegistry, MessageGateway } from './src/gateway';
 import logger from './src/logger';
 import { ProviderRegistry } from './src/provider';
@@ -18,12 +20,20 @@ async function main(): Promise<void> {
   logger.info('Starting nox...');
   await Config.init();
   await ProviderRegistry.instance.init(Config.get('providers'));
-  await ToolRegistry.instance.init();
-  await AgentRegistry.instance.init(Config.get('blueprints'), Config.get('env').databaseFile, Config.get('app').gate);
+  await ToolRegistry.instance.init(Config.get('tools'));
+  const appConfig = Config.get('app');
+  await AgentRegistry.instance.init(
+    Config.get('blueprints'),
+    Config.get('env').databaseFile,
+    appConfig.gate,
+    appConfig.runner,
+  );
+  DeepResearchRegistry.instance.init(Config.get('env').databaseFile);
+  DeliberationRegistry.instance.init(Config.get('env').databaseFile);
   // TODO: read broker configs from Config once the first concrete broker exists.
   await BrokerRegistry.instance.init({}, MessageGateway.instance);
 
-  const { host, port } = Config.get('app').server;
+  const { host, port } = appConfig.server;
   server = await startServer({ host, port, uiDir: Config.get('env').uiDir });
   logger.info(`nox started on http://${host}:${port}`);
 }
@@ -35,6 +45,8 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   await server?.stop();
   await BrokerRegistry.instance.stopAll();
+  await DeliberationRegistry.instance.close();
+  DeepResearchRegistry.instance.close();
   AgentRegistry.instance.close();
 }
 
