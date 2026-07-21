@@ -58,7 +58,7 @@ describe('Runner', () => {
       async function* () {
         throw new Error('boom');
       },
-    ]);
+    ], [], { maxAttempts: 1 });
 
     await expect(runner.run(userMessage('hi'))).rejects.toThrow('Error in agent run loop: boom');
     expect(eventLog.snapshot().some((event) => event.type === 'error')).toBe(true);
@@ -98,6 +98,84 @@ describe('Runner', () => {
       type: 'runCompleted',
       usage: { cacheReadTokens: 5, inputTokens: 12, outputTokens: 3 },
     });
+  });
+
+  test('retries provider failures before output and succeeds on the configured attempt', async () => {
+    let attempts = 0;
+    // eslint-disable-next-line require-yield
+    const fail = async function* (): AsyncGenerator<ProviderStreamEvent> {
+      attempts += 1;
+      throw new Error('temporary outage');
+    };
+    const { context, eventLog, runner } = setup([
+      fail,
+      fail,
+      async function* () {
+        attempts += 1;
+        yield { type: 'end', messages: [assistant('recovered')] };
+      },
+    ], [], { maxAttempts: 3, retryDelayMs: 0 });
+
+    expect(await runner.run(userMessage('hi'))).toBe(StopReason.Completed);
+    expect(attempts).toBe(3);
+    expect(context.messageHistory.at(-1)).toEqual(assistant('recovered'));
+    expect(eventLog.snapshot().some((event) => event.type === 'error')).toBe(false);
+  });
+
+  test('fails after the configured number of provider attempts', async () => {
+    let attempts = 0;
+    // eslint-disable-next-line require-yield
+    const fail = async function* (): AsyncGenerator<ProviderStreamEvent> {
+      attempts += 1;
+      throw new Error(`temporary outage ${attempts}`);
+    };
+    const { runner } = setup([fail, fail], [], { maxAttempts: 2, retryDelayMs: 0 });
+
+    await expect(runner.run(userMessage('hi'))).rejects.toThrow(
+      'Error in agent run loop: temporary outage 2',
+    );
+    expect(attempts).toBe(2);
+  });
+
+  test('does not retry after the provider has emitted output', async () => {
+    let attempts = 0;
+    const { runner } = setup([
+      // eslint-disable-next-line require-yield
+      async function* () {
+        attempts += 1;
+        yield { type: 'textFragment', text: 'partial' };
+        throw new Error('stream disconnected');
+      },
+      async function* () {
+        attempts += 1;
+        yield { type: 'end', messages: [assistant('duplicate')] };
+      },
+    ], [], { maxAttempts: 3, retryDelayMs: 0 });
+
+    await expect(runner.run(userMessage('hi'))).rejects.toThrow(
+      'Error in agent run loop: stream disconnected',
+    );
+    expect(attempts).toBe(1);
+  });
+
+  test('abort interrupts retry backoff without starting another attempt', async () => {
+    let attempts = 0;
+    const { runner } = setup([
+      async function* () {
+        attempts += 1;
+        throw new Error('temporary outage');
+      },
+      async function* () {
+        attempts += 1;
+        yield { type: 'end', messages: [assistant('too late')] };
+      },
+    ], [], { maxAttempts: 3, retryDelayMs: 1_000 });
+
+    const running = runner.run(userMessage('hi'));
+    await sleep(10);
+    expect(await runner.abort()).toBe(true);
+    expect(await running).toBe(StopReason.Aborted);
+    expect(attempts).toBe(1);
   });
 
   test('steer keeps tool calls paired with responses in the history', async () => {

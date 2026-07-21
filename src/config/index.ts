@@ -4,7 +4,7 @@ import { getEnvConfig, envConfigSchema } from './env';
 import { getProvidersConfig, providersConfigSchema } from './provider';
 import { getToolsConfig, toolsConfigSchema } from './tools';
 
-import type { AppConfig } from './app';
+import type { AppConfig, RunnerConfig } from './app';
 import type { BlueprintsConfig } from './blueprint';
 import type { EnvConfig } from './env';
 import type { ProvidersConfig } from './provider';
@@ -47,4 +47,4 @@ export class Config {
 }
 
 export { envConfigSchema, appConfigSchema, blueprintsConfigSchema, providersConfigSchema, toolsConfigSchema };
-export type { AppConfig, BlueprintsConfig, EnvConfig, ToolsConfig };
+export type { AppConfig, BlueprintsConfig, EnvConfig, RunnerConfig, ToolsConfig };

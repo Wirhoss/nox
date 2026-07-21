@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 
+import { createLogger } from '../logger';
 import { EventLog } from '../utils';
 
 import type { EscalationHub, EscalationResolution, ToolGate } from '../gate';
@@ -46,19 +47,36 @@ type AgentStreamEvent =
   | { type: 'error'; error: Error };
 
 interface RunnerOptions {
+  maxAttempts?: number;
   maxIterations: number;
+  retryDelayMs?: number;
   gate?: ToolGate;
   escalation?: EscalationHub;
   escalationTimeoutMs?: number;
 }
 
 const DEFAULT_ESCALATION_TIMEOUT_MS = 120_000;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_DELAY_MS = 1_000;
+const logger = createLogger('agent');
+
+class RetryableProviderError extends Error {
+  public readonly providerError: Error;
+
+  constructor(providerError: Error) {
+    super(providerError.message, { cause: providerError });
+    this.name = 'RetryableProviderError';
+    this.providerError = providerError;
+  }
+}
 
 class Runner {
   private eventLog: EventLog<AgentStreamEvent>;
   private context: Context;
 
   private maxIterations: number;
+  private maxAttempts: number;
+  private retryDelayMs: number;
   private gate?: ToolGate;
   private escalation?: EscalationHub;
   private escalationTimeoutMs: number;
@@ -78,7 +96,9 @@ class Runner {
     this.eventLog = eventLog;
     this.provider = provider;
     this.model = model;
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
     this.maxIterations = options.maxIterations;
+    this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
     this.gate = options.gate;
     this.escalation = options.escalation;
     this.escalationTimeoutMs = options.escalationTimeoutMs ?? DEFAULT_ESCALATION_TIMEOUT_MS;
@@ -264,6 +284,91 @@ class Runner {
     }
   }
 
+  private async waitBeforeRetry(attempt: number): Promise<void> {
+    const delayMs = this.retryDelayMs * (2 ** (attempt - 1));
+    if (delayMs === 0) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const signal = this.abortController?.signal;
+      const timeoutId = setTimeout((): void => {
+        signal?.removeEventListener('abort', abort);
+        resolve();
+      }, delayMs);
+      function abort(): void {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', abort);
+        reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+      }
+
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener('abort', abort, { once: true });
+    });
+  }
+
+  private async runProviderAttempt(): Promise<Promise<ToolResponseMessage>[]> {
+    const toolCalls: Promise<ToolResponseMessage>[] = [];
+    let receivedOutput = false;
+
+    try {
+      const stream = this.getMessageStream();
+      let streamError: Error | undefined;
+
+      for await (const event of stream) {
+        if (event.type === 'textFragment') {
+          receivedOutput = true;
+          this.handleText(event.text);
+        } else if (event.type === 'reasoningFragment') {
+          receivedOutput = true;
+          this.handleReasoning(event.text);
+        } else if (event.type === 'toolCall') {
+          receivedOutput = true;
+          toolCalls.push(this.handleToolCall(event.toolCall));
+        } else if (event.type === 'end') {
+          await this.commitAssistantMessage(event.messages, event.usage);
+        } else if (event.type === 'error') {
+          streamError = event.error;
+        }
+      }
+
+      if (streamError) throw streamError;
+      return toolCalls;
+    } catch (error) {
+      const providerError = error instanceof Error ? error : new Error(String(error));
+      if (receivedOutput || this.abortController?.signal.aborted) throw providerError;
+      throw new RetryableProviderError(providerError);
+    }
+  }
+
+  private async runProviderWithRetries(): Promise<Promise<ToolResponseMessage>[]> {
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      try {
+        return await this.runProviderAttempt();
+      } catch (error) {
+        const retryableError = error instanceof RetryableProviderError
+          ? error.providerError
+          : error;
+        if (
+          !(error instanceof RetryableProviderError)
+          || attempt === this.maxAttempts
+          || this.abortController?.signal.aborted
+        ) {
+          throw retryableError;
+        }
+        logger.warn({
+          attempt,
+          err: retryableError,
+          maxAttempts: this.maxAttempts,
+          modelId: this.model.modelId,
+        }, 'Provider stream failed before producing output; retrying.');
+        await this.waitBeforeRetry(attempt);
+      }
+    }
+    throw new Error('Provider retry loop exhausted unexpectedly.');
+  }
+
   private async commitAssistantMessage(messages: Message[], usage?: Usage): Promise<Message[]> {
     for (const message of messages) {
       if (message.role !== 'toolCall') {
@@ -285,24 +390,7 @@ class Runner {
   private async runLoop(): Promise<StopReason> {
     for (let i = 0; i < this.maxIterations; i++) {
       this.drainInjections();
-      const stream = this.getMessageStream();
-      const toolCalls: Promise<ToolResponseMessage>[] = [];
-      let streamError: Error | undefined;
-      for await (const event of stream) {
-        if (event.type === 'textFragment') {
-          this.handleText(event.text);
-        } else if (event.type === 'reasoningFragment') {
-          this.handleReasoning(event.text);
-        } else if (event.type === 'toolCall') {
-          toolCalls.push(this.handleToolCall(event.toolCall));
-        } else if (event.type === 'end') {
-          await this.commitAssistantMessage(event.messages, event.usage);
-        } else if (event.type === 'error') {
-          streamError = event.error;
-        }
-      }
-      if (streamError) throw streamError;
-
+      const toolCalls = await this.runProviderWithRetries();
       const toolResponses = await Promise.all(toolCalls);
 
       for (const toolResponse of toolResponses) {
@@ -363,7 +451,9 @@ class Runner {
       modelId: this.model.modelId,
       startedAt: new Date(startedAt).toISOString(),
     });
-    const completeRun = (status: Extract<AgentStreamEvent, { type: 'runCompleted' }>['status']) => {
+    const completeRun = (
+      status: Extract<AgentStreamEvent, { type: 'runCompleted' }>['status'],
+    ): void => {
       this.eventLog.push({
         type: 'runCompleted',
         runId,

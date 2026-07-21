@@ -7,6 +7,11 @@ import { readConfigFile } from './utils';
 import type { GateConfig } from '../gate';
 import type { EnvConfig } from './env';
 
+export const runnerConfigSchema = z.object({
+  maxAttempts: z.number().int().positive().default(3),
+  retryDelayMs: z.number().int().nonnegative().default(1_000),
+});
+
 export const appConfigSchema = z.object({
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
   server: z.object({
@@ -15,9 +20,11 @@ export const appConfigSchema = z.object({
   }),
 
   gate: gateConfigSchema.default({ rules: [], escalationTimeoutMs: 120_000 }),
+  runner: runnerConfigSchema.default({ maxAttempts: 3, retryDelayMs: 1_000 }),
 });
 
 export type AppConfig = z.infer<typeof appConfigSchema>;
+export type RunnerConfig = z.infer<typeof runnerConfigSchema>;
 
 let appConfig: AppConfig | null = null;
 
@@ -32,7 +39,7 @@ export async function updateGateConfig(envConfig: EnvConfig, gate: GateConfig): 
   return parsed;
 }
 
-export async function getAppConfig(envConfig: EnvConfig) {
+export async function getAppConfig(envConfig: EnvConfig): Promise<AppConfig> {
   if (!appConfig) {
     const raw = await readConfigFile(envConfig.configFileApp, {
       logLevel: process.env.LOG_LEVEL ?? 'info',

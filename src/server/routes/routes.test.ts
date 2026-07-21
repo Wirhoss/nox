@@ -51,6 +51,12 @@ describe('HTTP API contract', () => {
     expect(registered).toContain('GET /api/v1/sessions/:sessionId');
     expect(registered).toContain('GET /api/v1/runs');
     expect(registered).toContain('GET /api/v1/logs');
+    expect(registered).toContain('GET /api/v1/deep-research');
+    expect(registered).toContain('GET /api/v1/deep-research/:researchId');
+    expect(registered).toContain('POST /api/v1/deep-research');
+    expect(registered).toContain('GET /api/v1/deliberations');
+    expect(registered).toContain('GET /api/v1/deliberations/:deliberationId');
+    expect(registered).toContain('POST /api/v1/deliberations');
     expect(registered).toContain('GET /api/v1/config/tools/web_tools');
     expect(registered).toContain('PUT /api/v1/config/tools/web_tools');
     expect(registered.some((route) => route.includes('/api/v1/agents'))).toBe(false);

@@ -5,6 +5,8 @@ import { isDomainError } from '../../errors';
 const resourceIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Invalid resource ID');
 
 const blueprintParamsSchema = z.object({ blueprintId: resourceIdSchema });
+const deliberationParamsSchema = z.object({ deliberationId: resourceIdSchema });
+const researchParamsSchema = z.object({ researchId: resourceIdSchema });
 const sessionParamsSchema = z.object({ sessionId: resourceIdSchema });
 
 type ApiErrorCode =
@@ -39,9 +41,11 @@ function errorBody(error: unknown): ApiErrorBody {
 export {
   apiError,
   blueprintParamsSchema,
+  deliberationParamsSchema,
   errorBody,
   errorStatus,
   resourceIdSchema,
+  researchParamsSchema,
   sessionParamsSchema,
 };
 

@@ -10,9 +10,11 @@ import type { Context } from './context';
 import type { AgentStreamEvent, StopReason } from './runner';
 
 interface AgentConfig {
+  maxAttempts?: number;
   maxIterations: number;
   modelConfig: ModelConfig;
   provider: ChatProvider;
+  retryDelayMs?: number;
   gate?: ToolGate;
   escalationTimeoutMs?: number;
   onEvent?: (event: AgentStreamEvent, cursor: number) => void;
@@ -36,7 +38,9 @@ class AgentSession {
       agentConfig.provider,
       agentConfig.modelConfig,
       {
+        maxAttempts: agentConfig.maxAttempts,
         maxIterations: agentConfig.maxIterations,
+        retryDelayMs: agentConfig.retryDelayMs,
         gate: agentConfig.gate,
         escalation: this.escalation,
         escalationTimeoutMs: agentConfig.escalationTimeoutMs,

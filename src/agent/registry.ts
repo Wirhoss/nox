@@ -11,6 +11,7 @@ import { ToolRegistry } from '../tool/registry';
 import { Context } from './context';
 import { AgentSession } from './session';
 
+import type { RunnerConfig } from '../config';
 import type { NoxDatabase, RunListItem, RunSummary, RunStatus, SessionListItem, SessionRecord, StoredActivity, StoredMessage } from '../database';
 import type { GateConfig } from '../gate';
 import type { GatewayEvent } from '../gateway';
@@ -47,6 +48,7 @@ class AgentRegistry {
   private agentBlueprints = new Map<string, AgentBlueprint>();
   private sessions = new Map<string, AgentSession>();
   private gateConfig: GateConfig = { rules: [], escalationTimeoutMs: 120_000 };
+  private runnerConfig: RunnerConfig = { maxAttempts: 3, retryDelayMs: 1_000 };
 
   private initialized: boolean = false;
 
@@ -59,13 +61,21 @@ class AgentRegistry {
     return AgentRegistry._instance;
   }
 
-  public async init(agentBlueprints: AgentBlueprint[], databaseFile: string, gateConfig?: GateConfig): Promise<void> {
+  public async init(
+    agentBlueprints: AgentBlueprint[],
+    databaseFile: string,
+    gateConfig?: GateConfig,
+    runnerConfig?: RunnerConfig,
+  ): Promise<void> {
     if (this.initialized) {
       throw new Error('AgentRegistry already initialized.');
     }
     this.initialized = true;
     if (gateConfig) {
       this.gateConfig = gateConfig;
+    }
+    if (runnerConfig) {
+      this.runnerConfig = runnerConfig;
     }
 
     try {
@@ -238,14 +248,14 @@ class AgentRegistry {
   private attachPersistence(sessionId: string, context: Context): void {
     const store = this.requireStore();
     context.listener = {
-      onMessageAdded: (index, message) => {
+      onMessageAdded: (index, message): void => {
         try {
           store.saveMessage(sessionId, index, message);
         } catch (error) {
           logger.error({ err: error, sessionId }, 'Failed to persist session message.');
         }
       },
-      onHistoryTruncated: (length) => {
+      onHistoryTruncated: (length): void => {
         try {
           store.truncateMessages(sessionId, length);
         } catch (error) {
@@ -297,12 +307,14 @@ class AgentRegistry {
     ];
 
     return new AgentSession(context, {
+      maxAttempts: this.runnerConfig.maxAttempts,
       maxIterations: blueprint.config.maxIterations,
       modelConfig,
       provider,
+      retryDelayMs: this.runnerConfig.retryDelayMs,
       gate: new ToolGate(gateRules),
       escalationTimeoutMs: this.gateConfig.escalationTimeoutMs,
-      onEvent: (event) => {
+      onEvent: (event): void => {
         try {
           this.requireStore().recordEvent(sessionId, toGatewayEvent(event));
         } catch (error) {
