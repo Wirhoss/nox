@@ -83,13 +83,13 @@ class MessageGateway {
 
   public createInbox(brokerId: string, broker: BaseBroker): GatewayInbox {
     return {
-      openConversation: (conversationId, blueprintId) => {
+      openConversation: (conversationId, blueprintId): { sessionId: string } => {
         const { sessionId } = this.resolver.createSession(blueprintId ?? broker.defaultBlueprintId);
         this.bindings.set(bindingKey(brokerId, conversationId), sessionId);
         this.startOutboundPump(brokerId, broker, conversationId, sessionId);
         return { sessionId };
       },
-      submit: (conversationId, envelope) => {
+      submit: (conversationId, envelope): void => {
         this.submitToConversation(brokerId, broker, conversationId, envelope);
       },
     };
@@ -133,7 +133,7 @@ class MessageGateway {
   private dispatcherFor(sessionId: string, session: GatewaySession, debounceMs?: number): SessionDispatcher {
     let dispatcher = this.dispatchers.get(sessionId);
     if (!dispatcher) {
-      const onError = (error: Error) => {
+      const onError = (error: Error): void => {
         logger.error({ err: error, sessionId }, 'Agent run failed after message dispatch.');
       };
       dispatcher = new SessionDispatcher(session, onError, debounceMs);
@@ -151,7 +151,7 @@ class MessageGateway {
   }
 
   private startOutboundPump(brokerId: string, broker: BaseBroker, conversationId: string, sessionId: string): void {
-    void (async () => {
+    void (async (): Promise<void> => {
       try {
         for await (const envelope of this.subscribe(sessionId)) {
           if (broker.delivery === 'messages' && !isCoarseEvent(envelope.event)) {

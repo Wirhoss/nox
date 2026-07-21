@@ -10,7 +10,7 @@ const markdown = new MarkdownIt({
 markdown.disable(['image']);
 
 const defaultLinkOpen = markdown.renderer.rules.link_open;
-markdown.renderer.rules.link_open = (tokens, index, options, environment, renderer) => {
+markdown.renderer.rules.link_open = (tokens, index, options, environment, renderer): string => {
   tokens[index]?.attrSet('target', '_blank');
   tokens[index]?.attrSet('rel', 'noreferrer noopener');
   return defaultLinkOpen

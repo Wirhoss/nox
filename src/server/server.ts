@@ -53,6 +53,7 @@ type ServerOptions = {
 
 type NoxServer = Awaited<ReturnType<typeof createServer>>;
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 async function createServer(options: ServerOptions) {
   const uiExists = existsSync(options.uiDir);
   const inlineScriptHashes = uiExists

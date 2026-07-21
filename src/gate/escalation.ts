@@ -22,14 +22,14 @@ class EscalationHub {
 
   public wait(requestId: string, timeoutMs: number, signal?: AbortSignal, detail?: EscalationDetail): Promise<EscalationResolution> {
     return new Promise((resolve) => {
-      const finish = (resolution: EscalationResolution) => {
+      const finish = (resolution: EscalationResolution): void => {
         clearTimeout(timer);
         signal?.removeEventListener('abort', onAbort);
         this.pending.delete(requestId);
         resolve(resolution);
       };
       const timer = setTimeout(() => finish('timeout'), timeoutMs);
-      const onAbort = () => finish('aborted');
+      const onAbort = (): void => finish('aborted');
 
       if (signal?.aborted) {
         finish('aborted');

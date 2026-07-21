@@ -32,7 +32,9 @@ async function nextWithHeartbeat<T>(pending: Promise<IteratorResult<T>>): Promis
   });
 }
 
-function toSessionSummary(record: SessionRecord) {
+function toSessionSummary(
+  record: SessionRecord,
+): Pick<SessionRecord, 'blueprintId' | 'createdAt' | 'sessionId' | 'updatedAt'> {
   return {
     blueprintId: record.blueprintId,
     createdAt: record.createdAt,

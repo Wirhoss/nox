@@ -15,7 +15,7 @@ export type BlueprintsConfig = z.infer<typeof blueprintsConfigSchema>;
 
 let blueprintsConfig: BlueprintsConfig | null = null;
 
-export async function getBlueprintsConfig(envConfig: EnvConfig) {
+export async function getBlueprintsConfig(envConfig: EnvConfig): Promise<BlueprintsConfig> {
   try {
     if (!blueprintsConfig) {
       blueprintsConfig = blueprintsConfigSchema.parse(

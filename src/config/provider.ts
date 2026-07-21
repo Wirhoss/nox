@@ -31,7 +31,7 @@ export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 
 let providersConfig: ProvidersConfig | null = null;
 
-export async function getProvidersConfig(envConfig: EnvConfig) {
+export async function getProvidersConfig(envConfig: EnvConfig): Promise<ProvidersConfig> {
   try {
     if (!providersConfig) {
       providersConfig = providersConfigSchema.parse(await readConfigFile(envConfig.configFileProviders, {}));

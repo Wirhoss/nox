@@ -10,6 +10,7 @@ import { Runner, StopReason } from './runner';
 
 import type {
   Message,
+  MessageContent,
   ModelConfig,
   Provider,
   ProviderStreamEvent,
@@ -43,7 +44,11 @@ function fakeProvider(scripts: StreamScript[]): Provider {
   } as unknown as Provider;
 }
 
-function setup(scripts: StreamScript[], tools: ImmediateTool[] = [], options: Partial<RunnerOptions> = {}) {
+function setup(
+  scripts: StreamScript[],
+  tools: ImmediateTool[] = [],
+  options: Partial<RunnerOptions> = {},
+): { context: Context; eventLog: EventLog<AgentStreamEvent>; runner: Runner } {
   const context = new Context('system prompt');
   for (const tool of tools) context.tools[tool.name] = tool;
   const eventLog = new EventLog<AgentStreamEvent>();
@@ -55,7 +60,7 @@ describe('Runner', () => {
   test('provider stream errors reject run() and land in the event log', async () => {
     const { eventLog, runner } = setup([
       // eslint-disable-next-line require-yield
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         throw new Error('boom');
       },
     ], [], { maxAttempts: 1 });
@@ -70,7 +75,7 @@ describe('Runner', () => {
 
   test('emits measured run lifecycle metadata', async () => {
     const { eventLog, runner } = setup([
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'reasoningFragment', text: 'thinking' };
         yield { type: 'textFragment', text: 'hello' };
         yield {
@@ -110,7 +115,7 @@ describe('Runner', () => {
     const { context, eventLog, runner } = setup([
       fail,
       fail,
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         attempts += 1;
         yield { type: 'end', messages: [assistant('recovered')] };
       },
@@ -140,13 +145,12 @@ describe('Runner', () => {
   test('does not retry after the provider has emitted output', async () => {
     let attempts = 0;
     const { runner } = setup([
-      // eslint-disable-next-line require-yield
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         attempts += 1;
         yield { type: 'textFragment', text: 'partial' };
         throw new Error('stream disconnected');
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         attempts += 1;
         yield { type: 'end', messages: [assistant('duplicate')] };
       },
@@ -161,11 +165,12 @@ describe('Runner', () => {
   test('abort interrupts retry backoff without starting another attempt', async () => {
     let attempts = 0;
     const { runner } = setup([
-      async function* () {
+      // eslint-disable-next-line require-yield
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         attempts += 1;
         throw new Error('temporary outage');
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         attempts += 1;
         yield { type: 'end', messages: [assistant('too late')] };
       },
@@ -185,18 +190,18 @@ describe('Runner', () => {
       description: 'waits until aborted',
       parameters: z.object({}),
       call: (_params, ctx) => new Promise((resolve) => {
-        const finish = () => resolve([{ type: 'text', text: 'aborted' }]);
+        const finish = (): void => resolve([{ type: 'text', text: 'aborted' }]);
         if (ctx.abortSignal.aborted) finish();
         else ctx.abortSignal.addEventListener('abort', finish, { once: true });
       }),
     };
     const toolCall = toolCallMessage('wait', 'call-1');
     const { context, runner } = setup([
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'toolCall', toolCall };
         yield { type: 'end', messages: [toolCall] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'textFragment', text: 'ok' };
         yield { type: 'end', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }] };
       },
@@ -221,11 +226,11 @@ describe('Runner', () => {
     };
     const toolCall = toolCallMessage('echo', 'call-1');
     const { context, eventLog, runner } = setup([
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'toolCall', toolCall };
         yield { type: 'end', messages: [toolCall] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'end', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'bye' }] }] };
       },
     ], [echoTool]);
@@ -263,7 +268,7 @@ function trackingTool(onCall: () => void): ImmediateTool {
     name: 'echo',
     description: 'echoes',
     parameters: z.object({}),
-    call: async () => {
+    call: async (): Promise<MessageContent[]> => {
       onCall();
       return [{ type: 'text', text: 'done' }];
     },
@@ -274,11 +279,11 @@ describe('Runner gate', () => {
   const gatedScripts = (): StreamScript[] => {
     const toolCall = toolCallMessage('echo', 'call-1');
     return [
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'toolCall', toolCall };
         yield { type: 'end', messages: [toolCall] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'end', messages: [assistant('bye')] };
       },
     ];
@@ -371,15 +376,15 @@ describe('Runner deferred tools', () => {
   test('acks immediately and injects the result into the ongoing loop', async () => {
     const toolCall = toolCallMessage('job', 'call-1');
     const { context, runner } = setup([
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'toolCall', toolCall };
         yield { type: 'end', messages: [toolCall] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         await sleep(60);
         yield { type: 'end', messages: [assistant('working')] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'end', messages: [assistant('done')] };
       },
     ]);
@@ -396,14 +401,14 @@ describe('Runner deferred tools', () => {
   test('a result landing while idle wakes the runner without a user message', async () => {
     const toolCall = toolCallMessage('job', 'call-1');
     const { context, runner } = setup([
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'toolCall', toolCall };
         yield { type: 'end', messages: [toolCall] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'end', messages: [assistant('ok, running in background')] };
       },
-      async function* () {
+      async function* (): AsyncGenerator<ProviderStreamEvent> {
         yield { type: 'end', messages: [assistant('job is done')] };
       },
     ]);

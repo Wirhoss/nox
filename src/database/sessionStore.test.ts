@@ -4,8 +4,9 @@ import { closeDatabase, openDatabase } from './database';
 import { SessionStore } from './sessionStore';
 
 import type { Message } from '../provider';
+import type { NoxDatabase } from './database';
 
-function setup() {
+function setup(): { database: NoxDatabase; store: SessionStore } {
   const database = openDatabase(':memory:');
   const store = new SessionStore(database);
   store.insertSession({ sessionId: 's1', blueprintId: 'b1', systemPrompt: 'sys' });

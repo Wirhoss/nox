@@ -71,7 +71,7 @@ class FakeSession implements GatewaySession {
   }
 }
 
-function setup(debounceMs = 10) {
+function setup(debounceMs = 10): { dispatcher: SessionDispatcher; errors: Error[]; session: FakeSession } {
   const session = new FakeSession();
   const errors: Error[] = [];
   const dispatcher = new SessionDispatcher(session, (error) => errors.push(error), debounceMs);

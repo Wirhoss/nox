@@ -68,7 +68,7 @@ class FakeBroker extends BaseBroker {
   }
 }
 
-function setup() {
+function setup(): { broker: FakeBroker; gateway: MessageGateway; session: FakeSession } {
   const session = new FakeSession();
   const sessions = new Map<string, FakeSession>();
   let counter = 0;

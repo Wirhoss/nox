@@ -22,7 +22,7 @@ type JsonSchema = {
 
 const MAX_DEPTH = 3;
 
-const unique = (xs: string[]) => [...new Set(xs)];
+const unique = (xs: string[]): string[] => [...new Set(xs)];
 
 function typeName(schema: JsonSchema): string {
   if (!schema || typeof schema !== 'object') return 'unknown';

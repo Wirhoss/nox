@@ -83,7 +83,7 @@ class ProviderStream {
       if (this.abortSignal?.aborted) {
         resolve(StreamStatus.ABORTED);
       }
-      onAbort = () => resolve(StreamStatus.ABORTED);
+      onAbort = (): void => resolve(StreamStatus.ABORTED);
       this.abortSignal?.addEventListener('abort', onAbort, { once: true });
     });
 
