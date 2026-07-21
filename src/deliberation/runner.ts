@@ -33,11 +33,6 @@ function assistantText(messages: readonly Message[], from: number): string {
     .trim();
 }
 
-/**
- * Drives one deliberation to completion: participants propose, then critique each
- * other for as many rounds as configured, with a moderator checkpoint after every
- * critique round and a final synthesis. Every phase is a cancellation point.
- */
 class DeliberationRunner {
   public constructor(
     private readonly store: DeliberationStore,
@@ -76,7 +71,6 @@ class DeliberationRunner {
     return { blueprintId, session, sessionId };
   }
 
-  /** Runs every participant in parallel and records the round as one batch. */
   private async runParticipantRound(round: number, participants: SessionHandle[]): Promise<void> {
     this.assertNotCancelled();
     const phase = round === 1 ? 'proposal' : 'critique';

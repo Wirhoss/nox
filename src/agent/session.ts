@@ -24,13 +24,9 @@ class AgentSession {
   private readonly eventLog: EventLog<AgentStreamEvent>;
   private readonly escalation = new EscalationHub();
 
-  private agentConfig: AgentConfig;
-  private context: Context;
   private runner: Runner;
 
   constructor(context: Context, agentConfig: AgentConfig) {
-    this.context = context;
-    this.agentConfig = agentConfig;
     this.eventLog = new EventLog(agentConfig.onEvent);
     this.runner = new Runner(
       context,
@@ -54,10 +50,6 @@ class AgentSession {
 
   public get idle(): Promise<void> {
     return this.runner.idle;
-  }
-
-  public get history(): readonly Message[] {
-    return this.context.messageHistory;
   }
 
   public get eventCursor(): number {

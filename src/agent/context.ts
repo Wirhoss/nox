@@ -7,22 +7,22 @@ interface ContextListener {
 }
 
 class Context {
-  public inputTokens: number = 0;
-  public outputTokens: number = 0;
-  public cacheReadTokens: number = 0;
+  private readonly sessionId?: string;
 
-  public systemPrompt: string;
+  private inputTokens: number = 0;
+  private outputTokens: number = 0;
+  private cacheReadTokens: number = 0;
 
-  public messageHistory: Message[] = [];
-  public fullMessageHistory: Message[] = [];
-
-  public tools: Record<string, Tool> = {};
-
-  public readonly sessionId?: string;
-
-  public listener?: ContextListener;
-
+  private systemPrompt: string;
+  private messageHistory: Message[] = [];
+  private fullMessageHistory: Message[] = [];
+  private tools: Record<string, Tool> = {};
+  private _listener?: ContextListener;
   private checkpointIndex?: number;
+
+  public get listener(): ContextListener | undefined {
+    return this._listener;
+  }
 
   constructor(systemPrompt: string, sessionId?: string) {
     this.systemPrompt = systemPrompt;
@@ -34,7 +34,7 @@ class Context {
   public addMessage(message: Message): void {
     this.messageHistory.push(message);
     this.fullMessageHistory.push(message);
-    this.listener?.onMessageAdded(this.messageHistory.length - 1, message);
+    this._listener?.onMessageAdded(this.messageHistory.length - 1, message);
   }
 
   public saveCheckpoint(): void {
