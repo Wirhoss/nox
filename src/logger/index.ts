@@ -42,11 +42,27 @@ const prettyStream = pretty({
   },
 });
 
+/**
+ * Credentials live one careless `logger.info({ config })` away from the log
+ * store, which the UI serves over HTTP. Redaction is cheap insurance: it is
+ * applied before either stream sees the record.
+ */
+const REDACTED_PATHS = [
+  'apiKey',
+  '*.apiKey',
+  '*.*.apiKey',
+  'headers.authorization',
+  '*.headers.authorization',
+];
+
 const logLevel = process.env.LOG_LEVEL ?? 'info';
 const logStore = new StructuredLogStore();
 const consoleStream = process.env.NODE_ENV !== 'production' ? prettyStream : process.stdout;
 const logger: Logger = pino(
-  { level: logLevel },
+  {
+    level: logLevel,
+    redact: { censor: '[redacted]', paths: REDACTED_PATHS },
+  },
   pino.multistream([
     { level: logLevel, stream: consoleStream },
     { level: logLevel, stream: logStore },

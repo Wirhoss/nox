@@ -17,6 +17,7 @@ import type {
 } from '../provider';
 import type { ToolContext } from '../tool';
 import type { Context } from './context';
+import type { Logger } from 'pino';
 
 enum RunnerState {
   Idle,
@@ -53,6 +54,8 @@ interface RunnerOptions {
   gate?: ToolGate;
   escalation?: EscalationHub;
   escalationTimeoutMs?: number;
+  /** Correlates every log line this runner emits with its session. */
+  sessionId?: string;
 }
 
 const DEFAULT_ESCALATION_TIMEOUT_MS = 120_000;
@@ -91,11 +94,17 @@ class Runner {
 
   private pendingInjections: ToolResponseMessage[] = [];
 
+  /** Session-scoped logger; `activeLog` narrows it to the current run. */
+  private readonly log: Logger;
+  private activeLog: Logger;
+
   constructor(context: Context, eventLog: EventLog<AgentStreamEvent>, provider: Provider, model: ModelConfig, options: RunnerOptions) {
     this.context = context;
     this.eventLog = eventLog;
     this.provider = provider;
     this.model = model;
+    this.log = options.sessionId ? logger.child({ sessionId: options.sessionId }) : logger;
+    this.activeLog = this.log;
     this.maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
     this.maxIterations = options.maxIterations;
     this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
@@ -139,7 +148,13 @@ class Runner {
     if (verdict.verdict === 'pass') {
       return true;
     }
+    // Everything past this point is a policy decision about a tool call, so it
+    // is logged unconditionally: this is the audit trail for the gate.
     if (verdict.verdict === 'deny') {
+      this.activeLog.warn(
+        { reason: verdict.reason, toolName: toolCall.name },
+        'Tool call denied by gate policy.',
+      );
       toolResponse.response.push({
         type: 'text',
         text: `Tool call denied by policy: ${verdict.reason} This decision is final; do not retry this call.`,
@@ -149,6 +164,10 @@ class Runner {
     }
 
     if (!this.escalation) {
+      this.activeLog.warn(
+        { reason: verdict.reason, toolName: toolCall.name },
+        'Tool call requires approval but no escalation hub is attached; refusing it.',
+      );
       toolResponse.response.push({
         type: 'text',
         text: `Tool call not executed: ${verdict.reason} User approval is required but unavailable; do not retry this call.`,
@@ -158,6 +177,10 @@ class Runner {
     }
 
     const requestId = nanoid();
+    this.activeLog.info(
+      { reason: verdict.reason, requestId, toolName: toolCall.name },
+      'Tool call escalated for user approval.',
+    );
     this.eventLog.push({
       type: 'permissionRequest',
       requestId,
@@ -171,6 +194,10 @@ class Runner {
       reason: verdict.reason,
     });
     this.eventLog.push({ type: 'permissionResolved', requestId, resolution });
+    this.activeLog.info(
+      { requestId, resolution, toolName: toolCall.name },
+      'Tool call escalation resolved.',
+    );
 
     if (resolution === 'approved') {
       return true;
@@ -200,9 +227,17 @@ class Runner {
       execution: 'immediate',
       response: [],
     };
+    const startedAt = Date.now();
+    this.activeLog.debug(
+      { toolArguments: toolCall.arguments, toolName: toolCall.name },
+      'Tool call started.',
+    );
     try {
       const tool = this.context.tools[toolCall.name];
       if (!tool) {
+        // The model asked for a tool it was never given; that points at a
+        // blueprint or router problem, not at the model.
+        this.activeLog.warn({ toolName: toolCall.name }, 'Tool call requested an unknown tool.');
         toolResponse.response.push({
           type: 'text',
           text: `Tool ${toolCall.name} not found.`,
@@ -216,13 +251,27 @@ class Runner {
           toolResponse.response = [{ type: 'text', text: ack }];
           toolResponse.isError = false;
           this.trackDeferredResult(toolCall, result);
+          this.activeLog.debug(
+            { durationMs: Date.now() - startedAt, toolName: toolCall.name },
+            'Deferred tool acknowledged.',
+          );
         } else {
           const response: MessageContent[] = await tool.call(parsedArguments, this.toolContext());
           toolResponse.response = response ?? [];
           toolResponse.isError = false;
+          this.activeLog.debug(
+            { durationMs: Date.now() - startedAt, toolName: toolCall.name },
+            'Tool call completed.',
+          );
         }
       }
     } catch (error) {
+      // The failure is reported to the model as tool output, which would
+      // otherwise make it invisible to anyone operating the app.
+      this.activeLog.error(
+        { durationMs: Date.now() - startedAt, err: error, toolArguments: toolCall.arguments, toolName: toolCall.name },
+        'Tool call failed.',
+      );
       toolResponse.response.push({
         type: 'text',
         text: `Error executing tool ${toolCall.name}: ${(error as Error).message}`,
@@ -237,13 +286,21 @@ class Runner {
   }
 
   private trackDeferredResult(toolCall: ToolCallMessage, result: Promise<MessageContent[]>): void {
+    const log = this.activeLog;
     result.then(
-      (content) => this.injectDeferredResult(toolCall, content ?? [], false),
-      (error) => this.injectDeferredResult(
-        toolCall,
-        [{ type: 'text', text: `Deferred tool ${toolCall.name} failed: ${(error as Error).message}` }],
-        true,
-      ),
+      (content) => {
+        log.debug({ toolName: toolCall.name }, 'Deferred tool result received.');
+        this.injectDeferredResult(toolCall, content ?? [], false);
+      },
+      (error) => {
+        // Out-of-band failure: nothing else observes this rejection.
+        log.error({ err: error, toolName: toolCall.name }, 'Deferred tool failed.');
+        this.injectDeferredResult(
+          toolCall,
+          [{ type: 'text', text: `Deferred tool ${toolCall.name} failed: ${(error as Error).message}` }],
+          true,
+        );
+      },
     );
   }
 
@@ -269,8 +326,11 @@ class Runner {
       return;
     }
     this.commitInjection(message);
-    // Fire-and-forget wake-up; failures already land in the event log.
-    void this.resume().catch(() => undefined);
+    // Fire-and-forget wake-up. The event log carries the failure to whoever is
+    // subscribed, but nobody may be, so it is logged here too.
+    void this.resume().catch((error: unknown) => {
+      this.log.error({ err: error, toolName: toolCall.name }, 'Resume after a deferred tool result failed.');
+    });
   }
 
   private commitInjection(message: ToolResponseMessage): void {
@@ -357,7 +417,7 @@ class Runner {
         ) {
           throw retryableError;
         }
-        logger.warn({
+        this.activeLog.warn({
           attempt,
           err: retryableError,
           maxAttempts: this.maxAttempts,
@@ -399,6 +459,11 @@ class Runner {
       if (this.abortController?.signal.aborted) return StopReason.Aborted;
       if (toolResponses.length === 0 && this.pendingInjections.length === 0) return StopReason.Completed;
     }
+    // Not an error, but the run was cut short: the answer is likely truncated.
+    this.activeLog.warn(
+      { maxIterations: this.maxIterations },
+      'Agent run hit the tool iteration ceiling.',
+    );
     this.context.addMessage({
       role: 'user',
       content: [{ type: 'text', text: 'Maximum tool iterations reached.' }],
@@ -439,6 +504,7 @@ class Runner {
     this.abortController = new AbortController();
 
     const runId = nanoid();
+    this.activeLog = this.log.child({ runId });
     const startedAt = Date.now();
     const usageAtStart = {
       inputTokens: this.context.inputTokens,
@@ -451,20 +517,31 @@ class Runner {
       modelId: this.model.modelId,
       startedAt: new Date(startedAt).toISOString(),
     });
+    this.activeLog.info(
+      { modelId: this.model.modelId, resumed: userMessage === undefined },
+      'Agent run started.',
+    );
     const completeRun = (
       status: Extract<AgentStreamEvent, { type: 'runCompleted' }>['status'],
     ): void => {
+      const durationMs = Date.now() - startedAt;
+      const usage = {
+        inputTokens: this.context.inputTokens - usageAtStart.inputTokens,
+        outputTokens: this.context.outputTokens - usageAtStart.outputTokens,
+        cacheReadTokens: this.context.cacheReadTokens - usageAtStart.cacheReadTokens,
+      };
       this.eventLog.push({
         type: 'runCompleted',
         runId,
         status,
-        durationMs: Date.now() - startedAt,
-        usage: {
-          inputTokens: this.context.inputTokens - usageAtStart.inputTokens,
-          outputTokens: this.context.outputTokens - usageAtStart.outputTokens,
-          cacheReadTokens: this.context.cacheReadTokens - usageAtStart.cacheReadTokens,
-        },
+        durationMs,
+        usage,
       });
+      // Token counts are the app's cost signal, so they ride the run summary.
+      this.activeLog.info(
+        { durationMs, modelId: this.model.modelId, status, usage },
+        'Agent run finished.',
+      );
     };
 
     if (userMessage) {
@@ -486,6 +563,7 @@ class Runner {
         return StopReason.Aborted;
       }
       const parsedError = error instanceof Error ? error : new Error(String(error));
+      this.activeLog.error({ err: parsedError, modelId: this.model.modelId }, 'Agent run failed.');
       this.eventLog.push({
         type: 'error',
         error: parsedError,
@@ -495,6 +573,7 @@ class Runner {
     } finally {
       this.state = RunnerState.Idle;
       this.abortController = undefined;
+      this.activeLog = this.log;
       this.idleResolve?.();
     }
   }

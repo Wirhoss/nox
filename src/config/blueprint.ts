@@ -3,11 +3,14 @@ import { mkdir, readdir, unlink } from 'node:fs/promises';
 import { z } from 'zod';
 
 import { agentBlueprintSchema } from '../agent/registry';
+import { createLogger } from '../logger';
 
 import { readConfigDirectory } from './utils';
 
 import type { AgentBlueprint } from '../agent/registry';
 import type { EnvConfig } from './env';
+
+const logger = createLogger('config:blueprint');
 
 export const blueprintsConfigSchema = z.array(agentBlueprintSchema);
 
@@ -29,7 +32,10 @@ export async function getBlueprintsConfig(envConfig: EnvConfig): Promise<Bluepri
 }
 
 async function findBlueprintFile(dirPath: string, blueprintId: string): Promise<string | null> {
-  const entries = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
+  const entries = await readdir(dirPath, { withFileTypes: true }).catch((error: unknown) => {
+    logger.error({ dirPath, err: error }, 'Could not scan the blueprint directory.');
+    return [];
+  });
   for (const dirent of entries) {
     if (!dirent.isFile() || !dirent.name.endsWith('.json')) {
       continue;
@@ -40,8 +46,10 @@ async function findBlueprintFile(dirPath: string, blueprintId: string): Promise<
       if (parsed?.id === blueprintId) {
         return filePath;
       }
-    } catch {
-      // Unparseable files are reported by configuration loading.
+    } catch (error) {
+      // A file we cannot parse here may still be the blueprint being looked
+      // for, in which case the caller silently writes a duplicate instead.
+      logger.warn({ err: error, filePath }, 'Skipping an unreadable blueprint file during lookup.');
     }
   }
   return null;

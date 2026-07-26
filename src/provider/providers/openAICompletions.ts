@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { createLogger } from '../../logger';
 import {
   providerBaseConfigSchema,
   type TextGenerateOptions,
@@ -14,6 +15,7 @@ import {
 } from '../stream';
 
 import type { Tool } from '../../tool';
+import type { ModelConfig } from '../config';
 import type {
   Message,
   MessageContent,
@@ -26,6 +28,8 @@ const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
 });
 
 type OpenAICompletionsConfig = z.infer<typeof openAICompletionsConfigSchema>;
+
+const logger = createLogger('provider:openai');
 
 type OpenAIContentPart =
   | { type: 'text'; text: string }
@@ -183,29 +187,62 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): Promise<Response> {
-    const response = await this.fetchWithTimeout(
-      `${this.normalizedBaseUrl}/chat/completions`,
-      {
-        body: JSON.stringify(this.buildBody(systemPrompt, messageHistory, tools, opts)),
-        headers: {
-          ...this.authHeaders,
-          'Content-Type': 'application/json',
-        },
-        method: 'POST',
-      },
-      signal,
+    const body = this.buildBody(systemPrompt, messageHistory, tools, opts);
+    const modelId = typeof body['model'] === 'string' ? body['model'] : 'unknown';
+    const startedAt = Date.now();
+
+    logger.debug(
+      { messageCount: messageHistory.length, modelId, toolCount: tools.length },
+      'Chat completion request sent.',
     );
+
+    let response: Response;
+    try {
+      response = await this.fetchWithTimeout(
+        `${this.normalizedBaseUrl}/chat/completions`,
+        {
+          body: JSON.stringify(body),
+          headers: {
+            ...this.authHeaders,
+            'Content-Type': 'application/json',
+          },
+          method: 'POST',
+        },
+        signal,
+      );
+    } catch (error) {
+      // Timeouts and connection failures never reach a status code, so they
+      // would otherwise only surface as a retry warning in the runner.
+      if (!signal.aborted) {
+        logger.error(
+          { baseUrl: this.normalizedBaseUrl, durationMs: Date.now() - startedAt, err: error, modelId },
+          'Chat completion request never reached the provider.',
+        );
+      }
+      throw error;
+    }
+
+    const durationMs = Date.now() - startedAt;
+    if (!response.ok) {
+      // Rate limiting is the failure an operator most needs to see coming; it
+      // looks identical to any other 4xx once it becomes a thrown Error.
+      const metadata = { durationMs, modelId, status: response.status };
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after');
+        logger.warn({ ...metadata, retryAfter }, 'Provider rate limited the chat completion request.');
+      } else {
+        logger.error(metadata, 'Chat completion request rejected by the provider.');
+      }
+    } else {
+      logger.debug({ durationMs, modelId }, 'Chat completion response headers received.');
+    }
 
     await this.assertSuccessfulResponse(response, 'chat completion request');
     return response;
   }
 
-  private buildBody(
-    systemPrompt: string,
-    messageHistory: Message[],
-    tools: Tool[],
-    opts: TextGenerateOptions | undefined,
-  ): Record<string, unknown> {
+  /** Resolves the model the way `buildBody` does, so logs name the same one. */
+  private resolveModel(opts: TextGenerateOptions | undefined): { model?: ModelConfig; modelId: string } {
     const configuredModel = this.defaultModel === undefined
       ? undefined
       : this.getModelConfig(this.defaultModel);
@@ -215,6 +252,17 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     if (modelId === undefined) {
       throw new Error('No OpenAI model configured: pass opts.model or set defaultModel');
     }
+
+    return { model, modelId };
+  }
+
+  private buildBody(
+    systemPrompt: string,
+    messageHistory: Message[],
+    tools: Tool[],
+    opts: TextGenerateOptions | undefined,
+  ): Record<string, unknown> {
+    const { model, modelId } = this.resolveModel(opts);
 
     const sampling = { ...model, ...opts };
     const body: Record<string, unknown> = {
@@ -392,9 +440,11 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncGenerator<ProviderStreamEvent> {
+    const startedAt = Date.now();
     const response = await this.request(systemPrompt, messageHistory, tools, opts, signal);
     if (response.body === null) throw new Error('OpenAI response did not include a body');
 
+    const { modelId } = this.resolveModel(opts);
     const decoder = new TextDecoder();
     const pendingToolCalls: Array<PendingToolCall | undefined> = [];
     let buffer = '';
@@ -480,11 +530,30 @@ class OpenAICompletions extends BaseProvider implements ChatProvider {
       });
     }
 
+    let toolCallCount = 0;
     for (const pending of pendingToolCalls) {
       if (pending === undefined) continue;
       const toolCall = this.toToolCall(pending);
+      toolCallCount += 1;
       messages.push(toolCall);
       yield { toolCall, type: 'toolCall' };
+    }
+
+    if (usage === undefined) {
+      // Without usage there is no cost or context accounting for this call.
+      logger.warn({ modelId }, 'Provider returned no usage for a chat completion.');
+    } else {
+      logger.info(
+        {
+          cacheReadTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+          durationMs: Date.now() - startedAt,
+          inputTokens: usage.prompt_tokens,
+          modelId,
+          outputTokens: usage.completion_tokens,
+          toolCallCount,
+        },
+        'Chat completion finished.',
+      );
     }
 
     yield {

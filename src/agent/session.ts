@@ -18,6 +18,8 @@ interface AgentConfig {
   gate?: ToolGate;
   escalationTimeoutMs?: number;
   onEvent?: (event: AgentStreamEvent, cursor: number) => void;
+  /** Correlates the runner's log lines with this session. */
+  sessionId?: string;
 }
 
 class AgentSession {
@@ -40,6 +42,7 @@ class AgentSession {
         gate: agentConfig.gate,
         escalation: this.escalation,
         escalationTimeoutMs: agentConfig.escalationTimeoutMs,
+        sessionId: agentConfig.sessionId,
       }
     );
   }

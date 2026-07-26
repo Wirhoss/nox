@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { normalizedBaseUrl, responseError, signalWithTimeout } from './shared';
+import { normalizedBaseUrl, responseError, signalWithTimeout, webServiceLogger } from './shared';
 
 import type { WebSearchResponse, WebSearchService, WebSearchServiceDefinition } from '../types';
 
@@ -54,6 +54,7 @@ class SearxngSearchService implements WebSearchService {
     if (this.config.apiKey) {
       headers.Authorization = `Bearer ${this.config.apiKey}`;
     }
+    const startedAt = Date.now();
     const response = await fetch(url, {
       headers,
       signal: signalWithTimeout(signal, this.config.timeoutMs ?? 30_000),
@@ -62,6 +63,16 @@ class SearxngSearchService implements WebSearchService {
       throw await responseError(response);
     }
     const body = await response.json() as { results?: SearxngResult[] };
+    // A search that returns nothing is a common, silent dead end for an agent.
+    webServiceLogger.debug(
+      {
+        durationMs: Date.now() - startedAt,
+        maxResults: input.maxResults,
+        resultCount: body.results?.length ?? 0,
+        service: 'searxng',
+      },
+      'Web search completed.',
+    );
     const results = (body.results ?? [])
       .filter(result => typeof result.url === 'string' && typeof result.title === 'string')
       .slice(0, input.maxResults)

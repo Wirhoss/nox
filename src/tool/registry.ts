@@ -1,7 +1,11 @@
+import { createLogger } from '../logger';
+
 import { ToolRouter, WebTools } from './tools';
 
 import type { ToolsConfig } from '../config/tools';
 import type { Tool, ToolSet, ToolSetClass, ToolSetFactory } from './tool';
+
+const logger = createLogger('tool');
 
 class ToolRegistry {
   private static _instance: ToolRegistry;
@@ -25,6 +29,7 @@ class ToolRegistry {
     }
     this.toolSetFactories['web_tools'] = (): WebTools => new WebTools(config.web_tools ?? {});
     this.initialized = true;
+    logger.info({ toolSets: Object.keys(this.toolSetFactories) }, 'Tool registry initialized.');
   }
 
   public getRouterToolSetClass(): ToolSetClass<ToolRouter, [Tool[]]> | null {

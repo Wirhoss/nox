@@ -9,11 +9,14 @@ import {
   providerIdSchema,
   upsertProviderConfig,
 } from '../../config/provider';
+import { createLogger } from '../../logger';
 import { ProviderRegistry } from '../../provider';
 
 import { apiError } from './shared';
 
 import type { ProviderConfig } from '../../config/provider';
+
+const logger = createLogger('api:providers');
 
 type ProviderConfigView = Omit<ProviderConfig, 'apiKey'> & {
   hasApiKey: boolean;
@@ -65,7 +68,8 @@ const providerRoutes = new Elysia({ prefix: '/api/v1' })
     try {
       const saved = await upsertProviderConfig(Config.get('env'), body.id, body.config);
       return status(201, { provider: providerView(body.id, saved), restartRequired: true });
-    } catch {
+    } catch (error) {
+      logger.error({ err: error, providerId: body.id }, 'Failed to persist a new provider configuration.');
       return status(500, apiError('internal_error', 'Failed to persist the provider configuration.'));
     }
   }, {
@@ -81,7 +85,8 @@ const providerRoutes = new Elysia({ prefix: '/api/v1' })
     try {
       const saved = await upsertProviderConfig(Config.get('env'), params.providerId, body);
       return { provider: providerView(params.providerId, saved), restartRequired: true };
-    } catch {
+    } catch (error) {
+      logger.error({ err: error, providerId: params.providerId }, 'Failed to persist a provider configuration.');
       return status(500, apiError('internal_error', 'Failed to persist the provider configuration.'));
     }
   }, {
@@ -104,7 +109,8 @@ const providerRoutes = new Elysia({ prefix: '/api/v1' })
     try {
       await deleteProviderConfig(Config.get('env'), params.providerId);
       return { restartRequired: true };
-    } catch {
+    } catch (error) {
+      logger.error({ err: error, providerId: params.providerId }, 'Failed to delete a provider configuration.');
       return status(500, apiError('internal_error', 'Failed to delete the provider configuration.'));
     }
   }, {

@@ -4,12 +4,15 @@ import { z } from 'zod';
 import { AgentRegistry, agentBlueprintSchema } from '../../agent/registry';
 import { Config } from '../../config';
 import { deleteBlueprintConfig, upsertBlueprintConfig } from '../../config/blueprint';
+import { createLogger } from '../../logger';
 import { ProviderRegistry } from '../../provider';
 import { ToolRegistry } from '../../tool/registry';
 
 import { apiError, blueprintParamsSchema } from './shared';
 
 import type { AgentBlueprint } from '../../agent/registry';
+
+const logger = createLogger('api:blueprints');
 
 function findInvalidReferences(
   blueprint: AgentBlueprint,
@@ -68,7 +71,8 @@ const blueprintRoutes = new Elysia({ prefix: '/api/v1' })
       const saved = await upsertBlueprintConfig(Config.get('env'), body);
       AgentRegistry.instance.upsertBlueprint(saved);
       return status(201, saved);
-    } catch {
+    } catch (error) {
+      logger.error({ blueprintId: body.id, err: error }, 'Failed to persist a blueprint.');
       return status(500, apiError('internal_error', 'Failed to persist the blueprint.'));
     }
   }, {
@@ -116,7 +120,8 @@ const blueprintRoutes = new Elysia({ prefix: '/api/v1' })
       await deleteBlueprintConfig(Config.get('env'), params.blueprintId);
       AgentRegistry.instance.removeBlueprint(params.blueprintId);
       return status(204, undefined);
-    } catch {
+    } catch (error) {
+      logger.error({ blueprintId: params.blueprintId, err: error }, 'Failed to delete a blueprint.');
       return status(500, apiError('internal_error', 'Failed to delete the blueprint.'));
     }
   }, {

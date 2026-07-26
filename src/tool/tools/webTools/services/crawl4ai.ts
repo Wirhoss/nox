@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { normalizedBaseUrl, responseError, signalWithTimeout } from './shared';
+import { normalizedBaseUrl, responseError, signalWithTimeout, webServiceLogger } from './shared';
 
 import type { WebExtractResponse, WebExtractService, WebExtractServiceDefinition } from '../types';
 
@@ -75,6 +75,7 @@ class Crawl4AIService implements WebExtractService {
     if (this.config.apiKey) {
       headers.Authorization = `Bearer ${this.config.apiKey}`;
     }
+    const startedAt = Date.now();
     const response = await fetch(`${normalizedBaseUrl(this.config.url)}/crawl`, {
       method: 'POST',
       headers,
@@ -94,8 +95,27 @@ class Crawl4AIService implements WebExtractService {
     if (!response.ok) {
       throw await responseError(response);
     }
+    const crawled = crawlResults(await response.json());
+    // Per-page failures come back inside a 200, so they are only visible here.
+    const failedCount = crawled.filter((result) => result.success === false).length;
+    webServiceLogger.debug(
+      {
+        durationMs: Date.now() - startedAt,
+        failedCount,
+        requestedCount: input.urls.length,
+        resultCount: crawled.length,
+        service: 'crawl4ai',
+      },
+      'Web crawl completed.',
+    );
+    if (failedCount > 0) {
+      webServiceLogger.warn(
+        { failedCount, requestedCount: input.urls.length, service: 'crawl4ai' },
+        'Web crawl could not fetch some pages.',
+      );
+    }
     return {
-      results: crawlResults(await response.json()).map((result, index) => {
+      results: crawled.map((result, index) => {
         const completeContent = markdownFrom(result);
         return {
           url: result.url ?? input.urls[index] ?? '',

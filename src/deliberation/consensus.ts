@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import { createLogger } from '../logger';
+
+const logger = createLogger('deliberation');
+
 const consensusAssessmentSchema = z.object({
   blockingObjections: z.array(z.string()),
   consensusReached: z.boolean(),
@@ -26,8 +30,13 @@ function parseConsensusAssessment(output: string): ConsensusAssessment {
   const firstBrace = output.indexOf('{');
   const lastBrace = output.lastIndexOf('}');
   if (firstBrace < 0 || lastBrace <= firstBrace) {
+    logger.warn(
+      { outputPreview: output.slice(0, 200) },
+      'Moderator returned no structured consensus assessment; treating it as unverified.',
+    );
     return unverified('The moderator did not return a structured consensus assessment.');
   }
+  let issues: unknown;
   try {
     const parsed = consensusAssessmentSchema.safeParse(JSON.parse(output.slice(firstBrace, lastBrace + 1)));
     if (parsed.success) {
@@ -36,9 +45,15 @@ function parseConsensusAssessment(output: string): ConsensusAssessment {
         consensusReached: parsed.data.consensusReached && parsed.data.blockingObjections.length === 0,
       };
     }
-  } catch {
+    issues = parsed.error.issues;
+  } catch (error) {
     // A malformed checkpoint must fail closed and consume another round.
+    issues = error;
   }
+  logger.warn(
+    { issues, outputPreview: output.slice(0, 200) },
+    'Moderator returned an invalid consensus assessment; consuming another round.',
+  );
   return unverified('The moderator returned an invalid consensus assessment.');
 }
 

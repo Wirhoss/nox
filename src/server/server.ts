@@ -16,6 +16,18 @@ import { apiError } from './routes/shared';
 
 const logger = createLogger('server');
 
+/** Requests slower than this are worth seeing without turning on debug. */
+const SLOW_REQUEST_MS = 1_000;
+
+/**
+ * The log viewer polls this route, so logging it would feed the ring buffer
+ * with records about reading the ring buffer.
+ */
+const ACCESS_LOG_EXCLUDED_PATHS = new Set(['/api/v1/logs']);
+
+/** Per-request start times, keyed by the request itself to avoid a derive. */
+const requestStartedAt = new WeakMap<Request, number>();
+
 async function collectInlineScriptHashes(directory: string): Promise<string[]> {
   const hashes = new Set<string>();
 
@@ -68,6 +80,31 @@ async function createServer(options: ServerOptions) {
       },
     }))
     .use(openapi())
+    .onRequest(({ request }) => {
+      requestStartedAt.set(request, Date.now());
+    })
+    .onAfterResponse({ as: 'global' }, ({ path, request, set }) => {
+      if (ACCESS_LOG_EXCLUDED_PATHS.has(path)) return;
+      const startedAt = requestStartedAt.get(request);
+      requestStartedAt.delete(request);
+      const durationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
+      const status = typeof set.status === 'number' ? set.status : 200;
+      const record = { durationMs, method: request.method, path, status };
+
+      // Successful, fast requests are debug-only: the UI polls often enough
+      // that logging them at info would drown everything else out.
+      // Distinct from onError's 'Request failed.': this line is the access
+      // record, that one carries the cause.
+      if (status >= 500) {
+        logger.error(record, 'Request errored.');
+      } else if (status >= 400) {
+        logger.warn(record, 'Request rejected.');
+      } else if (durationMs !== undefined && durationMs >= SLOW_REQUEST_MS) {
+        logger.info(record, 'Slow request.');
+      } else {
+        logger.debug(record, 'Request handled.');
+      }
+    })
     .onError(({ code, error, path, set }) => {
       if (code === 'NOT_FOUND') {
         set.status = 404;

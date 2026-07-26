@@ -41,6 +41,7 @@ class StructuredLogStore extends Writable {
   private readonly capacity: number;
   private dropped = 0;
   private entries: LogEntry[] = [];
+  private malformed = 0;
   private nextId = 1;
   private pending = '';
 
@@ -102,7 +103,11 @@ class StructuredLogStore extends Writable {
         this.ingest(JSON.parse(line) as Record<string, unknown>);
       } catch {
         // The console destination remains authoritative if a malformed record
-        // ever reaches this secondary observability stream.
+        // ever reaches this secondary observability stream. Reporting through
+        // the logger would recurse back into this stream, so note it on stderr
+        // instead of dropping it without a trace.
+        this.malformed += 1;
+        process.stderr.write(`[logStore] Dropped a malformed log record (${this.malformed} so far).\n`);
       }
     }
     callback();

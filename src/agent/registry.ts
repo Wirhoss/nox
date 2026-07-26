@@ -314,6 +314,7 @@ class AgentRegistry {
       retryDelayMs: this.runnerConfig.retryDelayMs,
       gate: new ToolGate(gateRules),
       escalationTimeoutMs: this.gateConfig.escalationTimeoutMs,
+      sessionId,
       onEvent: (event): void => {
         try {
           this.requireStore().recordEvent(sessionId, toGatewayEvent(event));

@@ -4,11 +4,14 @@ import { Config } from '../../config';
 import { updateGateConfig } from '../../config/app';
 import { updateWebToolsConfig } from '../../config/tools';
 import { gateConfigSchema } from '../../gate';
+import { createLogger } from '../../logger';
 import { webServicesCatalog, webToolsConfigSchema } from '../../tool/tools';
 
 import { apiError } from './shared';
 
 import type { WebToolsConfig } from '../../tool/tools';
+
+const logger = createLogger('api:config');
 
 type CapabilityConfigView = {
   contract: unknown;
@@ -56,7 +59,8 @@ const configRoutes = new Elysia({ prefix: '/api/v1' })
         services: webServicesCatalog(),
         restartRequired: false,
       };
-    } catch {
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to persist the web tools configuration.');
       return status(500, apiError('internal_error', 'Failed to persist the web tools configuration.'));
     }
   }, {
@@ -67,7 +71,8 @@ const configRoutes = new Elysia({ prefix: '/api/v1' })
     try {
       const gate = await updateGateConfig(Config.get('env'), body);
       return { gate, restartRequired: true };
-    } catch {
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to persist the gate configuration.');
       return status(500, apiError('internal_error', 'Failed to persist gate configuration.'));
     }
   }, {
