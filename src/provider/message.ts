@@ -1,3 +1,8 @@
+interface MessageBase {
+  readonly createdAt: Date;
+  readonly messageId: string;
+}
+
 interface MessageContentText {
   type: 'text';
   text: string;
@@ -6,23 +11,41 @@ interface MessageContentText {
 interface MessageContentImage {
   type: 'image';
   source:
-    | { kind: 'base64'; mediaType: string; data: string }
-    | { kind: 'url'; url: string };
+    | { type: 'base64'; mediaType: string; data: string }
+    | { type: 'url'; url: string };
 }
 
 type MessageContent = MessageContentText | MessageContentImage;
 
-interface AssistantMessage {
+interface AssistantMessage extends MessageBase {
   role: 'assistant';
   content: MessageContent[];
 }
 
-interface ReasoningMessage {
+interface CompactionMessage extends MessageBase {
+  role: 'compaction';
+  content: MessageContent[];
+  replacedMessageIds: readonly string[];
+}
+
+interface FoldMessage extends MessageBase {
+  role: 'fold';
+  anchorMessageId: string;
+  foldedMessageIds: readonly string[];
+  content: MessageContent[];
+}
+
+interface ReasoningMessage extends MessageBase {
   role: 'reasoning';
   content: MessageContent[];
 }
 
-interface ToolCallMessage {
+interface UserMessage extends MessageBase {
+  role: 'user';
+  content: MessageContent[];
+}
+
+interface ToolCallMessage extends MessageBase {
   role: 'toolCall';
   name: string;
   trackId: string;
@@ -31,7 +54,7 @@ interface ToolCallMessage {
 
 type ToolResponseExecution = 'immediate' | 'deferredAck' | 'deferredResult';
 
-interface ToolResponseMessage {
+interface ToolResponseMessage extends MessageBase {
   role: 'toolResponse';
   name: string;
   trackId: string;
@@ -40,25 +63,18 @@ interface ToolResponseMessage {
   isError?: boolean;
 }
 
-interface UserMessage {
-  role: 'user';
-  content: MessageContent[];
-}
-
-type Message = AssistantMessage | ReasoningMessage | UserMessage | ToolCallMessage | ToolResponseMessage;
-
-function toUserMessage(text: string): UserMessage {
-  return {
-    role: 'user',
-    content: [{
-      type: 'text',
-      text,
-    }],
-  };
-}
+type Message = AssistantMessage
+  | CompactionMessage
+  | FoldMessage
+  | ReasoningMessage
+  | ToolCallMessage
+  | ToolResponseMessage
+  | UserMessage;
 
 export type {
   AssistantMessage,
+  CompactionMessage,
+  FoldMessage,
   Message,
   MessageContent,
   MessageContentImage,
@@ -69,5 +85,3 @@ export type {
   ToolResponseMessage,
   UserMessage,
 };
-
-export { toUserMessage };

@@ -1,8 +1,10 @@
-import type { z } from "zod";
-import type { Provider } from "./provider";
-import { OpenAICompletions } from "./providers";
-import { createLogger } from "../logger";
-import type { ModelConfig } from "./config";
+import { createLogger } from '../logger';
+
+import { OpenAICompletions } from './providers';
+
+import type { ModelConfig } from './config';
+import type { Provider } from './provider';
+import type { z } from 'zod';
 
 const logger = createLogger('provider');
 
@@ -13,18 +15,29 @@ type ProviderClass = (typeof builtinProvidersClasses)[keyof typeof builtinProvid
 type ProviderConfig = z.infer<ProviderClass['configSchema']>;
 
 class ProviderRegistry {
+  static _instance: ProviderRegistry;
   private providerClasses: Record<string, ProviderClass> = {
     ...builtinProvidersClasses,
   };
   private providers: Record<string, Provider> = {};
-
   private initialized: boolean = false;
 
-  constructor() {}
+  private constructor() {}
+
+  static get instance(): ProviderRegistry {
+    if (!ProviderRegistry._instance) {
+      ProviderRegistry._instance = new ProviderRegistry();
+    }
+    return ProviderRegistry._instance;
+  }
+
+  public getProvider(providerId: string): Provider | null {
+    return this.providers[providerId] || null;
+  }
 
   public async init(configs: Record<string, ProviderConfig>): Promise<Record<string, Provider>> {
     if (this.initialized) {
-      throw new Error('ProviderRegistry already initialized.');
+      throw new Error('ProviderManager already initialized.');
     }
     this.initialized = true;
 
@@ -56,6 +69,10 @@ class ProviderRegistry {
     }
   }
 
+  public listProviderIds(): string[] {
+    return Object.keys(this.providers);
+  }
+
   private async initProvider(providerId: string, providerConfig: ProviderConfig): Promise<{ providerId: string; provider: Provider } | null> {
     const ProviderClass = this.providerClasses[providerConfig.type];
     if (!ProviderClass) {
@@ -76,7 +93,7 @@ class ProviderRegistry {
       return null;
     }
     const configuredModels = new Map<string, ModelConfig>();
-    for (const modelConfig of providerConfig.modelConfigs ?? []) {
+    for(const modelConfig of providerConfig.modelConfigs ?? []) {
       if (!availableModels.has(modelConfig.modelId)) {
         logger.warn(
           { providerId, modelId: modelConfig.modelId },
@@ -96,3 +113,8 @@ class ProviderRegistry {
     return { providerId, provider };
   }
 }
+
+export {
+  ProviderRegistry,
+  builtinProvidersClasses
+};

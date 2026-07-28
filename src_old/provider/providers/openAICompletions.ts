@@ -5,18 +5,22 @@ import {
   providerBaseConfigSchema,
   type TextGenerateOptions,
 } from '../config';
-import { ProviderError } from '../error';
-import { ChatProvider } from '../provider';
+import {
+  BaseProvider,
+  type ChatProvider,
+} from '../provider';
+import {
+  ProviderStream,
+  type ProviderStreamEvent,
+} from '../stream';
 
 import type { Tool } from '../../tool';
 import type { ModelConfig } from '../config';
-import type { ProviderErrorCode } from '../error';
 import type {
   Message,
   MessageContent,
   ToolCallMessage,
 } from '../message';
-import type { ProviderSourceEvent, ToolCallDraft } from '../stream';
 
 const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
   type: z.literal('openai_completions'),
@@ -73,9 +77,7 @@ interface OpenAIStreamChunk {
     delta?: OpenAIStreamDelta;
   }>;
   error?: {
-    code?: string;
     message?: string;
-    type?: string;
   };
   usage?: OpenAIUsage | null;
 }
@@ -86,129 +88,7 @@ interface PendingToolCall {
   name: string;
 }
 
-interface OpenAIErrorDetails {
-  code?: string;
-  message?: string;
-  type?: string;
-}
-
-const OPENAI_PROVIDER = 'openai_completions';
-
-// Completions has no role for "this is a summary of what we dropped", and a
-// mid-conversation `system` message reads as an instruction rather than as
-// reference material. A marked user turn keeps it inert and keeps image parts.
-const COMPACTION_HEADER = '[conversation summary]\n';
-
-function classifyOpenAIError(
-  status: number | undefined,
-  details: OpenAIErrorDetails,
-): ProviderErrorCode {
-  const signature = [details.code, details.type, details.message]
-    .filter((value): value is string => value !== undefined)
-    .join(' ')
-    .toLowerCase();
-
-  if (
-    status === 401
-    || status === 403
-    || signature.includes('invalid_api_key')
-    || signature.includes('authentication')
-  ) {
-    return 'authentication';
-  }
-
-  if (
-    signature.includes('context_length')
-    || signature.includes('context limit')
-    || signature.includes('context window')
-    || signature.includes('maximum context')
-    || signature.includes('prompt is too long')
-    || signature.includes('too many tokens')
-  ) {
-    return 'context_limit';
-  }
-
-  if (
-    signature.includes('insufficient_quota')
-    || signature.includes('quota_exceeded')
-    || signature.includes('billing_hard_limit')
-    || signature.includes('credit balance')
-    || signature.includes('usage limit')
-  ) {
-    return 'usage_limit';
-  }
-
-  if (status === 429 || signature.includes('rate_limit')) return 'rate_limit';
-  if (status !== undefined && [400, 404, 409, 422].includes(status)) {
-    return 'invalid_request';
-  }
-
-  return 'provider_error';
-}
-
-function createOpenAIConnectionError(
-  error: unknown,
-  message = 'OpenAI connection failed',
-): ProviderError {
-  const detail = error instanceof Error && error.message.length > 0
-    ? `: ${error.message}`
-    : '';
-  return new ProviderError(
-    'connection',
-    `${message}${detail}`,
-    { cause: error, provider: OPENAI_PROVIDER },
-  );
-}
-
-function createOpenAIError(
-  operation: string,
-  details: OpenAIErrorDetails,
-  status?: number,
-  cause?: unknown,
-): ProviderError {
-  const statusSuffix = status === undefined ? '' : ` (${status})`;
-  const detailSuffix = details.message === undefined ? '' : `: ${details.message}`;
-
-  return new ProviderError(
-    classifyOpenAIError(status, details),
-    `OpenAI ${operation} failed${statusSuffix}${detailSuffix}`,
-    {
-      cause,
-      provider: OPENAI_PROVIDER,
-      providerCode: details.code ?? details.type,
-      status,
-    },
-  );
-}
-
-function parseOpenAIErrorDetails(detail: string): OpenAIErrorDetails {
-  try {
-    const body = JSON.parse(detail) as unknown;
-    if (body !== null && typeof body === 'object') {
-      const record = body as Record<string, unknown>;
-      const nested = record['error'];
-      const error = nested !== null && typeof nested === 'object'
-        ? nested as Record<string, unknown>
-        : record;
-
-      return {
-        code: typeof error['code'] === 'string' ? error['code'] : undefined,
-        message: typeof error['message'] === 'string'
-          ? error['message']
-          : typeof record['message'] === 'string'
-            ? record['message']
-            : undefined,
-        type: typeof error['type'] === 'string' ? error['type'] : undefined,
-      };
-    }
-  } catch {
-    // Non-JSON responses are still useful as a bounded diagnostic message.
-  }
-
-  return detail.length > 0 ? { message: detail.slice(0, 500) } : {};
-}
-
-class OpenAICompletions extends ChatProvider {
+class OpenAICompletions extends BaseProvider implements ChatProvider {
   static override readonly configSchema = openAICompletionsConfigSchema;
 
   private readonly defaultModel?: string;
@@ -235,6 +115,20 @@ class OpenAICompletions extends ChatProvider {
     return (payload.data ?? [])
       .map(({ id }) => id)
       .filter((id): id is string => typeof id === 'string');
+  }
+
+  public getMessageStream(
+    systemPrompt: string,
+    messageHistory: Message[],
+    tools: Tool[],
+    opts?: TextGenerateOptions,
+  ): ProviderStream {
+    const signal = opts?.signal ?? new AbortController().signal;
+
+    return new ProviderStream(
+      this.readStream(systemPrompt, messageHistory, tools, opts, signal),
+      signal,
+    );
   }
 
   private get authHeaders(): Record<string, string> {
@@ -265,22 +159,14 @@ class OpenAICompletions extends ChatProvider {
       .filter((candidate): candidate is AbortSignal => candidate !== undefined);
 
     try {
-      try {
-        return await fetch(input, {
-          ...init,
-          signal: signals.length === 0
-            ? undefined
-            : signals.length === 1
-              ? signals[0]
-              : AbortSignal.any(signals),
-        });
-      } catch (error) {
-        // A caller abort is normal stream control flow. Everything else that
-        // failed before response headers is provider-agnostic connectivity.
-        if (signal?.aborted) throw error;
-
-        throw createOpenAIConnectionError(error);
-      }
+      return await fetch(input, {
+        ...init,
+        signal: signals.length === 0
+          ? undefined
+          : signals.length === 1
+            ? signals[0]
+            : AbortSignal.any(signals),
+      });
     } finally {
       clearTimeout(timeoutId);
     }
@@ -290,11 +176,8 @@ class OpenAICompletions extends ChatProvider {
     if (response.ok) return;
 
     const detail = await response.text().catch(() => '');
-    throw createOpenAIError(
-      operation,
-      parseOpenAIErrorDetails(detail),
-      response.status,
-    );
+    const suffix = detail.length > 0 ? `: ${detail.slice(0, 500)}` : '';
+    throw new Error(`OpenAI ${operation} failed (${response.status})${suffix}`);
   }
 
   private async request(
@@ -429,32 +312,6 @@ class OpenAICompletions extends ChatProvider {
         continue;
       }
 
-      if (message.role === 'compaction') {
-        messages.push({
-          content: this.toOpenAIUserContent([
-            { text: COMPACTION_HEADER, type: 'text' },
-            ...message.content,
-          ]),
-          role: 'user',
-        });
-        continue;
-      }
-
-      if (message.role === 'fold') {
-        // Chat Completions has no notion of a folded turn, so the summary rides
-        // along on the assistant message it replaced tool traffic for rather
-        // than becoming a turn of its own and breaking role alternation.
-        const foldText = this.toAssistantText(message.content);
-        const previous = messages.at(-1);
-
-        if (previous?.role === 'assistant' && previous.content !== null) {
-          previous.content = `${previous.content}\n${foldText ?? ''}`;
-        } else {
-          messages.push({ content: foldText, role: 'assistant' });
-        }
-        continue;
-      }
-
       if (message.role === 'reasoning') {
         continue;
       }
@@ -475,37 +332,27 @@ class OpenAICompletions extends ChatProvider {
         continue;
       }
 
-      if (message.role === 'toolResponse') {
-        const responseText = message.response
-          .filter((part) => part.type === 'text')
-          .map((part) => part.text)
-          .join('\n');
+      const responseText = message.response
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
 
-        if (message.execution === 'deferredResult') {
-          // A late deferred result can't be a `tool` message: those must sit
-          // right after their tool_calls turn. Surface it as user content
-          // correlated by trackId instead.
-          messages.push({
-            content: `[deferred result for ${message.name} (${message.trackId})]\n${responseText}`,
-            role: 'user',
-          });
-          continue;
-        }
-
+      if (message.execution === 'deferredResult') {
+        // A late deferred result can't be a `tool` message: those must sit
+        // right after their tool_calls turn. Surface it as user content
+        // correlated by trackId instead.
         messages.push({
-          content: responseText,
-          role: 'tool',
-          tool_call_id: message.trackId,
+          content: `[deferred result for ${message.name} (${message.trackId})]\n${responseText}`,
+          role: 'user',
         });
         continue;
       }
 
-      // Every role must be mapped on purpose: a new one has to fail here
-      // instead of silently disappearing from the request.
-      const unmapped: never = message;
-      throw new Error(
-        `Unsupported message role: ${(unmapped as Message).role}`,
-      );
+      messages.push({
+        content: responseText,
+        role: 'tool',
+        tool_call_id: message.trackId,
+      });
     }
 
     return messages;
@@ -515,7 +362,7 @@ class OpenAICompletions extends ChatProvider {
     const parts = content.map((part): OpenAIContentPart => {
       if (part.type === 'text') return part;
 
-      const url = part.source.type === 'url'
+      const url = part.source.kind === 'url'
         ? part.source.url
         : `data:${part.source.mediaType};base64,${part.source.data}`;
       return { image_url: { url }, type: 'image_url' };
@@ -556,7 +403,7 @@ class OpenAICompletions extends ChatProvider {
     }));
   }
 
-  private toToolCall(pending: PendingToolCall): ToolCallDraft {
+  private toToolCall(pending: PendingToolCall): ToolCallMessage {
     if (pending.id.length === 0 || pending.name.length === 0) {
       throw new Error('OpenAI returned an incomplete tool call');
     }
@@ -586,13 +433,13 @@ class OpenAICompletions extends ChatProvider {
     };
   }
 
-  protected override async *attempt(
+  private async *readStream(
     systemPrompt: string,
     messageHistory: Message[],
     tools: Tool[],
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
-  ): AsyncGenerator<ProviderSourceEvent> {
+  ): AsyncGenerator<ProviderStreamEvent> {
     const startedAt = Date.now();
     const response = await this.request(systemPrompt, messageHistory, tools, opts, signal);
     if (response.body === null) throw new Error('OpenAI response did not include a body');
@@ -601,6 +448,7 @@ class OpenAICompletions extends ChatProvider {
     const decoder = new TextDecoder();
     const pendingToolCalls: Array<PendingToolCall | undefined> = [];
     let buffer = '';
+    let text = '';
     let usage: OpenAIUsage | undefined;
 
     const consumeData = (data: string): { content?: string; done?: boolean; reasoning?: string } => {
@@ -610,21 +458,16 @@ class OpenAICompletions extends ChatProvider {
       try {
         chunk = JSON.parse(data) as OpenAIStreamChunk;
       } catch {
-        throw createOpenAIError('stream', {
-          message: `OpenAI returned an invalid stream event: ${data.slice(0, 500)}`,
-        });
+        throw new Error(`OpenAI returned an invalid stream event: ${data.slice(0, 500)}`);
       }
 
       if (chunk.error !== undefined) {
-        throw createOpenAIError('stream', {
-          code: chunk.error.code,
-          message: chunk.error.message ?? 'OpenAI returned a stream error',
-          type: chunk.error.type,
-        });
+        throw new Error(chunk.error.message ?? 'OpenAI returned a stream error');
       }
       if (chunk.usage !== null && chunk.usage !== undefined) usage = chunk.usage;
 
       const delta = chunk.choices?.[0]?.delta;
+      if (delta?.content) text += delta.content;
 
       for (const call of delta?.tool_calls ?? []) {
         const pending = pendingToolCalls[call.index] ?? {
@@ -648,30 +491,25 @@ class OpenAICompletions extends ChatProvider {
     };
 
     let done = false;
-    try {
-      for await (const bytes of response.body) {
-        buffer += decoder.decode(bytes, { stream: true });
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? '';
+    for await (const bytes of response.body) {
+      buffer += decoder.decode(bytes, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
 
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line.startsWith('data:')) continue;
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) continue;
 
-          const fragments = consumeData(line.slice(5).trim());
-          if (fragments.done) {
-            done = true;
-            break;
-          }
-          if (fragments.reasoning) yield { text: fragments.reasoning, type: 'reasoningFragment' };
-          if (fragments.content) yield { text: fragments.content, type: 'textFragment' };
+        const fragments = consumeData(line.slice(5).trim());
+        if (fragments.done) {
+          done = true;
+          break;
         }
-
-        if (done) break;
+        if (fragments.reasoning) yield { text: fragments.reasoning, type: 'reasoningFragment' };
+        if (fragments.content) yield { text: fragments.content, type: 'textFragment' };
       }
-    } catch (error) {
-      if (error instanceof ProviderError || signal.aborted) throw error;
-      throw createOpenAIConnectionError(error, 'OpenAI stream connection failed');
+
+      if (done) break;
     }
 
     if (!done) {
@@ -684,11 +522,20 @@ class OpenAICompletions extends ChatProvider {
       }
     }
 
+    const messages: Message[] = [];
+    if (text.length > 0) {
+      messages.push({
+        content: [{ text, type: 'text' }],
+        role: 'assistant',
+      });
+    }
+
     let toolCallCount = 0;
     for (const pending of pendingToolCalls) {
       if (pending === undefined) continue;
       const toolCall = this.toToolCall(pending);
       toolCallCount += 1;
+      messages.push(toolCall);
       yield { toolCall, type: 'toolCall' };
     }
 
@@ -710,6 +557,7 @@ class OpenAICompletions extends ChatProvider {
     }
 
     yield {
+      messages,
       type: 'end',
       usage: usage === undefined
         ? undefined

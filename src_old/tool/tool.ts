@@ -29,25 +29,11 @@ type Tool = ImmediateTool | DeferredTool;
 
 abstract class ToolSet {
   protected _tools: Record<string, Tool> = {};
-  protected enabledTools: Set<string>;
-
-  constructor(enabledTools?: string[]) {
-    this.enabledTools = new Set(enabledTools ?? []);
-  }
 
   public readonly gate?: GateDeclaration;
 
   public get tools(): Record<string, Tool> {
-    if (this.enabledTools.size === 0) {
-      return this._tools;
-    }
-    const filteredTools: Record<string, Tool> = {};
-    for (const tool of Object.values(this._tools)) {
-      if (this.enabledTools.has(tool.name)) {
-        filteredTools[tool.name] = tool;
-      }
-    }
-    return filteredTools;
+    return this._tools;
   }
 }
 

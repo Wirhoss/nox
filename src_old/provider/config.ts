@@ -29,9 +29,7 @@ type ModelConfig = z.infer<typeof modelConfigSchema>;
 const providerBaseConfigSchema = z.object({
   baseUrl: z.string(),
   apiKey: z.string().optional(),
-  maxRetries: z.number().int().nonnegative().optional(),
   modelConfigs: z.array(modelConfigSchema).optional(),
-  retryDelayMs: z.number().nonnegative().optional(),
   timeoutMs: z.number().positive().optional(),
 });
 

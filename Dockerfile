@@ -8,7 +8,9 @@ RUN bun install --frozen-lockfile
 
 COPY ui/ ./
 
-RUN bun run build
+RUN bun run check \
+  && bun run test \
+  && bun run build
 
 FROM oven/bun:1-alpine AS builder
 
@@ -18,11 +20,15 @@ COPY bun.lock package.json ./
 
 RUN bun install --frozen-lockfile
 
-COPY tsconfig.json ./
+COPY eslint.config.ts tsconfig.json ./
+COPY scripts/ ./scripts/
 COPY src/ ./src/
 COPY index.ts ./
 
-RUN bun run build
+RUN bun run typecheck:backend \
+  && bun run lint \
+  && bun run test:backend \
+  && bun run bundle:backend
 
 FROM oven/bun:1-alpine AS runner
 

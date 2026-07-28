@@ -1,3 +1,8 @@
+import { nanoid } from 'nanoid';
+
+import { toProviderError } from './error';
+
+import type { ProviderError } from './error';
 import type {
   Message,
   ToolCallMessage
@@ -9,10 +14,21 @@ interface Usage {
   cacheReadTokens?: number;
 }
 
-type ProviderStreamEvent =
-  | { type: 'end'; aborted?: boolean; messages: Message[]; usage?: Usage }
-  | { type: 'error'; error: Error }
+type ToolCallDraft = Omit<ToolCallMessage, 'createdAt' | 'messageId'>;
+
+type ProviderSourceEvent =
+  | { type: 'end'; usage?: Usage }
+  | { type: 'error'; error: ProviderError }
   | { type: 'reasoningFragment'; text: string }
+  | { type: 'retry'; attempt: number; delayMs: number; error: ProviderError; resetOutput: true }
+  | { type: 'textFragment'; text: string }
+  | { type: 'toolCall', toolCall: ToolCallDraft }
+
+type ProviderStreamEvent =
+  | { type: 'end'; aborted: boolean; messages: Message[]; usage?: Usage }
+  | { type: 'error'; error: ProviderError }
+  | { type: 'reasoningFragment'; text: string }
+  | { type: 'retry'; attempt: number; delayMs: number; error: ProviderError; resetOutput: true }
   | { type: 'textFragment'; text: string }
   | { type: 'toolCall', toolCall: ToolCallMessage }
 
@@ -27,15 +43,17 @@ enum StreamStatus {
 class ProviderStream {
   private _completed: Promise<Message[]>;
   private resolve!: (resolve: Message[]) => void;
-  private reject!: (error: Error) => void;
+  private reject!: (error: ProviderError) => void;
 
   private _status: StreamStatus;
+
+  private lastStampMs = 0;
 
   private readonly queue: ProviderStreamEvent[] = [];
   private readonly waiting: Array<(event: ProviderStreamEvent | null) => void> = [];
 
   constructor(
-    private source: AsyncIterable<ProviderStreamEvent>,
+    private source: AsyncIterable<ProviderSourceEvent>,
     private abortSignal: AbortSignal,
   ) {
     this._completed = new Promise((res, rej) => {
@@ -72,11 +90,43 @@ class ProviderStream {
     }
   }
 
+  private stamp(atMs?: number): Date {
+    this.lastStampMs = Math.max(atMs ?? Date.now(), this.lastStampMs + 1);
+    return new Date(this.lastStampMs);
+  }
+
   private async pump(): Promise<void> {
-    let reasoningAccumulated = '';
-    let textAccumulated = '';
     const messages: Message[] = [];
     const iterator = this.source[Symbol.asyncIterator]();
+
+    let reasoningAccumulated = '';
+    let reasoningStartedAt: number | undefined;
+    let textAccumulated = '';
+    let textStartedAt: number | undefined;
+
+    /** Materializes buffered fragments so order matches arrival order. */
+    const flush = (): void => {
+      if (reasoningAccumulated) {
+        messages.push({
+          role: 'reasoning',
+          content: [{ type: 'text', text: reasoningAccumulated }],
+          createdAt: this.stamp(reasoningStartedAt),
+          messageId: nanoid(),
+        });
+        reasoningAccumulated = '';
+        reasoningStartedAt = undefined;
+      }
+      if (textAccumulated) {
+        messages.push({
+          role: 'assistant',
+          content: [{ type: 'text', text: textAccumulated }],
+          createdAt: this.stamp(textStartedAt),
+          messageId: nanoid(),
+        });
+        textAccumulated = '';
+        textStartedAt = undefined;
+      }
+    };
 
     let onAbort: (() => void) | undefined;
     const abort = new Promise<StreamStatus.ABORTED>((resolve) => {
@@ -94,13 +144,7 @@ class ProviderStream {
 
         if (result === StreamStatus.ABORTED) {
           void iterator.return?.().catch(() => { });
-          if (reasoningAccumulated) {
-            messages.push({ role: 'reasoning', content: [{ type: 'text', text: reasoningAccumulated }] });
-          }
-          if (textAccumulated) {
-            const assistantMessage: Message = { role: 'assistant', content: [{ type: 'text', text: textAccumulated }] };
-            messages.push(assistantMessage);
-          }
+          flush();
           this.finish(messages, true);
           return;
         }
@@ -112,41 +156,58 @@ class ProviderStream {
 
         const event = result.value;
 
-        if (event.type === 'end') {
-          const completedMessages = reasoningAccumulated.length > 0
-            ? [
-              { role: 'reasoning' as const, content: [{ type: 'text' as const, text: reasoningAccumulated }] },
-              ...event.messages,
-            ]
-            : event.messages;
-          this.finish(completedMessages, false, event.usage);
-          return;
-        } else if (event.type === 'error') {
-          this.fail(messages, event.error);
-          return;
-        } else if (event.type === 'reasoningFragment') {
-          reasoningAccumulated += event.text;
-        } else if (event.type === 'textFragment') {
-          textAccumulated += event.text;
-        } else if (event.type === 'toolCall') {
-          messages.push(event.toolCall);
+        switch (event.type) {
+          case 'end': {
+            flush();
+            this.finish(messages, false, event.usage);
+            return;
+          }
+          case 'error': {
+            this.fail(messages, event.error);
+            return;
+          }
+          case 'reasoningFragment': {
+            reasoningStartedAt ??= Date.now();
+            reasoningAccumulated += event.text;
+            this.push(event);
+            break;
+          }
+          case 'retry': {
+            reasoningAccumulated = '';
+            reasoningStartedAt = undefined;
+            textAccumulated = '';
+            textStartedAt = undefined;
+            messages.length = 0;
+            this.push(event);
+            break;
+          }
+          case 'textFragment': {
+            textStartedAt ??= Date.now();
+            textAccumulated += event.text;
+            this.push(event);
+            break;
+          }
+          case 'toolCall': {
+            // Flush first: a tool call always follows the text that requested it.
+            flush();
+            const toolCall: ToolCallMessage = {
+              ...event.toolCall,
+              createdAt: this.stamp(),
+              messageId: nanoid(),
+            };
+            messages.push(toolCall);
+            this.push({ toolCall, type: 'toolCall' });
+            break;
+          }
         }
-
-        this.push(event);
       }
     } catch (error) {
       if (this.abortSignal?.aborted || isAbortError(error)) {
-        if (reasoningAccumulated) {
-          messages.push({ role: 'reasoning', content: [{ type: 'text', text: reasoningAccumulated }] });
-        }
-        if (textAccumulated) {
-          const assistantMessage: Message = { role: 'assistant', content: [{ type: 'text', text: textAccumulated }] };
-          messages.push(assistantMessage);
-        }
+        flush();
         this.finish(messages, true);
         return;
       }
-      this.fail(messages, error as Error);
+      this.fail(messages, error);
     } finally {
       if (onAbort) this.abortSignal?.removeEventListener('abort', onAbort);
     }
@@ -157,9 +218,10 @@ class ProviderStream {
     this.settle(aborted ? StreamStatus.ABORTED : StreamStatus.COMPLETED, messages);
   }
 
-  private fail(messages: Message[], error: Error): void {
-    this.push({ type: 'error', error });
-    this.settle(StreamStatus.FAILED, messages, error);
+  private fail(messages: Message[], error: unknown): void {
+    const providerError = toProviderError(error);
+    this.push({ type: 'error', error: providerError });
+    this.settle(StreamStatus.FAILED, messages, providerError);
   }
 
   private push(event: ProviderStreamEvent): void {
@@ -170,7 +232,7 @@ class ProviderStream {
     else this.queue.push(event);
   }
 
-  private settle(status: StreamStatus, messages: Message[], error?: Error): void {
+  private settle(status: StreamStatus, messages: Message[], error?: ProviderError): void {
     if (this.status !== StreamStatus.OPEN) return;
 
     this._status = status;
@@ -194,6 +256,8 @@ export {
 };
 
 export type {
+  ProviderSourceEvent,
   ProviderStreamEvent,
+  ToolCallDraft,
   Usage,
 };

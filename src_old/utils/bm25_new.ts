@@ -3,6 +3,10 @@ type BM25Tokenizer = (text: string) => Iterable<string>;
 interface BM25Options {
   k1?: number;
   b?: number;
+  /**
+   * Optional custom tokenizer. Returned terms must already have the desired
+   * case-folding and normalization applied. Empty terms are ignored.
+   */
   tokenizer?: BM25Tokenizer;
 }
 
@@ -26,6 +30,9 @@ const INITIAL_POSTING_CAPACITY = 1;
 function normalizeText(text: string, hasNonAscii: boolean): string {
   const lower = text.toLowerCase();
   if (!hasNonAscii) return lower;
+
+  // Preserve the previous accent-insensitive behavior for Latin scripts while
+  // retaining letters and combining marks used by other writing systems.
   return lower.normalize('NFD').replace(LATIN_COMBINING_MARKS, '$1');
 }
 
@@ -54,6 +61,21 @@ function appendPosting(postings: PostingList, docIndex: number, termFrequency: n
   postings.length++;
 }
 
+/**
+ * Exact BM25 index optimized for low-allocation, term-at-a-time searches.
+ *
+ * The built-in tokenizer lowercases text, folds Latin diacritics, and accepts
+ * Unicode letters, numbers, and combining marks. Whitespace and punctuation
+ * delimit terms; languages that do not mark word boundaries should provide a
+ * custom tokenizer (for example, one backed by Intl.Segmenter).
+ *
+ * Repeated query terms are deduplicated. Search uses mutable scratch buffers,
+ * so calls on the same instance must remain synchronous and non-reentrant.
+ *
+ * Documents can be appended without rebuilding the index. IDF and document
+ * length normalization use the current corpus statistics at search time, so
+ * results remain exact after each insertion.
+ */
 class BM25 {
   private readonly k1: number;
   private readonly b: number;
@@ -179,6 +201,10 @@ class BM25 {
     return results;
   }
 
+  /**
+   * Allocation-free result path. Writes sorted results into caller-provided
+   * buffers and returns the number of positions written.
+   */
   searchInto(
     query: string,
     docIndexes: Uint32Array,
@@ -241,6 +267,8 @@ class BM25 {
 
     if (this.queryPostings.length === 0) return 0;
 
+    // k1 * (1 - b + b * docLength / avgDocumentLength), split into
+    // a constant and one multiplication per posting.
     const normalizationScale =
       this.k1 * this.b * this.documentCountValue / this.totalDocumentLength;
     let touchedCount = 0;
@@ -278,6 +306,7 @@ class BM25 {
     this.ensureHeapCapacity(Math.min(limit, touchedCount));
     let heapLength = 0;
 
+    // The root is the worst retained result. On ties, lower docIndex wins.
     for (let i = 0; i < touchedCount; i++) {
       const docIndex = this.touchedDocs[i]!;
       const score = this.scores[docIndex]!;
@@ -334,6 +363,8 @@ class BM25 {
   }
 
   private sortHeapDescending(length: number): void {
+    // Extracting the minimum into the end of a min-heap leaves the arrays in
+    // best-to-worst order without allocating another sorting structure.
     for (let end = length - 1; end > 0; end--) {
       const rootScore = this.heapScores[0]!;
       const rootDocIndex = this.heapDocIndexes[0]!;
@@ -390,6 +421,8 @@ class BM25 {
     const docLengths = new Uint32Array(capacity);
     docLengths.set(this.docLengths);
 
+    // Search buffers are scratch space. Their previous contents do not need to
+    // survive growth: a zero epoch guarantees scores are assigned before read.
     this.docLengths = docLengths;
     this.scores = new Float64Array(capacity);
     this.scoreEpochs = new Uint32Array(capacity);
@@ -402,6 +435,7 @@ class BM25 {
     let capacity = Math.max(8, this.heapDocIndexes.length);
     while (capacity < required) capacity *= 2;
 
+    // Heap contents are scratch and are fully rebuilt by rank().
     this.heapDocIndexes = new Uint32Array(capacity);
     this.heapScores = new Float64Array(capacity);
   }
@@ -409,10 +443,7 @@ class BM25 {
 
 export {
   BM25,
-};
-
-export type {
-  BM25Options,
-  BM25Tokenizer,
-  SearchResult,
+  type BM25Options,
+  type BM25Tokenizer,
+  type SearchResult,
 };
