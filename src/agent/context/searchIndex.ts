@@ -5,10 +5,6 @@ import { truncateMessageText } from './truncate';
 
 import type { Message } from '../../provider';
 import type { SessionSearchOptions } from './types';
-
-// A fold carries no content of its own worth retrieving: the messages it folded
-// are still in the transcript and already indexed, so indexing the summary too
-// would return the same tool traffic twice.
 function isIndexable(message: Message): boolean {
   if (message.role === 'fold') return false;
   if (message.role === 'reasoning') return false;

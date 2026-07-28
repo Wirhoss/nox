@@ -74,13 +74,6 @@ function applyCompaction(history: readonly Message[], compaction: CompactionMess
   ];
 }
 
-// Replays one recorded fold: the folded messages leave the history and the fold
-// takes their place. The anchor is left untouched — how a fold is rendered is
-// the provider's call, so `anchorMessageId` only says where it belongs.
-//
-// `foldHistory` produces its own output through this same function, so a live
-// fold and a rebuilt fold cannot drift: any drift would change the bytes sent to
-// the provider and invalidate the whole prompt cache.
 function applyFold(history: readonly Message[], fold: FoldMessage): Message[] {
   const foldedIds = new Set(fold.foldedMessageIds);
   if (foldedIds.size === 0) {
@@ -119,8 +112,6 @@ function applyFold(history: readonly Message[], fold: FoldMessage): Message[] {
       );
     }
     foundIds.add(message.messageId);
-    // A deferred result can sit between a call and its response, so the folded
-    // messages are not always contiguous. The fold lands on the first of them.
     if (!placed) {
       folded.push(fold);
       placed = true;
@@ -135,10 +126,7 @@ function applyFold(history: readonly Message[], fold: FoldMessage): Message[] {
   return folded;
 }
 
-function renderFold(
-  toolCallMessages: ReadonlyMap<string, ToolCallMessage>,
-  toolResponseMessages: ReadonlyMap<string, ToolResponseMessage>,
-): string {
+function renderFold(toolCallMessages: ReadonlyMap<string, ToolCallMessage>, toolResponseMessages: ReadonlyMap<string, ToolResponseMessage>): string {
   let toolFoldedMessage = '-----The following tool calls and responses have been folded-----';
   for (const toolCallMessage of toolCallMessages.values()) {
     const response = toolResponseMessages.get(toolCallMessage.trackId);
@@ -153,11 +141,7 @@ function renderFold(
   return toolFoldedMessage;
 }
 
-function resolveIndex(
-  history: readonly Message[],
-  messageId: string | undefined,
-  fallback: number,
-): number {
+function resolveIndex(history: readonly Message[], messageId: string | undefined, fallback: number): number {
   if (messageId === undefined) return fallback;
   const index = history.findIndex((message) => message.messageId === messageId);
   if (index === -1) {
@@ -166,13 +150,9 @@ function resolveIndex(
   return index;
 }
 
-// Replaces the tool traffic inside `range` (the whole history when omitted)
-// with one fold per tool group. The runner knows the boundaries of the turn it
-// just completed, so scoping the fold keeps the edit off the part of the
-// history the provider has already cached.
-function foldHistory(history: readonly Message[], range: FoldRange = {}): FoldResult {
-  const from = resolveIndex(history, range.fromMessageId, 0);
-  const to = resolveIndex(history, range.toMessageId, history.length - 1);
+function foldHistory(history: readonly Message[], fromMessageId?: string, toMessageId?: string): FoldResult {
+  const from = resolveIndex(history, fromMessageId, 0);
+  const to = resolveIndex(history, toMessageId, history.length - 1);
   if (to < from) {
     throw new Error('Fold range ends before it starts.');
   }
@@ -192,8 +172,6 @@ function foldHistory(history: readonly Message[], range: FoldRange = {}): FoldRe
     }
 
     if (message.role === 'toolResponse') {
-      // A deferred result arrives long after its call and stays in the active
-      // history on its own, so it is never part of a fold.
       if (message.execution === 'deferredResult') continue;
       toolResponseMessages.set(message.trackId, message);
       foldedMessageIds.push(message.messageId);
@@ -202,7 +180,6 @@ function foldHistory(history: readonly Message[], range: FoldRange = {}): FoldRe
 
     if (message.role !== 'assistant') continue;
 
-    // An assistant turn closes the tool group that ran before it.
     if (toolCallMessages.size > 0) {
       if (anchor === undefined) {
         throw new Error('No anchor assistant message found for folding tool calls and responses.');
@@ -244,6 +221,5 @@ export {
 };
 
 export type {
-  FoldRange,
   FoldResult,
 };

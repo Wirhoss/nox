@@ -13,7 +13,6 @@ import type {
   Message,
 } from '../../provider';
 import type { Tool } from '../../tool';
-import type { FoldRange } from './history';
 import type { ContextOptions } from './types';
 
 class Context {
@@ -71,12 +70,8 @@ class Context {
     this.messageHistory.push(frozen);
   }
 
-  // `range` scopes the fold to the turn the runner just finished. Folding the
-  // whole history instead removes tool traffic from the earliest turn in the
-  // session, which invalidates the provider's cached prefix all the way back
-  // to it.
-  public fold(range?: FoldRange): void {
-    const { events, history } = foldHistory(this.messageHistory, range);
+  public fold(fromMessageId?: string, toMessageId?: string): void {
+    const { events, history } = foldHistory(this.messageHistory, fromMessageId, toMessageId);
     if (events.length === 0) return;
 
     for (const event of events) {
@@ -118,12 +113,8 @@ class Context {
     this.messageHistory = compactedHistory;
   }
 
-  // The transcript already records every view transform that was applied, so a
-  // rebuild is a single ordered replay. Reproducing the exact array that was
-  // last sent is what lets a reloaded session hit the provider's prompt cache.
   private rebuildHistory(fullHistory: readonly Message[]): Message[] {
     let history: Message[] = [];
-
     for (const event of fullHistory) {
       if (event.role === 'fold') {
         history = applyFold(history, event);
@@ -133,7 +124,6 @@ class Context {
         history.push(event);
       }
     }
-
     return history;
   }
 }
