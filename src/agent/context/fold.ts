@@ -1,80 +1,12 @@
-import { nanoid } from 'nanoid';
-
-import type {
-  AssistantMessage,
-  CompactionMessage,
-  FoldMessage,
-  Message,
-  ToolCallMessage,
-  ToolResponseMessage,
-} from '../../provider';
-
-interface FoldRange {
-  fromMessageId?: string;
-  toMessageId?: string;
-}
+import { nanoid } from "nanoid";
+import type { AssistantMessage, FoldedMessage, Message, ToolCallMessage, ToolResponseMessage } from "../../provider";
 
 interface FoldResult {
   history: Message[];
-  events: FoldMessage[];
+  events: FoldedMessage[];
 }
 
-function isSafeCut(history: readonly Message[], index: number): boolean {
-  if (index <= 0 || index >= history.length) return true;
-  if (history[index - 1]?.role === 'toolCall') return false;
-  if (history[index]?.role === 'toolResponse') return false;
-  return true;
-}
-
-function seekSafeCut(history: readonly Message[], from: number, direction: 1 | -1): number {
-  let index = Math.max(0, Math.min(from, history.length));
-  while (index > 0 && index < history.length && !isSafeCut(history, index)) {
-    index += direction;
-  }
-  return Math.max(0, Math.min(index, history.length));
-}
-
-function applyCompaction(history: readonly Message[], compaction: CompactionMessage): Message[] {
-  const replacedIds = new Set(compaction.replacedMessageIds);
-  if (replacedIds.size === 0) {
-    throw new Error(`Compaction ${compaction.messageId} does not replace any messages.`);
-  }
-  if (replacedIds.size !== compaction.replacedMessageIds.length) {
-    throw new Error(`Compaction ${compaction.messageId} contains duplicate message references.`);
-  }
-  if (replacedIds.has(compaction.messageId)) {
-    throw new Error(`Compaction ${compaction.messageId} cannot replace itself.`);
-  }
-
-  const indexes: number[] = [];
-  const foundIds = new Set<string>();
-  for (const [index, message] of history.entries()) {
-    if (!replacedIds.has(message.messageId)) continue;
-    indexes.push(index);
-    foundIds.add(message.messageId);
-  }
-
-  if (foundIds.size !== replacedIds.size) {
-    const missingIds = compaction.replacedMessageIds.filter((messageId) => !foundIds.has(messageId));
-    throw new Error(
-      `Compaction ${compaction.messageId} references missing messages: ${missingIds.join(', ')}.`,
-    );
-  }
-
-  const start = indexes[0]!;
-  const end = indexes[indexes.length - 1]! + 1;
-  if (end - start !== indexes.length) {
-    throw new Error(`Compaction ${compaction.messageId} references a non-contiguous message range.`);
-  }
-
-  return [
-    ...history.slice(0, start),
-    compaction,
-    ...history.slice(end),
-  ];
-}
-
-function applyFold(history: readonly Message[], fold: FoldMessage): Message[] {
+function applyFold(history: readonly Message[], fold: FoldedMessage): Message[] {
   const foldedIds = new Set(fold.foldedMessageIds);
   if (foldedIds.size === 0) {
     throw new Error(`Fold ${fold.messageId} does not fold any messages.`);
@@ -135,7 +67,7 @@ function renderFold(toolCallMessages: ReadonlyMap<string, ToolCallMessage>, tool
       + `\nArguments: ${JSON.stringify(toolCallMessage.arguments)}`
       + `\nWas Error: ${response?.isError ?? 'unknown'}`
       + `\nWas Deferred: ${response?.execution === 'deferredAck'}`
-      + `\nReponse Size: ${response?.response ? Buffer.byteLength(JSON.stringify(response?.response)) + ' bytes' : 'n/a'}`
+      + `\nResponse Size: ${response?.response ? Buffer.byteLength(JSON.stringify(response?.response)) + ' bytes' : 'n/a'}`
       + '\n- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
   }
   return toolFoldedMessage;
@@ -157,12 +89,14 @@ function foldHistory(history: readonly Message[], fromMessageId?: string, toMess
     throw new Error('Fold range ends before it starts.');
   }
 
-  const events: FoldMessage[] = [];
+  const events: FoldedMessage[] = [];
 
   const toolCallMessages: Map<string, ToolCallMessage> = new Map();
   const toolResponseMessages: Map<string, ToolResponseMessage> = new Map();
   let foldedMessageIds: string[] = [];
-  let anchor: AssistantMessage | undefined;
+  let anchor: AssistantMessage | undefined = history
+    .slice(0, from)
+    .findLast((message): message is AssistantMessage => message.role === 'assistant');
 
   for (const message of history.slice(from, to + 1)) {
     if (message.role === 'toolCall') {
@@ -184,8 +118,8 @@ function foldHistory(history: readonly Message[], fromMessageId?: string, toMess
       if (anchor === undefined) {
         throw new Error('No anchor assistant message found for folding tool calls and responses.');
       }
-      events.push(Object.freeze<FoldMessage>({
-        role: 'fold',
+      events.push(Object.freeze<FoldedMessage>({
+        role: 'folded',
         anchorMessageId: anchor.messageId,
         content: [{ type: 'text', text: renderFold(toolCallMessages, toolResponseMessages) }],
         createdAt: new Date(),
@@ -201,7 +135,19 @@ function foldHistory(history: readonly Message[], fromMessageId?: string, toMess
   }
 
   if (toolCallMessages.size > 0 || toolResponseMessages.size > 0) {
-    throw new Error('Remaining tool call or response messages found after folding context. This should not happen.');
+    if (anchor === undefined) {
+      throw new Error('No anchor assistant message found for folding tool calls and responses.');
+    }
+    events.push(Object.freeze<FoldedMessage>({
+      role: 'folded',
+      anchorMessageId: anchor.messageId,
+      content: [{ type: 'text', text: renderFold(toolCallMessages, toolResponseMessages) }],
+      createdAt: new Date(),
+      foldedMessageIds: Object.freeze(foldedMessageIds),
+      messageId: nanoid(),
+    }));
+    toolCallMessages.clear();
+    toolResponseMessages.clear();
   }
 
   let folded: Message[] = [...history];
@@ -213,13 +159,6 @@ function foldHistory(history: readonly Message[], fromMessageId?: string, toMess
 }
 
 export {
-  applyCompaction,
-  applyFold,
   foldHistory,
-  isSafeCut,
-  seekSafeCut,
-};
-
-export type {
-  FoldResult,
-};
+  applyFold
+}

@@ -7,10 +7,9 @@ import type { Message } from '../../provider';
 import type { SessionSearchOptions } from './types';
 function isIndexable(message: Message): boolean {
   if (message.role === 'fold') return false;
-  if (message.role === 'reasoning') return false;
   if (message.role === 'compaction') return false;
   if (message.role === 'toolResponse') return message.execution !== 'deferredAck';
-  if (message.role === 'assistant' || message.role === 'user') return message.content.length > 0;
+  if (message.role === 'assistant' || message.role === 'user' || message.role === 'reasoning') return message.content.length > 0;
   return true;
 }
 

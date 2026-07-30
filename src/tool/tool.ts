@@ -49,6 +49,8 @@ abstract class ToolSet {
     }
     return filteredTools;
   }
+
+  protected abstract addTools(): void;
 }
 
 type ToolSetClass<

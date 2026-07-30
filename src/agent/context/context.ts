@@ -1,51 +1,68 @@
 import { nanoid } from 'nanoid';
 
-import { formatHistoryMessage } from './format';
-import { applyCompaction, applyFold, foldHistory, seekSafeCut } from './history';
 import { COMPACT_PROMPT } from './prompt';
-import { MessageSearchIndex } from './searchIndex';
-import { SessionHistoryToolSet } from './tools';
+import { HistorySearch } from './search';
 
 import type {
   AssistantMessage,
   ChatProvider,
-  CompactionMessage,
+  CompactedMessage,
   Message,
 } from '../../provider';
 import type { Tool } from '../../tool';
-import type { ContextOptions } from './types';
+import { applyFold, foldHistory } from './fold';
+import { applyCompaction, seekSafeCut } from './compact';
+
+interface ContextOptions {
+  fullHistory?: Message[];
+  tools?: Record<string, Tool>;
+
+  compactGuardBeginning?: number;
+  compactGuardEnd?: number;
+  compactMinMessages?: number;
+}
 
 class Context {
   private readonly systemPrompt: string;
-  private readonly tools: Record<string, Tool>;
+  private readonly tools: Map<string, Tool>;
 
   private readonly compactProvider: ChatProvider;
   private readonly compactGuardBeginning: number;
   private readonly compactGuardEnd: number;
   private readonly compactMinMessages: number;
 
-  private sessionHistoryToolSet: SessionHistoryToolSet;
-  private searchIndex: MessageSearchIndex;
+  private searchHistory: HistorySearch;
 
   private messageHistory: Message[];
+
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(systemPrompt: string, compactProvider: ChatProvider, contextOptions: ContextOptions) {
     this.systemPrompt = systemPrompt;
     this.compactProvider = compactProvider;
-    this.tools = contextOptions.tools ?? {};
     this.compactGuardBeginning = contextOptions.compactGuardBeginning ?? 5;
     this.compactGuardEnd = contextOptions.compactGuardEnd ?? 5;
     this.compactMinMessages = contextOptions.compactMinMessages ?? 10;
-    this.searchIndex = new MessageSearchIndex(contextOptions.fullHistory ?? []);
-    this.sessionHistoryToolSet = new SessionHistoryToolSet(
-      (query, options) => this.searchIndex.search(query, this.messageHistory, options),
-      (message) => formatHistoryMessage(message),
+    this.searchHistory = new HistorySearch(contextOptions.fullHistory ?? [], { chunkSize: 1000 });
+    this.tools = new Map<string, Tool>(
+      Object.entries(contextOptions.tools ?? {}).sort((a, b) => a[0].localeCompare(b[0]))
     );
     this.messageHistory = this.rebuildHistory(contextOptions.fullHistory ?? []);
   }
 
+  private serializeMutation<T>(mutation: () => T | Promise<T>): Promise<T> {
+    const result = this.mutationQueue.then(mutation);
+
+    this.mutationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    return result;
+  }
+
   public getFullHistory(): readonly Message[] {
-    return this.searchIndex.history;
+    return this.searchHistory.history;
   }
 
   public getHistory(): readonly Message[] {
@@ -56,69 +73,72 @@ class Context {
     return this.systemPrompt;
   }
 
-  public getTools(): Record<string, Tool> {
+  public getTools(): Map<string, Tool> {
     return this.tools;
   }
 
-  public getSessionHistoryToolSet(): SessionHistoryToolSet {
-    return this.sessionHistoryToolSet;
+  public getHistorySearchToolSet(): HistorySearch {
+    return this.searchHistory;
   }
 
   public addMessage(message: Message): void {
     const frozen = Object.freeze(message);
-    this.searchIndex.append(frozen);
+    this.searchHistory.append(frozen);
     this.messageHistory.push(frozen);
   }
 
-  public fold(fromMessageId?: string, toMessageId?: string): void {
-    const { events, history } = foldHistory(this.messageHistory, fromMessageId, toMessageId);
-    if (events.length === 0) return;
+  public async fold(fromMessageId?: string, toMessageId?: string): Promise<void> {
+    return this.serializeMutation(() => {
+      const { events, history } = foldHistory(this.messageHistory, fromMessageId, toMessageId);
+      if (events.length === 0) return;
 
-    for (const event of events) {
-      this.searchIndex.append(event);
-    }
-    this.messageHistory = history;
+      for (const event of events) {
+        this.searchHistory.append(event);
+      }
+      this.messageHistory = history;
+    });
   }
 
   public async compact(): Promise<void> {
-    const history = this.messageHistory;
+    return this.serializeMutation(async () => {
+      const history = this.messageHistory;
 
-    const lastCompactionIndex = Math.max(0, history.findLastIndex((message) => message.role === 'compaction'));
-    const start = seekSafeCut(history, lastCompactionIndex + this.compactGuardBeginning, +1);
-    const end = seekSafeCut(history, history.length - this.compactGuardEnd, -1);
+      const start = seekSafeCut(history, this.compactGuardBeginning, +1);
+      const end = seekSafeCut(history, history.length - this.compactGuardEnd, -1);
 
-    if (end - start < this.compactMinMessages) return;
+      if (end - start < this.compactMinMessages) return;
 
-    const middle = history.slice(start, end);
-    if (middle.length === 0) return;
+      const middle = history.slice(start, end);
+      if (middle.length === 0) return;
 
-    const stream = this.compactProvider.getMessageStream(COMPACT_PROMPT, middle, []);
-    const result = await stream.completed;
-    const assistantMessages = result.filter(
-      (message): message is AssistantMessage => message.role === 'assistant',
-    );
+      const stream = this.compactProvider.getMessageStream(COMPACT_PROMPT, middle, []);
+      const result = await stream.completed;
+      const assistantMessages = result.filter(
+        (message) => message.role === 'assistant' && message.content.length > 0
+      ) as AssistantMessage[];
 
-    if (assistantMessages.length === 0) return;
+      if (assistantMessages.length === 0) return;
 
-    const compactionMessage: CompactionMessage = Object.freeze({
-      role: 'compaction',
-      content: assistantMessages.flatMap((message) => message.content),
-      createdAt: new Date(),
-      messageId: nanoid(),
-      replacedMessageIds: Object.freeze(middle.map((message) => message.messageId)),
-    });
-    const compactedHistory = applyCompaction(history, compactionMessage);
+      const compactedMessage: CompactedMessage = Object.freeze({
+        role: 'compacted',
+        content: assistantMessages.flatMap((message) => message.content),
+        createdAt: new Date(),
+        messageId: nanoid(),
+        compactedMessageIds: Object.freeze(middle.map((message) => message.messageId)),
+      });
+      const compactedHistory = applyCompaction(history, compactedMessage);
 
-    this.searchIndex.append(compactionMessage);
-    this.messageHistory = compactedHistory;
+      this.searchHistory.append(compactedMessage);
+      this.messageHistory = compactedHistory;
+    })
   }
 
   private rebuildHistory(fullHistory: readonly Message[]): Message[] {
     let history: Message[] = [];
     for (const event of fullHistory) {
-      if (event.role === 'fold') {
+      if (event.role === 'folded') {
         history = applyFold(history, event);
-      } else if (event.role === 'compaction') {
+      } else if (event.role === 'compacted') {
         history = applyCompaction(history, event);
       } else {
         history.push(event);
