@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid';
 
+import { applyCompaction, seekSafeCut } from './compact';
+import { applyFold, foldHistory } from './fold';
 import { COMPACT_PROMPT } from './prompt';
 import { HistorySearch } from './search';
 
@@ -10,8 +12,6 @@ import type {
   Message,
 } from '../../provider';
 import type { Tool } from '../../tool';
-import { applyFold, foldHistory } from './fold';
-import { applyCompaction, seekSafeCut } from './compact';
 
 interface ContextOptions {
   fullHistory?: Message[];
@@ -114,8 +114,11 @@ class Context {
       const stream = this.compactProvider.getMessageStream(COMPACT_PROMPT, middle, []);
       const result = await stream.completed;
       const assistantMessages = result.filter(
-        (message) => message.role === 'assistant' && message.content.length > 0
-      ) as AssistantMessage[];
+        (message): message is AssistantMessage => message.role === 'assistant'
+          && message.content.some(
+            (part) => part.type === 'text' && part.text.trim().length > 0,
+          ),
+      );
 
       if (assistantMessages.length === 0) return;
 
@@ -130,7 +133,7 @@ class Context {
 
       this.searchHistory.append(compactedMessage);
       this.messageHistory = compactedHistory;
-    })
+    });
   }
 
   private rebuildHistory(fullHistory: readonly Message[]): Message[] {

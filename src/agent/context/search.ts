@@ -1,19 +1,32 @@
-import { BM25 } from "../../utils";
-import { contentToString, messageToString } from "../../provider";
-import { ToolSet } from "../../tool";
-import { z } from "zod";
-import type { ImmediateTool } from "../../tool";
-import type { Message, ToolResponseMessage } from "../../provider";
+import { z } from 'zod';
+
+import { contentToString, messageToString } from '../../provider';
+import { ToolSet } from '../../tool';
+import { BM25 } from '../../utils';
+
+import type {
+  Message,
+  ToolCallMessage,
+  ToolResponseMessage,
+} from '../../provider';
+import type { ImmediateTool } from '../../tool';
 
 interface HistorySearchOptions {
   chunkSize?: number;
 }
 
 function isIndexable(message: Message): boolean {
-  if (message.role === 'folded') return false;
-  if (message.role === 'compacted') return false;
+  if (message.role === 'folded' || message.role === 'compacted') return false;
   if (message.role === 'toolResponse') return message.execution !== 'deferredAck';
-  if (message.role === 'assistant' || message.role === 'user' || message.role === 'reasoning') return message.content.length > 0;
+  if (
+    message.role === 'assistant'
+    || message.role === 'user'
+    || message.role === 'reasoning'
+  ) {
+    return message.content.some(
+      (part) => part.type === 'image' || part.text.length > 0,
+    );
+  }
   return true;
 }
 
@@ -21,7 +34,11 @@ const readToolResultSchema = z.object({
   trackId: z.string().describe(
     'The track ID of the tool call whose result you want, as shown in the `Track ID` field of the '
     + 'tool call or of its folded/compacted placeholder.',
-  )
+  ),
+  offset: z.number().int().min(0).default(0)
+    .describe('Character offset at which to start reading the result.'),
+  maxCharacters: z.number().int().min(200).max(4000).default(4000)
+    .describe('Maximum characters to return. Continue from the reported next offset if truncated.'),
 });
 
 const searchHistorySchema = z.object({
@@ -30,79 +47,35 @@ const searchHistorySchema = z.object({
     + 'symbol names, error messages, commands, IDs, or quoted user wording.',
   ),
   limit: z.number().int().min(1).max(20).default(5)
-    .describe('Maximum number of transcript excerpts to return. Keep it small; raise it only when the first search comes back empty or off-target.')
+    .describe('Maximum number of transcript excerpts to return. Keep it small; raise it only when the first search comes back empty or off-target.'),
 });
 
 class HistorySearch extends ToolSet {
-  private _history: Message[];
-  private chunks: string[] = [];
-  private chunkSize: number;
-
-  private toolResponses: Record<string, ToolResponseMessage> = {};
-
   private readonly bm25: BM25;
+  private readonly chunkSize: number;
+  private readonly chunks: string[] = [];
+  private readonly knownIds = new Set<string>();
+  private readonly toolResponses = new Map<string, ToolResponseMessage>();
+
+  private readonly _history: Message[] = [];
 
   constructor(messages: readonly Message[], historySearchOptions: HistorySearchOptions) {
     super();
-    this._history = [...messages];
+
     this.chunkSize = historySearchOptions.chunkSize ?? 1000;
-    this.chunks = messages.filter(isIndexable).flatMap((message) => this.chunkString(messageToString(message)));
-    this.bm25 = new BM25(this.chunks);
+    if (!Number.isInteger(this.chunkSize) || this.chunkSize <= 0) {
+      throw new RangeError('History search chunkSize must be a positive integer.');
+    }
 
     for (const message of messages) {
-      if(message.role === 'toolResponse') {
-        if (message.execution === 'deferredAck') continue;
-        if (!this.toolResponses[message.trackId]) this.toolResponses[message.trackId] = message;
-      }
+      this.track(message);
+      this._history.push(message);
+      this.chunks.push(...this.chunksForMessage(message));
+      this.rememberToolResponse(message);
     }
 
+    this.bm25 = new BM25(this.chunks);
     this.addTools();
-  }
-
-  protected addTools(): void {
-    const readToolResultTool: ImmediateTool<typeof readToolResultSchema> = {
-      type: 'immediate',
-      name: 'read_tool_result',
-      description: 'Re-read the full result of an earlier tool call by its track ID. Use it when a tool result you need was folded or compacted out of the active context, or when you only kept a summary of it and now need the exact output.',
-      parameters: readToolResultSchema,
-      call: async ({ trackId }, _ctx) => {
-        const message = this.toolResponses[trackId];
-        if (!message) throw new Error(`No tool response found for track ID: ${trackId}`);
-        return [{ type: 'text', text: messageToString(message) }];
-      }
-    };
-
-    this._tools[readToolResultTool.name] = readToolResultTool;
-
-    const searchHistoryTool: ImmediateTool<typeof searchHistorySchema> = {
-      type: 'immediate',
-      name: 'search_history',
-      description: 'Keyword-search the complete session transcript, including messages removed from the active context by folding or compaction, and get back the best-matching excerpts. Use it to recover earlier facts, requirements, decisions, commands, errors, or exact identifiers instead of guessing or asking the user to repeat them.',
-      parameters: searchHistorySchema,
-      call: async ({ query, limit }, _ctx) => {
-        const results = this.bm25.search(query, limit);
-        const chunks = results.map((result) => this.chunks[result.docIndex])
-        .filter(c => c !== undefined);
-        return chunks.map((chunk) => ({ type: 'text', text: chunk }));
-      }
-    };
-
-    this._tools[searchHistoryTool.name] = searchHistoryTool;
-  }
-
-  private chunkString(text: string): string[] {
-    const chunks: string[] = [];
-    let start = 0;
-    while (start < text.length) {
-      let end = Math.min(start + this.chunkSize, text.length);
-      if (end < text.length) {
-        const nl = text.indexOf('\n', end);
-        if (nl !== -1 && nl - end <= this.chunkSize / 4) end = nl + 1;
-      }
-      chunks.push(text.slice(start, end));
-      start = end;
-    }
-    return chunks;
   }
 
   public get history(): readonly Message[] {
@@ -110,41 +83,136 @@ class HistorySearch extends ToolSet {
   }
 
   public append(message: Message): void {
+    this.track(message);
     this._history.push(message);
-    if (!isIndexable(message)) return;
+    this.rememberToolResponse(message);
 
-    const chunks: string[] = [];
-    if(message.role === 'assistant' || message.role === 'user' || message.role === 'reasoning') {
-      const contentChunks = this.chunkString(contentToString(message.content));
-      for(const [index, responseChunk] of contentChunks.entries()) {
-        const chunk = `Role: ${message.role}\n`
-        + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
-        + `\nContent chunk number ${index} of ${contentChunks.length}`
-        + `\nContent chunk:\n${responseChunk}`;
-        chunks.push(chunk);
-      }
-    } else if(message.role === 'toolResponse') {
-      const responseChunks = this.chunkString(contentToString(message.response));
-      for(const [index, responseChunk] of responseChunks.entries()) {
-        const chunk = `Role: ${message.role}\nName: ${message.name}\nTrack ID: ${message.trackId}`
-        + `\nExecution: ${message.execution}\nIs Error: ${message.isError ?? false}`
-        + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
-        + `\nResponse chunk number ${index} of ${responseChunks.length}`
-        + `\nResponse chunk:\n${responseChunk}`;
-        chunks.push(chunk);
-      }
-      if (!this.toolResponses[message.trackId]) this.toolResponses[message.trackId] = message;
-    } else {
-      chunks.push(messageToString(message));
-    }
-
-    for (const chunk of chunks) {
+    for (const chunk of this.chunksForMessage(message)) {
       this.chunks.push(chunk);
       this.bm25.addDocument(chunk);
     }
+  }
+
+  protected addTools(): void {
+    const readToolResultTool: ImmediateTool<typeof readToolResultSchema> = {
+      call: async ({ trackId, offset, maxCharacters }, _ctx) => {
+        const message = this.toolResponses.get(trackId);
+        if (message === undefined) {
+          throw new Error(`No tool response found for track ID: ${trackId}`);
+        }
+
+        const formatted = messageToString(message);
+        if (offset >= formatted.length && formatted.length > 0) {
+          throw new RangeError(
+            `Offset ${offset} is beyond tool result length ${formatted.length}.`,
+          );
+        }
+
+        const end = Math.min(offset + maxCharacters, formatted.length);
+        const continuation = end < formatted.length
+          ? `\n\n[Result truncated. Continue with offset ${end}. Total characters: ${formatted.length}.]`
+          : '';
+        return [{
+          text: formatted.slice(offset, end) + continuation,
+          type: 'text',
+        }];
+      },
+      description: 'Read an earlier tool result by track ID. Results are bounded; if the response reports a next offset, call the tool again from that offset.',
+      name: 'read_tool_result',
+      parameters: readToolResultSchema,
+      type: 'immediate',
+    };
+    this._tools[readToolResultTool.name] = readToolResultTool;
+
+    const searchHistoryTool: ImmediateTool<typeof searchHistorySchema> = {
+      call: async ({ query, limit }, _ctx) => {
+        const results = this.bm25.search(query, limit);
+        return results.map(({ docIndex }) => {
+          const chunk = this.chunks[docIndex];
+          if (chunk === undefined) {
+            throw new Error(`BM25 index ${docIndex} does not map to a history chunk.`);
+          }
+          return { text: chunk, type: 'text' };
+        });
+      },
+      description: 'Keyword-search the complete session transcript, including messages removed from the active context by folding or compaction, and get back the best-matching excerpts. Use it to recover earlier facts, requirements, decisions, commands, errors, or exact identifiers instead of guessing or asking the user to repeat them.',
+      name: 'search_history',
+      parameters: searchHistorySchema,
+      type: 'immediate',
+    };
+    this._tools[searchHistoryTool.name] = searchHistoryTool;
+  }
+
+  private chunkString(text: string): string[] {
+    if (text.length === 0) return [''];
+
+    const chunks: string[] = [];
+    let start = 0;
+    while (start < text.length) {
+      let end = Math.min(start + this.chunkSize, text.length);
+      if (end < text.length) {
+        const newline = text.indexOf('\n', end);
+        if (newline !== -1 && newline - end <= this.chunkSize / 4) end = newline + 1;
+      }
+      chunks.push(text.slice(start, end));
+      start = end;
+    }
+    return chunks;
+  }
+
+  private chunksForMessage(message: Message): string[] {
+    if (!isIndexable(message)) return [];
+
+    if (
+      message.role === 'assistant'
+      || message.role === 'user'
+      || message.role === 'reasoning'
+    ) {
+      const contentChunks = this.chunkString(contentToString(message.content));
+      return contentChunks.map((contentChunk, index) => `Role: ${message.role}`
+        + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
+        + `\nContent chunk ${index + 1} of ${contentChunks.length}`
+        + `\nContent:\n${contentChunk}`);
+    }
+
+    if (message.role === 'toolResponse') {
+      const responseChunks = this.chunkString(contentToString(message.response));
+      return responseChunks.map((responseChunk, index) => `Role: ${message.role}`
+        + `\nName: ${message.name}\nTrack ID: ${message.trackId}`
+        + `\nExecution: ${message.execution}\nIs Error: ${message.isError ?? false}`
+        + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
+        + `\nResponse chunk ${index + 1} of ${responseChunks.length}`
+        + `\nResponse:\n${responseChunk}`);
+    }
+
+    if (message.role === 'toolCall') return this.toolCallChunks(message);
+    return [];
+  }
+
+  private rememberToolResponse(message: Message): void {
+    if (message.role !== 'toolResponse' || message.execution === 'deferredAck') return;
+    if (!this.toolResponses.has(message.trackId)) {
+      this.toolResponses.set(message.trackId, message);
+    }
+  }
+
+  private toolCallChunks(message: ToolCallMessage): string[] {
+    const argumentChunks = this.chunkString(JSON.stringify(message.arguments));
+    return argumentChunks.map((argumentChunk, index) => `Role: ${message.role}`
+      + `\nName: ${message.name}\nTrack ID: ${message.trackId}`
+      + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
+      + `\nArguments chunk ${index + 1} of ${argumentChunks.length}`
+      + `\nArguments:\n${argumentChunk}`);
+  }
+
+  private track(message: Message): void {
+    if (this.knownIds.has(message.messageId)) {
+      throw new Error(`Duplicate message ID: ${message.messageId}.`);
+    }
+    this.knownIds.add(message.messageId);
   }
 }
 
 export {
   HistorySearch,
-}
+};

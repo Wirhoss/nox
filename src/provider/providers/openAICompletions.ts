@@ -429,7 +429,7 @@ class OpenAICompletions extends ChatProvider {
         continue;
       }
 
-      if (message.role === 'compaction') {
+      if (message.role === 'compacted') {
         messages.push({
           content: this.toOpenAIUserContent([
             { text: COMPACTION_HEADER, type: 'text' },
@@ -440,7 +440,7 @@ class OpenAICompletions extends ChatProvider {
         continue;
       }
 
-      if (message.role === 'fold') {
+      if (message.role === 'folded') {
         // Chat Completions has no notion of a folded turn, so the summary rides
         // along on the assistant message it replaced tool traffic for rather
         // than becoming a turn of its own and breaking role alternation.

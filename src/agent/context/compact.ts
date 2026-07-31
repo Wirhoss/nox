@@ -1,4 +1,4 @@
-import type { CompactedMessage, Message } from "../../provider";
+import type { CompactedMessage, Message } from '../../provider';
 
 function isSafeCut(history: readonly Message[], index: number): boolean {
   if (index <= 0 || index >= history.length) return true;
@@ -57,5 +57,5 @@ function applyCompaction(history: readonly Message[], compaction: CompactedMessa
 
 export {
   applyCompaction,
-  seekSafeCut
-}
+  seekSafeCut,
+};

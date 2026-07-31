@@ -99,8 +99,7 @@ function foldedMessageToString(message: FoldedMessage): string {
   return `Role: ${message.role}\nAnchor Message ID: ${message.anchorMessageId}`
   + `\nFolded Message IDs: ${message.foldedMessageIds.join(', ')}`
   + `\nContent:\n${contentToString(message.content)}`
-  + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
-  + `\nContent: \n${contentToString(message.content)}`;
+  + `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`;
 }
 
 function toolCallMessageToString(message: ToolCallMessage): string {
@@ -124,7 +123,7 @@ function messageToString(message: Message): string {
   if (message.role === 'folded') return foldedMessageToString(message);
   if (message.role === 'toolCall') return toolCallMessageToString(message);
   if (message.role === 'toolResponse') return toolResponseMessageToString(message);
-  return `Unknown message role`;
+  return 'Unknown message role';
 }
 
 type Message = AssistantMessage
@@ -137,8 +136,8 @@ type Message = AssistantMessage
 
 export {
   contentToString,
-  messageToString
-}
+  messageToString,
+};
 
 export type {
   AssistantMessage,
