@@ -77,6 +77,31 @@ describe('foldHistory', () => {
     expect(result.events[0]?.foldedMessageIds).toEqual(['call', 'response']);
   });
 
+  test('renders every call and response with a duplicate track ID', () => {
+    const history = [
+      assistant('assistant'),
+      toolCall('call-one', 'duplicate-track'),
+      toolResponse('response-one', 'duplicate-track'),
+      toolCall('call-two', 'duplicate-track'),
+      toolResponse('response-two', 'duplicate-track'),
+    ];
+
+    const result = foldHistory(history);
+    const event = result.events[0];
+    if (event === undefined) throw new Error('Expected fold event.');
+    const content = event.content[0];
+    if (content?.type !== 'text') throw new Error('Expected text fold content.');
+
+    expect(event.foldedMessageIds).toEqual([
+      'call-one',
+      'response-one',
+      'call-two',
+      'response-two',
+    ]);
+    expect(content.text.match(/Tool Name: read/g)).toHaveLength(2);
+    expect(content.text.match(/Response Size:/g)).toHaveLength(2);
+  });
+
   test('records unmatched tool responses in the fold placeholder', () => {
     const history = [
       assistant('assistant'),

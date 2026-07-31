@@ -28,26 +28,32 @@ interface DeferredTool<T extends z.ZodObject = z.ZodObject> extends ToolBase<T> 
 type Tool = ImmediateTool | DeferredTool;
 
 abstract class ToolSet {
-  protected _tools: Record<string, Tool> = {};
-  protected enabledTools: Set<string>;
+  readonly #tools = new Map<string, Tool>();
+  readonly #enabledTools: ReadonlySet<string>;
 
-  constructor(enabledTools?: string[]) {
-    this.enabledTools = new Set(enabledTools ?? []);
+  #visibleTools?: Readonly<Record<string, Tool>>;
+
+  constructor(enabledTools?: readonly string[]) {
+    this.#enabledTools = new Set(enabledTools ?? []);
   }
 
   public readonly gate?: GateDeclaration;
 
-  public get tools(): Record<string, Tool> {
-    if (this.enabledTools.size === 0) {
-      return this._tools;
+  public get tools(): Readonly<Record<string, Tool>> {
+    this.#visibleTools ??= Object.freeze(Object.fromEntries(
+      [...this.#tools]
+        .filter(([name]) => this.#enabledTools.size === 0 || this.#enabledTools.has(name))
+        .sort(([a], [b]) => a.localeCompare(b)),
+    ));
+    return this.#visibleTools;
+  }
+
+  protected registerTool(tool: Tool): void {
+    if (this.#tools.has(tool.name)) {
+      throw new Error(`Tool ${tool.name} is already registered.`);
     }
-    const filteredTools: Record<string, Tool> = {};
-    for (const tool of Object.values(this._tools)) {
-      if (this.enabledTools.has(tool.name)) {
-        filteredTools[tool.name] = tool;
-      }
-    }
-    return filteredTools;
+    this.#tools.set(tool.name, Object.freeze({ ...tool }) as Tool);
+    this.#visibleTools = undefined;
   }
 
   protected abstract addTools(): void;

@@ -511,7 +511,7 @@ class OpenAICompletions extends ChatProvider {
     return messages;
   }
 
-  private toOpenAIUserContent(content: MessageContent[]): string | OpenAIContentPart[] {
+  private toOpenAIUserContent(content: readonly MessageContent[]): string | OpenAIContentPart[] {
     const parts = content.map((part): OpenAIContentPart => {
       if (part.type === 'text') return part;
 
@@ -526,7 +526,7 @@ class OpenAICompletions extends ChatProvider {
       : parts;
   }
 
-  private toAssistantText(content: MessageContent[]): string | null {
+  private toAssistantText(content: readonly MessageContent[]): string | null {
     const text = content
       .filter((part) => part.type === 'text')
       .map((part) => part.text)

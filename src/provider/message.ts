@@ -4,66 +4,66 @@ interface MessageBase {
 }
 
 interface MessageContentText {
-  type: 'text';
-  text: string;
+  readonly type: 'text';
+  readonly text: string;
 }
 
 interface MessageContentImage {
-  type: 'image';
-  source:
-    | { type: 'base64'; mediaType: string; data: string }
-    | { type: 'url'; url: string };
+  readonly type: 'image';
+  readonly source:
+    | { readonly type: 'base64'; readonly mediaType: string; readonly data: string }
+    | { readonly type: 'url'; readonly url: string };
 }
 
 type MessageContent = MessageContentText | MessageContentImage;
 
 interface AssistantMessage extends MessageBase {
-  role: 'assistant';
-  content: MessageContent[];
+  readonly role: 'assistant';
+  readonly content: readonly MessageContent[];
 }
 
 interface CompactedMessage extends MessageBase {
-  role: 'compacted';
-  content: MessageContent[];
-  compactedMessageIds: readonly string[];
+  readonly role: 'compacted';
+  readonly content: readonly MessageContent[];
+  readonly compactedMessageIds: readonly string[];
 }
 
 interface FoldedMessage extends MessageBase {
-  role: 'folded';
-  anchorMessageId: string;
-  foldedMessageIds: readonly string[];
-  content: MessageContent[];
+  readonly role: 'folded';
+  readonly anchorMessageId: string;
+  readonly foldedMessageIds: readonly string[];
+  readonly content: readonly MessageContent[];
 }
 
 interface ReasoningMessage extends MessageBase {
-  role: 'reasoning';
-  content: MessageContent[];
+  readonly role: 'reasoning';
+  readonly content: readonly MessageContent[];
 }
 
 interface UserMessage extends MessageBase {
-  role: 'user';
-  content: MessageContent[];
+  readonly role: 'user';
+  readonly content: readonly MessageContent[];
 }
 
 interface ToolCallMessage extends MessageBase {
-  role: 'toolCall';
-  name: string;
-  trackId: string;
-  arguments: Record<string, unknown>;
+  readonly role: 'toolCall';
+  readonly name: string;
+  readonly trackId: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
 }
 
 type ToolResponseExecution = 'immediate' | 'deferredAck' | 'deferredResult';
 
 interface ToolResponseMessage extends MessageBase {
-  role: 'toolResponse';
-  name: string;
-  trackId: string;
-  execution: ToolResponseExecution;
-  response: MessageContent[];
-  isError?: boolean;
+  readonly role: 'toolResponse';
+  readonly name: string;
+  readonly trackId: string;
+  readonly execution: ToolResponseExecution;
+  readonly response: readonly MessageContent[];
+  readonly isError?: boolean;
 }
 
-function contentToString(content: MessageContent[]): string {
+function contentToString(content: readonly MessageContent[]): string {
   return content.map((c) => {
     if (c.type === 'text') return c.text;
     if (c.type === 'image') {

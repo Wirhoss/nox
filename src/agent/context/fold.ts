@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid';
 
+import { freezeMessage } from './immutable';
+
 import type {
   AssistantMessage,
   FoldedMessage,
@@ -12,6 +14,14 @@ interface FoldResult {
   history: Message[];
   events: FoldedMessage[];
 }
+
+interface FoldAccumulator {
+  calls: Map<string, ToolCallMessage[]>;
+  responses: Map<string, ToolResponseMessage[]>;
+  messageIds: string[];
+}
+
+const SEPARATOR = '- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
 
 function applyFold(history: readonly Message[], fold: FoldedMessage): Message[] {
   const foldedIds = new Set(fold.foldedMessageIds);
@@ -33,7 +43,9 @@ function applyFold(history: readonly Message[], fold: FoldedMessage): Message[] 
     throw new Error(`Fold ${fold.messageId} references a missing anchor ${fold.anchorMessageId}.`);
   }
   if (history[anchorIndex]?.role !== 'assistant') {
-    throw new Error(`Fold ${fold.messageId} anchor ${fold.anchorMessageId} is not an assistant message.`);
+    throw new Error(
+      `Fold ${fold.messageId} anchor ${fold.anchorMessageId} is not an assistant message.`,
+    );
   }
 
   const foundIds = new Set<string>();
@@ -69,37 +81,66 @@ function responseSize(response: ToolResponseMessage): string {
   return `${Buffer.byteLength(JSON.stringify(response.response))} bytes`;
 }
 
-function renderFold(
-  toolCallMessages: ReadonlyMap<string, ToolCallMessage>,
-  toolResponseMessages: ReadonlyMap<string, ToolResponseMessage>,
-): string {
-  let toolFoldedMessage = '-----The following tool calls and responses have been folded-----';
-  for (const toolCallMessage of toolCallMessages.values()) {
-    const response = toolResponseMessages.get(toolCallMessage.trackId);
-    toolFoldedMessage += `\nTool Name: ${toolCallMessage.name}`
-      + `\nTrack Id: ${toolCallMessage.trackId}`
-      + `\nArguments: ${JSON.stringify(toolCallMessage.arguments)}`
-      + `\nWas Error: ${response?.isError ?? 'unknown'}`
-      + `\nWas Deferred: ${response?.execution === 'deferredAck'}`
-      + `\nResponse Size: ${response === undefined ? 'n/a' : responseSize(response)}`
-      + '\n- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
-  }
-
-  for (const response of toolResponseMessages.values()) {
-    if (toolCallMessages.has(response.trackId)) continue;
-    toolFoldedMessage += `\nUnmatched Tool Response: ${response.name}`
-      + `\nTrack Id: ${response.trackId}`
-      + `\nWas Error: ${response.isError ?? 'unknown'}`
-      + `\nWas Deferred: ${response.execution === 'deferredAck'}`
-      + `\nResponse Size: ${responseSize(response)}`
-      + '\n- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
-  }
-
-  return toolFoldedMessage;
+function renderCall(call: ToolCallMessage, response: ToolResponseMessage | undefined): string {
+  return `Tool Name: ${call.name}`
+    + `\nTrack Id: ${call.trackId}`
+    + `\nArguments: ${JSON.stringify(call.arguments)}`
+    + `\nWas Error: ${response?.isError ?? 'unknown'}`
+    + `\nWas Deferred: ${response?.execution === 'deferredAck'}`
+    + `\nResponse Size: ${response === undefined ? 'n/a' : responseSize(response)}`;
 }
 
-function resolveIndex(history: readonly Message[], messageId: string | undefined, fallback: number): number {
+function renderOrphanResponse(response: ToolResponseMessage): string {
+  return `Unmatched Tool Response: ${response.name}`
+    + `\nTrack Id: ${response.trackId}`
+    + `\nWas Error: ${response.isError ?? 'unknown'}`
+    + `\nWas Deferred: ${response.execution === 'deferredAck'}`
+    + `\nResponse Size: ${responseSize(response)}`;
+}
+
+function renderFold({ calls, responses }: FoldAccumulator): string {
+  const entries: string[] = [];
+
+  for (const [trackId, trackCalls] of calls) {
+    const trackResponses = responses.get(trackId) ?? [];
+    for (const [index, call] of trackCalls.entries()) {
+      entries.push(renderCall(call, trackResponses[index]));
+    }
+  }
+
+  for (const [trackId, trackResponses] of responses) {
+    const pairedCount = calls.get(trackId)?.length ?? 0;
+    for (const response of trackResponses.slice(pairedCount)) {
+      entries.push(renderOrphanResponse(response));
+    }
+  }
+
+  return ['-----The following tool calls and responses have been folded-----']
+    .concat(entries.map((entry) => `${entry}\n${SEPARATOR}`))
+    .join('\n');
+}
+
+function trackedPush<T>(tracked: Map<string, T[]>, trackId: string, message: T): void {
+  const existing = tracked.get(trackId);
+  if (existing === undefined) tracked.set(trackId, [message]);
+  else existing.push(message);
+}
+
+function createAccumulator(): FoldAccumulator {
+  return { calls: new Map(), messageIds: [], responses: new Map() };
+}
+
+function isEmpty(accumulator: FoldAccumulator): boolean {
+  return accumulator.calls.size === 0 && accumulator.responses.size === 0;
+}
+
+function resolveIndex(
+  history: readonly Message[],
+  messageId: string | undefined,
+  fallback: number,
+): number {
   if (messageId === undefined) return fallback;
+
   const index = history.findIndex((message) => message.messageId === messageId);
   if (index === -1) {
     throw new Error(`Fold range references a missing message ${messageId}.`);
@@ -107,7 +148,11 @@ function resolveIndex(history: readonly Message[], messageId: string | undefined
   return index;
 }
 
-function foldHistory(history: readonly Message[], fromMessageId?: string, toMessageId?: string): FoldResult {
+function foldHistory(
+  history: readonly Message[],
+  fromMessageId?: string,
+  toMessageId?: string,
+): FoldResult {
   const from = resolveIndex(history, fromMessageId, 0);
   const to = resolveIndex(history, toMessageId, history.length - 1);
   if (to < from) {
@@ -115,43 +160,39 @@ function foldHistory(history: readonly Message[], fromMessageId?: string, toMess
   }
 
   const events: FoldedMessage[] = [];
-  const toolCallMessages = new Map<string, ToolCallMessage>();
-  const toolResponseMessages = new Map<string, ToolResponseMessage>();
-  let foldedMessageIds: string[] = [];
+  let accumulator = createAccumulator();
   let anchor = history
     .slice(0, from)
     .findLast((message): message is AssistantMessage => message.role === 'assistant');
 
   const flush = (): void => {
-    if (toolCallMessages.size === 0 && toolResponseMessages.size === 0) return;
+    if (isEmpty(accumulator)) return;
     if (anchor === undefined) {
       throw new Error('No anchor assistant message found for folding tool calls and responses.');
     }
 
-    events.push(Object.freeze<FoldedMessage>({
+    events.push(freezeMessage<FoldedMessage>({
       anchorMessageId: anchor.messageId,
-      content: [{ type: 'text', text: renderFold(toolCallMessages, toolResponseMessages) }],
+      content: [{ text: renderFold(accumulator), type: 'text' }],
       createdAt: new Date(),
-      foldedMessageIds: Object.freeze(foldedMessageIds),
+      foldedMessageIds: accumulator.messageIds,
       messageId: nanoid(),
       role: 'folded',
     }));
-    toolCallMessages.clear();
-    toolResponseMessages.clear();
-    foldedMessageIds = [];
+    accumulator = createAccumulator();
   };
 
   for (const message of history.slice(from, to + 1)) {
     if (message.role === 'toolCall') {
-      toolCallMessages.set(message.trackId, message);
-      foldedMessageIds.push(message.messageId);
+      trackedPush(accumulator.calls, message.trackId, message);
+      accumulator.messageIds.push(message.messageId);
       continue;
     }
 
     if (message.role === 'toolResponse') {
       if (message.execution === 'deferredResult') continue;
-      toolResponseMessages.set(message.trackId, message);
-      foldedMessageIds.push(message.messageId);
+      trackedPush(accumulator.responses, message.trackId, message);
+      accumulator.messageIds.push(message.messageId);
       continue;
     }
 
@@ -174,4 +215,8 @@ function foldHistory(history: readonly Message[], fromMessageId?: string, toMess
 export {
   applyFold,
   foldHistory,
+};
+
+export type {
+  FoldResult,
 };
