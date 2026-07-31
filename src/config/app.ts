@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
+import { databaseConfigSchema } from '../database/config';
+
 const appConfigSchema = z.object({
+  database: databaseConfigSchema,
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   server: z.object({
     host: z.string().min(1).default('127.0.0.1'),

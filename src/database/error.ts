@@ -1,5 +1,4 @@
 type DatabaseErrorCode =
-  | 'already_initialized'
   | 'connection_failed'
   | 'migration_failed'
   | 'not_initialized'
@@ -26,26 +25,26 @@ class NotInitializedError extends DatabaseError {
 }
 
 class ConnectionFailedError extends DatabaseError {
-  public readonly databaseFile: string;
+  public readonly target: string;
 
-  constructor(databaseFile: string, cause?: unknown) {
-    super('connection_failed', `Failed to open database at ${databaseFile}.`, cause);
+  constructor(target: string, cause?: unknown) {
+    super('connection_failed', `Failed to open database at ${target}.`, cause);
     this.name = 'ConnectionFailedError';
-    this.databaseFile = databaseFile;
+    this.target = target;
   }
 }
 
 class MigrationFailedError extends DatabaseError {
-  public readonly databaseFile: string;
+  public readonly target: string;
 
-  constructor(databaseFile: string, cause?: unknown) {
+  constructor(target: string, cause?: unknown) {
     super(
       'migration_failed',
-      `Migrations failed for ${databaseFile}; the schema is in an unknown state.`,
+      `Migrations failed for ${target}; the schema is in an unknown state.`,
       cause,
     );
     this.name = 'MigrationFailedError';
-    this.databaseFile = databaseFile;
+    this.target = target;
   }
 }
 

@@ -39,6 +39,16 @@ const appSection = fileSection({
   schema: appConfigSchema,
 });
 
+const appDatabaseDefaults = {
+  driver: 'sqlite',
+  sqlite: {
+    busyTimeoutMs: 5_000,
+    enableWAL: true,
+    foreignKeys: true,
+    statementCacheSize: 100,
+  },
+} as const;
+
 const secretSchema = z.object({
   apiKey: z.string().optional(),
   url: z.string().default('https://example.test'),
@@ -81,7 +91,11 @@ describe('config files', () => {
 
     const value = await loadFileSection(appSection, dir);
 
-    expect(value).toEqual({ logLevel: 'info', server: { host: '127.0.0.1', port: 3000 } });
+    expect(value).toEqual({
+      database: appDatabaseDefaults,
+      logLevel: 'info',
+      server: { host: '127.0.0.1', port: 3000 },
+    });
     expect(await read(dir, 'app.json')).toEqual(value);
   });
 
@@ -93,6 +107,7 @@ describe('config files', () => {
 
     expect(value.server).toEqual({ host: '127.0.0.1', port: 8080 });
     expect(await read(dir, 'app.json')).toEqual({
+      database: appDatabaseDefaults,
       logLevel: 'info',
       server: { host: '127.0.0.1', port: 8080 },
     });
@@ -100,7 +115,11 @@ describe('config files', () => {
 
   test('leaves an already complete file untouched', async () => {
     const dir = await configDir();
-    const stored = { logLevel: 'warn', server: { host: '0.0.0.0', port: 3000 } };
+    const stored = {
+      database: appDatabaseDefaults,
+      logLevel: 'warn',
+      server: { host: '0.0.0.0', port: 3000 },
+    };
     await write(dir, 'app.json', stored);
     const before = await readFile(`${dir}/app.json`, 'utf8');
 
@@ -166,6 +185,7 @@ describe('config updates', () => {
     await init(dir);
 
     const result = await Config.update('app', {
+      database: appDatabaseDefaults,
       logLevel: 'debug',
       server: { host: '127.0.0.1', port: 3000 },
     });
