@@ -1,6 +1,3 @@
-import * as dotenv from 'dotenv';
-dotenv.config({ quiet: true });
-
 import { AgentRegistry } from './src/agent/registry';
 import { Config } from './src/config';
 import { DeepResearchRegistry } from './src/deepResearch';

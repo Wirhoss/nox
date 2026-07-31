@@ -77,11 +77,11 @@ function messageIds(history: readonly Message[]): string[] {
 
 function immediateTool(name: string): Tool {
   return {
-    call: async () => [],
     description: name,
+    executionType: 'immediate',
     name,
     parameters: z.object({}),
-    type: 'immediate',
+    prepare: () => ({ run: async () => [], title: name, type: 'immediate' }),
   };
 }
 

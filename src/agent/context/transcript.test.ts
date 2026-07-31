@@ -7,8 +7,8 @@ import {
 import { HistorySearchToolSet } from './search';
 import { Transcript } from './transcript';
 
-import type { Message } from '../../provider';
-import type { ImmediateTool, ToolSet } from '../../tool';
+import type { Message, MessageContent } from '../../provider';
+import type { ToolSet } from '../../tool';
 import type { TranscriptOptions } from './transcript';
 
 const createdAt = new Date('2026-01-01T00:00:00.000Z');
@@ -31,12 +31,16 @@ function createTranscript(
   return { tools: new HistorySearchToolSet(transcript), transcript };
 }
 
-function immediateTool(toolSet: ToolSet, name: string): ImmediateTool {
-  const tool = toolSet.tools[name];
-  if (tool === undefined || tool.type !== 'immediate') {
-    throw new Error(`Expected immediate tool: ${name}`);
+async function runTool(
+  toolSet: ToolSet,
+  name: string,
+  params: unknown,
+): Promise<MessageContent[]> {
+  const execution = toolSet.prepare(name, params);
+  if (execution.type !== 'immediate') {
+    throw new Error(`Expected immediate execution: ${name}`);
   }
-  return tool;
+  return execution.run(toolContext);
 }
 
 describe('Transcript', () => {
@@ -49,12 +53,10 @@ describe('Transcript', () => {
     const live = createTranscript([], { chunkSize: 120 });
     for (const message of messages) live.transcript.append(message);
 
-    const restoredTool = immediateTool(restored.tools, 'search_history');
-    const liveTool = immediateTool(live.tools, 'search_history');
     const parameters = { limit: 5, query: 'needle beta' };
 
-    expect(await restoredTool.call(parameters, toolContext))
-      .toEqual(await liveTool.call(parameters, toolContext));
+    expect(await runTool(restored.tools, 'search_history', parameters))
+      .toEqual(await runTool(live.tools, 'search_history', parameters));
   });
 
   test('recovers from persisted duplicate IDs but rejects live duplicates', () => {
@@ -89,9 +91,8 @@ describe('Transcript', () => {
       user('one', 'needle '.repeat(100)),
       user('two', 'needle '.repeat(100)),
     ], { chunkSize: 120, maxSearchCharacters: 350 });
-    const tool = immediateTool(tools, 'search_history');
 
-    const response = await tool.call({ limit: 10, query: 'needle' }, toolContext);
+    const response = await runTool(tools, 'search_history', { limit: 10, query: 'needle' });
     const text = response.map((part) => part.type === 'text' ? part.text : '').join('');
 
     expect(text.length).toBeLessThanOrEqual(350);
@@ -129,22 +130,21 @@ describe('Transcript', () => {
       role: 'toolResponse',
       trackId: 'track-large',
     }], { chunkSize: 1000 });
-    const tool = immediateTool(tools, 'read_tool_result');
 
-    const first = await tool.call({
+    const first = await runTool(tools, 'read_tool_result', {
       maxCharacters: 400,
       offset: 0,
       trackId: 'track-large',
-    }, toolContext);
+    });
     const firstText = first[0]?.type === 'text' ? first[0].text : '';
 
     expect(firstText).toContain('[Result truncated. Continue with offset 400.');
 
-    const second = await tool.call({
+    const second = await runTool(tools, 'read_tool_result', {
       maxCharacters: 400,
       offset: 400,
       trackId: 'track-large',
-    }, toolContext);
+    });
     const secondText = second[0]?.type === 'text' ? second[0].text : '';
     expect(secondText).toContain('result');
   });

@@ -46,11 +46,11 @@ function toolResponse(messageId: string): Message {
 
 function immediateTool(name: string): Tool {
   return {
-    call: async () => [],
     description: `${name} description`,
+    executionType: 'immediate',
     name,
     parameters: z.object({ query: z.string() }),
-    type: 'immediate',
+    prepare: () => ({ run: async () => [], title: name, type: 'immediate' }),
   };
 }
 

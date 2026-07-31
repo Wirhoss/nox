@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ToolSet } from '../../tool';
 
-import type { ImmediateTool } from '../../tool';
+import type { Tool } from '../../tool';
 import type { Transcript } from './transcript';
 
 const readToolResultSchema = z.object({
@@ -38,27 +38,33 @@ class HistorySearchToolSet extends ToolSet {
   }
 
   protected addTools(): void {
-    const readToolResult: ImmediateTool<typeof readToolResultSchema> = {
-      call: async ({ trackId, offset, maxCharacters }) => (
-        this.#transcript.readToolResult(trackId, offset, maxCharacters)
-      ),
+    const readToolResult: Tool<typeof readToolResultSchema> = {
       description: 'Read an earlier tool result by track ID. Results are bounded; if the response '
         + 'reports a next offset, call the tool again from that offset.',
+      executionType: 'immediate',
       name: 'read_tool_result',
       parameters: readToolResultSchema,
-      type: 'immediate',
+      prepare: ({ trackId, offset, maxCharacters }) => ({
+        run: async () => this.#transcript.readToolResult(trackId, offset, maxCharacters),
+        title: `Read tool result — ${trackId}`,
+        type: 'immediate',
+      }),
     };
     this.registerTool(readToolResult);
 
-    const searchHistory: ImmediateTool<typeof searchHistorySchema> = {
-      call: async ({ query, limit }) => this.#transcript.search(query, limit),
+    const searchHistory: Tool<typeof searchHistorySchema> = {
       description: 'Keyword-search the complete session transcript, including messages removed '
         + 'from the active context by folding or compaction, and get back the best-matching '
         + 'excerpts. Use it to recover earlier facts, requirements, decisions, commands, errors, '
         + 'or exact identifiers instead of guessing or asking the user to repeat them.',
+      executionType: 'immediate',
       name: 'search_history',
       parameters: searchHistorySchema,
-      type: 'immediate',
+      prepare: ({ query, limit }) => ({
+        run: async () => this.#transcript.search(query, limit),
+        title: `Search history — ${query}`,
+        type: 'immediate',
+      }),
     };
     this.registerTool(searchHistory);
   }
