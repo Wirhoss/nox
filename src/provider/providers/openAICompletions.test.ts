@@ -163,11 +163,15 @@ describe('OpenAICompletions', () => {
       },
     ];
     const tools: Tool[] = [{
-      call: async () => [{ text: 'Sunny', type: 'text' }],
       description: 'Get the weather',
+      executionType: 'immediate',
       name: 'weather',
       parameters: z.object({ city: z.string() }),
-      type: 'immediate',
+      prepare: () => ({
+        run: async () => [{ text: 'Sunny', type: 'text' }],
+        title: 'Get the weather',
+        type: 'immediate',
+      }),
     }];
 
     const stream = provider.getMessageStream('Be helpful', history, tools, {
