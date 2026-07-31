@@ -1,43 +1,74 @@
-import type { GateDeclaration } from '../gate';
+import { InvalidToolParamsError, UnknownToolError } from './error';
+
 import type { MessageContent } from '../provider';
+import type { GateDeclaration } from './gate';
 import type { z } from 'zod';
 
 interface ToolContext {
   abortSignal: AbortSignal;
 }
 
-interface ToolBase<T extends z.ZodObject = z.ZodObject> {
+type ToolExecutionType = 'immediate' | 'deferred';
+
+type ToolExposure = 'eager' | 'lazy';
+
+interface Tool<T extends z.ZodObject = z.ZodObject> {
   name: string;
   description: string;
   parameters: T;
+  executionType: ToolExecutionType;
+  exposure?: ToolExposure;
+  prepare(params: z.infer<T>): ToolExecution;
 }
 
-interface ImmediateTool<T extends z.ZodObject = z.ZodObject> extends ToolBase<T> {
+interface ExecutionBase {
+  title: string;
+  preview?: string;
+}
+
+interface ImmediateExecution extends ExecutionBase {
   type: 'immediate';
-  call: (params: z.infer<T>, ctx: ToolContext) => Promise<MessageContent[]>;
+  run(ctx: ToolContext): Promise<MessageContent[]>;
 }
 
-interface DeferredTool<T extends z.ZodObject = z.ZodObject> extends ToolBase<T> {
+interface DeferredExecution extends ExecutionBase {
   type: 'deferred';
-  start: (params: z.infer<T>, ctx: ToolContext) => Promise<{
-    ack: string;
+  run(ctx: ToolContext): Promise<{
+    ack: MessageContent[];
     result: Promise<MessageContent[]>;
   }>;
 }
 
-type Tool = ImmediateTool | DeferredTool;
+type ToolExecution =
+  | ImmediateExecution
+  | DeferredExecution;
+
+function prepareTool(tool: Tool, rawParams: unknown): ToolExecution {
+  const parsed = tool.parameters.safeParse(rawParams);
+  if (!parsed.success) {
+    throw new InvalidToolParamsError(tool, parsed.error);
+  }
+  return tool.prepare(parsed.data);
+}
 
 abstract class ToolSet {
+  public readonly exposure: ToolExposure;
+  /** Rules this set ships with, applied before the user's own gate config. */
+  public readonly gate?: GateDeclaration;
   readonly #tools = new Map<string, Tool>();
   readonly #enabledTools: ReadonlySet<string>;
 
   #visibleTools?: Readonly<Record<string, Tool>>;
 
-  constructor(enabledTools?: readonly string[]) {
+  constructor(
+    enabledTools?: readonly string[],
+    exposure: ToolExposure = 'eager',
+    gate?: GateDeclaration,
+  ) {
     this.#enabledTools = new Set(enabledTools ?? []);
+    this.exposure = exposure;
+    this.gate = gate;
   }
-
-  public readonly gate?: GateDeclaration;
 
   public get tools(): Readonly<Record<string, Tool>> {
     this.#visibleTools ??= Object.freeze(Object.fromEntries(
@@ -48,33 +79,42 @@ abstract class ToolSet {
     return this.#visibleTools;
   }
 
+  public prepare(name: string, rawParams: unknown): ToolExecution {
+    const tool = this.tools[name];
+    if (tool === undefined) {
+      throw new UnknownToolError(name);
+    }
+    return prepareTool(tool, rawParams);
+  }
+
   protected registerTool(tool: Tool): void {
     if (this.#tools.has(tool.name)) {
       throw new Error(`Tool ${tool.name} is already registered.`);
     }
-    this.#tools.set(tool.name, Object.freeze({ ...tool }) as Tool);
+    this.#tools.set(tool.name, Object.freeze(tool));
     this.#visibleTools = undefined;
   }
 
   protected abstract addTools(): void;
 }
 
-type ToolSetClass<
-  T extends ToolSet = ToolSet,
-  TArguments extends unknown[] = [],
-> = new (...args: TArguments) => T;
+type ToolSetClass<T extends ToolSet = ToolSet, TArguments extends unknown[] = []> = new (...args: TArguments) => T;
 
 type ToolSetFactory<T extends ToolSet = ToolSet> = () => T;
 
 export type {
-  DeferredTool,
-  ImmediateTool,
+  DeferredExecution,
+  ImmediateExecution,
   Tool,
   ToolContext,
+  ToolExecution,
+  ToolExecutionType,
+  ToolExposure,
   ToolSetClass,
   ToolSetFactory,
 };
 
 export {
+  prepareTool,
   ToolSet,
 };
