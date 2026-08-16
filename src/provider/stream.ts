@@ -167,6 +167,7 @@ class ProviderStream {
 
         switch (event.type) {
           case "end": {
+            await iterator.return?.();
             flush();
             this.finish(messages, false, event.usage);
             return;

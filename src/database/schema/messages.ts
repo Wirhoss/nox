@@ -2,7 +2,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
 
 import { sessions } from "./sessions";
 
-import type { MessageContent, ToolResponseExecution } from "../../agent/context/message";
+import type { MessageContent, ToolResponseExecution } from "../../context/message";
 
 const MESSAGE_ROLES = [
   "assistant",
@@ -20,21 +20,6 @@ const TOOL_RESPONSE_EXECUTIONS = [
   "immediate",
 ] as const satisfies readonly ToolResponseExecution[];
 
-/**
- * One row per `Message`. The seven variants of the union share a table because
- * they are always read back as one ordered transcript; `role` is the
- * discriminator and the variant-specific columns are nullable.
- *
- * | column              | roles that populate it                                          |
- * | ------------------- | --------------------------------------------------------------- |
- * | `content`           | every role except `toolCall`                                      |
- * | `name` / `track_id` | `toolCall`, `toolResponse`                                        |
- * | `arguments`         | `toolCall`                                                        |
- * | `execution`         | `toolResponse`                                                    |
- * | `is_error`          | `toolResponse`                                                    |
- * | `anchor_message_id` | `folded`                                                          |
- * | `ref_message_ids`   | `compacted` (compactedMessageIds), `folded` (foldedMessageIds)     |
- */
 const messages = sqliteTable(
   "messages",
   {
@@ -48,7 +33,6 @@ const messages = sqliteTable(
     name: text("name"),
     refMessageIds: text("ref_message_ids", { mode: "json" }).$type<readonly string[]>(),
     role: text("role", { enum: MESSAGE_ROLES }).notNull(),
-    // Monotonic per session: transcript order, independent of clock skew.
     seq: integer("seq").notNull(),
     sessionId: text("session_id")
       .notNull()
