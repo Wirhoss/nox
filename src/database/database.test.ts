@@ -1,29 +1,29 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { afterEach, describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { afterEach, describe, expect, test } from 'bun:test';
+import { eq } from 'drizzle-orm';
 
-import { Database } from "./database";
-import { Mutex } from "./mutex";
-import { messages, sessions } from "./schema";
+import { Database } from './database';
+import { Mutex } from './mutex';
+import { messages, sessions } from './schema';
 
 const directories: string[] = [];
 let open: Database | undefined;
 
 function migrationCount(): number {
   const journal: unknown = JSON.parse(
-    readFileSync(join(import.meta.dir, "migrations", "meta", "_journal.json"), "utf8"),
+    readFileSync(join(import.meta.dir, 'migrations', 'meta', '_journal.json'), 'utf8'),
   );
   const entries = (journal as { entries?: unknown[] }).entries ?? [];
   return entries.length;
 }
 
 function databasePath(): string {
-  const directory = mkdtempSync(join(tmpdir(), "nox-db-"));
+  const directory = mkdtempSync(join(tmpdir(), 'nox-db-'));
   directories.push(directory);
-  return join(directory, "nox.db");
+  return join(directory, 'nox.db');
 }
 
 async function openDatabase(path = databasePath()): Promise<Database> {
@@ -39,7 +39,7 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
     if (error instanceof Error) return error;
     throw new TypeError(`Expected an Error, got ${typeof error}.`, { cause: error });
   }
-  throw new Error("Expected the promise to reject, but it resolved.");
+  throw new Error('Expected the promise to reject, but it resolved.');
 }
 
 async function seedSession(database: Database, sessionId: string): Promise<void> {
@@ -63,8 +63,8 @@ afterEach(async () => {
   }
 });
 
-describe("Mutex", () => {
-  test("runs tasks in submission order without interleaving", async () => {
+describe('Mutex', () => {
+  test('runs tasks in submission order without interleaving', async () => {
     const mutex = new Mutex();
     const events: string[] = [];
 
@@ -78,24 +78,24 @@ describe("Mutex", () => {
     );
     await Promise.all(tasks);
 
-    expect(events).toEqual(["start:1", "end:1", "start:2", "end:2", "start:3", "end:3"]);
+    expect(events).toEqual(['start:1', 'end:1', 'start:2', 'end:2', 'start:3', 'end:3']);
   });
 
-  test("a rejected task does not poison the ones queued behind it", async () => {
+  test('a rejected task does not poison the ones queued behind it', async () => {
     const mutex = new Mutex();
 
     const failure = await rejection(
       mutex.run(() => {
-        throw new Error("boom");
+        throw new Error('boom');
       }),
     );
-    expect(failure.message).toBe("boom");
-    expect(await mutex.run(() => "ok")).toBe("ok");
+    expect(failure.message).toBe('boom');
+    expect(await mutex.run(() => 'ok')).toBe('ok');
   });
 });
 
-describe("Database.open", () => {
-  test("concurrent opens share one instance and one connection", async () => {
+describe('Database.open', () => {
+  test('concurrent opens share one instance and one connection', async () => {
     const path = databasePath();
     const [first, second, third] = await Promise.all([
       Database.open({ path }),
@@ -109,57 +109,57 @@ describe("Database.open", () => {
     expect(first.isOpen).toBeTrue();
   });
 
-  test("enables WAL and foreign keys", async () => {
+  test('enables WAL and foreign keys', async () => {
     const database = await openDatabase();
 
-    const journal = database.db.all<{ journal_mode: string }>("PRAGMA journal_mode");
-    const foreignKeys = database.db.all<{ foreign_keys: number }>("PRAGMA foreign_keys");
+    const journal = database.db.all<{ journal_mode: string }>('PRAGMA journal_mode');
+    const foreignKeys = database.db.all<{ foreign_keys: number }>('PRAGMA foreign_keys');
 
-    expect(journal[0]?.journal_mode.toLowerCase()).toBe("wal");
+    expect(journal[0]?.journal_mode.toLowerCase()).toBe('wal');
     expect(foreignKeys[0]?.foreign_keys).toBe(1);
   });
 
-  test("reopening an existing file is idempotent and keeps its rows", async () => {
+  test('reopening an existing file is idempotent and keeps its rows', async () => {
     const path = databasePath();
     const first = await openDatabase(path);
-    await seedSession(first, "session-a");
+    await seedSession(first, 'session-a');
     await first.close();
 
     const second = await openDatabase(path);
     const rows = await second.db.select().from(sessions);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.sessionId).toBe("session-a");
+    expect(rows[0]?.sessionId).toBe('session-a');
   });
 
-  test("current() throws before open and resolves to the shared instance after", async () => {
-    expect(() => Database.current()).toThrow("has not been opened");
+  test('current() throws before open and resolves to the shared instance after', async () => {
+    expect(() => Database.current()).toThrow('has not been opened');
 
     const database = await openDatabase();
     expect(await Database.current()).toBe(database);
   });
 
-  test("applies the generated migrations and records them", async () => {
+  test('applies the generated migrations and records them', async () => {
     const database = await openDatabase();
 
     const tables = database.db
       .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
       .map((row) => row.name);
 
-    expect(tables).toContain("messages");
-    expect(tables).toContain("sessions");
-    expect(tables).toContain("__drizzle_migrations");
+    expect(tables).toContain('messages');
+    expect(tables).toContain('sessions');
+    expect(tables).toContain('__drizzle_migrations');
   });
 
-  test("re-running migrations on an existing file is a no-op", async () => {
+  test('re-running migrations on an existing file is a no-op', async () => {
     const path = databasePath();
     const first = await openDatabase(path);
-    const applied = first.db.all<{ hash: string }>("SELECT hash FROM __drizzle_migrations");
-    await seedSession(first, "session-a");
+    const applied = first.db.all<{ hash: string }>('SELECT hash FROM __drizzle_migrations');
+    await seedSession(first, 'session-a');
     await first.close();
 
     const second = await openDatabase(path);
-    const reapplied = second.db.all<{ hash: string }>("SELECT hash FROM __drizzle_migrations");
+    const reapplied = second.db.all<{ hash: string }>('SELECT hash FROM __drizzle_migrations');
 
     expect(applied).toHaveLength(migrationCount());
     expect(reapplied).toEqual(applied);
@@ -167,10 +167,10 @@ describe("Database.open", () => {
   });
 });
 
-describe("Database writes", () => {
-  test("serialises concurrent transactions from multiple agents", async () => {
+describe('Database writes', () => {
+  test('serialises concurrent transactions from multiple agents', async () => {
     const database = await openDatabase();
-    await seedSession(database, "session-a");
+    await seedSession(database, 'session-a');
 
     const agents = Array.from({ length: 25 }, (_unused, index) => index);
     await Promise.all(
@@ -179,19 +179,19 @@ describe("Database writes", () => {
           const [last] = tx
             .select({ seq: messages.seq })
             .from(messages)
-            .where(eq(messages.sessionId, "session-a"))
+            .where(eq(messages.sessionId, 'session-a'))
             .orderBy(messages.seq)
             .all()
             .slice(-1);
 
           tx.insert(messages)
             .values({
-              content: [{ text: `message ${String(index)}`, type: "text" }],
+              content: [{ text: `message ${String(index)}`, type: 'text' }],
               createdAt: Date.now(),
               messageId: `message-${String(index)}`,
-              role: "user",
+              role: 'user',
               seq: (last?.seq ?? 0) + 1,
-              sessionId: "session-a",
+              sessionId: 'session-a',
             })
             .run();
         }),
@@ -201,7 +201,7 @@ describe("Database writes", () => {
     const rows = await database.db
       .select({ seq: messages.seq })
       .from(messages)
-      .where(eq(messages.sessionId, "session-a"))
+      .where(eq(messages.sessionId, 'session-a'))
       .orderBy(messages.seq);
 
     // 25 concurrent read-modify-writes must produce a gapless sequence; any
@@ -209,109 +209,109 @@ describe("Database writes", () => {
     expect(rows.map((row) => row.seq)).toEqual(agents.map((index) => index + 1));
   });
 
-  test("rolls a failed transaction back without breaking the queue", async () => {
+  test('rolls a failed transaction back without breaking the queue', async () => {
     const database = await openDatabase();
-    await seedSession(database, "session-a");
+    await seedSession(database, 'session-a');
 
     const failure = await rejection(
       database.transaction((tx) => {
         tx.insert(messages)
           .values({
             createdAt: Date.now(),
-            messageId: "doomed",
-            role: "user",
+            messageId: 'doomed',
+            role: 'user',
             seq: 1,
-            sessionId: "session-a",
+            sessionId: 'session-a',
           })
           .run();
-        throw new Error("rollback");
+        throw new Error('rollback');
       }),
     );
-    expect(failure.message).toBe("rollback");
+    expect(failure.message).toBe('rollback');
 
     await database.transaction((tx) => {
       tx.insert(messages)
         .values({
           createdAt: Date.now(),
-          messageId: "survivor",
-          role: "user",
+          messageId: 'survivor',
+          role: 'user',
           seq: 1,
-          sessionId: "session-a",
+          sessionId: 'session-a',
         })
         .run();
     });
 
     const rows = await database.db.select({ messageId: messages.messageId }).from(messages);
-    expect(rows.map((row) => row.messageId)).toEqual(["survivor"]);
+    expect(rows.map((row) => row.messageId)).toEqual(['survivor']);
   });
 
-  test("exclusive() holds the connection across awaits", async () => {
+  test('exclusive() holds the connection across awaits', async () => {
     const database = await openDatabase();
     const events: string[] = [];
 
     await Promise.all([
       database.exclusive(async () => {
-        events.push("a:start");
+        events.push('a:start');
         await Promise.resolve();
-        events.push("a:end");
+        events.push('a:end');
       }),
       database.exclusive(() => {
-        events.push("b");
+        events.push('b');
       }),
     ]);
 
-    expect(events).toEqual(["a:start", "a:end", "b"]);
+    expect(events).toEqual(['a:start', 'a:end', 'b']);
   });
 });
 
-describe("Database schema", () => {
-  test("round-trips every message variant through JSON columns", async () => {
+describe('Database schema', () => {
+  test('round-trips every message variant through JSON columns', async () => {
     const database = await openDatabase();
-    await seedSession(database, "session-a");
+    await seedSession(database, 'session-a');
     const createdAt = Date.now();
 
     await database.transaction((tx) => {
       tx.insert(messages)
         .values([
           {
-            content: [{ text: "hello", type: "text" }],
+            content: [{ text: 'hello', type: 'text' }],
             createdAt,
-            messageId: "user-1",
-            role: "user",
+            messageId: 'user-1',
+            role: 'user',
             seq: 1,
-            sessionId: "session-a",
+            sessionId: 'session-a',
           },
           {
-            arguments: { limit: 10, query: "nox" },
+            arguments: { limit: 10, query: 'nox' },
             createdAt,
-            messageId: "call-1",
-            name: "search",
-            role: "toolCall",
+            messageId: 'call-1',
+            name: 'search',
+            role: 'toolCall',
             seq: 2,
-            sessionId: "session-a",
-            trackId: "track-1",
+            sessionId: 'session-a',
+            trackId: 'track-1',
           },
           {
-            content: [{ source: { type: "url", url: "https://x/y.png" }, type: "image" }],
+            content: [{ source: { type: 'url', url: 'https://x/y.png' }, type: 'image' }],
             createdAt,
-            execution: "immediate",
+            execution: 'immediate',
             isError: false,
-            messageId: "response-1",
-            name: "search",
-            role: "toolResponse",
+            messageId: 'response-1',
+            name: 'search',
+            role: 'toolResponse',
             seq: 3,
-            sessionId: "session-a",
-            trackId: "track-1",
+            sessionId: 'session-a',
+            trackId: 'track-1',
           },
           {
-            anchorMessageId: "user-1",
-            content: [{ text: "summary", type: "text" }],
+            anchorMessageId: 'user-1',
+            content: [{ text: 'summary', type: 'text' }],
             createdAt,
-            messageId: "folded-1",
-            refMessageIds: ["user-1", "call-1"],
-            role: "folded",
+            messageId: 'folded-1',
+            refMessageIds: ['user-1', 'call-1'],
+            role: 'folded',
             seq: 4,
-            sessionId: "session-a",
+            sessionId: 'session-a',
           },
         ])
         .run();
@@ -320,38 +320,38 @@ describe("Database schema", () => {
     const rows = await database.db
       .select()
       .from(messages)
-      .where(eq(messages.sessionId, "session-a"))
+      .where(eq(messages.sessionId, 'session-a'))
       .orderBy(messages.seq);
 
-    expect(rows.map((row) => row.role)).toEqual(["user", "toolCall", "toolResponse", "folded"]);
-    expect(rows[0]?.content).toEqual([{ text: "hello", type: "text" }]);
-    expect(rows[1]?.arguments).toEqual({ limit: 10, query: "nox" });
+    expect(rows.map((row) => row.role)).toEqual(['user', 'toolCall', 'toolResponse', 'folded']);
+    expect(rows[0]?.content).toEqual([{ text: 'hello', type: 'text' }]);
+    expect(rows[1]?.arguments).toEqual({ limit: 10, query: 'nox' });
     expect(rows[2]?.isError).toBeFalse();
-    expect(rows[2]?.execution).toBe("immediate");
-    expect(rows[3]?.refMessageIds).toEqual(["user-1", "call-1"]);
+    expect(rows[2]?.execution).toBe('immediate');
+    expect(rows[3]?.refMessageIds).toEqual(['user-1', 'call-1']);
   });
 
-  test("cascades message deletion with its session", async () => {
+  test('cascades message deletion with its session', async () => {
     const database = await openDatabase();
-    await seedSession(database, "session-a");
+    await seedSession(database, 'session-a');
 
     await database.transaction((tx) => {
       tx.insert(messages)
         .values({
           createdAt: Date.now(),
-          messageId: "user-1",
-          role: "user",
+          messageId: 'user-1',
+          role: 'user',
           seq: 1,
-          sessionId: "session-a",
+          sessionId: 'session-a',
         })
         .run();
-      tx.delete(sessions).where(eq(sessions.sessionId, "session-a")).run();
+      tx.delete(sessions).where(eq(sessions.sessionId, 'session-a')).run();
     });
 
     expect(await database.db.select().from(messages)).toHaveLength(0);
   });
 
-  test("rejects a message whose session does not exist", async () => {
+  test('rejects a message whose session does not exist', async () => {
     const database = await openDatabase();
 
     const failure = await rejection(
@@ -359,10 +359,10 @@ describe("Database schema", () => {
         tx.insert(messages)
           .values({
             createdAt: Date.now(),
-            messageId: "orphan",
-            role: "user",
+            messageId: 'orphan',
+            role: 'user',
             seq: 1,
-            sessionId: "missing",
+            sessionId: 'missing',
           })
           .run();
       }),
@@ -371,16 +371,16 @@ describe("Database schema", () => {
   });
 });
 
-describe("Database.close", () => {
-  test("is idempotent and rejects later use", async () => {
+describe('Database.close', () => {
+  test('is idempotent and rejects later use', async () => {
     const database = await openDatabase();
 
     await database.close();
     await database.close();
 
     expect(database.isOpen).toBeFalse();
-    expect(() => database.db).toThrow("is closed");
-    expect((await rejection(database.transaction(() => undefined))).message).toContain("is closed");
+    expect(() => database.db).toThrow('is closed');
+    expect((await rejection(database.transaction(() => undefined))).message).toContain('is closed');
 
     open = undefined;
   });

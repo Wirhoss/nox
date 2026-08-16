@@ -44,7 +44,7 @@ function elementAt(array: Float64Array | Uint32Array, index: number): number {
 function normalizeText(text: string, hasNonAscii: boolean): string {
   const lower = text.toLowerCase();
   if (!hasNonAscii) return lower;
-  return lower.normalize("NFD").replace(LATIN_COMBINING_MARKS, "$1");
+  return lower.normalize('NFD').replace(LATIN_COMBINING_MARKS, '$1');
 }
 
 function createPostingList(): PostingList {
@@ -101,10 +101,10 @@ class BM25 {
     this.tokenizer = options.tokenizer;
 
     if (!Number.isFinite(this.k1) || this.k1 < 0) {
-      throw new RangeError("k1 must be a finite number greater than or equal to 0");
+      throw new RangeError('k1 must be a finite number greater than or equal to 0');
     }
     if (!Number.isFinite(this.b) || this.b < 0 || this.b > 1) {
-      throw new RangeError("b must be a finite number between 0 and 1");
+      throw new RangeError('b must be a finite number between 0 and 1');
     }
 
     this.k1PlusOne = this.k1 + 1;
@@ -120,7 +120,7 @@ class BM25 {
 
   public addDocument(text: string): number {
     if (this.documentCountValue === 0xffffffff) {
-      throw new RangeError("BM25 supports at most 4,294,967,295 documents");
+      throw new RangeError('BM25 supports at most 4,294,967,295 documents');
     }
 
     const docIndex = this.documentCountValue;
@@ -185,7 +185,7 @@ class BM25 {
   ): number {
     const limit = this.resolveLimit(topK);
     if (docIndexes.length < limit || scores.length < limit) {
-      throw new RangeError("searchInto output buffers must have at least topK positions");
+      throw new RangeError('searchInto output buffers must have at least topK positions');
     }
     if (limit === 0) return 0;
 

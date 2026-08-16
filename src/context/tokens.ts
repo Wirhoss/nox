@@ -1,8 +1,8 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-import { type Message, messageToString } from "./message";
+import { type Message, messageToString } from './message';
 
-import type { Tool } from "../tool/tool";
+import type { Tool } from '../tool/tool';
 
 const DEFAULT_CHARACTERS_PER_TOKEN = 3;
 const MESSAGE_TOKEN_OVERHEAD = 6;
@@ -19,19 +19,19 @@ function estimateTokensByCharacters(text: string): number {
  */
 function stableSerialize(value: unknown, ancestors = new Set<object>()): string {
   if (value instanceof Date) return JSON.stringify(value.toISOString());
-  if (value === undefined || typeof value === "function" || typeof value === "symbol") {
-    return "null";
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    return 'null';
   }
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (ancestors.has(value)) throw new TypeError("Cannot estimate tokens for a circular value.");
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (ancestors.has(value)) throw new TypeError('Cannot estimate tokens for a circular value.');
 
   ancestors.add(value);
   const serialized = Array.isArray(value)
-    ? `[${value.map((item: unknown) => stableSerialize(item, ancestors)).join(",")}]`
+    ? `[${value.map((item: unknown) => stableSerialize(item, ancestors)).join(',')}]`
     : `{${Object.entries(value)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item, ancestors)}`)
-        .join(",")}}`;
+        .join(',')}}`;
   ancestors.delete(value);
   return serialized;
 }
@@ -48,7 +48,7 @@ class TokenEstimator {
   ) {
     this.#count = tokenCounter;
     this.#prefixTokens =
-      this.#countText(stableSerialize({ content: systemPrompt, role: "system" })) +
+      this.#countText(stableSerialize({ content: systemPrompt, role: 'system' })) +
       SYSTEM_TOKEN_OVERHEAD +
       [...tools].reduce((total, tool) => total + this.#estimateTool(tool), 0);
   }
@@ -81,7 +81,7 @@ class TokenEstimator {
   #countText(text: string): number {
     const count = this.#count(text);
     if (!Number.isFinite(count) || count < 0) {
-      throw new RangeError("tokenCounter must return a finite, non-negative number.");
+      throw new RangeError('tokenCounter must return a finite, non-negative number.');
     }
     return Math.ceil(count);
   }
@@ -91,9 +91,9 @@ class TokenEstimator {
       function: {
         description: tool.description,
         name: tool.name,
-        parameters: z.toJSONSchema(tool.parameters, { io: "input" }),
+        parameters: z.toJSONSchema(tool.parameters, { io: 'input' }),
       },
-      type: "function",
+      type: 'function',
     };
     return this.#countText(stableSerialize(descriptor)) + TOOL_TOKEN_OVERHEAD;
   }

@@ -1,17 +1,17 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-import { BM25 } from "../utils/bm25";
-import { parseOrThrow } from "../utils/validate";
-import { freezeMessage } from "./immutable";
+import { BM25 } from '../utils/bm25';
+import { parseOrThrow } from '../utils/validate';
+import { freezeMessage } from './immutable';
 import {
   contentToString,
   type Message,
   type MessageContentText,
   messageToString,
   type ToolResponseMessage,
-} from "./message";
+} from './message';
 
-import type { Logger } from "../logger/logger";
+import type { Logger } from '../logger/logger';
 
 interface TranscriptOptions {
   chunkSize?: number;
@@ -22,8 +22,8 @@ interface TranscriptOptions {
 const DEFAULT_CHUNK_SIZE = 1000;
 const DEFAULT_MAX_SEARCH_CHARACTERS = 6000;
 const SEARCH_BUDGET_NOTE =
-  "[More matches were omitted to stay within the history-search response budget. " +
-  "Narrow the query with a more exact keyword, path, symbol, error, or ID.]";
+  '[More matches were omitted to stay within the history-search response budget. ' +
+  'Narrow the query with a more exact keyword, path, symbol, error, or ID.]';
 
 const transcriptLimitsSchema = z.object({
   chunkSize: z.number().int().positive(),
@@ -32,16 +32,16 @@ const transcriptLimitsSchema = z.object({
 
 function isIndexable(message: Message): boolean {
   switch (message.role) {
-    case "compacted":
-    case "folded":
+    case 'compacted':
+    case 'folded':
       return false;
-    case "toolResponse":
-      return message.execution !== "deferredAck";
-    case "assistant":
-    case "reasoning":
-    case "user":
-      return message.content.some((part) => part.type === "image" || part.text.length > 0);
-    case "toolCall":
+    case 'toolResponse':
+      return message.execution !== 'deferredAck';
+    case 'assistant':
+    case 'reasoning':
+    case 'user':
+      return message.content.some((part) => part.type === 'image' || part.text.length > 0);
+    case 'toolCall':
       return true;
   }
 }
@@ -70,7 +70,7 @@ class Transcript {
       if (this.#knownIds.has(message.messageId)) {
         options.logger?.warn(
           { messageId: message.messageId },
-          "Skipping duplicate persisted message while rebuilding the transcript.",
+          'Skipping duplicate persisted message while rebuilding the transcript.',
         );
         continue;
       }
@@ -123,11 +123,11 @@ class Transcript {
       end < formatted.length
         ? `\n\n[Result truncated. Continue with offset ${String(end)}. ` +
           `Total characters: ${String(formatted.length)}.]`
-        : "";
+        : '';
     return [
       {
         text: formatted.slice(offset, end) + continuation,
-        type: "text",
+        type: 'text',
       },
     ];
   }
@@ -146,7 +146,7 @@ class Transcript {
         omitted = true;
         break;
       }
-      hits.push({ text: chunk, type: "text" });
+      hits.push({ text: chunk, type: 'text' });
       characterCount += chunk.length;
     }
 
@@ -164,19 +164,19 @@ class Transcript {
     }
     hits.push({
       text: SEARCH_BUDGET_NOTE.slice(0, this.#maxSearchCharacters - characterCount),
-      type: "text",
+      type: 'text',
     });
   }
 
   #chunkString(text: string): string[] {
-    if (text.length === 0) return [""];
+    if (text.length === 0) return [''];
 
     const chunks: string[] = [];
     let start = 0;
     while (start < text.length) {
       let end = Math.min(start + this.#chunkSize, text.length);
       if (end < text.length) {
-        const newline = text.indexOf("\n", end);
+        const newline = text.indexOf('\n', end);
         if (newline !== -1 && newline - end <= this.#chunkSize / 4) end = newline + 1;
       }
       chunks.push(text.slice(start, end));
@@ -188,7 +188,7 @@ class Transcript {
   #chunksForMessage(message: Message): string[] {
     if (!isIndexable(message)) return [];
 
-    if (message.role === "toolCall") {
+    if (message.role === 'toolCall') {
       return this.#renderChunks(
         JSON.stringify(message.arguments),
         (chunk, position) =>
@@ -200,7 +200,7 @@ class Transcript {
       );
     }
 
-    if (message.role === "toolResponse") {
+    if (message.role === 'toolResponse') {
       return this.#renderChunks(
         contentToString(message.response),
         (chunk, position) =>
@@ -244,8 +244,8 @@ class Transcript {
     this.#chunks.push(...this.#chunksForMessage(message));
 
     if (
-      message.role === "toolResponse" &&
-      message.execution !== "deferredAck" &&
+      message.role === 'toolResponse' &&
+      message.execution !== 'deferredAck' &&
       !this.#toolResponses.has(message.trackId)
     ) {
       this.#toolResponses.set(message.trackId, message);

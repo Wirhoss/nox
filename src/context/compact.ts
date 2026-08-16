@@ -1,9 +1,9 @@
-import type { CompactedMessage, Message } from "./message";
+import type { CompactedMessage, Message } from './message';
 
 function isSafeCut(history: readonly Message[], index: number): boolean {
   if (index <= 0 || index >= history.length) return true;
-  if (history[index - 1]?.role === "toolCall") return false;
-  if (history[index]?.role === "toolResponse") return false;
+  if (history[index - 1]?.role === 'toolCall') return false;
+  if (history[index]?.role === 'toolResponse') return false;
   return true;
 }
 
@@ -42,7 +42,7 @@ function applyCompaction(history: readonly Message[], compaction: CompactedMessa
       (messageId) => !foundIds.has(messageId),
     );
     throw new Error(
-      `Compaction ${compaction.messageId} references missing messages: ${missingIds.join(", ")}.`,
+      `Compaction ${compaction.messageId} references missing messages: ${missingIds.join(', ')}.`,
     );
   }
 

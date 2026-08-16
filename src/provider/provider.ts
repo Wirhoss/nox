@@ -3,12 +3,12 @@ import {
   type ProviderBaseConfig,
   providerBaseConfigSchema,
   type TextGenerateOptions,
-} from "./config";
-import { toProviderError } from "./error";
-import { type ProviderSourceEvent, ProviderStream } from "./stream";
+} from './config';
+import { toProviderError } from './error';
+import { type ProviderSourceEvent, ProviderStream } from './stream';
 
-import type { Message } from "../context/message";
-import type { Tool } from "../tool/tool";
+import type { Message } from '../context/message';
+import type { Tool } from '../tool/tool';
 
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 500;
@@ -18,7 +18,7 @@ function abortReason(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   return reason instanceof Error
     ? reason
-    : new DOMException("The operation was aborted", "AbortError");
+    : new DOMException('The operation was aborted', 'AbortError');
 }
 
 function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
@@ -32,10 +32,10 @@ function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
       reject(abortReason(signal));
     };
     timeout = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
+      signal.removeEventListener('abort', onAbort);
       resolve();
     }, delayMs);
-    signal.addEventListener("abort", onAbort, { once: true });
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -116,7 +116,7 @@ abstract class ChatProvider extends BaseProvider {
     for (let attempt = 1; ; attempt += 1) {
       try {
         for await (const event of this.attempt(systemPrompt, messageHistory, tools, opts, signal)) {
-          if (event.type === "error") throw event.error;
+          if (event.type === 'error') throw event.error;
           yield event;
         }
         return;
@@ -124,7 +124,7 @@ abstract class ChatProvider extends BaseProvider {
         if (signal.aborted) throw error;
 
         const providerError = toProviderError(error);
-        if (providerError.code !== "connection" || attempt > this.maxRetries) {
+        if (providerError.code !== 'connection' || attempt > this.maxRetries) {
           throw providerError;
         }
 
@@ -134,7 +134,7 @@ abstract class ChatProvider extends BaseProvider {
           delayMs,
           error: providerError,
           resetOutput: true,
-          type: "retry",
+          type: 'retry',
         };
         await waitForRetry(delayMs, signal);
       }

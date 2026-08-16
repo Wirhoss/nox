@@ -1,34 +1,39 @@
-import { nanoid } from "nanoid";
+import { nanoid } from 'nanoid';
 
-import { applyCompaction, seekSafeCut } from "./compact";
-import { applyFold, foldHistory, type FoldOptions } from "./fold";
-import { freezeMessage } from "./immutable";
-import { type ContextOptions, resolveContextOptions } from "./options";
-import { COMPACT_PROMPT } from "./prompt";
-import { HistorySearchToolSet } from "./search";
-import { TokenEstimator } from "./tokens";
-import { Transcript } from "./transcript";
+import { applyCompaction, seekSafeCut } from './compact';
+import { applyFold, foldHistory, type FoldOptions } from './fold';
+import { freezeMessage } from './immutable';
+import { type ContextOptions, resolveContextOptions } from './options';
+import { COMPACT_PROMPT } from './prompt';
+import { HistorySearchToolSet } from './search';
+import { TokenEstimator } from './tokens';
+import { Transcript } from './transcript';
 
-import type { Logger } from "../logger/logger";
-import type { ChatProvider } from "../provider/provider";
-import type { Tool, ToolSet } from "../tool/tool";
-import type { AssistantMessage, CompactedMessage, Message, UserMessage } from "./message";
+import type { Logger } from '../logger/logger';
+import type { ChatProvider } from '../provider/provider';
+import type { Tool } from '../tool/tool';
+import type { AssistantMessage, CompactedMessage, Message, UserMessage } from './message';
 
-const HANDOFF_REQUEST_PREFIX = "compaction-request";
+const HANDOFF_REQUEST_PREFIX = 'compaction-request';
+
+interface CompactResult {
+  readonly compacted: boolean;
+  readonly folded: boolean;
+}
 
 function createHandoffRequest(): UserMessage {
   return freezeMessage<UserMessage>({
-    content: [{ text: "Produce the handoff now.", type: "text" }],
+    content: [{ text: 'Produce the handoff now.', type: 'text' }],
     createdAt: new Date(),
     messageId: `${HANDOFF_REQUEST_PREFIX}-${nanoid()}`,
-    role: "user",
+    role: 'user',
   });
 }
 
 function hasUsableText(message: Message): message is AssistantMessage {
   return (
-    message.role === "assistant" &&
-    message.content.some((part) => part.type === "text" && part.text.trim().length > 0)
+    message.role === 'assistant' &&
+    message.content.some((part) => part.type === 'text' && part.text.trim().length > 0)
   );
 }
 
@@ -36,9 +41,9 @@ class Context {
   readonly #systemPrompt: string;
   readonly #tools: Readonly<Record<string, Tool>>;
 
-  readonly #compactGuardBeginning: number;
-  readonly #compactGuardEnd: number;
-  readonly #compactMinMessages: number;
+  readonly #compactGuardBeginningTokens: number;
+  readonly #compactGuardEndTokens: number;
+  readonly #compactMinTokens: number;
   readonly #compactProvider: ChatProvider;
   readonly #foldMinReductionRatio: number;
   readonly #pressureTokenLimit?: number;
@@ -61,20 +66,33 @@ class Context {
 
     this.#systemPrompt = systemPrompt;
     this.#compactProvider = compactProvider;
-    this.#compactGuardBeginning = options.compactGuardBeginning;
-    this.#compactGuardEnd = options.compactGuardEnd;
-    this.#compactMinMessages = options.compactMinMessages;
+    this.#compactGuardBeginningTokens = options.compactGuardBeginningTokens;
+    this.#compactGuardEndTokens = options.compactGuardEndTokens;
+    this.#compactMinTokens = options.compactMinTokens;
     this.#foldMinReductionRatio = options.foldMinReductionRatio;
     this.#logger = options.logger;
     this.#pressureTokenLimit = options.pressureTokenLimit;
-    this.#tools = options.tools;
 
     this.#transcript = new Transcript(options.fullHistory, { logger: options.logger });
     this.#historyTools = new HistorySearchToolSet(this.#transcript);
 
+    const duplicateToolName = Object.keys(this.#historyTools.tools).find(
+      (name) => options.tools[name] !== undefined,
+    );
+    if (duplicateToolName !== undefined) {
+      throw new Error(`Tool ${duplicateToolName} conflicts with a context history tool.`);
+    }
+    this.#tools = Object.freeze(
+      Object.fromEntries(
+        [...Object.entries(options.tools), ...Object.entries(this.#historyTools.tools)].sort(
+          ([a], [b]) => a.localeCompare(b),
+        ),
+      ),
+    );
+
     this.#estimator = new TokenEstimator(
       systemPrompt,
-      [...Object.values(this.#tools), ...Object.values(this.#historyTools.tools)],
+      Object.values(this.#tools),
       options.tokenCounter,
     );
 
@@ -85,32 +103,44 @@ class Context {
     this.#activeHistory.push(this.#transcript.append(message));
   }
 
-  public async compact(): Promise<void> {
+  public async compact(): Promise<CompactResult> {
     return this.#serializeMutation(async () => {
+      let folded = false;
       if (this.#pressureTokenLimit !== undefined) {
-        if (!this.isUnderPressure()) return;
-        this.#reclaimByFolding();
-        if (!this.isUnderPressure()) return;
+        if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
+        folded = this.#reclaimByFolding();
+        if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
       }
 
       const middle = this.#selectCompactionRange();
-      if (middle === undefined) return;
+      if (middle === undefined) return Object.freeze({ compacted: false, folded });
 
       const compacted = await this.#summarize(middle);
-      if (compacted === undefined) return;
+      if (compacted === undefined) return Object.freeze({ compacted: false, folded });
+
+      const replacedTokens = this.#estimateMessages(middle);
+      const compactedTokens = this.#estimator.estimateMessage(compacted);
+      if (compactedTokens >= replacedTokens) {
+        this.#logger?.warn(
+          { compactedTokens, messageCount: middle.length, replacedTokens },
+          'Compaction did not reduce the context; keeping the range intact.',
+        );
+        return Object.freeze({ compacted: false, folded });
+      }
 
       const history = applyCompaction(this.#activeHistory, compacted);
       this.#transcript.append(compacted);
       this.#rewriteHistory(history);
+      return Object.freeze({ compacted: true, folded });
     });
   }
 
-  public async fold(fromMessageId?: string, toMessageId?: string): Promise<void> {
-    return this.#serializeMutation(() => {
+  public async fold(fromMessageId?: string, toMessageId?: string): Promise<boolean> {
+    return this.#serializeMutation(() =>
       this.#applyFoldResult(
         foldHistory(this.#activeHistory, this.#foldOptions(fromMessageId, toMessageId)),
-      );
-    });
+      ),
+    );
   }
 
   public getFullHistory(): readonly Message[] {
@@ -130,7 +160,7 @@ class Context {
   }
 
   public getTools(): Readonly<Record<string, Tool>> {
-    return {...this.#tools, ...this.#historyTools.tools};
+    return this.#tools;
   }
 
   public isUnderPressure(): boolean {
@@ -139,26 +169,33 @@ class Context {
     );
   }
 
-  #applyFoldResult({ events, history }: { events: readonly Message[]; history: Message[] }): void {
-    if (events.length === 0) return;
+  #applyFoldResult({
+    events,
+    history,
+  }: {
+    events: readonly Message[];
+    history: Message[];
+  }): boolean {
+    if (events.length === 0) return false;
     for (const event of events) this.#transcript.append(event);
     this.#rewriteHistory(history);
+    return true;
   }
 
   #rewriteHistory(history: Message[]): void {
     this.#activeHistory = history;
   }
 
-  #reclaimByFolding(): void {
+  #reclaimByFolding(): boolean {
     const history = this.#activeHistory;
-    const firstAssistant = history.findIndex((message) => message.role === "assistant");
-    if (firstAssistant === -1) return;
+    const firstAssistant = history.findIndex((message) => message.role === 'assistant');
+    if (firstAssistant === -1) return false;
 
     const from = firstAssistant + 1;
-    const to = history.length - 1 - this.#compactGuardEnd;
-    if (to < from) return;
+    const to = this.#guardedEnd(history) - 1;
+    if (to < from) return false;
 
-    this.#applyFoldResult(
+    return this.#applyFoldResult(
       foldHistory(history, this.#foldOptions(history[from]?.messageId, history[to]?.messageId)),
     );
   }
@@ -176,22 +213,53 @@ class Context {
   #rebuildHistory(fullHistory: readonly Message[]): Message[] {
     let history: Message[] = [];
     for (const event of fullHistory) {
-      if (event.role === "folded") history = applyFold(history, event);
-      else if (event.role === "compacted") history = applyCompaction(history, event);
+      if (event.role === 'folded') history = applyFold(history, event);
+      else if (event.role === 'compacted') history = applyCompaction(history, event);
       else history.push(event);
     }
     return history;
   }
 
+  #estimateMessages(messages: readonly Message[]): number {
+    return messages.reduce((total, message) => total + this.#estimator.estimateMessage(message), 0);
+  }
+
+  #guardedEnd(history: readonly Message[]): number {
+    let end = history.length;
+    let guardedTokens = 0;
+    while (end > 0) {
+      const message = history[end - 1];
+      if (message === undefined) break;
+      const nextTokens = this.#estimator.estimateMessage(message);
+      if (guardedTokens + nextTokens > this.#compactGuardEndTokens) break;
+      guardedTokens += nextTokens;
+      end--;
+    }
+    return seekSafeCut(history, end, -1);
+  }
+
+  #guardedStart(history: readonly Message[]): number {
+    let start = 0;
+    let guardedTokens = 0;
+    while (start < history.length) {
+      const message = history[start];
+      if (message === undefined) break;
+      const nextTokens = this.#estimator.estimateMessage(message);
+      if (guardedTokens + nextTokens > this.#compactGuardBeginningTokens) break;
+      guardedTokens += nextTokens;
+      start++;
+    }
+    return seekSafeCut(history, start, 1);
+  }
+
   #selectCompactionRange(): readonly Message[] | undefined {
     const history = this.#activeHistory;
-    const start = seekSafeCut(history, this.#compactGuardBeginning, 1);
-    const end = seekSafeCut(history, history.length - this.#compactGuardEnd, -1);
-
-    if (end - start < this.#compactMinMessages) return undefined;
+    const start = this.#guardedStart(history);
+    const end = this.#guardedEnd(history);
+    if (end <= start) return undefined;
 
     const middle = history.slice(start, end);
-    return middle.length === 0 ? undefined : middle;
+    return this.#estimateMessages(middle) >= this.#compactMinTokens ? middle : undefined;
   }
 
   #serializeMutation<T>(mutation: () => Promise<T> | T): Promise<T> {
@@ -214,7 +282,7 @@ class Context {
     if (summary.length === 0) {
       this.#logger?.warn(
         { messageCount: middle.length },
-        "Compaction provider returned no usable summary; keeping the range intact.",
+        'Compaction provider returned no usable summary; keeping the range intact.',
       );
       return undefined;
     }
@@ -224,9 +292,11 @@ class Context {
       content: summary.flatMap((message) => [...message.content]),
       createdAt: new Date(),
       messageId: nanoid(),
-      role: "compacted",
+      role: 'compacted',
     });
   }
 }
 
 export { Context };
+
+export type { CompactResult };

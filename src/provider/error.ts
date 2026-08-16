@@ -1,11 +1,11 @@
 type ProviderErrorCode =
-  | "authentication"
-  | "connection"
-  | "context_limit"
-  | "invalid_request"
-  | "provider_error"
-  | "rate_limit"
-  | "usage_limit";
+  | 'authentication'
+  | 'connection'
+  | 'context_limit'
+  | 'invalid_request'
+  | 'provider_error'
+  | 'rate_limit'
+  | 'usage_limit';
 
 interface ProviderErrorOptions {
   cause?: unknown;
@@ -22,7 +22,7 @@ class ProviderError extends Error {
 
   constructor(code: ProviderErrorCode, message: string, options: ProviderErrorOptions = {}) {
     super(message, { cause: options.cause });
-    this.name = "ProviderError";
+    this.name = 'ProviderError';
     this.code = code;
     this.provider = options.provider;
     this.providerCode = options.providerCode;
@@ -36,15 +36,15 @@ function isProviderError(error: unknown): error is ProviderError {
 
 function toProviderError(
   error: unknown,
-  fallbackMessage = "Provider request failed",
+  fallbackMessage = 'Provider request failed',
 ): ProviderError {
   if (isProviderError(error)) return error;
 
   let message = fallbackMessage;
   if (error instanceof Error) message = error.message;
-  else if (typeof error === "string" && error.length > 0) message = error;
+  else if (typeof error === 'string' && error.length > 0) message = error;
 
-  return new ProviderError("provider_error", message, { cause: error });
+  return new ProviderError('provider_error', message, { cause: error });
 }
 
 export { isProviderError, ProviderError, toProviderError };

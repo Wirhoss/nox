@@ -1,22 +1,22 @@
-import { join } from "node:path";
+import { join } from 'node:path';
 
-import { Database as SqliteConnection } from "bun:sqlite";
-import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { Database as SqliteConnection } from 'bun:sqlite';
+import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite';
+import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 
-import { type Logger, silentLogger } from "../logger/logger";
-import { parseOrThrow } from "../utils/validate";
-import { type DatabaseConfig, type DatabaseConfigInput, databaseConfigSchema } from "./config";
-import { Mutex } from "./mutex";
-import { schema } from "./schema";
+import { type Logger, silentLogger } from '../logger/logger';
+import { parseOrThrow } from '../utils/validate';
+import { type DatabaseConfig, type DatabaseConfigInput, databaseConfigSchema } from './config';
+import { Mutex } from './mutex';
+import { schema } from './schema';
 
 // Resolved against this module, not the CWD, so migrations are found wherever
 // the process is started from.
-const MIGRATIONS_FOLDER = join(import.meta.dir, "migrations");
+const MIGRATIONS_FOLDER = join(import.meta.dir, 'migrations');
 
 type NoxDrizzle = BunSQLiteDatabase<typeof schema>;
 
-type NoxTransaction = Parameters<Parameters<NoxDrizzle["transaction"]>[0]>[0];
+type NoxTransaction = Parameters<Parameters<NoxDrizzle['transaction']>[0]>[0];
 
 interface DatabaseOptions extends DatabaseConfigInput {
   logger?: Logger;
@@ -42,7 +42,7 @@ class Database {
 
   public static current(): Promise<Database> {
     if (Database.#shared === undefined) {
-      throw new Error("Database has not been opened. Call Database.open() first.");
+      throw new Error('Database has not been opened. Call Database.open() first.');
     }
     return Database.#shared;
   }
@@ -87,7 +87,7 @@ class Database {
       if (this.#closed) return;
       this.#closed = true;
       this.#connection.close(false);
-      this.#logger.info({ path: this.#config.path }, "Database closed.");
+      this.#logger.info({ path: this.#config.path }, 'Database closed.');
     });
 
     Database.#shared = undefined;
@@ -109,17 +109,17 @@ class Database {
 
   #applyPragmas(): void {
     const journal = this.#connection
-      .query<{ journal_mode: string }, []>("PRAGMA journal_mode = WAL")
+      .query<{ journal_mode: string }, []>('PRAGMA journal_mode = WAL')
       .get();
 
     this.#connection.run(`PRAGMA busy_timeout = ${String(this.#config.busyTimeoutMs)}`);
     this.#connection.run(`PRAGMA synchronous = ${this.#config.synchronous.toUpperCase()}`);
-    this.#connection.run("PRAGMA foreign_keys = ON");
+    this.#connection.run('PRAGMA foreign_keys = ON');
 
-    if (journal !== null && journal.journal_mode.toLowerCase() !== "wal") {
+    if (journal !== null && journal.journal_mode.toLowerCase() !== 'wal') {
       this.#logger.warn(
         { journalMode: journal.journal_mode, path: this.#config.path },
-        "SQLite refused WAL mode; concurrent readers will block on writers.",
+        'SQLite refused WAL mode; concurrent readers will block on writers.',
       );
     }
   }
@@ -140,7 +140,7 @@ class Database {
     if (total > applied) {
       this.#logger.info(
         { applied: total - applied, path: this.#config.path, total },
-        "Applied pending migrations.",
+        'Applied pending migrations.',
       );
     }
   }
@@ -148,7 +148,7 @@ class Database {
   #appliedMigrations(): number {
     const row = this.#connection
       .query<{ count: number }, []>(
-        "SELECT COUNT(*) AS count FROM sqlite_master " +
+        'SELECT COUNT(*) AS count FROM sqlite_master ' +
           "WHERE type = 'table' AND name = '__drizzle_migrations'",
       )
       .get();
@@ -156,7 +156,7 @@ class Database {
 
     return (
       this.#connection
-        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM __drizzle_migrations")
+        .query<{ count: number }, []>('SELECT COUNT(*) AS count FROM __drizzle_migrations')
         .get()?.count ?? 0
     );
   }
@@ -166,7 +166,7 @@ class Database {
     await this.#writes.run(() => {
       this.#applyPragmas();
       this.#migrate();
-      this.#logger.info({ path: this.#config.path }, "Database opened.");
+      this.#logger.info({ path: this.#config.path }, 'Database opened.');
     });
   }
 }

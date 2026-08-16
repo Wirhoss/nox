@@ -4,58 +4,58 @@ interface MessageBase {
 }
 
 interface MessageContentText {
-  readonly type: "text";
+  readonly type: 'text';
   readonly text: string;
 }
 
 interface MessageContentImage {
-  readonly type: "image";
+  readonly type: 'image';
   readonly source:
-    | { readonly type: "base64"; readonly mediaType: string; readonly data: string }
-    | { readonly type: "url"; readonly url: string };
+    | { readonly type: 'base64'; readonly mediaType: string; readonly data: string }
+    | { readonly type: 'url'; readonly url: string };
 }
 
 type MessageContent = MessageContentImage | MessageContentText;
 
 interface AssistantMessage extends MessageBase {
-  readonly role: "assistant";
+  readonly role: 'assistant';
   readonly content: readonly MessageContent[];
 }
 
 interface CompactedMessage extends MessageBase {
-  readonly role: "compacted";
+  readonly role: 'compacted';
   readonly content: readonly MessageContent[];
   readonly compactedMessageIds: readonly string[];
 }
 
 interface FoldedMessage extends MessageBase {
-  readonly role: "folded";
+  readonly role: 'folded';
   readonly anchorMessageId: string;
   readonly foldedMessageIds: readonly string[];
   readonly content: readonly MessageContent[];
 }
 
 interface ReasoningMessage extends MessageBase {
-  readonly role: "reasoning";
+  readonly role: 'reasoning';
   readonly content: readonly MessageContent[];
 }
 
 interface UserMessage extends MessageBase {
-  readonly role: "user";
+  readonly role: 'user';
   readonly content: readonly MessageContent[];
 }
 
 interface ToolCallMessage extends MessageBase {
-  readonly role: "toolCall";
+  readonly role: 'toolCall';
   readonly name: string;
   readonly trackId: string;
   readonly arguments: Readonly<Record<string, unknown>>;
 }
 
-type ToolResponseExecution = "deferredAck" | "deferredResult" | "immediate";
+type ToolResponseExecution = 'deferredAck' | 'deferredResult' | 'immediate';
 
 interface ToolResponseMessage extends MessageBase {
-  readonly role: "toolResponse";
+  readonly role: 'toolResponse';
   readonly name: string;
   readonly trackId: string;
   readonly execution: ToolResponseExecution;
@@ -67,15 +67,15 @@ function contentToString(content: readonly MessageContent[]): string {
   return content
     .map((item) => {
       switch (item.type) {
-        case "text":
+        case 'text':
           return item.text;
-        case "image":
-          return item.source.type === "base64"
+        case 'image':
+          return item.source.type === 'base64'
             ? `[Image: ${item.source.mediaType}]`
             : `[Image: ${item.source.url}]`;
       }
     })
-    .join("\n");
+    .join('\n');
 }
 
 function assistantMessageToString(message: AssistantMessage): string {
@@ -103,14 +103,14 @@ function compactedMessageToString(message: CompactedMessage): string {
   return (
     `Role: ${message.role}\nContent:\n${contentToString(message.content)}` +
     `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}` +
-    `\nCompacted Message IDs: ${message.compactedMessageIds.join(", ")}`
+    `\nCompacted Message IDs: ${message.compactedMessageIds.join(', ')}`
   );
 }
 
 function foldedMessageToString(message: FoldedMessage): string {
   return (
     `Role: ${message.role}\nAnchor Message ID: ${message.anchorMessageId}` +
-    `\nFolded Message IDs: ${message.foldedMessageIds.join(", ")}` +
+    `\nFolded Message IDs: ${message.foldedMessageIds.join(', ')}` +
     `\nContent:\n${contentToString(message.content)}` +
     `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
   );
@@ -135,19 +135,19 @@ function toolResponseMessageToString(message: ToolResponseMessage): string {
 
 function messageToString(message: Message): string {
   switch (message.role) {
-    case "assistant":
+    case 'assistant':
       return assistantMessageToString(message);
-    case "compacted":
+    case 'compacted':
       return compactedMessageToString(message);
-    case "folded":
+    case 'folded':
       return foldedMessageToString(message);
-    case "reasoning":
+    case 'reasoning':
       return reasoningMessageToString(message);
-    case "toolCall":
+    case 'toolCall':
       return toolCallMessageToString(message);
-    case "toolResponse":
+    case 'toolResponse':
       return toolResponseMessageToString(message);
-    case "user":
+    case 'user':
       return userMessageToString(message);
   }
 }

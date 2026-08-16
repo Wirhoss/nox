@@ -1,21 +1,22 @@
-import type { Message, MessageContent } from "./message";
+import type { Message, MessageContent } from './message';
 
 const DATE_MUTATOR_NAMES = [
-  "setDate",
-  "setFullYear",
-  "setHours",
-  "setMilliseconds",
-  "setMinutes",
-  "setMonth",
-  "setSeconds",
-  "setTime",
-  "setUTCDate",
-  "setUTCFullYear",
-  "setUTCHours",
-  "setUTCMilliseconds",
-  "setUTCMinutes",
-  "setUTCMonth",
-  "setUTCSeconds",
+  'setDate',
+  'setFullYear',
+  'setHours',
+  'setMilliseconds',
+  'setMinutes',
+  'setMonth',
+  'setSeconds',
+  'setTime',
+  'setUTCDate',
+  'setUTCFullYear',
+  'setUTCHours',
+  'setUTCMilliseconds',
+  'setUTCMinutes',
+  'setUTCMonth',
+  'setUTCSeconds',
+  'setYear',
 ] as const;
 
 class ImmutableDate extends Date {}
@@ -35,7 +36,7 @@ function freezeDate(value: Date): Date {
 function freezeContent(content: readonly MessageContent[]): readonly MessageContent[] {
   return Object.freeze(
     content.map((part): MessageContent =>
-      part.type === "text"
+      part.type === 'text'
         ? Object.freeze({ ...part })
         : Object.freeze({ ...part, source: Object.freeze({ ...part.source }) }),
     ),
@@ -43,7 +44,7 @@ function freezeContent(content: readonly MessageContent[]): readonly MessageCont
 }
 
 function freezeDeep(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
-  if (value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== 'object') return value;
 
   const existing = seen.get(value);
   if (existing !== undefined) return existing;
@@ -69,28 +70,28 @@ function freezeVariant(message: Message): Message {
   const base = { ...message, createdAt: freezeDate(message.createdAt) };
 
   switch (base.role) {
-    case "assistant":
-    case "reasoning":
-    case "user":
+    case 'assistant':
+    case 'reasoning':
+    case 'user':
       return { ...base, content: freezeContent(base.content) };
-    case "compacted":
+    case 'compacted':
       return {
         ...base,
         compactedMessageIds: Object.freeze([...base.compactedMessageIds]),
         content: freezeContent(base.content),
       };
-    case "folded":
+    case 'folded':
       return {
         ...base,
         content: freezeContent(base.content),
         foldedMessageIds: Object.freeze([...base.foldedMessageIds]),
       };
-    case "toolCall":
+    case 'toolCall':
       return {
         ...base,
         arguments: freezeDeep(base.arguments) as Readonly<Record<string, unknown>>,
       };
-    case "toolResponse":
+    case 'toolResponse':
       return { ...base, response: freezeContent(base.response) };
   }
 }

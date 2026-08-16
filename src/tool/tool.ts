@@ -1,15 +1,15 @@
-import { InvalidToolParamsError, UnknownToolError } from "./error";
+import { InvalidToolParamsError, UnknownToolError } from './error';
 
-import type { MessageContent } from "../context/message";
-import type { z } from "zod";
+import type { MessageContent } from '../context/message';
+import type { z } from 'zod';
 
 interface ToolContext {
   abortSignal: AbortSignal;
 }
 
-type ToolExecutionType = "deferred" | "immediate";
+type ToolExecutionType = 'deferred' | 'immediate';
 
-type ToolExposure = "eager" | "lazy";
+type ToolExposure = 'eager' | 'lazy';
 
 interface Tool<T extends z.ZodObject = z.ZodObject> {
   description: string;
@@ -26,12 +26,12 @@ interface ExecutionBase {
 }
 
 interface ImmediateExecution extends ExecutionBase {
-  type: "immediate";
+  type: 'immediate';
   run(ctx: ToolContext): Promise<MessageContent[]>;
 }
 
 interface DeferredExecution extends ExecutionBase {
-  type: "deferred";
+  type: 'deferred';
   run(ctx: ToolContext): Promise<{
     ack: MessageContent[];
     result: Promise<MessageContent[]>;
@@ -56,7 +56,7 @@ abstract class ToolSet {
 
   #visibleTools?: Readonly<Record<string, Tool>>;
 
-  constructor(enabledTools?: readonly string[], exposure: ToolExposure = "eager") {
+  constructor(enabledTools?: readonly string[], exposure: ToolExposure = 'eager') {
     this.#enabledTools = new Set(enabledTools ?? []);
     this.exposure = exposure;
   }

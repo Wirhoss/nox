@@ -1,4 +1,4 @@
-import { defineConfig } from "drizzle-kit";
+import { defineConfig } from 'drizzle-kit';
 
 /**
  * drizzle-kit only generates and inspects migrations; nothing here runs at
@@ -6,10 +6,10 @@ import { defineConfig } from "drizzle-kit";
  * which reads the same `out` folder.
  */
 export default defineConfig({
-  dbCredentials: { url: process.env.NOX_DATABASE_PATH ?? "nox.db" },
-  dialect: "sqlite",
-  out: "./src/database/migrations",
-  schema: "./src/database/schema/index.ts",
+  dbCredentials: { url: process.env.NOX_DATABASE_PATH ?? 'nox.db' },
+  dialect: 'sqlite',
+  out: './src/database/migrations',
+  schema: './src/database/schema/index.ts',
   strict: true,
   verbose: true,
 });

@@ -1,8 +1,8 @@
-import { nanoid } from "nanoid";
+import { nanoid } from 'nanoid';
 
-import { type ProviderError, toProviderError } from "./error";
+import { type ProviderError, toProviderError } from './error';
 
-import type { Message, ToolCallMessage } from "../context/message";
+import type { Message, ToolCallMessage } from '../context/message';
 
 interface Usage {
   cacheReadTokens?: number;
@@ -10,23 +10,23 @@ interface Usage {
   outputTokens: number;
 }
 
-type ToolCallDraft = Omit<ToolCallMessage, "createdAt" | "messageId">;
+type ToolCallDraft = Omit<ToolCallMessage, 'createdAt' | 'messageId'>;
 
 type ProviderSourceEvent =
-  | { type: "end"; usage?: Usage }
-  | { type: "error"; error: ProviderError }
-  | { type: "reasoningFragment"; text: string }
-  | { type: "retry"; attempt: number; delayMs: number; error: ProviderError; resetOutput: true }
-  | { type: "textFragment"; text: string }
-  | { type: "toolCall"; toolCall: ToolCallDraft };
+  | { type: 'end'; usage?: Usage }
+  | { type: 'error'; error: ProviderError }
+  | { type: 'reasoningFragment'; text: string }
+  | { type: 'retry'; attempt: number; delayMs: number; error: ProviderError; resetOutput: true }
+  | { type: 'textFragment'; text: string }
+  | { type: 'toolCall'; toolCall: ToolCallDraft };
 
 type ProviderStreamEvent =
-  | { type: "end"; aborted: boolean; messages: Message[]; usage?: Usage }
-  | { type: "error"; error: ProviderError }
-  | { type: "reasoningFragment"; text: string }
-  | { type: "retry"; attempt: number; delayMs: number; error: ProviderError; resetOutput: true }
-  | { type: "textFragment"; text: string }
-  | { type: "toolCall"; toolCall: ToolCallMessage };
+  | { type: 'end'; aborted: boolean; messages: Message[]; usage?: Usage }
+  | { type: 'error'; error: ProviderError }
+  | { type: 'reasoningFragment'; text: string }
+  | { type: 'retry'; attempt: number; delayMs: number; error: ProviderError; resetOutput: true }
+  | { type: 'textFragment'; text: string }
+  | { type: 'toolCall'; toolCall: ToolCallMessage };
 
 enum StreamStatus {
   OPEN,
@@ -36,7 +36,7 @@ enum StreamStatus {
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 class ProviderStream {
@@ -91,12 +91,12 @@ class ProviderStream {
 
   private fail(error: unknown): void {
     const providerError = toProviderError(error);
-    this.push({ error: providerError, type: "error" });
+    this.push({ error: providerError, type: 'error' });
     this.settleFailed(providerError);
   }
 
   private finish(messages: Message[], aborted: boolean, usage?: Usage): void {
-    this.push({ aborted, messages, type: "end", usage });
+    this.push({ aborted, messages, type: 'end', usage });
     this.settle(aborted ? StreamStatus.ABORTED : StreamStatus.COMPLETED, () => {
       this.resolve(messages);
     });
@@ -106,31 +106,31 @@ class ProviderStream {
     const messages: Message[] = [];
     const iterator = this.source[Symbol.asyncIterator]();
 
-    let reasoningAccumulated = "";
+    let reasoningAccumulated = '';
     let reasoningStartedAt: number | undefined;
-    let textAccumulated = "";
+    let textAccumulated = '';
     let textStartedAt: number | undefined;
 
     /** Materializes buffered fragments so order matches arrival order. */
     const flush = (): void => {
       if (reasoningAccumulated.length > 0) {
         messages.push({
-          content: [{ text: reasoningAccumulated, type: "text" }],
+          content: [{ text: reasoningAccumulated, type: 'text' }],
           createdAt: this.stamp(reasoningStartedAt),
           messageId: nanoid(),
-          role: "reasoning",
+          role: 'reasoning',
         });
-        reasoningAccumulated = "";
+        reasoningAccumulated = '';
         reasoningStartedAt = undefined;
       }
       if (textAccumulated.length > 0) {
         messages.push({
-          content: [{ text: textAccumulated, type: "text" }],
+          content: [{ text: textAccumulated, type: 'text' }],
           createdAt: this.stamp(textStartedAt),
           messageId: nanoid(),
-          role: "assistant",
+          role: 'assistant',
         });
-        textAccumulated = "";
+        textAccumulated = '';
         textStartedAt = undefined;
       }
     };
@@ -143,7 +143,7 @@ class ProviderStream {
       onAbort = (): void => {
         resolve(StreamStatus.ABORTED);
       };
-      this.abortSignal.addEventListener("abort", onAbort, { once: true });
+      this.abortSignal.addEventListener('abort', onAbort, { once: true });
     });
 
     try {
@@ -159,45 +159,45 @@ class ProviderStream {
         }
 
         if (result.done === true) {
-          this.fail(new Error("Provider stream ended without an end event"));
+          this.fail(new Error('Provider stream ended without an end event'));
           return;
         }
 
         const event = result.value;
 
         switch (event.type) {
-          case "end": {
+          case 'end': {
             await iterator.return?.();
             flush();
             this.finish(messages, false, event.usage);
             return;
           }
-          case "error": {
+          case 'error': {
             this.fail(event.error);
             return;
           }
-          case "reasoningFragment": {
+          case 'reasoningFragment': {
             reasoningStartedAt ??= Date.now();
             reasoningAccumulated += event.text;
             this.push(event);
             break;
           }
-          case "retry": {
-            reasoningAccumulated = "";
+          case 'retry': {
+            reasoningAccumulated = '';
             reasoningStartedAt = undefined;
-            textAccumulated = "";
+            textAccumulated = '';
             textStartedAt = undefined;
             messages.length = 0;
             this.push(event);
             break;
           }
-          case "textFragment": {
+          case 'textFragment': {
             textStartedAt ??= Date.now();
             textAccumulated += event.text;
             this.push(event);
             break;
           }
-          case "toolCall": {
+          case 'toolCall': {
             // Flush first: a tool call always follows the text that requested it.
             flush();
             const toolCall: ToolCallMessage = {
@@ -206,7 +206,7 @@ class ProviderStream {
               messageId: nanoid(),
             };
             messages.push(toolCall);
-            this.push({ toolCall, type: "toolCall" });
+            this.push({ toolCall, type: 'toolCall' });
             break;
           }
         }
@@ -219,7 +219,7 @@ class ProviderStream {
       }
       this.fail(error);
     } finally {
-      if (onAbort !== undefined) this.abortSignal.removeEventListener("abort", onAbort);
+      if (onAbort !== undefined) this.abortSignal.removeEventListener('abort', onAbort);
     }
   }
 

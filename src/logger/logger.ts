@@ -1,4 +1,4 @@
-type LogLevel = "debug" | "error" | "info" | "trace" | "warn";
+type LogLevel = 'debug' | 'error' | 'info' | 'trace' | 'warn';
 
 type LogFields = Readonly<Record<string, unknown>>;
 
@@ -25,11 +25,11 @@ const LEVEL_RANK: Readonly<Record<LogLevel, number>> = {
 };
 
 const LEVEL_LABEL: Readonly<Record<LogLevel, string>> = {
-  trace: "TRC",
-  debug: "DBG",
-  info: "INF",
-  warn: "WRN",
-  error: "ERR",
+  trace: 'TRC',
+  debug: 'DBG',
+  info: 'INF',
+  warn: 'WRN',
+  error: 'ERR',
 };
 
 const NEEDS_QUOTING = /[\s"=]/;
@@ -39,40 +39,40 @@ function writeToStderr(line: string): void {
 }
 
 function formatTime(at: Date): string {
-  const hours = String(at.getHours()).padStart(2, "0");
-  const minutes = String(at.getMinutes()).padStart(2, "0");
-  const seconds = String(at.getSeconds()).padStart(2, "0");
-  const millis = String(at.getMilliseconds()).padStart(3, "0");
+  const hours = String(at.getHours()).padStart(2, '0');
+  const minutes = String(at.getMinutes()).padStart(2, '0');
+  const seconds = String(at.getSeconds()).padStart(2, '0');
+  const millis = String(at.getMilliseconds()).padStart(3, '0');
   return `${hours}:${minutes}:${seconds}.${millis}`;
 }
 
 function formatValue(value: unknown): string {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
 
   if (value instanceof Error) return formatValue(`${value.name}: ${value.message}`);
   if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return `[${value.map((item) => formatValue(item)).join(",")}]`;
+  if (Array.isArray(value)) return `[${value.map((item) => formatValue(item)).join(',')}]`;
 
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     return NEEDS_QUOTING.test(value) ? JSON.stringify(value) : value;
   }
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     return String(value);
   }
 
-  if (typeof value === "function" || typeof value === "symbol") return `<${typeof value}>`;
+  if (typeof value === 'function' || typeof value === 'symbol') return `<${typeof value}>`;
   try {
     return JSON.stringify(value);
   } catch {
-    return "<unserializable>";
+    return '<unserializable>';
   }
 }
 
 function formatFields(fields: LogFields): string {
   const entries = Object.entries(fields).sort(([a], [b]) => a.localeCompare(b));
-  if (entries.length === 0) return "";
-  return ` ${entries.map(([key, value]) => `${key}=${formatValue(value)}`).join(" ")}`;
+  if (entries.length === 0) return '';
+  return ` ${entries.map(([key, value]) => `${key}=${formatValue(value)}`).join(' ')}`;
 }
 
 class ConsoleLogger implements Logger {
@@ -82,7 +82,7 @@ class ConsoleLogger implements Logger {
 
   constructor(module: string, options: LoggerOptions = {}) {
     this.#module = module;
-    this.#level = options.level ?? "info";
+    this.#level = options.level ?? 'info';
     this.#write = options.write ?? writeToStderr;
   }
 
@@ -94,30 +94,30 @@ class ConsoleLogger implements Logger {
   }
 
   public debug(fields: LogFields, message: string): void {
-    this.log("debug", fields, message);
+    this.log('debug', fields, message);
   }
 
   public error(fields: LogFields, message: string): void {
-    this.log("error", fields, message);
+    this.log('error', fields, message);
   }
 
   public info(fields: LogFields, message: string): void {
-    this.log("info", fields, message);
+    this.log('info', fields, message);
   }
 
   public trace(fields: LogFields, message: string): void {
-    this.log("trace", fields, message);
+    this.log('trace', fields, message);
   }
 
   public warn(fields: LogFields, message: string): void {
-    this.log("warn", fields, message);
+    this.log('warn', fields, message);
   }
 
   private log(level: LogLevel, fields: LogFields, message: string): void {
     if (LEVEL_RANK[level] < LEVEL_RANK[this.#level]) return;
 
     const time = formatTime(new Date());
-    const single = message.replace(/\s+/gu, " ").trim();
+    const single = message.replace(/\s+/gu, ' ').trim();
     this.#write(`${time} ${LEVEL_LABEL[level]} ${this.#module} ${single}${formatFields(fields)}\n`);
   }
 }

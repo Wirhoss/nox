@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 const samplingParametersConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
@@ -17,10 +17,10 @@ const modelBaseConfigSchema = samplingParametersConfigSchema.extend({
 
 const textModelConfigSchema = modelBaseConfigSchema.extend({
   contextWindow: z.number().int().positive().optional(),
-  type: z.literal("text"),
+  type: z.literal('text'),
 });
 
-const modelConfigSchema = z.discriminatedUnion("type", [textModelConfigSchema]);
+const modelConfigSchema = z.discriminatedUnion('type', [textModelConfigSchema]);
 
 type ModelConfig = z.infer<typeof modelConfigSchema>;
 
