@@ -6,6 +6,7 @@ node_modules/
 coverage/
 dist/
 out/
+src/database/migrations/
 
 bun.lock
 package-lock.json
