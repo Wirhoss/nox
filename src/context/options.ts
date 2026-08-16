@@ -26,7 +26,6 @@ const contextPolicySchema = z
     compactMinMessages: z.number().int().positive().optional(),
     contextWindow: z.number().int().positive().optional(),
     foldMinReductionRatio: z.number().gt(0).max(1).optional(),
-    maxMessageTokens: z.number().int().positive().optional(),
     reserveForOutput: z.number().int().nonnegative().optional(),
   })
   .superRefine((policy, ctx) => {
@@ -66,7 +65,6 @@ interface ResolvedContextOptions {
   foldMinReductionRatio: number;
   fullHistory: readonly Message[];
   logger?: Logger;
-  maxMessageTokens?: number;
   pressureTokenLimit?: number;
   tokenCounter?: (text: string) => number;
   tools: Readonly<Record<string, Tool>>;
@@ -105,7 +103,6 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
     foldMinReductionRatio: policy.foldMinReductionRatio ?? DEFAULT_FOLD_MIN_REDUCTION_RATIO,
     fullHistory: options.fullHistory ?? [],
     logger: options.logger,
-    maxMessageTokens: policy.maxMessageTokens,
     pressureTokenLimit: resolvePressureTokenLimit(policy),
     tokenCounter: options.tokenCounter,
     tools: resolveTools(options.tools),

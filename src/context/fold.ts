@@ -16,17 +16,8 @@ interface FoldResult {
 }
 
 interface FoldOptions {
-  /**
-   * Measures a message the way the provider will bill it. Required: a fold that
-   * is never measured is a fold that can silently cost more than it reclaims.
-   */
   estimateTokens: (message: Message) => number;
   fromMessageId?: string;
-  /**
-   * Fraction of the replaced tokens a fold has to reclaim to be applied at all.
-   * Folding rewrites settled history and therefore invalidates the cached
-   * prefix, so a fold that merely breaks even is a net loss.
-   */
   minReductionRatio?: number;
   toMessageId?: string;
 }
@@ -38,13 +29,6 @@ interface FoldAccumulator {
 }
 
 const DEFAULT_MIN_REDUCTION_RATIO = 0.2;
-
-/**
- * Arguments are kept only as a reminder of what was called with what. The full
- * call survives in the transcript and stays keyword-searchable, so an unbounded
- * copy here buys nothing — and for write/patch tools the arguments *are* the
- * payload, which is how folding used to cost more than it saved.
- */
 const MAX_FOLDED_ARGUMENT_CHARS = 200;
 
 function applyFold(history: readonly Message[], fold: FoldedMessage): Message[] {

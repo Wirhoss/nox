@@ -39,8 +39,18 @@ Consequences that are binding, not aspirational:
   system possible at all (see below).
 - **The prefix may only contain what is stable for the whole session.** A
   blueprint's persona and its tool schemas qualify. A recalled fact does not.
+- **Two operations may modify the prefix: `fold` and `compact`. Nothing else
+  touches it, ever.** Not a recall, not a tool result, not a broker, not a
+  plugin, not the system prompt mid-session. Everything else appends, and
+  appending grows the suffix, which is free. `Context` has exactly one private
+  method that replaces the active history and only those two reach it.
 - Any code path that can alter the prefix must be able to say *why* and *how
-  much of the cache it cost*.
+  much of the cache it cost*. **Measuring this is deferred until there is a
+  request loop to measure.** A tracker was built and then removed: it needed a
+  caller to tell it a request had gone out, and with no runner nothing ever
+  settled, so it produced an empty ledger and a hash nobody compared. The rule
+  above is what actually protects the prefix; the accounting is instrumentation
+  and waits for something to instrument.
 
 ### Law 2 — Fold first. Compaction is the last resort.
 
@@ -104,10 +114,7 @@ stack, because the previous generations kept building the outer layers first.
 ║                                                              ║
 ║   Context engine     transcript · fold · compact · tokens    ║
 ║                      prefix · pressure · bounded retrieval   ║
-║                                                              ║
-║   Write boundary     suffix-only ingress · budget            ║
-║                      accounting · provenance for every       ║
-║                      contributed token                       ║
+║                      append is the only way in               ║
 ║                                                              ║
 ║   Contribution model extension points · services ·           ║
 ║                      lifecycle · disposal                    ║
@@ -178,25 +185,32 @@ answer to the product vision: a D&D campaign's memory, a council's record of a
 debate, and a coding agent's memory are not the same object, and a kernel that
 fixed one shape would be fought by every app.
 
-### What the kernel keeps instead: the write boundary
+### What the kernel keeps instead: no way in but append
 
 One thing cannot be delegated. Most agent memory systems recall facts and splice
 them into the system prompt — under Law 1 that is the worst possible design,
 rewriting the cache key on every turn so each recall re-bills the entire prefix.
 A memory plugin free to write anywhere could destroy the property Nox exists for.
 
-So the kernel does not own memory. It owns **the boundary every contribution
-writes through**, which it needs anyway for tool results and broker input:
+**This is answered by structure, not by a guard.** The kernel exposes no API that
+edits the prefix. `Context` keeps its active history private, hands out frozen
+copies, and offers exactly one way to add anything: append. A contribution cannot
+splice into the head because there is nothing to call. That is a stronger
+guarantee than a gate, and it costs nothing to maintain.
 
-- **Suffix-only ingress.** Contributed content is appended where new content
-  always goes. Nothing outside the kernel can edit the prefix.
-- **Budgeted.** Every contributed token is counted before it lands. A recall
-  cannot undo what folding reclaimed.
-- **Provenance required.** Contributed content carries its source. Content
-  without one is a rumor.
-
-Memory is then simply the first serious consumer of that boundary — and any
-future one is constrained identically, for free.
+> **An earlier draft of this document specified a "write boundary" here** — a
+> kernel-owned ingress with suffix-only writes, per-token budgeting, and required
+> provenance. It was cut, not deferred. Suffix-only was already true by
+> construction, as above. Provenance had no consumer. And *budgeting ingress* was
+> the same category error as `maxMessageTokens`: refusing content at the door
+> does not make the context smaller, it makes the content not exist, which
+> collides head-on with "the transcript is permanent and complete". A recall that
+> arrives too large is pressure, and pressure is what folding and compaction are
+> for.
+>
+> If a future contribution needs its source recorded, that is a
+> `messageId → source` table beside the transcript — metadata, never a gate, and
+> never rendered into a message.
 
 The one exception, and it is a narrow one: what is **stable for the entire
 session** may sit in the prefix — a blueprint's persona and durable instructions,
@@ -294,17 +308,15 @@ v1 is done when this is demonstrably true:
 **Contribution model** — port the contract half of `idk_yet/`. Extension points,
 service tokens, disposables. No manifests, no host.
 
-**Write boundary** — suffix-only ingress, budget accounting, provenance. Needed
-in v1 regardless of memory, because tool results already flow through it.
-Retrofitting an ingress point into a finished context engine is exactly the kind
-of surgery that has previously turned into a rewrite.
+~~**Write boundary**~~ — cut from the design, not deferred. See "What the kernel
+keeps instead: no way in but append".
 
 **Deferred, with the trigger to un-defer:**
 
 | Deferred | Un-defer when |
 |---|---|
 | Plugin machinery (manifest, host) | A contribution must load from outside the repo or fail independently |
-| Memory (entirely — it is a plugin) | The write boundary exists and one session runs end-to-end |
+| Memory (entirely — it is a plugin) | One session runs end-to-end |
 | Web UI | There is a session worth watching |
 | Message gateway / brokers | A session runs end-to-end locally |
 | Agent blueprints | More than one agent config exists in practice |
@@ -355,7 +367,6 @@ Nothing on that list is cancelled. Every one of them is *later*.
 | **Pressure** | Measured proximity to the context budget, including reserved output. |
 | **Memory** | Durable, addressable, cross-session knowledge with provenance. A plugin, not kernel. Not compaction. |
 | **Recall** | A bounded read from memory into the suffix. |
-| **Write boundary** | The kernel-owned ingress every contribution appends through: suffix-only, budgeted, provenance-carrying. |
 | **Extension point** | A typed slot the kernel declares and contributions fill. |
 | **Contribution** | Any concrete capability registered against an extension point. |
 | **Service** | A host-owned dependency handed to contributions by token. Never a global. |
@@ -438,6 +449,14 @@ review:
 - **Gates were dropped from `ToolSet`.** Its only tie to the deferred gate
   subsystem. It comes back when gates do.
 - **Folding is measured.** See Law 2.
+- **`maxMessageTokens` was removed, not ported forward.** It rejected any
+  message over a token ceiling, which meant the one case it ever fired on — an
+  oversized tool result — lost its content entirely and left the matching tool
+  call without a response, producing an *invalid* request while trying to
+  prevent a large one. It also contradicted "the transcript is permanent and
+  complete": rejecting to save space is deleting to save space. Message size is
+  the active context's problem, and pressure, folding and compaction are what
+  solve it. `errors.ts` and `MessageTooLargeError` went with it.
 
 **`ULTRA_OLD_DO_NOT_CHECK/` and the rest of `idk_yet/`** — reference only, module
 by module, until the port completes. Then they leave the working tree; git

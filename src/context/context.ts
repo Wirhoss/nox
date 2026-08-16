@@ -1,7 +1,6 @@
 import { nanoid } from "nanoid";
 
 import { applyCompaction, seekSafeCut } from "./compact";
-import { MessageTooLargeError } from "./errors";
 import { applyFold, foldHistory, type FoldOptions } from "./fold";
 import { freezeMessage } from "./immutable";
 import { type ContextOptions, resolveContextOptions } from "./options";
@@ -16,11 +15,6 @@ import type { Tool, ToolSet } from "../tool/tool";
 import type { AssistantMessage, CompactedMessage, Message, UserMessage } from "./message";
 
 const HANDOFF_REQUEST_PREFIX = "compaction-request";
-
-interface ContextLoadDiagnostics {
-  duplicateMessageIds: readonly string[];
-  oversizedMessageIds: readonly string[];
-}
 
 function createHandoffRequest(): UserMessage {
   return freezeMessage<UserMessage>({
@@ -47,12 +41,10 @@ class Context {
   readonly #compactMinMessages: number;
   readonly #compactProvider: ChatProvider;
   readonly #foldMinReductionRatio: number;
-  readonly #maxMessageTokens?: number;
   readonly #pressureTokenLimit?: number;
 
   readonly #estimator: TokenEstimator;
   readonly #historyTools: HistorySearchToolSet;
-  readonly #loadDiagnostics: ContextLoadDiagnostics;
   readonly #logger?: Logger;
   readonly #transcript: Transcript;
 
@@ -74,7 +66,6 @@ class Context {
     this.#compactMinMessages = options.compactMinMessages;
     this.#foldMinReductionRatio = options.foldMinReductionRatio;
     this.#logger = options.logger;
-    this.#maxMessageTokens = options.maxMessageTokens;
     this.#pressureTokenLimit = options.pressureTokenLimit;
     this.#tools = options.tools;
 
@@ -88,15 +79,9 @@ class Context {
     );
 
     this.#activeHistory = this.#rebuildHistory(this.#transcript.messages);
-    this.#loadDiagnostics = Object.freeze({
-      duplicateMessageIds: this.#transcript.duplicateMessageIds,
-      oversizedMessageIds: this.#findOversizedMessages(),
-    });
   }
 
-  /** @throws {MessageTooLargeError} if the message exceeds `maxMessageTokens`. */
   public addMessage(message: Message): void {
-    this.#assertWithinIngressLimit(message);
     this.#activeHistory.push(this.#transcript.append(message));
   }
 
@@ -116,7 +101,7 @@ class Context {
 
       const history = applyCompaction(this.#activeHistory, compacted);
       this.#transcript.append(compacted);
-      this.#activeHistory = history;
+      this.#rewriteHistory(history);
     });
   }
 
@@ -136,14 +121,6 @@ class Context {
     return Object.freeze([...this.#activeHistory]);
   }
 
-  public getHistorySearchToolSet(): ToolSet {
-    return this.#historyTools;
-  }
-
-  public getLoadDiagnostics(): ContextLoadDiagnostics {
-    return this.#loadDiagnostics;
-  }
-
   public getSystemPrompt(): string {
     return this.#systemPrompt;
   }
@@ -153,7 +130,7 @@ class Context {
   }
 
   public getTools(): Readonly<Record<string, Tool>> {
-    return this.#tools;
+    return {...this.#tools, ...this.#historyTools.tools};
   }
 
   public isUnderPressure(): boolean {
@@ -165,33 +142,11 @@ class Context {
   #applyFoldResult({ events, history }: { events: readonly Message[]; history: Message[] }): void {
     if (events.length === 0) return;
     for (const event of events) this.#transcript.append(event);
+    this.#rewriteHistory(history);
+  }
+
+  #rewriteHistory(history: Message[]): void {
     this.#activeHistory = history;
-  }
-
-  #assertWithinIngressLimit(message: Message): void {
-    if (this.#maxMessageTokens === undefined) return;
-
-    const estimate = this.#estimator.estimateMessage(message);
-    if (estimate > this.#maxMessageTokens) {
-      throw new MessageTooLargeError(message.messageId, estimate, this.#maxMessageTokens);
-    }
-  }
-
-  #findOversizedMessages(): readonly string[] {
-    const maxMessageTokens = this.#maxMessageTokens;
-    if (maxMessageTokens === undefined) return Object.freeze([]);
-
-    const oversized = this.#activeHistory
-      .filter((message) => this.#estimator.estimateMessage(message) > maxMessageTokens)
-      .map((message) => message.messageId);
-
-    if (oversized.length > 0) {
-      this.#logger?.warn(
-        { maxMessageTokens, messageIds: oversized },
-        "Loaded persisted messages that exceed the configured ingress cap.",
-      );
-    }
-    return Object.freeze(oversized);
   }
 
   #reclaimByFolding(): void {
@@ -275,5 +230,3 @@ class Context {
 }
 
 export { Context };
-
-export type { ContextLoadDiagnostics };

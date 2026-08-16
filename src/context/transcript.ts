@@ -52,7 +52,6 @@ class Transcript {
   readonly #maxSearchCharacters: number;
 
   readonly #chunks: string[] = [];
-  readonly #duplicateMessageIds: string[] = [];
   readonly #knownIds = new Set<string>();
   readonly #messages: Message[] = [];
   readonly #toolResponses = new Map<string, ToolResponseMessage>();
@@ -69,7 +68,6 @@ class Transcript {
 
     for (const message of messages) {
       if (this.#knownIds.has(message.messageId)) {
-        this.#duplicateMessageIds.push(message.messageId);
         options.logger?.warn(
           { messageId: message.messageId },
           "Skipping duplicate persisted message while rebuilding the transcript.",
@@ -80,10 +78,6 @@ class Transcript {
     }
 
     this.#bm25 = new BM25(this.#chunks);
-  }
-
-  public get duplicateMessageIds(): readonly string[] {
-    return Object.freeze([...this.#duplicateMessageIds]);
   }
 
   public get messages(): readonly Message[] {
