@@ -1,0 +1,13 @@
+ULTRA_OLD_DO_NOT_CHECK/
+idk_yet/
+.codegraph/
+.git/
+node_modules/
+coverage/
+dist/
+out/
+
+bun.lock
+package-lock.json
+*.md
+*.tsbuildinfo
