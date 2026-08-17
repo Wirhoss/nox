@@ -104,7 +104,7 @@ function renderOutcome(response: ToolResponseMessage | undefined): string {
 function renderCall(call: ToolCallMessage, response: ToolResponseMessage | undefined): string {
   return (
     `Tool Name: ${call.name}` +
-    `\nTrack Id: ${call.trackId}` +
+    `\nTrack ID: ${call.trackId}` +
     `\nArguments: ${renderArguments(call)}` +
     `\nOutcome: ${renderOutcome(response)}`
   );
@@ -113,7 +113,7 @@ function renderCall(call: ToolCallMessage, response: ToolResponseMessage | undef
 function renderOrphanResponse(response: ToolResponseMessage): string {
   return (
     `Unmatched Tool Response: ${response.name}` +
-    `\nTrack Id: ${response.trackId}` +
+    `\nTrack ID: ${response.trackId}` +
     `\nOutcome: ${renderOutcome(response)}`
   );
 }

@@ -1,24 +1,11 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
+import {
+  MESSAGE_ROLES,
+  type MessageContent,
+  TOOL_RESPONSE_EXECUTIONS,
+} from '../../context/message';
 import { sessions } from './sessions';
-
-import type { MessageContent, ToolResponseExecution } from '../../context/message';
-
-const MESSAGE_ROLES = [
-  'assistant',
-  'compacted',
-  'folded',
-  'reasoning',
-  'toolCall',
-  'toolResponse',
-  'user',
-] as const;
-
-const TOOL_RESPONSE_EXECUTIONS = [
-  'deferredAck',
-  'deferredResult',
-  'immediate',
-] as const satisfies readonly ToolResponseExecution[];
 
 const messages = sqliteTable(
   'messages',
@@ -49,6 +36,6 @@ type MessageRow = typeof messages.$inferSelect;
 
 type MessageRowInsert = typeof messages.$inferInsert;
 
-export { MESSAGE_ROLES, messages, TOOL_RESPONSE_EXECUTIONS };
+export { messages };
 
 export type { MessageRow, MessageRowInsert };

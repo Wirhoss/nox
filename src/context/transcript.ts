@@ -7,8 +7,10 @@ import {
   contentToString,
   type Message,
   type MessageContentText,
+  messageIdentityToString,
   messageToString,
   type ToolResponseMessage,
+  trackedHeaderToString,
 } from './message';
 
 import type { Logger } from '../logger/logger';
@@ -192,9 +194,8 @@ class Transcript {
       return this.#renderChunks(
         JSON.stringify(message.arguments),
         (chunk, position) =>
-          `Role: ${message.role}` +
-          `\nName: ${message.name}\nTrack ID: ${message.trackId}` +
-          `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}` +
+          trackedHeaderToString(message) +
+          `\n${messageIdentityToString(message)}` +
           `\nArguments chunk ${position}` +
           `\nArguments:\n${chunk}`,
       );
@@ -204,10 +205,9 @@ class Transcript {
       return this.#renderChunks(
         contentToString(message.response),
         (chunk, position) =>
-          `Role: ${message.role}` +
-          `\nName: ${message.name}\nTrack ID: ${message.trackId}` +
+          trackedHeaderToString(message) +
           `\nExecution: ${message.execution}\nIs Error: ${String(message.isError ?? false)}` +
-          `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}` +
+          `\n${messageIdentityToString(message)}` +
           `\nResponse chunk ${position}` +
           `\nResponse:\n${chunk}`,
       );
@@ -217,7 +217,7 @@ class Transcript {
       contentToString(message.content),
       (chunk, position) =>
         `Role: ${message.role}` +
-        `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}` +
+        `\n${messageIdentityToString(message)}` +
         `\nContent chunk ${position}` +
         `\nContent:\n${chunk}`,
     );

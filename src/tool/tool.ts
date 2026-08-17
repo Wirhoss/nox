@@ -7,14 +7,8 @@ interface ToolContext {
   abortSignal: AbortSignal;
 }
 
-type ToolExecutionType = 'deferred' | 'immediate';
-
-type ToolExposure = 'eager' | 'lazy';
-
 interface Tool<T extends z.ZodObject = z.ZodObject> {
   description: string;
-  executionType: ToolExecutionType;
-  exposure?: ToolExposure;
   name: string;
   parameters: T;
   prepare(params: z.infer<T>): ToolExecution;
@@ -49,16 +43,13 @@ function prepareTool(tool: Tool, rawParams: unknown): ToolExecution {
 }
 
 abstract class ToolSet {
-  public readonly exposure: ToolExposure;
-
   readonly #enabledTools: ReadonlySet<string>;
   readonly #tools = new Map<string, Tool>();
 
   #visibleTools?: Readonly<Record<string, Tool>>;
 
-  constructor(enabledTools?: readonly string[], exposure: ToolExposure = 'eager') {
+  constructor(enabledTools?: readonly string[]) {
     this.#enabledTools = new Set(enabledTools ?? []);
-    this.exposure = exposure;
   }
 
   public get tools(): Readonly<Record<string, Tool>> {
@@ -105,8 +96,6 @@ export type {
   Tool,
   ToolContext,
   ToolExecution,
-  ToolExecutionType,
-  ToolExposure,
   ToolSetClass,
   ToolSetFactory,
 };

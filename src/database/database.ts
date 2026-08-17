@@ -5,9 +5,9 @@ import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 
 import { type Logger, silentLogger } from '../logger/logger';
+import { Mutex } from '../utils/mutex';
 import { parseOrThrow } from '../utils/validate';
 import { type DatabaseConfig, type DatabaseConfigInput, databaseConfigSchema } from './config';
-import { Mutex } from './mutex';
 import { schema } from './schema';
 
 // Resolved against this module, not the CWD, so migrations are found wherever

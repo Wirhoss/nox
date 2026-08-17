@@ -61,7 +61,6 @@ class HistorySearchToolSet extends ToolSet {
       description:
         'Read an earlier tool result by track ID. Results are bounded; if the response ' +
         'reports a next offset, call the tool again from that offset.',
-      executionType: 'immediate',
       name: 'read_tool_result',
       parameters: readToolResultSchema,
       prepare: ({ trackId, offset, maxCharacters }) => ({
@@ -78,7 +77,6 @@ class HistorySearchToolSet extends ToolSet {
         'from the active context by folding or compaction, and get back the best-matching ' +
         'excerpts. Use it to recover earlier facts, requirements, decisions, commands, errors, ' +
         'or exact identifiers instead of guessing or asking the user to repeat them.',
-      executionType: 'immediate',
       name: 'search_history',
       parameters: searchHistorySchema,
       prepare: ({ query, limit }) => ({

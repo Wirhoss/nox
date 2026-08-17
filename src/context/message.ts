@@ -52,7 +52,9 @@ interface ToolCallMessage extends MessageBase {
   readonly arguments: Readonly<Record<string, unknown>>;
 }
 
-type ToolResponseExecution = 'deferredAck' | 'deferredResult' | 'immediate';
+const TOOL_RESPONSE_EXECUTIONS = ['deferredAck', 'deferredResult', 'immediate'] as const;
+
+type ToolResponseExecution = (typeof TOOL_RESPONSE_EXECUTIONS)[number];
 
 interface ToolResponseMessage extends MessageBase {
   readonly role: 'toolResponse';
@@ -62,6 +64,31 @@ interface ToolResponseMessage extends MessageBase {
   readonly response: readonly MessageContent[];
   readonly isError?: boolean;
 }
+
+/**
+ * The single list of roles: storage enums and any other consumer derive from
+ * this rather than restating the union.
+ */
+const MESSAGE_ROLES = [
+  'assistant',
+  'compacted',
+  'folded',
+  'reasoning',
+  'toolCall',
+  'toolResponse',
+  'user',
+] as const satisfies readonly Message['role'][];
+
+type MessageRole = (typeof MESSAGE_ROLES)[number];
+
+type AssertNever<T extends never> = T;
+
+/**
+ * Fails to compile if a Message variant's role is missing from MESSAGE_ROLES;
+ * `satisfies` alone only proves the listed roles are valid, not that they are
+ * all of them.
+ */
+type _EveryRoleIsListed = AssertNever<Exclude<Message['role'], MessageRole>>;
 
 function contentToString(content: readonly MessageContent[]): string {
   return content
@@ -78,31 +105,27 @@ function contentToString(content: readonly MessageContent[]): string {
     .join('\n');
 }
 
-function assistantMessageToString(message: AssistantMessage): string {
-  return (
-    `Role: ${message.role}\nContent:\n${contentToString(message.content)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
-  );
+/** The trailing fields every rendered message ends with. */
+function messageIdentityToString(message: Message): string {
+  return `Created At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`;
 }
 
-function reasoningMessageToString(message: ReasoningMessage): string {
-  return (
-    `Role: ${message.role}\nContent:\n${contentToString(message.content)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
-  );
+/** The leading fields shared by the two tool-tracked message roles. */
+function trackedHeaderToString(message: ToolCallMessage | ToolResponseMessage): string {
+  return `Role: ${message.role}\nName: ${message.name}\nTrack ID: ${message.trackId}`;
 }
 
-function userMessageToString(message: UserMessage): string {
+/** Renders the roles whose whole payload is content, in their shared shape. */
+function contentMessageToString(message: ContentMessage): string {
   return (
     `Role: ${message.role}\nContent:\n${contentToString(message.content)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
+    `\n${messageIdentityToString(message)}`
   );
 }
 
 function compactedMessageToString(message: CompactedMessage): string {
   return (
-    `Role: ${message.role}\nContent:\n${contentToString(message.content)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}` +
+    contentMessageToString(message) +
     `\nCompacted Message IDs: ${message.compactedMessageIds.join(', ')}`
   );
 }
@@ -112,23 +135,23 @@ function foldedMessageToString(message: FoldedMessage): string {
     `Role: ${message.role}\nAnchor Message ID: ${message.anchorMessageId}` +
     `\nFolded Message IDs: ${message.foldedMessageIds.join(', ')}` +
     `\nContent:\n${contentToString(message.content)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
+    `\n${messageIdentityToString(message)}`
   );
 }
 
 function toolCallMessageToString(message: ToolCallMessage): string {
   return (
-    `Role: ${message.role}\nName: ${message.name}\nTrack ID: ${message.trackId}` +
+    trackedHeaderToString(message) +
     `\nArguments: ${JSON.stringify(message.arguments)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`
+    `\n${messageIdentityToString(message)}`
   );
 }
 
 function toolResponseMessageToString(message: ToolResponseMessage): string {
   return (
-    `Role: ${message.role}\nName: ${message.name}\nTrack ID: ${message.trackId}` +
+    trackedHeaderToString(message) +
     `\nExecution: ${message.execution}\nIs Error: ${String(message.isError ?? false)}` +
-    `\nCreated At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}` +
+    `\n${messageIdentityToString(message)}` +
     `\nResponse:\n${contentToString(message.response)}`
   );
 }
@@ -136,19 +159,17 @@ function toolResponseMessageToString(message: ToolResponseMessage): string {
 function messageToString(message: Message): string {
   switch (message.role) {
     case 'assistant':
-      return assistantMessageToString(message);
+    case 'reasoning':
+    case 'user':
+      return contentMessageToString(message);
     case 'compacted':
       return compactedMessageToString(message);
     case 'folded':
       return foldedMessageToString(message);
-    case 'reasoning':
-      return reasoningMessageToString(message);
     case 'toolCall':
       return toolCallMessageToString(message);
     case 'toolResponse':
       return toolResponseMessageToString(message);
-    case 'user':
-      return userMessageToString(message);
   }
 }
 
@@ -161,16 +182,29 @@ type Message =
   | ToolResponseMessage
   | UserMessage;
 
-export { contentToString, messageToString };
+/** The roles whose payload is content, rendered through one shared shape. */
+type ContentMessage =
+  AssistantMessage | CompactedMessage | FoldedMessage | ReasoningMessage | UserMessage;
+
+export {
+  contentToString,
+  MESSAGE_ROLES,
+  messageIdentityToString,
+  messageToString,
+  TOOL_RESPONSE_EXECUTIONS,
+  trackedHeaderToString,
+};
 
 export type {
   AssistantMessage,
   CompactedMessage,
+  ContentMessage,
   FoldedMessage,
   Message,
   MessageContent,
   MessageContentImage,
   MessageContentText,
+  MessageRole,
   ReasoningMessage,
   ToolCallMessage,
   ToolResponseExecution,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -18,6 +19,31 @@ interface LoaderContext {
   logger: Logger;
 }
 
+const RENAME_RETRY_DELAYS_MS = [1, 4, 16, 64, 128];
+
+function isTransientRenameError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  return error.code === 'EACCES' || error.code === 'EPERM';
+}
+
+/**
+ * Windows refuses a rename with EPERM or EACCES while another writer holds the
+ * destination open for its own rename. The collision is transient, so retry
+ * before surrendering; POSIX renames just replace and return on the first try.
+ */
+async function renameInto(temporaryPath: string, filePath: string): Promise<void> {
+  for (const delay of RENAME_RETRY_DELAYS_MS) {
+    try {
+      await rename(temporaryPath, filePath);
+      return;
+    } catch (error) {
+      if (!isTransientRenameError(error)) throw error;
+      await Bun.sleep(delay);
+    }
+  }
+  await rename(temporaryPath, filePath);
+}
+
 async function readJson(filePath: string): Promise<unknown> {
   const file = Bun.file(filePath);
   if (!(await file.exists())) return undefined;
@@ -34,13 +60,20 @@ async function readJson(filePath: string): Promise<unknown> {
   }
 }
 
+/**
+ * Writes through a temporary sibling and renames it into place, so a reader
+ * never observes a half-written file. The temporary name is unique per call:
+ * two writers racing over the same path — most realistically two processes
+ * materializing defaults at startup — must not adopt or delete each other's
+ * scratch file.
+ */
 async function writeJson(filePath: string, value: unknown): Promise<void> {
-  const temporaryPath = `${filePath}.tmp`;
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
 
   try {
     await mkdir(dirname(filePath), { recursive: true });
     await Bun.write(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
-    await rename(temporaryPath, filePath);
+    await renameInto(temporaryPath, filePath);
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw new ConfigError('unwritable', filePath, 'could not be written.', error);

@@ -49,7 +49,6 @@ describe('TokenEstimator', () => {
     const schema = z.object({ value: z.string() });
     const tool = {
       description: 'description',
-      executionType: 'immediate' as const,
       name: 'tool',
       parameters: schema,
       prepare: () => ({
@@ -121,7 +120,6 @@ describe('context token policy', () => {
     const schema = z.object({});
     const base = {
       description: 'tool',
-      executionType: 'immediate' as const,
       parameters: schema,
       prepare: () => ({
         run: () => Promise.resolve([]),

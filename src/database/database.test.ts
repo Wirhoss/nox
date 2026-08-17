@@ -6,7 +6,6 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
 import { Database } from './database';
-import { Mutex } from './mutex';
 import { messages, sessions } from './schema';
 
 const directories: string[] = [];
@@ -61,37 +60,6 @@ afterEach(async () => {
       /* empty */
     }
   }
-});
-
-describe('Mutex', () => {
-  test('runs tasks in submission order without interleaving', async () => {
-    const mutex = new Mutex();
-    const events: string[] = [];
-
-    const tasks = [1, 2, 3].map(async (id) =>
-      mutex.run(async () => {
-        events.push(`start:${String(id)}`);
-        await Promise.resolve();
-        await Promise.resolve();
-        events.push(`end:${String(id)}`);
-      }),
-    );
-    await Promise.all(tasks);
-
-    expect(events).toEqual(['start:1', 'end:1', 'start:2', 'end:2', 'start:3', 'end:3']);
-  });
-
-  test('a rejected task does not poison the ones queued behind it', async () => {
-    const mutex = new Mutex();
-
-    const failure = await rejection(
-      mutex.run(() => {
-        throw new Error('boom');
-      }),
-    );
-    expect(failure.message).toBe('boom');
-    expect(await mutex.run(() => 'ok')).toBe('ok');
-  });
 });
 
 describe('Database.open', () => {

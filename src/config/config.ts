@@ -1,4 +1,5 @@
 import { type Logger, silentLogger } from '../logger/logger';
+import { Mutex } from '../utils/mutex';
 import { type ConfigKey, type ConfigMap, sections } from './sections';
 
 import type { EnvConfig } from './env';
@@ -16,6 +17,7 @@ interface ConfigUpdate<T> {
 class Config {
   readonly #context: LoaderContext;
   readonly #env: EnvConfig;
+  readonly #updates = new Mutex();
   readonly #values: Map<ConfigKey, unknown>;
 
   private constructor(env: EnvConfig, context: LoaderContext, values: Map<ConfigKey, unknown>) {
@@ -50,15 +52,23 @@ class Config {
     return this.#values.get(key) as ConfigMap[K];
   }
 
+  /**
+   * Updates are serialized so the file on disk and the value held here always
+   * describe the same write: concurrent callers would otherwise land in one
+   * order on disk and another in memory.
+   */
   public async update<K extends ConfigKey>(
     key: K,
     next: ConfigMap[K],
   ): Promise<ConfigUpdate<ConfigMap[K]>> {
     const section = sections[key];
-    const value = (await section.update(this.#context, next)) as ConfigMap[K];
 
-    this.#values.set(key, value);
-    return { restartRequired: section.applies === 'restart', value };
+    return this.#updates.run(async () => {
+      const value = (await section.update(this.#context, next)) as ConfigMap[K];
+
+      this.#values.set(key, value);
+      return { restartRequired: section.applies === 'restart', value };
+    });
   }
 }
 

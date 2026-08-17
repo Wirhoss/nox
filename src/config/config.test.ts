@@ -10,9 +10,8 @@ import { appConfigSchema } from './app';
 import { Config } from './config';
 import { readEnvConfig } from './env';
 import { isConfigError } from './error';
+import { type LoaderContext, writeJson } from './loader';
 import { directorySection, fileSection } from './section';
-
-import type { LoaderContext } from './loader';
 
 const created: string[] = [];
 
@@ -228,6 +227,24 @@ describe('config directories', () => {
   });
 });
 
+describe('writeJson', () => {
+  // Nothing in the application writes one file from twenty callers at once;
+  // this pins the utility's own contract, since anything that reaches for an
+  // atomic write is entitled to assume racing writers cannot break each other.
+  test('racing writers over one path all succeed and leave a readable file', async () => {
+    const dir = await configDir();
+    const filePath = join(dir, 'app.json');
+    const writers = Array.from({ length: 20 }, (_unused, index) => index);
+
+    await Promise.all(writers.map(async (index) => writeJson(filePath, { logLevel: index })));
+
+    const written = (await read(dir, 'app.json')) as { logLevel: number };
+    expect(writers).toContain(written.logLevel);
+    // Each writer renames its own scratch file into place, so none are orphaned.
+    expect(await readdir(dir)).toEqual(['app.json']);
+  });
+});
+
 describe('Config', () => {
   test('generates every registered section on a first run', async () => {
     const dir = await configDir();
@@ -249,6 +266,25 @@ describe('Config', () => {
     expect(result.value.logLevel).toBe('debug');
     expect(config.get('app').logLevel).toBe('debug');
     expect(await read(dir, 'app.json')).toMatchObject({ logLevel: 'debug' });
+  });
+
+  test('serialises updates so the stored value matches the file on disk', async () => {
+    const dir = await configDir();
+    const config = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
+
+    const levels = ['debug', 'error', 'info', 'trace', 'warn'] as const;
+    const results = await Promise.all(
+      levels.map(async (logLevel) =>
+        config.update('app', { database: databaseDefaults, logLevel }),
+      ),
+    );
+
+    // Every caller sees the value it wrote, the last one queued wins in memory,
+    // and the file agrees with it: no update lands on disk in one order and in
+    // memory in another.
+    expect(results.map((result) => result.value.logLevel)).toEqual([...levels]);
+    expect(config.get('app').logLevel).toBe('warn');
+    expect(await read(dir, 'app.json')).toMatchObject({ logLevel: 'warn' });
   });
 
   test('two instances over the same directory do not share state', async () => {

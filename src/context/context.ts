@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 
+import { Mutex } from '../utils/mutex';
 import { applyCompaction, seekSafeCut } from './compact';
 import { applyFold, foldHistory, type FoldOptions } from './fold';
 import { freezeMessage } from './immutable';
@@ -53,9 +54,9 @@ class Context {
   readonly #logger?: Logger;
   readonly #transcript: Transcript;
 
-  #activeHistory: Message[];
+  readonly #mutations = new Mutex();
 
-  #mutationQueue: Promise<void> = Promise.resolve();
+  #activeHistory: Message[];
 
   constructor(
     systemPrompt: string,
@@ -104,7 +105,7 @@ class Context {
   }
 
   public async compact(): Promise<CompactResult> {
-    return this.#serializeMutation(async () => {
+    return this.#mutations.run(async () => {
       let folded = false;
       if (this.#pressureTokenLimit !== undefined) {
         if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
@@ -136,7 +137,7 @@ class Context {
   }
 
   public async fold(fromMessageId?: string, toMessageId?: string): Promise<boolean> {
-    return this.#serializeMutation(() =>
+    return this.#mutations.run(() =>
       this.#applyFoldResult(
         foldHistory(this.#activeHistory, this.#foldOptions(fromMessageId, toMessageId)),
       ),
@@ -260,15 +261,6 @@ class Context {
 
     const middle = history.slice(start, end);
     return this.#estimateMessages(middle) >= this.#compactMinTokens ? middle : undefined;
-  }
-
-  #serializeMutation<T>(mutation: () => Promise<T> | T): Promise<T> {
-    const result = this.#mutationQueue.then(mutation);
-    this.#mutationQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
   }
 
   async #summarize(middle: readonly Message[]): Promise<CompactedMessage | undefined> {

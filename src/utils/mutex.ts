@@ -1,3 +1,7 @@
+/**
+ * Serializes tasks against a shared promise tail, so callers that must not
+ * interleave run one after another in submission order.
+ */
 class Mutex {
   #tail: Promise<unknown> = Promise.resolve();
 

@@ -105,7 +105,6 @@ describe('Context cache stability', () => {
     const parameters = z.object({ value: z.string() });
     const zebra: Tool<typeof parameters> = {
       description: 'z',
-      executionType: 'immediate',
       name: 'zebra',
       parameters,
       prepare: () => ({
@@ -131,7 +130,6 @@ describe('Context cache stability', () => {
     const parameters = z.object({});
     const conflicting: Tool<typeof parameters> = {
       description: 'conflict',
-      executionType: 'immediate',
       name: 'search_history',
       parameters,
       prepare: () => ({
