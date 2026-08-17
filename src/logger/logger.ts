@@ -1,4 +1,7 @@
-type LogLevel = 'debug' | 'error' | 'info' | 'trace' | 'warn';
+/** Ordered from most to least verbose. Config derives its schema from this. */
+const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error'] as const;
+
+type LogLevel = (typeof LOG_LEVELS)[number];
 
 type LogFields = Readonly<Record<string, unknown>>;
 
@@ -135,6 +138,6 @@ function createLogger(module: string, options: LoggerOptions = {}): Logger {
   return new ConsoleLogger(module, options);
 }
 
-export { createLogger, silentLogger };
+export { createLogger, LOG_LEVELS, silentLogger };
 
 export type { LogFields, Logger, LoggerOptions, LogLevel };

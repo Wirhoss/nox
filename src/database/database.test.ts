@@ -95,17 +95,17 @@ describe('Mutex', () => {
 });
 
 describe('Database.open', () => {
-  test('concurrent opens share one instance and one connection', async () => {
+  test('every call returns an independent instance', async () => {
     const path = databasePath();
-    const [first, second, third] = await Promise.all([
-      Database.open({ path }),
-      Database.open({ path }),
-      Database.open({ path }),
-    ]);
-    open = first;
+    const first = await openDatabase(path);
+    const second = await Database.open({ path });
 
-    expect(second).toBe(first);
-    expect(third).toBe(first);
+    // No process-wide instance: whoever owns the lifecycle owns the one
+    // connection, and closing one here must not disturb the other.
+    expect(second).not.toBe(first);
+    await second.close();
+
+    expect(second.isOpen).toBeFalse();
     expect(first.isOpen).toBeTrue();
   });
 
@@ -130,13 +130,6 @@ describe('Database.open', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.sessionId).toBe('session-a');
-  });
-
-  test('current() throws before open and resolves to the shared instance after', async () => {
-    expect(() => Database.current()).toThrow('has not been opened');
-
-    const database = await openDatabase();
-    expect(await Database.current()).toBe(database);
   });
 
   test('applies the generated migrations and records them', async () => {

@@ -23,8 +23,6 @@ interface DatabaseOptions extends DatabaseConfigInput {
 }
 
 class Database {
-  static #shared?: Promise<Database>;
-
   readonly #config: DatabaseConfig;
   readonly #connection: SqliteConnection;
   readonly #drizzle: NoxDrizzle;
@@ -40,22 +38,7 @@ class Database {
     this.#drizzle = drizzle({ client: this.#connection, schema });
   }
 
-  public static current(): Promise<Database> {
-    if (Database.#shared === undefined) {
-      throw new Error('Database has not been opened. Call Database.open() first.');
-    }
-    return Database.#shared;
-  }
-
   public static async open(options: DatabaseOptions = {}): Promise<Database> {
-    Database.#shared ??= Database.#create(options).catch((error: unknown) => {
-      Database.#shared = undefined;
-      throw error;
-    });
-    return Database.#shared;
-  }
-
-  static async #create(options: DatabaseOptions): Promise<Database> {
     const config = parseOrThrow(databaseConfigSchema, {
       busyTimeoutMs: options.busyTimeoutMs,
       path: options.path,
@@ -89,8 +72,6 @@ class Database {
       this.#connection.close(false);
       this.#logger.info({ path: this.#config.path }, 'Database closed.');
     });
-
-    Database.#shared = undefined;
   }
 
   public async exclusive<T>(run: (db: NoxDrizzle) => Promise<T> | T): Promise<T> {
@@ -130,8 +111,6 @@ class Database {
     }
   }
 
-  // Drizzle records applied migrations in __drizzle_migrations and wraps the
-  // batch in a transaction, so this is idempotent on every open.
   #migrate(): void {
     const applied = this.#appliedMigrations();
     migrate(this.#drizzle, { migrationsFolder: MIGRATIONS_FOLDER });
