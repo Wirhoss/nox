@@ -1,1 +1,0 @@
-ALTER TABLE `message` ADD `execution` text;
