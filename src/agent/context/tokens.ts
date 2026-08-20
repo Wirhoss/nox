@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { type Message, messageToString } from './message';
 
-import type { Tool } from '../tool/tool';
+import type { Tool } from '../../tool/tool';
 
 const DEFAULT_CHARACTERS_PER_TOKEN = 3;
 const MESSAGE_TOKEN_OVERHEAD = 6;

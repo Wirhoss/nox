@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
-import { parseOrThrow } from '../utils/validate';
+import { parseOrThrow } from '../../utils/validate';
 
-import type { Logger } from '../logger/logger';
-import type { Tool } from '../tool/tool';
+import type { Logger } from '../../logger/logger';
+import type { Tool } from '../../tool/tool';
 import type { Message } from './message';
 
 const DEFAULT_COMPACT_AT_RATIO = 0.8;
@@ -57,6 +57,8 @@ type ContextPolicy = z.infer<typeof contextPolicySchema>;
 interface ContextOptions extends ContextPolicy {
   fullHistory?: readonly Message[];
   logger?: Logger;
+  /** Handed to the transcript: one call per live append, whoever wrote it. */
+  onAppend?: (message: Message) => void;
   tokenCounter?: (text: string) => number;
   tools?: Readonly<Record<string, Tool>>;
 }
@@ -68,6 +70,7 @@ interface ResolvedContextOptions {
   foldMinReductionRatio: number;
   fullHistory: readonly Message[];
   logger?: Logger;
+  onAppend?: (message: Message) => void;
   pressureTokenLimit?: number;
   tokenCounter?: (text: string) => number;
   tools: Readonly<Record<string, Tool>>;
@@ -138,6 +141,7 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
     foldMinReductionRatio: policy.foldMinReductionRatio ?? DEFAULT_FOLD_MIN_REDUCTION_RATIO,
     fullHistory: options.fullHistory ?? [],
     logger: options.logger,
+    onAppend: options.onAppend,
     pressureTokenLimit,
     tokenCounter: options.tokenCounter,
     tools: resolveTools(options.tools),

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { BM25 } from '../utils/bm25';
-import { parseOrThrow } from '../utils/validate';
+import { BM25 } from '../../utils/bm25';
+import { parseOrThrow } from '../../utils/validate';
 import { freezeMessage } from './immutable';
 import {
   contentToString,
@@ -13,12 +13,13 @@ import {
   trackedHeaderToString,
 } from './message';
 
-import type { Logger } from '../logger/logger';
+import type { Logger } from '../../logger/logger';
 
 interface TranscriptOptions {
   chunkSize?: number;
   logger?: Logger;
   maxSearchCharacters?: number;
+  onAppend?: (message: Message) => void;
 }
 
 const DEFAULT_CHUNK_SIZE = 1000;
@@ -51,7 +52,9 @@ function isIndexable(message: Message): boolean {
 class Transcript {
   readonly #bm25: BM25;
   readonly #chunkSize: number;
+  readonly #logger?: Logger;
   readonly #maxSearchCharacters: number;
+  readonly #onAppend?: (message: Message) => void;
 
   readonly #chunks: string[] = [];
   readonly #knownIds = new Set<string>();
@@ -66,7 +69,9 @@ class Transcript {
       maxSearchCharacters: options.maxSearchCharacters ?? DEFAULT_MAX_SEARCH_CHARACTERS,
     });
     this.#chunkSize = limits.chunkSize;
+    this.#logger = options.logger;
     this.#maxSearchCharacters = limits.maxSearchCharacters;
+    this.#onAppend = options.onAppend;
 
     for (const message of messages) {
       if (this.#knownIds.has(message.messageId)) {
@@ -100,6 +105,7 @@ class Transcript {
     }
 
     this.#snapshot = undefined;
+    this.#notify(frozen);
     return frozen;
   }
 
@@ -234,6 +240,25 @@ class Transcript {
       throw new Error(
         `BM25 document index ${String(docIndex)} does not match ` +
           `transcript chunk index ${String(index)}.`,
+      );
+    }
+  }
+
+  /**
+   * A failing sink must not turn an append into a lost message. The transcript
+   * is the source of truth and appending to it is the one operation that is not
+   * allowed to fail, so the failure is logged and swallowed — by then the
+   * message is already recorded.
+   */
+  #notify(message: Message): void {
+    if (this.#onAppend === undefined) return;
+
+    try {
+      this.#onAppend(message);
+    } catch (error) {
+      this.#logger?.error(
+        { err: error, messageId: message.messageId },
+        'Transcript append sink failed; the message was recorded but not handed off.',
       );
     }
   }

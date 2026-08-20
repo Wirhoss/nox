@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 
-import { Mutex } from '../utils/mutex';
+import { Mutex } from '../../utils/mutex';
 import { applyCompaction, seekSafeCut } from './compact';
 import { applyFold, foldHistory, type FoldOptions } from './fold';
 import { freezeMessage } from './immutable';
@@ -10,9 +10,9 @@ import { HistorySearchToolSet } from './search';
 import { TokenEstimator } from './tokens';
 import { Transcript } from './transcript';
 
-import type { Logger } from '../logger/logger';
-import type { ChatProvider } from '../provider/provider';
-import type { Tool } from '../tool/tool';
+import type { Logger } from '../../logger/logger';
+import type { ChatProvider } from '../../provider/provider';
+import type { Tool } from '../../tool/tool';
 import type { AssistantMessage, CompactedMessage, Message, UserMessage } from './message';
 
 const HANDOFF_REQUEST_PREFIX = 'compaction-request';
@@ -74,7 +74,10 @@ class Context {
     this.#logger = options.logger;
     this.#pressureTokenLimit = options.pressureTokenLimit;
 
-    this.#transcript = new Transcript(options.fullHistory, { logger: options.logger });
+    this.#transcript = new Transcript(options.fullHistory, {
+      logger: options.logger,
+      onAppend: options.onAppend,
+    });
     this.#historyTools = new HistorySearchToolSet(this.#transcript);
 
     const duplicateToolName = Object.keys(this.#historyTools.tools).find(

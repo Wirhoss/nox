@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 
 import { type ProviderError, toProviderError } from './error';
 
-import type { Message, ToolCallMessage } from '../context/message';
+import type { Message, ToolCallMessage } from '../agent/context/message';
 
 interface Usage {
   cacheReadTokens?: number;

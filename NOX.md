@@ -407,6 +407,32 @@ had not accounted for: `tool/` (tool, error, render — minus gates), `provider/
 (config, error, stream, provider), `utils/bm25.ts`, and `utils/validate.ts`.
 `logger/` was **not** ported — it was rewritten, see below.
 
+The engine now lives at `src/agent/context/`, not `src/context/`. It is the
+agent's context, and nothing outside the agent constructs one.
+
+**Agent** — from `ULTRA_OLD_DO_NOT_CHECK/src_old/agent/`, a generation this plan
+did not know about. `src/agent/` in that tree is a stub: `runner.ts` is an empty
+class, `index.ts` is zero bytes. The working code — a 619-line `Runner` with 428
+lines of tests — is in **`src_old/agent/`**, and that is what was ported:
+
+```
+1. utils/eventLog.ts   append-only log with cursors   (no deps)          ✅
+2. events.ts           the AgentEvent taxonomy        (no deps)          ✅
+3. runner.ts           the loop, queue and deferreds  (context, provider, tool) ✅
+4. transcript.ts sink  one exit for every append      (edit, not a file) ✅
+5. sessionStore.ts     rows ↔ messages, queued writes (schema)           ✅
+6. session.ts          identity, context, events      (all of the above) ✅
+7. agent.ts            prompt, tools, model, sessions (session)          ✅
+```
+
+`~150` lines did not come across: the gate and escalation machinery (deferred,
+see below) and the runner's own retry loop, which `BaseProvider` now owns.
+
+**There is still no concrete provider.** `provider/` holds `BaseProvider`,
+`ChatProvider`, `ProviderStream` and the config; every test above runs against a
+scripted one. `openAICompletions.ts` is the last port between this and the v1
+criterion — a session that runs for hours against a real model.
+
 **Prefix construction was never written.** Line 7 above used to claim
 `prompt.ts` was "cache-stable prefix". It is not, and never was: it holds the
 compaction prompt and nothing else. Nothing in any previous generation built a
@@ -418,7 +444,8 @@ reference only. Porting a test suite ports the previous generation's assumptions
 about what correct behavior *was*, including the ones that were wrong — the
 folding that cost more tokens than it reclaimed passed every one of those tests.
 The context engine's tests are new code, written once the context definition is
-finished.
+finished. The same held for `src_old/agent/runner.test.ts`: 428 lines that
+covered the right cases and were still read as a checklist, not copied.
 
 **Contribution contract** — from `idk_yet/plugin/`: `disposable.ts`,
 `extension.ts`, `service.ts`, `plugin.ts`. Ports close to as-is; drop the
@@ -457,6 +484,59 @@ review:
   complete": rejecting to save space is deleting to save space. Message size is
   the active context's problem, and pressure, folding and compaction are what
   solve it. `errors.ts` and `MessageTooLargeError` went with it.
+
+**Decisions taken while porting the agent** — same purpose, same rule:
+
+- **One queue, drained at the top of every iteration.** User messages and
+  deferred results go on the same queue and enter the context immediately before
+  the request. A run ends only when it produced no tool responses *and* the queue
+  is empty. That single condition closes the window the old runner left open — a
+  result landing after the last request of a run — with no flag, watermark or
+  timer to keep in sync.
+- **The runner is long-lived, one per session.** It owns the queue, the
+  idle/running/stopped state and the deferred registry, because "is it idle" and
+  "did something land" have to be answered by the same object or the answer
+  races.
+- **A deferred tool closes its pair immediately.** The `deferredAck` satisfies
+  the tool call, so every request is valid from the first moment; the
+  `deferredResult` arrives later as an ordinary append. Compaction and folding
+  therefore need to know nothing about work in flight.
+- **A result landing while idle starts a run** (`trigger: 'deferredResult'`);
+  landing mid-run it just queues; landing after `stop()` it is still recorded in
+  the transcript, because dropping it to save the trouble is deleting it.
+- **Orphan tracks are left alone.** An ack with no result, found on reopen, is
+  not closed with a synthetic failure. The pair is already valid on the wire, and
+  inventing a result that never existed is worse than an unanswered ack.
+- **Deferred tools get a session-scoped abort signal**, immediate tools the
+  run's. `abort()` and `steer()` end the conversation in flight, not the
+  background work; only `stop()` cancels that.
+- **Compaction fires from the loop, once, before each request.** The policy
+  stays in `Context` — `compact()` is already a no-op without pressure — so
+  nothing outside decides the threshold, and `addMessage` stays synchronous and
+  infallible. An append that could fail because the summarizer was down would
+  lose tool results to save tokens.
+- **Retries belong to the provider.** The old runner's retry loop was not ported;
+  `BaseProvider` already retries and the stream emits `retry`, which the runner
+  only re-emits.
+- **`maxIterations` defaults to 90**, accepts `'unlimited'` at the caller's risk,
+  and hitting the ceiling ends the run with that status **without appending
+  anything**. The old runner injected a fake user message saying so; the
+  transcript records what happened, not what we wish the model had been told.
+- **The transcript sink is the only exit.** `Transcript.append` calls `onAppend`
+  once per live append, and the session hangs both persistence and the `message`
+  event off it. Folds and compactions are messages the context writes on its own,
+  so they reach storage and the log without anyone remembering to forward them —
+  the class of bug the old runner needed a dedicated test for. A sink that throws
+  is logged and swallowed: appending is the one operation not allowed to fail.
+- **A stored row that cannot become a message refuses to open the session.**
+  Replaying a damaged transcript is worse than not replaying it.
+- **A failed write is logged and surfaced as an `error` event**, and the
+  conversation carries on. What is lost is durability, not the conversation, and
+  a session that loses it silently is one you find out about on the next open.
+- **The agent owns the prompt, the tools and the context policy; sessions cannot
+  override them.** Two sessions of one agent send an identical prefix, which is
+  Law 1 stated as a constructor. This is a blueprint in everything but name;
+  when blueprints land they describe an `Agent`, they do not replace it.
 
 **`ULTRA_OLD_DO_NOT_CHECK/` and the rest of `idk_yet/`** — reference only, module
 by module, until the port completes. Then they leave the working tree; git

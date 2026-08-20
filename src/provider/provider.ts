@@ -7,7 +7,7 @@ import {
 import { toProviderError } from './error';
 import { type ProviderSourceEvent, ProviderStream } from './stream';
 
-import type { Message } from '../context/message';
+import type { Message } from '../agent/context/message';
 import type { Tool } from '../tool/tool';
 
 const DEFAULT_MAX_RETRIES = 2;

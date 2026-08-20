@@ -7,7 +7,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-
 function stableStringify(value: unknown): string {
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
     return 'null';

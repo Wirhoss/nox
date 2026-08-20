@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { type Message, messageToString } from './message';
 import { Transcript } from './transcript';
 
-import type { Logger } from '../logger/logger';
+import type { Logger } from '../../logger/logger';
 
 const CREATED_AT = new Date('2025-01-01T00:00:00.000Z');
 
@@ -133,5 +133,55 @@ describe('Transcript', () => {
 
     expect(transcript.search('ack-only', 5)).toEqual([]);
     expect(() => transcript.readToolResult('track', 0, 200)).toThrow('No tool response');
+  });
+
+  test('the append sink sees every live append, frozen, in order', () => {
+    const seen: Message[] = [];
+    const transcript = new Transcript([], {
+      onAppend: (message) => seen.push(message),
+    });
+
+    transcript.append(user('first', 'one'));
+    transcript.append(user('second', 'two'));
+
+    expect(seen.map((message) => message.messageId)).toEqual(['first', 'second']);
+    expect(Object.isFrozen(requireValue(seen[0]))).toBe(true);
+  });
+
+  test('the append sink is not called for messages the transcript was rebuilt from', () => {
+    const seen: Message[] = [];
+    const transcript = new Transcript([user('persisted', 'from storage')], {
+      onAppend: (message) => seen.push(message),
+    });
+
+    expect(seen).toEqual([]);
+
+    transcript.append(user('live', 'appended now'));
+    expect(seen.map((message) => message.messageId)).toEqual(['live']);
+  });
+
+  test('a rejected duplicate append does not reach the sink', () => {
+    const seen: Message[] = [];
+    const transcript = new Transcript([user('taken', 'already here')], {
+      onAppend: (message) => seen.push(message),
+    });
+
+    expect(() => transcript.append(user('taken', 'again'))).toThrow('Duplicate message ID');
+    expect(seen).toEqual([]);
+  });
+
+  test('a throwing sink is logged and leaves the message recorded', () => {
+    const logged: unknown[] = [];
+    const transcript = new Transcript([], {
+      logger: loggerWithWarnings(logged),
+      onAppend: () => {
+        throw new Error('storage is down');
+      },
+    });
+
+    expect(() => transcript.append(user('kept', 'needle'))).not.toThrow();
+    expect(transcript.messages.map((message) => message.messageId)).toEqual(['kept']);
+    expect(transcript.search('needle', 5)).not.toEqual([]);
+    expect(logged).toHaveLength(1);
   });
 });

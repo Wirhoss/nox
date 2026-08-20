@@ -1,6 +1,6 @@
 import { InvalidToolParamsError, UnknownToolError } from './error';
 
-import type { MessageContent } from '../context/message';
+import type { MessageContent } from '../agent/context/message';
 import type { z } from 'zod';
 
 interface ToolContext {

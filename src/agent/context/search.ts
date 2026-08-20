@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { type Tool, ToolSet } from '../tool/tool';
+import { type Tool, ToolSet } from '../../tool/tool';
 
 import type { Transcript } from './transcript';
 

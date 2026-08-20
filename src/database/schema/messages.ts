@@ -4,7 +4,7 @@ import {
   MESSAGE_ROLES,
   type MessageContent,
   TOOL_RESPONSE_EXECUTIONS,
-} from '../../context/message';
+} from '../../agent/context/message';
 import { sessions } from './sessions';
 
 const messages = sqliteTable(

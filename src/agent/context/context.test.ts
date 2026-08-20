@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
-import { ChatProvider } from '../provider/provider';
+import { ChatProvider } from '../../provider/provider';
 import { Context } from './context';
 import { type Message, messageToString, type UserMessage } from './message';
 import { TokenEstimator } from './tokens';
 
-import type { TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
-import type { Tool } from '../tool/tool';
+import type { TextGenerateOptions } from '../../provider/config';
+import type { ProviderSourceEvent } from '../../provider/stream';
+import type { Tool } from '../../tool/tool';
 
 const BASE_TIME = new Date('2025-01-01T00:00:00.000Z');
 
@@ -295,6 +295,68 @@ describe('Context compaction', () => {
     expect(await context.compact()).toEqual({ compacted: false, folded: true });
     expect(provider.requests).toHaveLength(0);
     expect(context.getHistory().map((message) => message.role)).toEqual(['assistant', 'folded']);
+  });
+
+  test('the append sink sees the compaction the context writes on its own', async () => {
+    const appended: Message[] = [];
+    const context = new Context('system', new SummaryProvider(['small']), {
+      contextWindow: 10_000,
+      fullHistory: [textMessage('user', 'huge', 'x'.repeat(20_000))],
+      onAppend: (message) => appended.push(message),
+      reserveForOutput: 2_000,
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(await context.compact()).toEqual({ compacted: true, folded: false });
+    expect(appended.map((message) => message.role)).toEqual(['compacted']);
+  });
+
+  test('the append sink sees the fold the context writes on its own', async () => {
+    const appended: Message[] = [];
+    const context = new Context('system', new SummaryProvider([]), {
+      compactGuardEndTokens: 0,
+      contextWindow: 30_000,
+      foldMinReductionRatio: 0.1,
+      fullHistory: [
+        textMessage('assistant', 'anchor', 'ready'),
+        {
+          arguments: { payload: 'x'.repeat(12_000) },
+          createdAt: BASE_TIME,
+          messageId: 'call',
+          name: 'work',
+          role: 'toolCall',
+          trackId: 'track',
+        },
+        {
+          createdAt: BASE_TIME,
+          execution: 'immediate',
+          messageId: 'response',
+          name: 'work',
+          response: [{ text: 'y'.repeat(12_000), type: 'text' }],
+          role: 'toolResponse',
+          trackId: 'track',
+        },
+      ],
+      onAppend: (message) => appended.push(message),
+      reserveForOutput: 2_000,
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(await context.compact()).toEqual({ compacted: false, folded: true });
+    expect(appended.map((message) => message.role)).toEqual(['folded']);
+  });
+
+  test('the append sink sees ordinary appends exactly once', () => {
+    const appended: Message[] = [];
+    const context = new Context('system', new SummaryProvider([]), {
+      fullHistory: [textMessage('user', 'rebuilt', 'from storage')],
+      onAppend: (message) => appended.push(message),
+    });
+
+    expect(appended).toEqual([]);
+
+    context.addMessage(textMessage('user', 'live', 'now'));
+    expect(appended.map((message) => message.messageId)).toEqual(['live']);
   });
 
   test('explicit folding reports whether it changed the cache and replays bit-perfectly', async () => {
