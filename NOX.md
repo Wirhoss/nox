@@ -10,10 +10,10 @@
 ## One sentence
 
 **Nox is a containerized, multi-agent runtime whose defining property is that a
-long-running session stays cheap: the prompt prefix is never invalidated, context
-is reduced deterministically before it is ever summarized, anything a program can
-do is done by a program instead of a prompt, and every concrete capability enters
-as a contribution rather than an import.**
+long-running session stays cheap: its logical request head remains deterministic,
+context is reduced before it is ever summarized, anything a program can do is
+done by a program instead of a prompt, and every concrete capability enters as a
+contribution rather than an import.**
 
 ---
 
@@ -22,35 +22,35 @@ as a contribution rather than an import.**
 These are the whole point. A feature that violates one of them is not a Nox
 feature, regardless of how useful it is.
 
-### Law 1 — The prefix is immutable infrastructure
+### Law 1 — The request head is stable infrastructure
 
-The beginning of every request (system instructions, tool schemas, settled
-history) is a cache key. Rewriting it is not a cosmetic change; it is a bill.
+The beginning of every logical request is system instructions, tool schemas and
+settled history. Nox keeps that sequence deterministic and append-stable so a
+provider may reuse it. Whether it is cached, where the cache boundary falls and
+what a hit is worth belong entirely to the provider.
 
 Consequences that are binding, not aspirational:
 
-- Tool schemas are serialized in a deterministic, name-sorted order. Map/object
-  iteration order is never trusted.
+- Tool schemas are presented in deterministic, name-sorted order. Map/object
+  iteration order is never trusted, and provider adapters preserve that order
+  when serializing their request format.
 - Messages are immutable snapshots once inserted. Nothing mutates a message
   in place after the fact.
 - **New information enters at the suffix.** Anything that varies during a session
   — retrieved memory, tool results, fresh facts — is appended at the end of the
   working set. It never edits the head. This rule is what makes the memory
   system possible at all (see below).
-- **The prefix may only contain what is stable for the whole session.** A
+- **The fixed head may only contain what is stable for the whole session.** A
   blueprint's persona and its tool schemas qualify. A recalled fact does not.
-- **Two operations may modify the prefix: `fold` and `compact`. Nothing else
-  touches it, ever.** Not a recall, not a tool result, not a broker, not a
-  plugin, not the system prompt mid-session. Everything else appends, and
-  appending grows the suffix, which is free. `Context` has exactly one private
-  method that replaces the active history and only those two reach it.
-- Any code path that can alter the prefix must be able to say *why* and *how
-  much of the cache it cost*. **Measuring this is deferred until there is a
-  request loop to measure.** A tracker was built and then removed: it needed a
-  caller to tell it a request had gone out, and with no runner nothing ever
-  settled, so it produced an empty ledger and a hash nobody compared. The rule
-  above is what actually protects the prefix; the accounting is instrumentation
-  and waits for something to instrument.
+- **Two operations may replace active history: `fold` and `compact`. Nothing
+  else does.** Not a recall, not a tool result, not a broker, not a plugin, not
+  the system prompt mid-session. Everything else appends. `Context` has exactly
+  one private method that replaces active history and only those two reach it.
+- **Prompt caching is provider behavior, not kernel state.** Nox does not declare
+  cache boundaries, send cache-control instructions that an API does not support,
+  hash an imagined provider prefix or estimate cache invalidation. A provider
+  adapter reports actual cache-read usage when its API exposes it; otherwise Nox
+  makes no claim about cache hits.
 
 ### Law 2 — Fold first. Compaction is the last resort.
 
@@ -68,12 +68,12 @@ Consequences:
   step in the loop, never a background convenience.
 - Both are transcript events, not destructive mutations. The full history
   survives. "Deleted to save space" is never the mechanism.
-- **A fold must pay for itself, and it is measured in tokens before it is
-  applied.** Folding rewrites settled history, so it invalidates the prefix
-  under Law 1 — a fold that merely breaks even spends the cache for nothing.
-  The placeholder therefore carries only what the model cannot reconstruct:
-  what was called, its track ID, and whether it worked. Everything else is
-  still in the transcript, searchable and retrievable by track ID.
+- **A fold must reduce the active context, and that reduction is measured in
+  tokens before it is applied.** A fold that merely breaks even makes the request
+  no smaller and is rejected. The placeholder therefore carries only what the
+  model cannot reconstruct: what was called, its track ID, and whether it worked.
+  Everything else is still in the transcript, searchable and retrievable by
+  track ID.
 
 ### Law 3 — If it can be deterministic, it must not be a prompt
 
@@ -188,14 +188,15 @@ fixed one shape would be fought by every app.
 ### What the kernel keeps instead: no way in but append
 
 One thing cannot be delegated. Most agent memory systems recall facts and splice
-them into the system prompt — under Law 1 that is the worst possible design,
-rewriting the cache key on every turn so each recall re-bills the entire prefix.
-A memory plugin free to write anywhere could destroy the property Nox exists for.
+them into the system prompt, changing the beginning of every later request. That
+breaks Nox's stability guarantee and may also forfeit whatever reuse a provider
+would otherwise perform. A memory plugin free to write anywhere could destroy the
+property Nox exists for.
 
 **This is answered by structure, not by a guard.** The kernel exposes no API that
-edits the prefix. `Context` keeps its active history private, hands out frozen
-copies, and offers exactly one way to add anything: append. A contribution cannot
-splice into the head because there is nothing to call. That is a stronger
+edits the request head. `Context` keeps its active history private, hands out
+frozen copies, and offers exactly one way to add anything: append. A contribution
+cannot splice into the head because there is nothing to call. That is a stronger
 guarantee than a gate, and it costs nothing to maintain.
 
 > **An earlier draft of this document specified a "write boundary" here** — a
@@ -289,8 +290,8 @@ Law 3 is not abandoned the moment memory becomes someone else's problem:
 v1 is done when this is demonstrably true:
 
 > A session can run for hours, across hundreds of turns, and the request sent to
-> the provider stays bounded, with a stable cached prefix, without silently
-> losing information — and there is a test that proves it.
+> the provider stays bounded and append-stable without silently losing
+> information — and there is a test that proves it.
 
 **Context engine** — the bulk of the work:
 
@@ -299,8 +300,8 @@ v1 is done when this is demonstrably true:
 - Deterministic folding of mechanical traffic.
 - Token budgeting with reserved output headroom; pressure detected before the
   provider rejects.
-- Cache-stable prefix construction, with an explicit account of what invalidates
-  it.
+- Deterministic, append-stable request inputs: fixed instructions, name-sorted
+  tool schemas and immutable history.
 - Compaction — implemented, tested, and *rarely reached*.
 - Bounded BM25 retrieval over full history.
 - Replay invariants under test, including malformed and duplicate history.
@@ -360,7 +361,7 @@ Nothing on that list is cancelled. Every one of them is *later*.
 |---|---|
 | **Transcript** | Append-only, immutable, complete session log. Source of truth. Searchable. |
 | **Active context** | The bounded working set actually sent to the provider. Derived from the transcript by replay. |
-| **Prefix** | The cache-stable head of a request: instructions + tool schemas + settled history. |
+| **Prefix** | The logically stable head of a request: instructions + name-sorted tool schemas + settled history. It may be cacheable, but caching is provider-owned. |
 | **Suffix** | Where new and varying content is appended. The only legal entry point for recalled memory. |
 | **Fold** | Deterministic, rule-based collapse of mechanical traffic. Lossless — the original stays in the transcript. |
 | **Compaction** | Model-assisted lossy summarization into a handoff. Session-scoped. Last resort. |
@@ -372,6 +373,9 @@ Nothing on that list is cancelled. Every one of them is *later*.
 | **Service** | A host-owned dependency handed to contributions by token. Never a global. |
 | **Provider** | An adapter to a model API. A contribution. |
 | **Tool** | A deterministic capability the model can call. |
+| **Direct tool** | A tool whose schema is presented directly in a session's fixed request head. |
+| **Routed tool** | A granted tool kept in the session's fixed routing catalog and discovered and invoked through the tool router. This describes access, not deferred code loading. |
+| **Tool router** | The deterministic `search_tool` / `call_tool` bridge to a session's routed tool catalog. |
 | **Tool set** | A named group of tools a blueprint can grant. |
 | **Blueprint** | A declarative agent definition: provider + model + tool sets + tools + memory scopes + gates. |
 | **Agent** | A live instance of a blueprint. |
@@ -403,8 +407,8 @@ lines, tested). One module at a time, each landing with `bun run check` green:
 ```
 
 The port also pulled in what the engine actually depends on, which this plan
-had not accounted for: `tool/` (tool, error, render — minus gates), `provider/`
-(config, error, stream, provider), `utils/bm25.ts`, and `utils/validate.ts`.
+had not accounted for: `tool/` (tool, error, render and routed-tool search/call — minus gates),
+`provider/` (config, error, stream, provider), `utils/bm25.ts`, and `utils/validate.ts`.
 `logger/` was **not** ported — it was rewritten, see below.
 
 The engine now lives at `src/agent/context/`, not `src/context/`. It is the
@@ -433,10 +437,14 @@ see below) and the runner's own retry loop, which `BaseProvider` now owns.
 scripted one. `openAICompletions.ts` is the last port between this and the v1
 criterion — a session that runs for hours against a real model.
 
-**Prefix construction was never written.** Line 7 above used to claim
-`prompt.ts` was "cache-stable prefix". It is not, and never was: it holds the
-compaction prompt and nothing else. Nothing in any previous generation built a
-prefix or accounted for what invalidated it. It is new code, not a port.
+**The prefix is an invariant, not a subsystem.** `prompt.ts` holds the compaction
+prompt and nothing else; no separate prefix builder is missing. `Agent` fixes the
+system prompt, each session resolves and snapshots the tools from the agent's
+current direct and routed tool sets when opened or loaded, `Context` keeps that
+snapshot ordered and messages immutable, and the runner passes that append-stable
+sequence to the provider. The
+adapter owns serialization into its API's request format. Prompt caching and cache
+metrics remain provider-specific.
 
 **The old tests do not come with the port.** `cache.test.ts`, `context.test.ts`,
 `fold.test.ts` and `transcript.test.ts` stay in `ULTRA_OLD_DO_NOT_CHECK/` as
@@ -533,10 +541,21 @@ review:
 - **A failed write is logged and surfaced as an `error` event**, and the
   conversation carries on. What is lost is durability, not the conversation, and
   a session that loses it silently is one you find out about on the next open.
-- **The agent owns the prompt, the tools and the context policy; sessions cannot
-  override them.** Two sessions of one agent send an identical prefix, which is
-  Law 1 stated as a constructor. This is a blueprint in everything but name;
-  when blueprints land they describe an `Agent`, they do not replace it.
+- **The agent owns the prompt, the current direct and routed tool sets, and the
+  context policy; sessions cannot override them.** A session resolves and snapshots
+  their tools when it is opened or loaded and keeps that request head stable for
+  its lifetime. Sessions opened from later configurations may differ; that
+  deliberately gives up reuse of the previous head without mutating an existing
+  conversation. This is a blueprint in everything but name; when blueprints land
+  they describe an `Agent`, they do not replace it.
+- **Direct versus routed is an agent assignment for a configured tool set.** It is
+  not an intrinsic `Tool` or `ToolSet` exposure property. For now a configured set
+  is assigned as a whole; its own enabled-tool selection decides what that set
+  contains.
+- **`call_tool.params` is a JSON string by design.** Small models were empirically
+  less consistent when asked to satisfy a dynamic object schema. The router parses
+  the string deterministically and then validates the decoded object against the
+  selected routed tool's real schema.
 
 **`ULTRA_OLD_DO_NOT_CHECK/` and the rest of `idk_yet/`** — reference only, module
 by module, until the port completes. Then they leave the working tree; git
@@ -551,5 +570,5 @@ Tokens cost money. Tokens cost latency. Tokens dilute attention.
 Repeated tokens are an architectural failure disguised as intelligence — and so
 is a paragraph of instructions doing the job of a twenty-line function.
 
-**Keep the history. Fold before you summarize. Never invalidate the prefix.
+**Keep the history. Fold before you summarize. Keep the request head stable.
 Recall into the suffix. If a program can do it, don't ask the model.**

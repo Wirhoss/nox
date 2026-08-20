@@ -7,11 +7,11 @@ import { z } from 'zod';
 
 import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
+import { type Tool, ToolSet } from '../tool/tool';
 import { Agent } from './agent';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
-import type { Tool } from '../tool/tool';
 import type { Message, MessageContent } from './context/message';
 
 const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
@@ -75,6 +75,44 @@ class RecordingProvider extends ChatProvider {
   }
 }
 
+class RoutingProvider extends ChatProvider {
+  public readonly toolNames: string[][] = [];
+
+  constructor() {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    messageHistory: Message[],
+    tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    this.toolNames.push(tools.map((tool) => tool.name));
+
+    if (messageHistory.at(-1)?.role === 'user') {
+      yield {
+        toolCall: {
+          arguments: { name: 'version', params: '{}' },
+          name: 'call_tool',
+          role: 'toolCall',
+          trackId: `version-${String(this.toolNames.length)}`,
+        },
+        type: 'toolCall',
+      };
+    } else {
+      yield { text: 'done', type: 'textFragment' };
+    }
+    yield { type: 'end' };
+  }
+}
+
 function echoTool(): Tool {
   return {
     description: 'echoes',
@@ -88,12 +126,43 @@ function echoTool(): Tool {
   };
 }
 
+function versionTool(version: string): Tool {
+  return {
+    description: 'Returns the current version.',
+    name: 'version',
+    parameters: z.object({}),
+    prepare: () => ({
+      run: () => Promise.resolve([{ text: version, type: 'text' as const }]),
+      title: `Version ${version}`,
+      type: 'immediate',
+    }),
+  };
+}
+
+class TestToolSet extends ToolSet {
+  readonly #definitions: readonly Tool[];
+
+  constructor(definitions: readonly Tool[]) {
+    super();
+    this.#definitions = definitions;
+    this.addTools();
+  }
+
+  protected override addTools(): void {
+    for (const tool of this.#definitions) this.registerTool(tool);
+  }
+}
+
+function toolSet(...tools: Tool[]): ToolSet {
+  return new TestToolSet(tools);
+}
+
 describe('Agent', () => {
-  test('every session it opens sends the same prefix', async () => {
+  test('sessions opened from the same tool configuration send the same request head', async () => {
     const provider = new RecordingProvider();
     const agent = new Agent(await openDatabase(), provider, MODEL, {
+      directToolSets: [toolSet(echoTool())],
       systemPrompt: 'you are nox',
-      tools: { echo: echoTool() },
     });
 
     const first = await agent.openSession();
@@ -108,9 +177,67 @@ describe('Agent', () => {
     expect(provider.requests[1]?.systemPrompt).toBe('you are nox');
     expect(provider.requests[0]?.toolNames).toEqual(provider.requests[1]?.toolNames ?? []);
     expect(provider.requests[0]?.toolNames).toContain('echo');
+    expect(provider.requests[0]?.toolNames).not.toContain('call_tool');
+    expect(provider.requests[0]?.toolNames).not.toContain('search_tool');
 
     await first.stop();
     await second.stop();
+  });
+
+  test('new and loaded sessions snapshot the current direct and routed tools', async () => {
+    const provider = new RoutingProvider();
+    const directToolSets: ToolSet[] = [toolSet({ ...echoTool(), name: 'alpha' })];
+    const routedToolSets: ToolSet[] = [toolSet(versionTool('one'))];
+    const agent = new Agent(await openDatabase(), provider, MODEL, {
+      directToolSets,
+      routedToolSets,
+      systemPrompt: 'system',
+    });
+
+    const openingFirst = agent.openSession({ sessionId: 'shared' });
+    directToolSets.push(toolSet({ ...echoTool(), name: 'beta' }));
+    routedToolSets[0] = toolSet(versionTool('two'));
+    const first = await openingFirst;
+
+    first.send('first');
+    await first.idle;
+    const firstResponse = first.getTranscript().find((message) => message.role === 'toolResponse');
+    expect(firstResponse?.role === 'toolResponse' ? firstResponse.response : []).toEqual([
+      { text: 'one', type: 'text' },
+    ]);
+    expect(provider.toolNames[0]).toContain('alpha');
+    expect(provider.toolNames[0]).not.toContain('beta');
+    expect(provider.toolNames[0]).toContain('call_tool');
+    expect(provider.toolNames[0]).toContain('search_tool');
+    expect(provider.toolNames[0]).not.toContain('version');
+    await first.stop();
+
+    const loaded = await agent.openSession({ sessionId: 'shared' });
+    loaded.send('second');
+    await loaded.idle;
+    const loadedResponses = loaded
+      .getTranscript()
+      .filter((message) => message.role === 'toolResponse');
+    const latest = loadedResponses.at(-1);
+    expect(latest?.role === 'toolResponse' ? latest.response : []).toEqual([
+      { text: 'two', type: 'text' },
+    ]);
+    expect(provider.toolNames[2]).toContain('alpha');
+    expect(provider.toolNames[2]).toContain('beta');
+    expect(provider.toolNames[2]).not.toContain('version');
+
+    await loaded.stop();
+  });
+
+  test('rejects ambiguous direct and routed tool assignments before opening', async () => {
+    const shared = toolSet(versionTool('one'));
+    const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
+      directToolSets: [shared],
+      routedToolSets: [shared],
+      systemPrompt: 'system',
+    });
+
+    expect(() => agent.openSession()).toThrow('Tool version cannot be both direct and routed.');
   });
 
   test('sessions from one agent keep separate transcripts', async () => {
