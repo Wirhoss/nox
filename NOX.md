@@ -43,7 +43,7 @@ Consequences that are binding, not aspirational:
 - **The fixed head may only contain what is stable for the whole session.** A
   blueprint's persona and its tool schemas qualify. A recalled fact does not.
 - **Two operations may replace active history: `fold` and `compact`. Nothing
-  else does.** Not a recall, not a tool result, not a broker, not a plugin, not
+  else does.** Not a recall, not a tool result, not a broker, not an extension, not
   the system prompt mid-session. Everything else appends. `Context` has exactly
   one private method that replaces active history and only those two reach it.
 - **Prompt caching is provider behavior, not kernel state.** Nox does not declare
@@ -116,7 +116,7 @@ stack, because the previous generations kept building the outer layers first.
 ║                      prefix · pressure · bounded retrieval   ║
 ║                      append is the only way in               ║
 ║                                                              ║
-║   Contribution model extension points · services ·           ║
+║   Contribution model contribution points · services ·           ║
 ║                      lifecycle · disposal                    ║
 ╚══════════════════════════════════════════════════════════════╝
                               ▲
@@ -133,37 +133,40 @@ constraint that holds from the first commit, because violating it is exactly how
 the last generation died.
 
 **The contribution rule:** builtins are contributions too. `openai` is not
-special-cased in a registry; it registers against the provider extension point
+special-cased in a registry; it registers against the provider contribution point
 like anything else would. In-repo and third-party contributions differ only in
 how they are *loaded*, never in what they *are*.
 
 ---
 
-## Plugins: contract now, machinery later
+## Extensions: contract now, machinery later
 
-The plugin system is first-class. But it is two separable things, and conflating
+The extension system is first-class. But it is two separable things, and conflating
 them is what produced 1,290 lines of kernel with no agent in it.
 
-**The contract — kernel, from day one** (~255 lines, already written in
-`idk_yet/`, ports mostly as-is):
+**The contract — kernel, from day one** (ported, `src/extensions/`):
 
 | Module | What it gives |
 |---|---|
-| `extension.ts` | `ExtensionPoint<T>`, typed registration, owner-scoped views |
+| `contribution.ts` | `ContributionPoint<T>`, typed registration, owner-scoped views |
+| `extension.ts` | `ExtensionContext`, `defineExtension` |
+| `manifest.ts` | Identity plus the `engines.nox` range, checked at startup |
 | `service.ts` | `ServiceToken<T>`, host services, no globals |
-| `plugin.ts` | `PluginContext`, `definePlugin` |
 | `disposable.ts` | Deterministic teardown of everything a contribution owns |
+| `identifier.ts` | The one rule an extension, point and service ID all obey |
+| `error.ts` | The `ExtensionError` taxonomy the contract can raise |
+| `contribution-points/` | What Nox actually accepts. Today: `nox.providers` |
 
 **The machinery — deferred** (~455 lines, stays in `idk_yet/` for now):
 
 | Module | Why it waits |
 |---|---|
-| `manifest.ts` | Semver ranges and dependency validation matter when someone else ships a plugin. Nobody does yet. |
-| `host.ts` | Dependency resolution, activation rollback, degraded startup, hot unload — all solve problems that only exist with untrusted, dynamically-loaded plugins. |
+| `manifest.ts` (the rest of it) | Versioning, `apiVersion` and dependency validation matter when someone else ships an extension. Nobody does yet. The compatibility range came across early — see the port decisions. |
+| `host.ts` | Dependency resolution, activation rollback, degraded startup, hot unload — all solve problems that only exist with untrusted, dynamically-loaded extensions. |
 
 **Why this split is safe, stated precisely:** the machinery *wraps* the contract
 without changing it. A contribution written today as
-`extensions.register(providers, "openai", impl)` reads identically after a
+`contributions.register(providers, "openai", impl)` reads identically after a
 manifest loader is added around it. Deferring the machinery cannot force a
 rewrite. Deferring the *contract* would force one immediately — the kernel would
 fill with direct imports, which is architecture review finding #7 and the
@@ -174,7 +177,7 @@ repo, or ship on its own version cycle, or fail without taking the process down.
 
 ---
 
-## Memory is a plugin
+## Memory is an extension
 
 No previous generation had one. It stays out of the kernel — it is the most
 speculative subsystem in the project, and speculative design in the kernel is
@@ -190,7 +193,7 @@ fixed one shape would be fought by every app.
 One thing cannot be delegated. Most agent memory systems recall facts and splice
 them into the system prompt, changing the beginning of every later request. That
 breaks Nox's stability guarantee and may also forfeit whatever reuse a provider
-would otherwise perform. A memory plugin free to write anywhere could destroy the
+would otherwise perform. A memory extension free to write anywhere could destroy the
 property Nox exists for.
 
 **This is answered by structure, not by a guard.** The kernel exposes no API that
@@ -225,14 +228,14 @@ better name.
 
 | | Compaction | Memory |
 |---|---|---|
-| Owned by | Kernel | Plugin |
+| Owned by | Kernel | Extension |
 | Scope | One session | Across sessions |
 | Lifetime | Until the session ends | Durable |
 | Created by | Budget pressure | Explicit write |
 | Lossy | Yes | No — it stores what it was given |
 | Addressable | No | Yes, by name |
 
-### Constraints on any memory plugin
+### Constraints on any memory extension
 
 Not kernel policy — the standard a memory contribution is judged against, so that
 Law 3 is not abandoned the moment memory becomes someone else's problem:
@@ -245,8 +248,8 @@ Law 3 is not abandoned the moment memory becomes someone else's problem:
 - **Retrieval starts deterministic**: keyed lookup, then structured query, then
   BM25. Embeddings are a later contribution, not the foundation. Nox is not a
   vector database bolted to a loop.
-- **Scopes are the plugin's business.** Per-agent, per-blueprint, per-app shared
-  memory — a memory plugin decides. The kernel neither knows nor cares.
+- **Scopes are the extension's business.** Per-agent, per-blueprint, per-app shared
+  memory — a memory extension decides. The kernel neither knows nor cares.
 
 ---
 
@@ -276,7 +279,7 @@ Law 3 is not abandoned the moment memory becomes someone else's problem:
 - **Not a prompt-engineering product.** Capability lives in tools and the
   runtime, not in longer instruction text.
 - **Not benchmark-optimized.** Correct long-session behavior beats a good demo.
-- **Not a third-party plugin marketplace** — the contribution model is the spine,
+- **Not a third-party extension marketplace** — the contribution model is the spine,
   but distribution, isolation and untrusted code are not yet in scope.
 - **Not multi-tenant, not hosted SaaS, not a stable public API.** Not yet, and
   not by accident.
@@ -306,8 +309,9 @@ v1 is done when this is demonstrably true:
 - Bounded BM25 retrieval over full history.
 - Replay invariants under test, including malformed and duplicate history.
 
-**Contribution model** — port the contract half of `idk_yet/`. Extension points,
-service tokens, disposables. No manifests, no host.
+**Contribution model** ✅ — the contract half of `idk_yet/` is ported to
+`src/extensions/`: contribution points, service tokens, disposables, `defineExtension`.
+No manifests, no host. `src/application.ts` activates and disposes them.
 
 ~~**Write boundary**~~ — cut from the design, not deferred. See "What the kernel
 keeps instead: no way in but append".
@@ -316,8 +320,8 @@ keeps instead: no way in but append".
 
 | Deferred | Un-defer when |
 |---|---|
-| Plugin machinery (manifest, host) | A contribution must load from outside the repo or fail independently |
-| Memory (entirely — it is a plugin) | One session runs end-to-end |
+| Extension machinery (manifest, host) | A contribution must load from outside the repo or fail independently |
+| Memory (entirely — it is an extension) | One session runs end-to-end |
 | Web UI | There is a session worth watching |
 | Message gateway / brokers | A session runs end-to-end locally |
 | Agent blueprints | More than one agent config exists in practice |
@@ -366,10 +370,11 @@ Nothing on that list is cancelled. Every one of them is *later*.
 | **Fold** | Deterministic, rule-based collapse of mechanical traffic. Lossless — the original stays in the transcript. |
 | **Compaction** | Model-assisted lossy summarization into a handoff. Session-scoped. Last resort. |
 | **Pressure** | Measured proximity to the context budget, including reserved output. |
-| **Memory** | Durable, addressable, cross-session knowledge with provenance. A plugin, not kernel. Not compaction. |
+| **Memory** | Durable, addressable, cross-session knowledge with provenance. An extension, not kernel. Not compaction. |
 | **Recall** | A bounded read from memory into the suffix. |
-| **Extension point** | A typed slot the kernel declares and contributions fill. |
-| **Contribution** | Any concrete capability registered against an extension point. |
+| **Contribution point** | A typed slot the kernel declares and contributions fill. |
+| **Extension** | A packaged unit of contributions with a lifecycle: identity, a compatibility range, activation and disposal. One extension may fill several contribution points. |
+| **Contribution** | Any concrete capability registered against a contribution point. |
 | **Service** | A host-owned dependency handed to contributions by token. Never a global. |
 | **Provider** | An adapter to a model API. A contribution. |
 | **Tool** | A deterministic capability the model can call. |
@@ -432,10 +437,61 @@ lines of tests — is in **`src_old/agent/`**, and that is what was ported:
 `~150` lines did not come across: the gate and escalation machinery (deferred,
 see below) and the runner's own retry loop, which `BaseProvider` now owns.
 
-**There is still no concrete provider.** `provider/` holds `BaseProvider`,
-`ChatProvider`, `ProviderStream` and the config; every test above runs against a
-scripted one. `openAICompletions.ts` is the last port between this and the v1
-criterion — a session that runs for hours against a real model.
+**The provider is ported.** It came across from `ULTRA_OLD_DO_NOT_CHECK/src/`,
+the generation the rest of `provider/` came from. It is the first thing in the
+tree that reaches a real model, and it enters as a contribution — a whole one:
+
+```
+src/extensions/builtin/openai/
+  extension.ts           manifest, activation, registration
+  openAICompletions.ts   the adapter itself
+```
+
+`src/provider/` therefore holds only the contract — `BaseProvider`,
+`ChatProvider`, `ProviderStream`, config and errors. No concrete adapter lives
+in it.
+
+**Decisions taken while porting the provider:**
+
+- **`nox.providers` takes `create(config: unknown)`, not
+  `create(config: ProviderBaseConfig)`.** The first real consumer settled a
+  question the point had guessed at: provider configuration is
+  provider-specific — the OpenAI adapter needs a `defaultModel` and a `type`
+  discriminator the base config has never heard of. Each contribution validates
+  against its own schema, because it is the only thing that knows what a valid
+  config for it looks like. This is exactly the correction that waiting for a
+  consumer was supposed to catch.
+- **The logger is injected, not a module singleton.** The previous generation
+  called `createLogger('provider:openai')` at module scope. The adapter now takes
+  one and defaults to `silentLogger`, and the builtin extension hands it
+  `context.logger`, so every line an adapter writes is attributed to the
+  extension that contributed it.
+- **Reasoning is never sent back.** This API has no field for it, and replaying
+  it as assistant text invites the model to imitate its own scratchpad.
+- **A late deferred result cannot be a `tool` message.** Those must sit directly
+  after the `tool_calls` turn they answer. A `deferredResult` is surfaced as user
+  content correlated by track ID, which keeps the request valid without
+  inventing an ordering the API does not have.
+- **A fold rides on the assistant turn whose tool traffic it replaced.** Chat
+  Completions has no folded turn, and making one its own message breaks role
+  alternation.
+- **The old test suite was not ported.** 6 tests were read as a checklist and 24
+  new ones written against the current contract, per the same rule that governed
+  the context engine.
+- **A builtin is a package, not a shim.** The adapter and the extension that
+  registers it live in one directory under `extensions/builtin/`. An earlier cut
+  put the adapter in `provider/providers/` with a twenty-line extension beside
+  it, which bought nothing: delete the extension and the concrete adapter is
+  still sitting inside the kernel's own tree. A builtin directory is
+  package-shaped on purpose — publishing one later is a move, not a rewrite, and
+  it is the event that un-defers `manifest.ts` and `host.ts`.
+- **Rule 2 is now enforced by a test.** `boundaries.test.ts` fails if anything
+  outside `extensions/builtin/` imports from it, or if one builtin imports
+  another. "The kernel imports nothing concrete" stopped being a review
+  convention the moment there was something concrete to import.
+
+`openAICompletions.ts` was the last port between the tree and the v1 criterion —
+a session that runs for hours against a real model. What remains is running it.
 
 **The prefix is an invariant, not a subsystem.** `prompt.ts` holds the compaction
 prompt and nothing else; no separate prefix builder is missing. `Agent` fixes the
@@ -455,10 +511,81 @@ The context engine's tests are new code, written once the context definition is
 finished. The same held for `src_old/agent/runner.test.ts`: 428 lines that
 covered the right cases and were still read as a checklist, not copied.
 
-**Contribution contract** — from `idk_yet/plugin/`: `disposable.ts`,
-`extension.ts`, `service.ts`, `plugin.ts`. Ports close to as-is; drop the
-manifest dependency from `plugin.ts` and keep `assertIdentifier` (currently it
-lives in `manifest.ts` — move it, don't drag the schema along).
+**Contribution contract** — from `idk_yet/plugin/`, now `src/extensions/`:
+
+```
+1. disposable.ts     Disposable, DisposableStore       (no deps)          ✅
+2. identifier.ts     assertIdentifier, no semver       (no deps)          ✅
+3. error.ts          the ExtensionError taxonomy       (no deps)          ✅
+4. contribution.ts   points, registry, scoped views    (disposable)       ✅
+5. service.ts        tokens, locked collection         (error)            ✅
+6. manifest.ts       identity + engines, no deps graph (identifier)       ✅
+7. extension.ts      ExtensionContext, defineExtension (manifest)         ✅
+8. application.ts    the composition root              (all of the above) ✅
+```
+
+`host.ts` stays in `idk_yet/`, deferred as planned. `manifest.ts` came across
+partially: the compatibility range only. Versioning, `apiVersion` and the
+dependency graph describe how an extension is *distributed*, and nothing is
+distributed yet.
+
+**Decisions taken while porting the contract** — same purpose, same rule:
+
+- **The vocabulary is VS Code's, adopted whole: extension / contribution point /
+  contribution.** The unit is an *extension*, the slot it fills is a
+  *contribution point*, and what fills it is a *contribution*. The earlier
+  hybrid — Eclipse's `plugin` and `extension point` beside VS Code's
+  `contribution` — was not wrong, but naming the unit `Extension` while the slot
+  stayed `ExtensionPoint` would have given two unrelated concepts the same
+  prefix, and `extensions/extension-points/` reads as a possessive that inverts
+  the real relationship: a point is declared by the kernel and *filled* by an
+  extension, never owned by one. Renamed while there were no extensions written
+  yet, which is the only moment it is free.
+
+- **A manifest is `{ id, engines: { nox } }`.** No `version` and no
+  `apiVersion`: nothing validates or consumes either yet, and a decorative field
+  is worse than a missing one. `engines` is different in kind and was pulled
+  forward from the deferred machinery on purpose — it is what an extension asserts
+  about the runtime it was written for, and adding a *required* field later
+  breaks every manifest at once. Against in-repo builtins the check is
+  tautological; it earns its place the day a contribution ships separately, and
+  by then it is already there.
+- **Compatibility is checked for every extension before any of them activates.**
+  Incompatibility is knowable up front, and finding out halfway leaves a
+  half-built application behind for a reason that was never in doubt.
+- **The runtime version is `NOX_VERSION` in `src/version.ts`**, a constant kept
+  in sync with `package.json` by a test rather than read from disk, and
+  overridable per application so a test can state what it is checking against.
+  An invalid runtime version throws at construction: a version that is not a
+  version makes every extension look incompatible for a reason nobody would find.
+- **`assertIdentifier` throws `TypeError`.** An invalid ID is a mistake at the
+  declaration site, not a runtime condition a caller recovers from. It moved to
+  `identifier.ts` with the pattern, leaving the semver and dependency schemas
+  behind.
+- **`activate` returns `void`; resources are owned through
+  `context.subscriptions`.** The returned-disposable convention was dropped —
+  not for style, for correctness: anything added to `subscriptions` is tracked
+  from the moment it is acquired, so an extension that fails halfway through
+  activation still releases what it took. A returned disposable is lost in
+  exactly that case, and it was a second way to do what `subscriptions` already
+  did.
+- **`NoxApplication` is a composition root, not an extension host.** It activates in
+  registration order, deactivates in reverse, disposes what extensions owned, and
+  refuses configuration once started. It does **not** roll back a failed
+  activation: a builtin that cannot start is a wiring bug, and recovering from
+  one is the deferred machinery. `stop()` still releases whatever activated.
+- **`nox.providers` is the only contribution point declared.** Its consumer
+  (`Agent`) and its producer (the provider adapter) both exist or are next. A
+  `nox.toolSets` point waits for the first concrete tool set — `src/` has none:
+  the only `ToolSet` subclasses are the kernel's own bounded retrieval and the
+  tool router. A point is one line; declaring an empty slot early is how rule 6
+  gets broken by something that looks free.
+- **A provider contributes a factory, not an instance.** `BaseProvider` takes
+  its config at construction and that config belongs to the `Config` service,
+  which may reload. `ProviderContribution` is an object rather than a bare
+  function so later fields do not break every registration site.
+- **Three service tokens: `nox.config`, `nox.database`, `nox.logger`.** Types
+  only, so declaring them keeps the kernel free of concrete imports.
 
 **Debt to fix during the port, not after** — from the previous architecture
 review:

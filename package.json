@@ -9,7 +9,6 @@
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",
     "db:studio": "drizzle-kit studio",
-    "example:plugin": "bun run examples/plugin-demo.ts",
     "test": "bun test --pass-with-no-tests ./src/",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
