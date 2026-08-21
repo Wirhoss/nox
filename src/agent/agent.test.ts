@@ -225,6 +225,7 @@ describe('Agent', () => {
       },
     };
     const agent = new Agent(await openDatabase(), new ToolCallingProvider(), MODEL, {
+      agentId: 'test',
       directToolSets: [grant('direct', guarded)],
       gate: {
         defaultVerdict: 'allow',
@@ -290,6 +291,7 @@ describe('Agent', () => {
       }),
     };
     const agent = new Agent(await openDatabase(), new ToolCallingProvider(), MODEL, {
+      agentId: 'test',
       directToolSets: [grant('direct', guarded)],
       gate: {
         defaultVerdict: 'allow',
@@ -320,6 +322,7 @@ describe('Agent', () => {
 
   test('gates the selected routed tool rather than the call_tool wrapper', async () => {
     const agent = new Agent(await openDatabase(), new RoutingProvider(), MODEL, {
+      agentId: 'test',
       gate: {
         defaultVerdict: 'allow',
         rules: [
@@ -359,6 +362,7 @@ describe('Agent', () => {
   test('sessions opened from the same tool configuration send the same request head', async () => {
     const provider = new RecordingProvider();
     const agent = new Agent(await openDatabase(), provider, MODEL, {
+      agentId: 'test',
       directToolSets: [grant('direct', echoTool())],
       systemPrompt: 'you are nox',
     });
@@ -389,6 +393,7 @@ describe('Agent', () => {
     ];
     const routedToolSets: ToolSetGrant[] = [grant('versions', versionTool('one'))];
     const agent = new Agent(await openDatabase(), provider, MODEL, {
+      agentId: 'test',
       directToolSets,
       routedToolSets,
       systemPrompt: 'system',
@@ -432,6 +437,7 @@ describe('Agent', () => {
   test('rejects ambiguous direct and routed tool assignments before opening', async () => {
     const shared = toolSet(versionTool('one'));
     const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
+      agentId: 'test',
       directToolSets: [{ toolSet: shared, toolSetId: 'direct' }],
       routedToolSets: [{ toolSet: shared, toolSetId: 'routed' }],
       systemPrompt: 'system',
@@ -442,7 +448,10 @@ describe('Agent', () => {
 
   test('sessions from one agent keep separate transcripts', async () => {
     const provider = new RecordingProvider();
-    const agent = new Agent(await openDatabase(), provider, MODEL, { systemPrompt: 'system' });
+    const agent = new Agent(await openDatabase(), provider, MODEL, {
+      agentId: 'test',
+      systemPrompt: 'system',
+    });
 
     const first = await agent.openSession();
     const second = await agent.openSession();
@@ -460,7 +469,7 @@ describe('Agent', () => {
   test('a session resumes by id with its history intact', async () => {
     const database = await openDatabase();
     const provider = new RecordingProvider();
-    const agent = new Agent(database, provider, MODEL, { systemPrompt: 'system' });
+    const agent = new Agent(database, provider, MODEL, { agentId: 'test', systemPrompt: 'system' });
 
     const session = await agent.openSession({ title: 'first run' });
     session.send('remember this');
@@ -483,6 +492,7 @@ describe('Agent', () => {
 
   test('an unknown session id starts a session under that name', async () => {
     const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
+      agentId: 'test',
       systemPrompt: 'system',
     });
 

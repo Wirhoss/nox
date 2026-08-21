@@ -23,6 +23,8 @@ interface SessionStoreOptions {
 }
 
 interface CreateSessionOptions {
+  /** The agent the session is being held with, recorded so it stays known. */
+  agentId?: string;
   metadata?: Readonly<Record<string, unknown>>;
   title?: string;
 }
@@ -275,6 +277,7 @@ class SessionStore {
   public async create(sessionId: string, options: CreateSessionOptions = {}): Promise<SessionRow> {
     const now = Date.now();
     const row: SessionRow = {
+      agentId: options.agentId ?? null,
       createdAt: now,
       metadata: options.metadata ?? null,
       sessionId,

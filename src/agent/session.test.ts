@@ -117,6 +117,7 @@ describe('Session', () => {
   test('a turn is persisted and replays on reopen', async () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
+      agentId: 'test',
       systemPrompt: 'system',
     });
 
@@ -126,6 +127,7 @@ describe('Session', () => {
 
     const resumedProvider = new ScriptedProvider([says('again')]);
     const resumed = await Session.open(database, resumedProvider, MODEL, {
+      agentId: 'test',
       sessionId: session.sessionId,
       systemPrompt: 'system',
     });
@@ -147,6 +149,7 @@ describe('Session', () => {
   test('a resumed session persists where the stored transcript left off', async () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
+      agentId: 'test',
       systemPrompt: 'system',
     });
 
@@ -155,6 +158,7 @@ describe('Session', () => {
     await session.stop();
 
     const resumed = await Session.open(database, new ScriptedProvider([says('again')]), MODEL, {
+      agentId: 'test',
       sessionId: session.sessionId,
       systemPrompt: 'system',
     });
@@ -181,7 +185,7 @@ describe('Session', () => {
       database,
       new ScriptedProvider([calls('echo', 'track-1'), says('done')]),
       MODEL,
-      { context: { tools: { echo: echoTool() } }, systemPrompt: 'system' },
+      { agentId: 'test', context: { tools: { echo: echoTool() } }, systemPrompt: 'system' },
     );
 
     session.send('use the tool');
@@ -204,7 +208,7 @@ describe('Session', () => {
       database,
       new ScriptedProvider([calls('echo', 'track-1'), says('done')]),
       MODEL,
-      { context: { tools: { echo: echoTool() } }, systemPrompt: 'system' },
+      { agentId: 'test', context: { tools: { echo: echoTool() } }, systemPrompt: 'system' },
     );
     const collected = collectUntil(session.events, 'runCompleted');
 
@@ -221,6 +225,7 @@ describe('Session', () => {
   test('a session started without an id gets one and can be resumed by it', async () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([]), MODEL, {
+      agentId: 'test',
       systemPrompt: 'system',
       title: 'First run',
     });
@@ -232,9 +237,55 @@ describe('Session', () => {
     expect(stored?.session.title).toBe('First run');
   });
 
+  test('the agent holding the session is stored with it', async () => {
+    const database = await openDatabase();
+    const session = await Session.open(database, new ScriptedProvider([]), MODEL, {
+      agentId: 'analyst',
+      systemPrompt: 'system',
+    });
+    await session.stop();
+
+    const stored = await new SessionStore(database).load(session.sessionId);
+    expect(stored?.session.agentId).toBe('analyst');
+  });
+
+  test('another agent cannot resume a session it did not open', async () => {
+    const database = await openDatabase();
+    const session = await Session.open(database, new ScriptedProvider([]), MODEL, {
+      agentId: 'analyst',
+      sessionId: 'shared',
+      systemPrompt: 'system',
+    });
+    await session.stop();
+
+    expect(
+      Session.open(database, new ScriptedProvider([]), MODEL, {
+        agentId: 'writer',
+        sessionId: 'shared',
+        systemPrompt: 'system',
+      }),
+    ).rejects.toThrow('belongs to agent analyst');
+  });
+
+  test('a session stored before attribution is adopted by whoever resumes it', async () => {
+    const database = await openDatabase();
+    // What an upgrade finds on disk: rows written when the column did not exist.
+    await new SessionStore(database).create('legacy');
+
+    const resumed = await Session.open(database, new ScriptedProvider([]), MODEL, {
+      agentId: 'writer',
+      sessionId: 'legacy',
+      systemPrompt: 'system',
+    });
+
+    expect(resumed.agentId).toBe('writer');
+    await resumed.stop();
+  });
+
   test('a storage failure is announced and the conversation carries on', async () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
+      agentId: 'test',
       systemPrompt: 'system',
     });
     const collected = collectUntil(session.events, 'runCompleted');
@@ -252,6 +303,7 @@ describe('Session', () => {
   test('stop closes the event stream for its subscribers', async () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
+      agentId: 'test',
       systemPrompt: 'system',
     });
     const drained = (async (): Promise<number> => {

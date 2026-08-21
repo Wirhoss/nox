@@ -42,10 +42,11 @@ function stubSession(sessionId: string, order: string[]): FakeSession {
 }
 
 /** An agent that hands out sessions without a provider or a database behind it. */
-function stubAgent(order: string[]): Agent {
+function stubAgent(agentId: string, order: string[]): Agent {
   let opened = 0;
 
   return {
+    agentId,
     openSession(options: OpenSessionOptions = {}): Promise<Session> {
       opened += 1;
       const session = stubSession(options.sessionId ?? `session-${String(opened)}`, order);
@@ -255,18 +256,18 @@ describe('NoxApplication', () => {
 describe('NoxApplication agents and sessions', () => {
   test('lists registered agents, sorted, and refuses a duplicate id', () => {
     const order: string[] = [];
-    const app = new NoxApplication().addAgent('writer', stubAgent(order));
-    app.addAgent('analyst', stubAgent(order));
+    const app = new NoxApplication().addAgent(stubAgent('writer', order));
+    app.addAgent(stubAgent('analyst', order));
 
     expect(app.agentIds).toEqual(['analyst', 'writer']);
     expect(app.getAgent('writer')).toBeDefined();
     expect(app.getAgent('missing')).toBeUndefined();
-    expect(() => app.addAgent('writer', stubAgent(order))).toThrow('already registered');
+    expect(() => app.addAgent(stubAgent('writer', order))).toThrow('already registered');
   });
 
   test('holds the sessions it opened and drops them when they are closed', async () => {
     const order: string[] = [];
-    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    const app = new NoxApplication().addAgent(stubAgent('writer', order));
     await app.start();
 
     const first = await app.openSession('writer', { sessionId: 'a' });
@@ -283,7 +284,7 @@ describe('NoxApplication agents and sessions', () => {
 
   test('a session stopped through its own handle is no longer running', async () => {
     const order: string[] = [];
-    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    const app = new NoxApplication().addAgent(stubAgent('writer', order));
     await app.start();
 
     const session = await app.openSession('writer', { sessionId: 'a' });
@@ -296,7 +297,7 @@ describe('NoxApplication agents and sessions', () => {
 
   test('refuses to open a session for an unknown agent, or while not running', async () => {
     const order: string[] = [];
-    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    const app = new NoxApplication().addAgent(stubAgent('writer', order));
 
     const beforeStart: unknown = await app.openSession('writer').catch((error: unknown) => error);
     expect((beforeStart as Error).message).toBe('Nox cannot open a session while it is created.');
@@ -313,7 +314,7 @@ describe('NoxApplication agents and sessions', () => {
   test('shutdown ends conversations, then extensions, then what it was given to own', async () => {
     const order: string[] = [];
     const app = new NoxApplication({ extensions: [tracer('nox.only', order)] });
-    app.addAgent('writer', stubAgent(order));
+    app.addAgent(stubAgent('writer', order));
     app.own({
       dispose() {
         order.push('dispose:storage');
@@ -336,7 +337,7 @@ describe('NoxApplication agents and sessions', () => {
 
   test('refuses ownership of a resource once it has started, and agents once stopped', async () => {
     const order: string[] = [];
-    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    const app = new NoxApplication().addAgent(stubAgent('writer', order));
     await app.start();
 
     expect(() =>
@@ -348,6 +349,6 @@ describe('NoxApplication agents and sessions', () => {
     ).toThrow('while Nox is running');
 
     await app.stop();
-    expect(() => app.addAgent('late', stubAgent(order))).toThrow('while Nox is stopped');
+    expect(() => app.addAgent(stubAgent('late', order))).toThrow('while Nox is stopped');
   });
 });

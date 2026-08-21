@@ -366,6 +366,7 @@ describe('OpenAICompletions session regression', () => {
     try {
       const instance = provider();
       const session = await Session.open(database, instance, model, {
+        agentId: 'test',
         context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
         sessionId: 'folded-reasoning-turn',
         systemPrompt: 'be brief',
@@ -384,6 +385,7 @@ describe('OpenAICompletions session regression', () => {
       // Reopen from storage, not from the live Context. The fold and its
       // synthetic assistant anchor must both survive and reconnect by ID.
       const resumed = await Session.open(database, instance, model, {
+        agentId: 'test',
         context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
         sessionId: session.sessionId,
         systemPrompt: 'be brief',

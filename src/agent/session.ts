@@ -21,6 +21,8 @@ import type { ContextOptions } from './context/options';
 import type { AgentEvent } from './events';
 
 interface SessionOptions extends RunnerOptions {
+  /** The agent holding the conversation, stored so the transcript stays attributable. */
+  agentId: string;
   /** Everything the context needs except the history, which comes from storage. */
   context?: Omit<ContextOptions, 'fullHistory' | 'onAppend'>;
   gate?: GatePolicyInput;
@@ -52,6 +54,7 @@ function toUserMessage(text: string): UserMessage {
  * a message by forgetting to subscribe somewhere.
  */
 class Session {
+  readonly #agentId: string;
   readonly #context: Context;
   readonly #events = new EventLog<AgentEvent>();
   readonly #gate?: SessionGate;
@@ -67,6 +70,7 @@ class Session {
     history: readonly Message[],
     options: SessionOptions,
   ) {
+    this.#agentId = options.agentId;
     this.#sessionId = sessionId;
     this.#store = store;
 
@@ -130,11 +134,28 @@ class Session {
 
     const stored = options.sessionId === undefined ? undefined : await store.load(sessionId);
     if (stored === undefined) {
-      await store.create(sessionId, { metadata: options.metadata, title: options.title });
+      await store.create(sessionId, {
+        agentId: options.agentId,
+        metadata: options.metadata,
+        title: options.title,
+      });
+    } else if (stored.session.agentId !== null && stored.session.agentId !== options.agentId) {
+      // A transcript carries one agent's prompt, tools and habits. Resuming it as
+      // a different agent would append a second voice to it and, once history is
+      // searchable across sessions, hand that agent someone else's memory.
+      throw new Error(
+        `Session ${sessionId} belongs to agent ${stored.session.agentId}, ` +
+          `not ${options.agentId}.`,
+      );
     }
 
     owner.session = new Session(sessionId, store, provider, model, stored?.messages ?? [], options);
     return owner.session;
+  }
+
+  /** The agent this conversation is being held with. */
+  public get agentId(): string {
+    return this.#agentId;
   }
 
   /** Everything an observer can see, from the first event of the session. */

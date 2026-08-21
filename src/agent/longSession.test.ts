@@ -140,6 +140,7 @@ describe('a session that runs long enough to fold and compact', () => {
     const database = await openDatabase();
     const provider = new RuleProvider();
     const session = await Session.open(database, provider, MODEL, {
+      agentId: 'test',
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       sessionId: 'long-run',
       systemPrompt: 'system',
@@ -176,6 +177,7 @@ describe('a session that runs long enough to fold and compact', () => {
     // Replay is the source of truth: reopening from storage alone must rebuild
     // the identical working set, reductions included.
     const reopened = await Session.open(database, new RuleProvider(), MODEL, {
+      agentId: 'test',
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       sessionId: 'long-run',
       systemPrompt: 'system',
@@ -190,6 +192,7 @@ describe('a session that runs long enough to fold and compact', () => {
     const database = await openDatabase();
     const provider = new RuleProvider();
     const session = await Session.open(database, provider, MODEL, {
+      agentId: 'test',
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       systemPrompt: 'system',
     });
@@ -226,6 +229,7 @@ describe('a session that runs long enough to fold and compact', () => {
   test('the stored transcript is what replays, not anything held in memory', async () => {
     const database = await openDatabase();
     const session = await Session.open(database, new RuleProvider(), MODEL, {
+      agentId: 'test',
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       sessionId: 'durable',
       systemPrompt: 'system',
@@ -247,6 +251,7 @@ describe('a session that runs long enough to fold and compact', () => {
     const database = await openDatabase();
     const provider = new RuleProvider();
     const session = await Session.open(database, provider, MODEL, {
+      agentId: 'test',
       // No contextWindow: the default an agent gets when nobody configures one.
       context: { tools: { work: workTool() } },
       systemPrompt: 'system',

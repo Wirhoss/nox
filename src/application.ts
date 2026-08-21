@@ -104,10 +104,13 @@ class NoxApplication {
    * surface does, not something a restart does. Extensions and services are not
    * like that — an extension already activated would see the set move.
    */
-  public addAgent(agentId: string, agent: Agent): this {
+  public addAgent(agent: Agent): this {
     if (this.#state === 'stopped' || this.#state === 'stopping') {
       throw new Error(`Cannot add an agent while Nox is ${this.#state}.`);
     }
+    // The agent names itself, because its sessions are stored under that name.
+    // A registry key of its own could disagree with what the transcripts say.
+    const { agentId } = agent;
     if (this.#agents.has(agentId)) {
       throw new Error(`An agent is already registered as ${agentId}.`);
     }

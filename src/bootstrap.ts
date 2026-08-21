@@ -107,12 +107,15 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   });
 
   application.addAgent(
-    DEFAULT_AGENT_ID,
     new Agent(
       database,
       provider,
       { contextWindow: providerEnv.contextWindow, modelId: providerEnv.modelId, type: 'text' },
-      { logger, systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+      {
+        agentId: DEFAULT_AGENT_ID,
+        logger,
+        systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      },
     ),
   );
 

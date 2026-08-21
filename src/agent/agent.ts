@@ -11,6 +11,11 @@ import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
 
 interface AgentOptions extends RunnerOptions {
+  /**
+   * Who this agent is. Every session it opens is stored under it, so a
+   * transcript stays attributable to the prompt and tools that produced it.
+   */
+  agentId: string;
   /** Context policy, minus what a session supplies: history, sink and tools. */
   context?: Omit<ContextOptions, 'fullHistory' | 'logger' | 'onAppend' | 'tools'>;
   directToolSets?: readonly ToolSetGrant[];
@@ -117,6 +122,7 @@ function composeSessionTools(
  * a later session may use newer sets without changing any session already alive.
  */
 class Agent {
+  readonly #agentId: string;
   readonly #context?: Omit<ContextOptions, 'fullHistory' | 'logger' | 'onAppend' | 'tools'>;
   readonly #database: Database;
   readonly #directToolSets: readonly ToolSetGrant[];
@@ -135,6 +141,7 @@ class Agent {
     model: ModelConfig,
     options: AgentOptions,
   ) {
+    this.#agentId = options.agentId;
     this.#database = database;
     this.#provider = provider;
     this.#model = model;
@@ -146,6 +153,10 @@ class Agent {
     this.#maxIterations = options.maxIterations;
     this.#routedToolSets = options.routedToolSets ?? [];
     this.#systemPrompt = options.systemPrompt;
+  }
+
+  public get agentId(): string {
+    return this.#agentId;
   }
 
   public get model(): ModelConfig {
@@ -164,6 +175,7 @@ class Agent {
 
     return Session.open(this.#database, this.#provider, this.#model, {
       ...options,
+      agentId: this.#agentId,
       // The model's own window is the budget unless the agent overrode it.
       context: { contextWindow: this.#model.contextWindow, ...this.#context, tools },
       gate: this.#gate,
