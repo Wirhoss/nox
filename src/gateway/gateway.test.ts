@@ -7,8 +7,10 @@ import { z } from 'zod';
 
 import { Agent } from '../agent/agent';
 import { NoxApplication } from '../application';
+import { GrantAuthorizationProvider } from '../auth/authorization';
 import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
+import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
 import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Gateway } from './gateway';
 
@@ -148,12 +150,12 @@ class TestBroker implements Broker {
   }
 
   /** Someone says something. The id is the transport's own, reused to retry. */
-  public say(conversationId: string, text: string, messageId?: string): void {
+  public say(conversationId: string, text: string, messageId?: string, senderId = 'someone'): void {
     this.#messages += 1;
     this.#host?.receive({
       conversationId,
       messageId: messageId ?? `m${String(this.#messages)}`,
-      senderId: 'someone',
+      senderId,
       text,
       type: 'message',
     });
@@ -181,12 +183,14 @@ interface Harness {
   gateway: Gateway;
 }
 
+const catalog = testCatalog();
+
 async function harness(
   database: Database,
   broker: TestBroker,
   options: {
-    approvers?: readonly string[];
     gate?: GatePolicyInput;
+    grants?: Readonly<Record<string, readonly string[]>>;
     provider?: ChatProvider;
     toolSets?: readonly ToolSetGrant[];
   } = {},
@@ -197,6 +201,7 @@ async function harness(
   application.addAgent(
     new Agent(database, options.provider ?? new TwoFragmentProvider(), MODEL, {
       agentId: 'assistant',
+      authorities: catalog,
       directToolSets: options.toolSets,
       gate: options.gate,
       systemPrompt: 'system',
@@ -204,7 +209,18 @@ async function harness(
   );
 
   const gateway = new Gateway(application, {
-    brokers: [{ agentId: 'assistant', approvers: options.approvers, broker, brokerId: 'test' }],
+    brokers: [
+      {
+        agentId: 'assistant',
+        authorization: new GrantAuthorizationProvider(
+          'test',
+          options.grants ?? { someone: ['*'] },
+          catalog,
+        ),
+        broker,
+        brokerId: 'test',
+      },
+    ],
     database,
   });
   application.setGateway(gateway);
@@ -327,6 +343,7 @@ describe('Gateway', () => {
   describe('permissions', () => {
     function guardedTool(executions: { count: number }): Tool {
       return {
+        authority: TEST_AUTHORITY,
         description: 'echoes',
         name: 'echo',
         parameters: z.object({}),
@@ -343,40 +360,42 @@ describe('Gateway', () => {
 
     async function guarded(
       broker: TestBroker,
-      approvers: readonly string[],
+      grants?: Readonly<Record<string, readonly string[]>>,
     ): Promise<{ executions: { count: number }; harnessed: Harness }> {
       const executions = { count: 0 };
       const harnessed = await harness(await openDatabase(), broker, {
-        approvers,
         gate: {
           defaultVerdict: 'allow',
           escalationTimeoutMs: 10_000,
           rules: [{ reason: 'needs a human', tools: ['echo'], verdict: 'escalate' }],
         },
+        grants,
         provider: new ToolCallingProvider(),
         toolSets: [{ toolSet: new TestToolSet([guardedTool(executions)]), toolSetId: 'direct' }],
       });
       return { executions, harnessed };
     }
 
-    test('asks the conversation and runs the tool once an approver answers', async () => {
+    test('asks the conversation and runs the tool once the originator answers', async () => {
       const broker = new TestBroker({ permissions: true, streaming: false });
-      const { executions, harnessed } = await guarded(broker, ['boss']);
+      const { executions, harnessed } = await guarded(broker, { alice: ['*'] });
 
-      broker.say('chat-1', 'usa echo');
+      broker.say('chat-1', 'usa echo', undefined, 'alice');
       const asked = await waitFor(
         () => broker.delivered.find((event) => event.type === 'permission'),
         'A permission request',
       );
       expect(executions.count).toBe(0);
       expect(asked.request.toolName).toBe('echo');
+      expect(asked.request.runAuthority.principal).toEqual({ issuer: 'test', subject: 'alice' });
 
-      // Someone who is not an approver is a bystander, whatever the transport says.
-      broker.answer('chat-1', asked.request.requestId, 'stranger', 'denied');
+      // Anyone but the principal whose run asked is a bystander, whatever the
+      // transport says and whatever else they are allowed to do themselves.
+      broker.answer('chat-1', asked.request.requestId, 'bob', 'denied');
       await harnessed.gateway.drain();
       expect(harnessed.application.sessions[0]?.session.getPendingPermissions()).toHaveLength(1);
 
-      broker.answer('chat-1', asked.request.requestId, 'boss', { approved: 'once' });
+      broker.answer('chat-1', asked.request.requestId, 'alice', { approved: 'once' });
       await settle(harnessed);
 
       expect(executions.count).toBe(1);
@@ -384,11 +403,30 @@ describe('Gateway', () => {
       expect(broker.texts('message')).toEqual(['done']);
     });
 
-    test('does not ask a transport that has nobody allowed to answer', async () => {
-      const broker = new TestBroker({ permissions: true });
-      const { executions, harnessed } = await guarded(broker, []);
+    test('never lets prose in the conversation resolve a pending call', async () => {
+      const broker = new TestBroker({ permissions: true, streaming: false });
+      const { executions, harnessed } = await guarded(broker, { alice: ['*'] });
 
-      broker.say('chat-1', 'usa echo');
+      broker.say('chat-1', 'usa echo', undefined, 'alice');
+      await waitFor(
+        () => broker.delivered.find((event) => event.type === 'permission'),
+        'A permission request',
+      );
+
+      for (const text of ['approve', 'sí, dale', 'yes']) {
+        broker.say('chat-1', text, `answer-${text}`, 'alice');
+      }
+      await harnessed.gateway.drain();
+
+      expect(harnessed.application.sessions[0]?.session.getPendingPermissions()).toHaveLength(1);
+      expect(executions.count).toBe(0);
+    });
+
+    test('does not ask a transport that cannot put a question to a human', async () => {
+      const broker = new TestBroker({ permissions: false });
+      const { executions, harnessed } = await guarded(broker, { alice: ['*'] });
+
+      broker.say('chat-1', 'usa echo', undefined, 'alice');
       await waitFor(
         () => harnessed.application.sessions[0]?.session.getPendingPermissions()[0],
         'A pending permission',
@@ -396,6 +434,18 @@ describe('Gateway', () => {
 
       expect(broker.delivered.filter((event) => event.type === 'permission')).toEqual([]);
       expect(executions.count).toBe(0);
+    });
+
+    test('denies a principal without the grant before the gate ever asks', async () => {
+      const broker = new TestBroker({ permissions: true, streaming: false });
+      const { executions, harnessed } = await guarded(broker, { alice: ['nox.history.*'] });
+
+      broker.say('chat-1', 'usa echo', undefined, 'alice');
+      await settle(harnessed);
+
+      expect(executions.count).toBe(0);
+      expect(broker.delivered.filter((event) => event.type === 'permission')).toEqual([]);
+      expect(harnessed.application.sessions[0]?.session.getPendingPermissions()).toEqual([]);
     });
   });
 });

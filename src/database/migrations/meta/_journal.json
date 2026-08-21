@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1786921684524,
-      "tag": "0000_crazy_toad",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1787281976351,
-      "tag": "0001_long_landau",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1787283395415,
-      "tag": "0002_fancy_dakota_north",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1787288917972,
-      "tag": "0003_cheerful_black_bolt",
+      "when": 1787323764956,
+      "tag": "0000_jazzy_fabian_cortez",
       "breakpoints": true
     }
   ]

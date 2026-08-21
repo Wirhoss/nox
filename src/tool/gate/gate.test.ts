@@ -1,13 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 
+import { messageAuthority, type RunAuthority } from '../../auth/principal';
+import { TEST_AUTHORITY, testOrigin, testPrincipal } from '../../testFixtures';
 import { SessionGate } from './gate';
 
 import type { GatePolicyInput } from './config';
 import type { GateRequest, PendingPermission } from './types';
 
+const ALICE = testPrincipal('alice');
+
+function authorityOf(subject: string): RunAuthority {
+  return messageAuthority(testOrigin(subject), `message-${subject}`);
+}
+
 function request(overrides: Partial<GateRequest> = {}): GateRequest {
   return {
+    authority: TEST_AUTHORITY,
     params: { command: 'ls' },
+    runAuthority: authorityOf('alice'),
+    runId: 'run-1',
     sessionId: 'session-1',
     title: 'Run command',
     toolName: 'bash',
@@ -187,7 +198,7 @@ describe('SessionGate escalation', () => {
     const call = request();
     const pending = await requestApproval(gate, call);
 
-    expect(gate.resolve(pending.request.requestId, { approved: 'session' })).toBeTrue();
+    expect(gate.resolve(pending.request.requestId, { approved: 'session' }, ALICE)).toBeTrue();
     expect(await pending.outcome).toEqual({ resolution: 'approved', scope: 'session' });
     expect(await gate.evaluate(call)).toMatchObject({ decidedBy: 'memo', verdict: 'allow' });
     expect(await gate.evaluate(request({ params: { command: 'ls -la' } }))).toMatchObject({
@@ -210,7 +221,7 @@ describe('SessionGate escalation', () => {
       signals: [],
       verdict: 'escalate',
     });
-    gate.resolve(pending.request.requestId, { approved: 'session' });
+    gate.resolve(pending.request.requestId, { approved: 'session' }, ALICE);
     await pending.outcome;
 
     expect(await gate.evaluate(call)).toMatchObject({ reason: 'blocked', verdict: 'deny' });
@@ -220,12 +231,12 @@ describe('SessionGate escalation', () => {
     const gate = escalating();
     const call = request();
     const once = await requestApproval(gate, call);
-    gate.resolve(once.request.requestId, { approved: 'once' });
+    gate.resolve(once.request.requestId, { approved: 'once' }, ALICE);
     await once.outcome;
     expect(await gate.evaluate(call)).toMatchObject({ verdict: 'escalate' });
 
     const denied = await requestApproval(gate, call);
-    gate.resolve(denied.request.requestId, 'denied');
+    gate.resolve(denied.request.requestId, 'denied', ALICE);
     expect(await denied.outcome).toEqual({ resolution: 'denied' });
     expect(await gate.evaluate(call)).toMatchObject({ verdict: 'escalate' });
   });
@@ -246,7 +257,7 @@ describe('SessionGate escalation', () => {
     const aborted = gate.requestPermission(request(), decision, controller.signal);
     controller.abort();
     expect(await aborted.outcome).toEqual({ resolution: 'aborted' });
-    expect(gate.resolve(aborted.request.requestId, { approved: 'once' })).toBeFalse();
+    expect(gate.resolve(aborted.request.requestId, { approved: 'once' }, ALICE)).toBeFalse();
   });
 
   test('stop aborts every concurrent request', async () => {

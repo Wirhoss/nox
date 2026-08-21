@@ -1,3 +1,4 @@
+import type { PrincipalRef, RunAuthority } from '../../auth/principal';
 import type { ToolRisk } from '../tool';
 
 interface RiskSignal {
@@ -7,10 +8,20 @@ interface RiskSignal {
   readonly severity: 'approval' | 'deny' | 'info' | 'review';
 }
 
+/**
+ * One concrete call, put to the Gate. It arrives already authorized: the
+ * principal has `use` for `authority`, and what is left to decide is whether
+ * these exact parameters are safe. Holding `authority` and the run's authority
+ * here is what lets a decision be audited and an escalation be addressed to
+ * the one person entitled to answer it.
+ */
 interface GateRequest {
+  readonly authority: string;
   readonly params: Readonly<Record<string, unknown>>;
   readonly preview?: string;
   readonly risk?: ToolRisk;
+  readonly runAuthority: RunAuthority;
+  readonly runId: string;
   readonly sessionId: string;
   readonly title: string;
   readonly toolName: string;
@@ -60,6 +71,7 @@ interface PendingPermission {
 
 interface GateAuditRecord extends GateRequest {
   readonly createdAt: Date;
+  readonly resolvedBy?: PrincipalRef;
   readonly decidedBy: string;
   readonly decisionId: string;
   readonly reason: string;
@@ -72,7 +84,12 @@ interface GateAuditRecord extends GateRequest {
 
 interface GateAuditSink {
   record(record: GateAuditRecord): void;
-  resolve(decisionId: string, resolution: PermissionResolution, resolvedAt: Date): void;
+  resolve(
+    decisionId: string,
+    resolution: PermissionResolution,
+    resolvedAt: Date,
+    resolvedBy?: PrincipalRef,
+  ): void;
 }
 
 export type {

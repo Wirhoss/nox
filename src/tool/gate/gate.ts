@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 
+import { principalKey, type PrincipalRef, samePrincipal } from '../../auth/principal';
 import { stableStringify } from '../../utils/json';
 import { parseOrThrow } from '../../utils/validate';
 import { type GatePolicy, type GatePolicyInput, gatePolicySchema } from './config';
@@ -25,12 +26,24 @@ interface SessionGateOptions {
 interface PendingEntry {
   readonly finish: (resolution: PermissionResolution) => void;
   readonly request: PermissionRequest;
+  resolvedBy?: PrincipalRef;
 }
 
 const VERDICT_STRENGTH = { abstain: 0, allow: 1, escalate: 2, deny: 3 } as const;
 
+/**
+ * What a session approval remembers. The principal is part of it: two people
+ * may both hold `use` for an authority, and an approval Alice gave for one
+ * exact call is not an approval Bob ever asked for. Leaving it out would let a
+ * memo grant silently across participants of a shared conversation.
+ */
 function callKey(request: GateRequest): string {
-  return `${request.toolSetId}\n${request.toolName}\n${stableStringify(request.params)}`;
+  return [
+    principalKey(request.runAuthority.principal),
+    request.toolSetId,
+    request.toolName,
+    stableStringify(request.params),
+  ].join('\n');
 }
 
 /** One live session's immutable policy, approvals and pending human decisions. */
@@ -144,11 +157,14 @@ class SessionGate {
       if (lifecycle.onAbort !== undefined) {
         signal?.removeEventListener('abort', lifecycle.onAbort);
       }
+      // Read before the entry leaves the map: `resolve` stamps who answered on
+      // it, and the audit line is the only place that ever gets to say so.
+      const resolvedBy = this.#pending.get(requestId)?.resolvedBy;
       this.#pending.delete(requestId);
       if (resolution.resolution === 'approved' && resolution.scope === 'session') {
         this.#approved.add(callKey(request));
       }
-      this.#audit?.resolve(requestId, resolution, new Date());
+      this.#audit?.resolve(requestId, resolution, new Date(), resolvedBy);
       finishOutcome(resolution);
     };
     lifecycle.onAbort = (): void => {
@@ -169,13 +185,23 @@ class SessionGate {
     return Object.freeze([...this.#pending.values()].map(({ request }) => request));
   }
 
+  /**
+   * Answers a pending request. `resolvedBy` is required and has to be the
+   * principal whose run asked: only the originator may approve, there is no
+   * delegated approval and no administrator rescue. Enforcing it here rather
+   * than only at the transport means no surface can reach around it.
+   */
   public resolve(
     requestId: string,
     resolution: 'denied' | { approved: 'once' | 'session' },
+    resolvedBy: PrincipalRef,
   ): boolean {
     const pending = this.#pending.get(requestId);
     if (pending === undefined) return false;
+    if (!samePrincipal(pending.request.runAuthority.principal, resolvedBy)) return false;
+    if (pending.request.expiresAt.getTime() <= Date.now()) return false;
 
+    pending.resolvedBy = resolvedBy;
     pending.finish(
       resolution === 'denied'
         ? { resolution: 'denied' }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { TEST_AUTHORITY } from '../testFixtures';
 import { InvalidToolParamsError, UnknownToolError } from './error';
 import { ToolRouter } from './router';
 
@@ -17,6 +18,7 @@ function immediateTool(
   run: (ctx: ToolContext) => Promise<MessageContent[]> = () => Promise.resolve(text(name)),
 ): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description,
     name,
     parameters: z.object({}),
@@ -60,6 +62,7 @@ describe('ToolRouter', () => {
     let receivedSignal: AbortSignal | undefined;
     const parameters = z.object({ path: z.string().describe('File path to read.') });
     const readFile: Tool<typeof parameters> = {
+      authority: TEST_AUTHORITY,
       description: 'Read a file.',
       name: 'read_file',
       parameters,
@@ -93,6 +96,7 @@ describe('ToolRouter', () => {
   test('preserves deferred execution instead of running it inside call_tool', async () => {
     const result = Promise.resolve(text('finished'));
     const deferred: Tool = {
+      authority: TEST_AUTHORITY,
       description: 'Start background work.',
       name: 'background_job',
       parameters: z.object({}),
@@ -116,6 +120,7 @@ describe('ToolRouter', () => {
   test('reports malformed JSON, invalid routed params, and unknown routed tools', () => {
     const parameters = z.object({ count: z.number() });
     const counted: Tool<typeof parameters> = {
+      authority: TEST_AUTHORITY,
       description: 'Count things.',
       name: 'count',
       parameters,
