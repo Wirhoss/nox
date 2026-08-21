@@ -4,16 +4,20 @@ import { isAbsolute, join } from 'node:path';
 import { Agent } from './agent/agent';
 import { ApiServer } from './api/server';
 import { NoxApplication } from './application';
+import { AuthorityCatalog, type AuthorityDefinition } from './auth/authority';
+import { GrantAuthorizationProvider } from './auth/authorization';
+import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { Database } from './database/database';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
+import { authorities } from './extensions/contribution-points/authorities';
 import { brokers } from './extensions/contribution-points/brokers';
 import { type ProviderConfig, providers } from './extensions/contribution-points/providers';
 import { type ToolSetConfig, toolSets } from './extensions/contribution-points/toolsets';
 import { toDisposable } from './extensions/disposable';
-import { type BrokerGrant, Gateway } from './gateway/gateway';
+import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService } from './services';
 
@@ -74,8 +78,8 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   application.own(await openApi(application, appConfig.api, database, logger));
 
   try {
-    await composeAgents(application, config, database, env.configDir, logger);
-    await openGateway(application, config, database, logger);
+    const catalog = await composeAgents(application, config, database, env.configDir, logger);
+    await openGateway(application, config, catalog, database, logger);
   } catch (error) {
     // Everything above is already open. A bootstrap that throws leaves nothing
     // running — a half-composed Nox holding a port and a database file is worse
@@ -109,6 +113,24 @@ async function openApi(
   });
 }
 
+/**
+ * Every authority this Nox knows: the core's own, plus one per contribution at
+ * the authorities point. Ownership is not something an extension asserts about
+ * itself — the registry recorded who registered what, and the catalog checks
+ * that each name sits inside that owner's namespace.
+ */
+function buildAuthorityCatalog(application: NoxApplication): AuthorityCatalog {
+  const contributed: AuthorityDefinition[] = application.contributions
+    .list(authorities)
+    .map((contribution) => ({
+      description: contribution.value.description,
+      id: contribution.id,
+      ownerExtensionId: contribution.extensionId,
+    }));
+
+  return AuthorityCatalog.from([...CORE_AUTHORITIES, ...contributed]);
+}
+
 /** Activates the extensions and registers one agent per blueprint on disk. */
 async function composeAgents(
   application: NoxApplication,
@@ -116,13 +138,17 @@ async function composeAgents(
   database: Database,
   configDir: string,
   logger: Logger,
-): Promise<void> {
+): Promise<AuthorityCatalog> {
   await application.start();
 
   // Only now do contributed config sections have schemas: each is the union of
   // what the extensions just contributed, and before activation there was
   // nothing to validate them against.
   await config.resolve(application.contributions);
+
+  // Likewise the catalog: an authority an extension has not contributed yet does
+  // not exist, and a tool naming one fails here rather than at call time.
+  const catalog = buildAuthorityCatalog(application);
 
   const blueprints = config.get('blueprints');
   if (Object.keys(blueprints).length === 0) {
@@ -170,6 +196,7 @@ async function composeAgents(
     application.addAgent(
       new Agent(database, provider, model, {
         agentId,
+        authorities: catalog,
         compactionModel,
         compactionProvider,
         context: blueprint.context,
@@ -182,6 +209,8 @@ async function composeAgents(
       }),
     );
   }
+
+  return catalog;
 }
 
 /**
@@ -193,6 +222,7 @@ async function composeAgents(
 async function openGateway(
   application: NoxApplication,
   config: Config,
+  catalog: AuthorityCatalog,
   database: Database,
   logger: Logger,
 ): Promise<void> {
@@ -214,12 +244,44 @@ async function openGateway(
       );
     }
 
+    const conversationGrants = Object.fromEntries(
+      Object.entries(entry.conversations).map(([conversationId, override]) => {
+        const agentId = override.agent ?? entry.agent;
+        if (application.getAgent(agentId) === undefined) {
+          throw new Error(
+            `Conversation "${conversationId}" on broker "${brokerId}" answers as agent ` +
+              `"${agentId}", which no blueprint defines.`,
+          );
+        }
+
+        const resolved: BrokerConversationGrant = Object.freeze({
+          agentId,
+          authorization: new GrantAuthorizationProvider(
+            brokerId,
+            override.grants,
+            catalog,
+            `grants:${brokerId}:${conversationId}`,
+          ),
+        });
+        return [conversationId, resolved] as const;
+      }),
+    );
+
     grants.push(
       Object.freeze({
         agentId: entry.agent,
-        approvers: entry.approvers,
+        // Built once per base route and configured conversation. Every grant is
+        // checked against the global catalog now rather than becoming a silent
+        // permission that can never match.
+        authorization: new GrantAuthorizationProvider(
+          brokerId,
+          entry.grants,
+          catalog,
+          `grants:${brokerId}`,
+        ),
         broker: contribution.value.create(entry),
         brokerId,
+        conversations: Object.freeze(conversationGrants),
       }),
     );
   }

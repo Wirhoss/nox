@@ -14,4 +14,9 @@ export type {
   OutboundPermission,
   OutboundPermissionResolved,
 } from './broker';
-export type { BrokerGrant, GatewayOptions, MessageGateway } from './gateway';
+export type {
+  BrokerConversationGrant,
+  BrokerGrant,
+  GatewayOptions,
+  MessageGateway,
+} from './gateway';
