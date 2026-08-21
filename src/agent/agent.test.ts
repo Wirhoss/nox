@@ -181,7 +181,7 @@ class TestToolSet extends ToolSet {
   readonly #definitions: readonly Tool[];
 
   constructor(definitions: readonly Tool[]) {
-    super();
+    super('test', 'Tool set used by agent tests.');
     this.#definitions = definitions;
     this.addTools();
   }

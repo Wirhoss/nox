@@ -30,11 +30,11 @@ function localImports(file: string): string[] {
     .map((specifier) => posix(relative(SRC, resolve(SRC, dirname(file), specifier))));
 }
 
-/** `extensions/builtin/openai/x.ts` → `extensions/builtin/openai`. */
+/** `extensions/builtin/providers/openai/x.ts` → `extensions/builtin/providers/openai`. */
 function builtinPackage(path: string): string | undefined {
   if (!path.startsWith(BUILTIN)) return undefined;
-  const name = path.slice(BUILTIN.length).split('/')[0];
-  return name === undefined ? undefined : `${BUILTIN}${name}`;
+  const [point, name] = path.slice(BUILTIN.length).split('/');
+  return point === undefined || name === undefined ? undefined : `${BUILTIN}${point}/${name}`;
 }
 
 describe('builtin extensions', () => {

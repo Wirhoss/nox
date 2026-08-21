@@ -7,8 +7,10 @@ import { NoxApplication } from './application';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { Database } from './database/database';
-import { openAIExtension } from './extensions/builtin/openai/extension';
+import { openAIExtension } from './extensions/builtin/providers/openai/extension';
+import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { type ProviderConfig, providers } from './extensions/contribution-points/providers';
+import { type ToolSetConfig, toolSets } from './extensions/contribution-points/toolsets';
 import { toDisposable } from './extensions/disposable';
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService } from './services';
@@ -17,6 +19,7 @@ import type { ApiConfig } from './api/config';
 import type { Blueprint } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
+import type { ToolSet, ToolSetGrant } from './tool/tool';
 
 interface BootstrapOptions {
   env?: EnvSource;
@@ -52,7 +55,10 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       : join(env.dataDir, appConfig.database.path),
   });
 
-  const application = new NoxApplication({ extensions: [openAIExtension], logger })
+  const application = new NoxApplication({
+    extensions: [openAIExtension, webToolsExtension],
+    logger,
+  })
     .provide(configService, config)
     .provide(databaseService, database)
     .provide(loggerService, logger);
@@ -110,9 +116,9 @@ async function composeAgents(
 ): Promise<void> {
   await application.start();
 
-  // Only now does `providers.json` have a schema: it is the union of what the
-  // extensions just contributed, and before activation there was nothing to
-  // validate it against.
+  // Only now do contributed config sections have schemas: each is the union of
+  // what the extensions just contributed, and before activation there was
+  // nothing to validate them against.
   await config.resolve(application.contributions);
 
   const blueprints = config.get('blueprints');
@@ -121,18 +127,42 @@ async function composeAgents(
   }
 
   const configuredProviders = config.get('providers');
-  const opened = new Map<string, ChatProvider>();
+  const configuredToolSets = config.get('toolSets');
+  const openedProviders = new Map<string, ChatProvider>();
+  const openedToolSets = new Map<string, ToolSet>();
   for (const [agentId, blueprint] of Object.entries(blueprints)) {
-    const provider = openProvider(application, configuredProviders, opened, blueprint.provider);
+    const provider = openProvider(
+      application,
+      configuredProviders,
+      openedProviders,
+      blueprint.provider,
+    );
     const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
     const compactionProvider =
       blueprint.compaction === undefined
         ? provider
-        : openProvider(application, configuredProviders, opened, blueprint.compaction.provider);
+        : openProvider(
+            application,
+            configuredProviders,
+            openedProviders,
+            blueprint.compaction.provider,
+          );
     const compactionModel =
       blueprint.compaction === undefined
         ? model
         : modelConfigFor(compactionProvider, blueprint.compaction.model);
+    const directToolSets = grantToolSets(
+      application,
+      configuredToolSets,
+      openedToolSets,
+      blueprint.toolSets.direct,
+    );
+    const routedToolSets = grantToolSets(
+      application,
+      configuredToolSets,
+      openedToolSets,
+      blueprint.toolSets.routed,
+    );
 
     application.addAgent(
       new Agent(database, provider, model, {
@@ -140,9 +170,11 @@ async function composeAgents(
         compactionModel,
         compactionProvider,
         context: blueprint.context,
+        directToolSets,
         gate: blueprint.gate,
         logger,
         maxIterations: blueprint.maxIterations,
+        routedToolSets,
         systemPrompt: blueprint.systemPrompt,
       }),
     );
@@ -182,6 +214,52 @@ function openProvider(
   const provider = contribution.value.create(entry);
   opened.set(providerId, provider);
   return provider;
+}
+
+/** Opens configured tool-set instances once and grants them under their config IDs. */
+function grantToolSets(
+  application: NoxApplication,
+  configured: Record<string, ToolSetConfig>,
+  opened: Map<string, ToolSet>,
+  toolSetIds: readonly string[],
+): ToolSetGrant[] {
+  const grants: ToolSetGrant[] = [];
+  const seen = new Set<string>();
+
+  for (const toolSetId of toolSetIds) {
+    if (seen.has(toolSetId)) {
+      throw new Error(`Tool set "${toolSetId}" is granted more than once in one blueprint list.`);
+    }
+    seen.add(toolSetId);
+
+    let toolSet = opened.get(toolSetId);
+    if (toolSet === undefined) {
+      const entry = configured[toolSetId];
+      if (entry === undefined) {
+        const known = Object.keys(configured);
+        throw new Error(
+          `A blueprint names tool set "${toolSetId}", which toolsets.json does not ` +
+            (known.length === 0
+              ? 'configure at all.'
+              : `configure. Configured: ${known.join(', ')}.`),
+        );
+      }
+
+      const contribution = application.contributions.get(toolSets, entry.type);
+      if (contribution === undefined) {
+        throw new Error(
+          `Tool set "${toolSetId}" is of type "${entry.type}", which no extension contributed.`,
+        );
+      }
+
+      toolSet = contribution.value.create(entry);
+      opened.set(toolSetId, toolSet);
+    }
+
+    grants.push(Object.freeze({ toolSet, toolSetId }));
+  }
+
+  return grants;
 }
 
 /**

@@ -109,6 +109,7 @@ describe('blueprint config', () => {
       model: 'main-model',
       provider: 'main',
       systemPrompt: 'be exact',
+      toolSets: { direct: [], routed: [] },
     });
 
     expect(
@@ -120,12 +121,14 @@ describe('blueprint config', () => {
         model: 'main-model',
         provider: 'main',
         systemPrompt: 'be exact',
+        toolSets: { direct: ['clock'], routed: ['internet'] },
       }),
     ).toMatchObject({
       compaction: { model: 'small-model', provider: 'compact-provider' },
       context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
       generation: { maxTokens: 1000, temperature: 0.2 },
       maxIterations: 'unlimited',
+      toolSets: { direct: ['clock'], routed: ['internet'] },
     });
 
     expect(

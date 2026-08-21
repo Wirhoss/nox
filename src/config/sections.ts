@@ -1,4 +1,6 @@
+import { brokerConfigSchema, brokers } from '../extensions/contribution-points/brokers';
 import { providerConfigSchema, providers } from '../extensions/contribution-points/providers';
+import { toolSetConfigSchema, toolSets } from '../extensions/contribution-points/toolsets';
 import { appConfigSchema } from './app';
 import { blueprintSchema } from './blueprint';
 import { contributionSection, directorySection, fileSection, type SectionValue } from './section';
@@ -21,11 +23,23 @@ const sections = {
     entrySchema: blueprintSchema,
     name: 'blueprints',
   }),
+  brokers: contributionSection({
+    applies: 'restart',
+    baseSchema: brokerConfigSchema,
+    name: 'brokers.json',
+    point: brokers,
+  }),
   providers: contributionSection({
     applies: 'restart',
     baseSchema: providerConfigSchema,
     name: 'providers.json',
     point: providers,
+  }),
+  toolSets: contributionSection({
+    applies: 'restart',
+    baseSchema: toolSetConfigSchema,
+    name: 'toolsets.json',
+    point: toolSets,
   }),
 };
 

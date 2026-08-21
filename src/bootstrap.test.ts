@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { ApiServer } from './api/server';
 import { bootstrap } from './bootstrap';
 import { providers } from './extensions/contribution-points/providers';
+import { toolSets } from './extensions/contribution-points/toolsets';
 import { silentLogger } from './logger/logger';
 import { configService, databaseService, loggerService } from './services';
 
@@ -52,6 +53,7 @@ interface BootOptions {
   blueprints?: Record<string, unknown>;
   dataDir?: string;
   providers?: unknown;
+  toolSets?: unknown;
 }
 
 function seed(options: BootOptions = {}): EnvSource {
@@ -60,6 +62,7 @@ function seed(options: BootOptions = {}): EnvSource {
   // — or a Nox already running on this machine — fight over the same socket.
   writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
   writeFileSync(join(configDir, 'providers.json'), JSON.stringify(options.providers ?? PROVIDERS));
+  writeFileSync(join(configDir, 'toolsets.json'), JSON.stringify(options.toolSets ?? {}));
 
   mkdirSync(join(configDir, 'blueprints'), { recursive: true });
   for (const [name, blueprint] of Object.entries(options.blueprints ?? { nox: NOX })) {
@@ -100,6 +103,26 @@ describe('bootstrap', () => {
     expect(application.agentIds).toEqual(['nox']);
     expect(application.getAgent('nox')?.model).toEqual({ modelId: 'gpt-test', type: 'text' });
     expect(application.getAgent('nox')?.systemPrompt).toBe('be exact');
+  });
+
+  test('wires a contributed tool-set instance into a blueprint', async () => {
+    const application = await boot({
+      blueprints: {
+        nox: { ...NOX, toolSets: { direct: ['internet'], routed: [] } },
+      },
+      toolSets: {
+        internet: {
+          search: { url: 'https://search.example.test' },
+          type: 'web',
+        },
+      },
+    });
+
+    expect(application.contributions.get(toolSets, 'web')?.extensionId).toBe('nox.toolset.web');
+    expect(application.services.get(configService).get('toolSets')).toHaveProperty('internet');
+
+    const session = await application.openSession('nox');
+    await application.closeSession(session.sessionId);
   });
 
   test('registers one agent per file in the blueprints directory', async () => {
@@ -208,12 +231,13 @@ describe('bootstrap', () => {
     expect(application.sessions).toEqual([]);
     expect(database.isOpen).toBe(false);
     expect(application.contributions.has(providers, 'openai_completions')).toBe(false);
+    expect(application.contributions.has(toolSets, 'web')).toBe(false);
   });
 
   test('answers the health probes over HTTP, and stops answering once stopped', async () => {
     const api = { host: '127.0.0.1', port: 39_517 };
     const application = await boot({ app: { api } });
-    const url = `http://${api.host}:${api.port}`;
+    const url = `http://${api.host}:${String(api.port)}`;
 
     const live = await fetch(`${url}/health/live`);
     expect(live.status).toBe(200);
@@ -255,6 +279,26 @@ describe('bootstrap', () => {
 
     expect(String(error)).toContain('missing');
     expect(String(error)).toContain('main');
+  });
+
+  test('refuses to boot when a blueprint names an unconfigured tool set', async () => {
+    const error = await failure({
+      blueprints: {
+        nox: { ...NOX, toolSets: { direct: ['missing'], routed: [] } },
+      },
+    });
+
+    expect(String(error)).toContain('missing');
+    expect(String(error)).toContain('toolsets.json');
+  });
+
+  test('rejects a tool-set kind nobody contributed', async () => {
+    const error = await failure({
+      toolSets: { internet: { type: 'ghost' } },
+    });
+
+    expect(String(error)).toContain('toolsets.json');
+    expect(String(error)).toContain('web');
   });
 
   test('rejects a blueprint missing what the schema requires', async () => {

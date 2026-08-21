@@ -14,9 +14,9 @@ import { gatePolicySchema } from '../tool/gate/config';
  * instance this agent talks through. Two agents may share one instance, and one
  * kind may have several instances, so the reference has to be to the instance.
  *
- * Tool sets are absent on purpose. An agent is granted them today by a caller
- * holding the objects, and there is no way yet to name one in a file; a field
- * for it here would be configuration nothing reads.
+ * Tool-set IDs name configured instances in `toolsets.json`. Direct sets expose
+ * every selected tool to the model; routed sets are discovered through the
+ * built-in search/call router instead.
  */
 const compactionConfigSchema = z.object({
   model: z.string().min(1),
@@ -24,6 +24,11 @@ const compactionConfigSchema = z.object({
 });
 
 const maxIterationsSchema = z.union([z.number().int().positive(), z.literal('unlimited')]);
+
+const toolSetsConfigSchema = z.object({
+  direct: z.array(z.string().min(1)).default([]),
+  routed: z.array(z.string().min(1)).default([]),
+});
 
 const blueprintSchema = z.object({
   /** Omit the whole block to inherit the agent's provider and model. */
@@ -36,6 +41,7 @@ const blueprintSchema = z.object({
   model: z.string().min(1),
   provider: z.string().min(1),
   systemPrompt: z.string().min(1),
+  toolSets: toolSetsConfigSchema.prefault({}),
 });
 
 type Blueprint = z.infer<typeof blueprintSchema>;
