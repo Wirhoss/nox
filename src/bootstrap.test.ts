@@ -53,6 +53,7 @@ function temporary(prefix: string): string {
 interface BootOptions {
   app?: unknown;
   blueprints?: Record<string, unknown>;
+  brokers?: unknown;
   dataDir?: string;
   providers?: unknown;
   secrets?: Readonly<Record<string, string>>;
@@ -66,6 +67,7 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
   // — or a Nox already running on this machine — fight over the same socket.
   writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
   writeFileSync(join(configDir, 'providers.json'), JSON.stringify(options.providers ?? PROVIDERS));
+  writeFileSync(join(configDir, 'brokers.json'), JSON.stringify(options.brokers ?? {}));
   writeFileSync(join(configDir, 'toolsets.json'), JSON.stringify(options.toolSets ?? {}));
 
   mkdirSync(join(configDir, 'blueprints'), { recursive: true });
@@ -279,8 +281,41 @@ describe('bootstrap', () => {
     await application.stop();
 
     // The listener goes with everything else: another server can take the port.
-    const rebound = await ApiServer.start(api);
+    const rebound = ApiServer.create(api);
+    await rebound.listen();
     await rebound.dispose();
+  });
+
+  test('gives the web broker the chat surface, once the runtime behind it is whole', async () => {
+    const api = { host: '127.0.0.1', port: 39_519 };
+    const application = await boot({
+      app: { api },
+      brokers: { web: { agent: 'nox', type: 'web' } },
+    });
+    const url = `http://${api.host}:${String(api.port)}`;
+
+    expect(application.state).toBe('running');
+
+    // Mounted rather than missing: an unauthenticated caller is turned away by
+    // the guard, which is a route answering. A surface that had never been
+    // composed would not know the path at all.
+    const stream = await fetch(`${url}/chat/stream`);
+    expect(stream.status).toBe(401);
+  });
+
+  test('refuses to start with two brokers claiming the same surface', async () => {
+    const error = await failure({
+      app: { api: { port: 0 } },
+      brokers: {
+        web: { agent: 'nox', type: 'web' },
+        // A second instance of a transport that dials out is impossible anyway;
+        // here it is configurable, so it has to be refused out loud.
+        wall: { agent: 'nox', type: 'web' },
+      },
+    });
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('exactly one broker');
   });
 
   test('releases the port when composing fails, rather than holding it', async () => {

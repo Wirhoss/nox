@@ -24,8 +24,10 @@ Individual steps: `bun run typecheck`, `bun run lint`, `bun run format`,
 ```bash
 export CONFIG_DIR=./.nox/config       # optional, see src/config/env.ts
 export DATA_DIR=./.nox/data           # optional: database and local secret key
+export UI_DIR=./src/ui/dist           # optional: output of `bun run build:ui`
 export NOX_SESSION_ID=my-session      # optional: resumes that session
 
+bun run build:ui
 bun run start
 ```
 
@@ -73,6 +75,81 @@ The corresponding field inside `blueprints/nox.json`:
   "toolSets": { "direct": [], "routed": ["internet"] }
 }
 ```
+
+## The web broker
+
+A **broker** is a transport into the message gateway — it delivers what arrived
+and renders what it is handed, and knows nothing about agents, sessions or the
+transcript. The builtin `web` broker is Nox's own HTTP surface acting as one: it
+does not dial out, it is handed connections by the browser, and its ingress rule
+is the access token the API already checks.
+
+`brokers.json`:
+
+```json
+{
+  "web": {
+    "type": "web",
+    "agent": "nox",
+    "grants": { "<accountId>": ["nox.*"] }
+  }
+}
+```
+
+The sender a broker vouches for is the **account id**, not the username: a name
+is a label a person may change, and a grant written against it would quietly
+stop matching. `GET /auth/me` returns the id of whoever is logged in.
+
+Exactly one broker of type `web` may be configured. There is one HTTP surface,
+and two brokers claiming it would make which conversation reached whom a matter
+of load order; a second one refuses to start.
+
+Its routes are mounted only when authentication is configured, and every one of
+them requires a token:
+
+| Route | What it does |
+|---|---|
+| `GET /chat/stream` | Server-sent events for every conversation, named by event type |
+| `POST /chat/conversations/:conversationId/messages` | Says something; answers `202`, the reply arrives on the stream |
+| `POST /chat/conversations/:conversationId/permissions/:requestId` | Answers a pending gate request with `{ "decision": "approve", "scope": "session" }` or `{ "decision": "deny" }` |
+
+A conversation is named by the client and bound to a session by the runtime on
+the first message it carries: there is no endpoint that creates one, because a
+chat nobody has spoken in is not yet a session. The binding survives a restart,
+like any other broker's.
+
+### What a broker receives
+
+What a run produces and what a surface shows are different questions, and the
+second one belongs to the transport. Every event a session emits is offered to
+every broker, and each one declares what it renders through `BrokerCapabilities`:
+
+| Capability | What it turns on |
+|---|---|
+| `streaming` | The reply as it is being written |
+| `permissions` | Gate requests, and their resolutions |
+| `reasoning` | What the model thought — settled, and live when `streaming` is on too |
+| `toolActivity` | The calls the agent made and what came back |
+| `runs` | When a run started, how it ended, and whether it was truncated |
+| `retries` | Provider failures being retried rather than reported |
+| `contextChanges` | Fold and compaction rewriting the context |
+| `usage` | Token accounting, per model call and as a run total |
+
+A broker that declares nothing gets the settled reply and nothing else, which is
+what a bot in a channel wants. The `web` broker declares all of them: it is not a
+chat client, it is a surface over the runtime, and a client on the other end
+decides what it draws.
+
+Two things stay with the gateway because they are not rendering questions: what
+another participant said, and which principal was allowed to use which authority.
+Both are about who may see what.
+
+Two things it deliberately does not do yet. Nothing is replayed to a client that
+reconnects — an event delivered while no stream is open is dropped, and reading
+a transcript back is a surface Nox does not have. And a run in flight cannot be
+stopped from here: the gateway's inbound events are messages and permission
+answers, and a stop button is a change to that contract rather than to this
+broker.
 
 ## Kernel and contributions
 
@@ -166,6 +243,7 @@ repo or fail without taking the process down.
 | OpenAI Chat Completions, as a self-contained builtin provider extension | Ported and tested |
 | Configurable tool-set contributions and blueprint grants | Ported and tested |
 | SearXNG search and Crawl4AI extraction builtin tool set | Ported and tested |
+| Message gateway, and the `web` broker over the HTTP surface | Built and tested |
 
 Deferred, each with the trigger that un-defers it, in
 [NOX.md](NOX.md#v1-scope): extension machinery, memory, web UI, message brokers,

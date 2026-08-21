@@ -18,7 +18,15 @@ import type { Message, MessageContent } from '../agent/context/message';
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
 import type { GatePolicyInput } from '../tool/gate';
-import type { Broker, BrokerCapabilities, BrokerHost, OutboundEvent } from './broker';
+import type {
+  Broker,
+  BrokerCapabilities,
+  BrokerHistory,
+  BrokerHost,
+  BrokerSession,
+  OutboundEvent,
+  OutboundRunCompleted,
+} from './broker';
 
 const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
 
@@ -69,6 +77,43 @@ class TwoFragmentProvider extends ChatProvider {
     yield { text: 'hola ', type: 'textFragment' };
     yield { text: 'mundo', type: 'textFragment' };
     yield { type: 'end' };
+  }
+}
+
+/** Thinks out loud, calls a tool, then answers — one run with something of every kind in it. */
+class VerboseProvider extends ChatProvider {
+  constructor() {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    if (messageHistory.at(-1)?.role === 'user') {
+      yield { text: 'pienso ', type: 'reasoningFragment' };
+      yield { text: 'un poco', type: 'reasoningFragment' };
+      yield {
+        toolCall: {
+          arguments: { value: 'x' },
+          name: 'echo',
+          role: 'toolCall',
+          trackId: 'echo-1',
+        },
+        type: 'toolCall',
+      };
+    } else {
+      yield { text: 'done', type: 'textFragment' };
+    }
+    yield { type: 'end', usage: { inputTokens: 3, outputTokens: 5 } };
   }
 }
 
@@ -131,6 +176,51 @@ class ToolCallingProvider extends ChatProvider {
     }
     yield { type: 'end' };
   }
+}
+
+/**
+ * Answers, then keeps going until something stops it. A steer and a stop are
+ * both about a run that is still in flight, and a provider that finishes before
+ * the test can speak proves nothing.
+ */
+class SlowProvider extends ChatProvider {
+  constructor() {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  protected override async *attempt(
+    _systemPrompt: string,
+    _messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    yield { text: 'sigo ', type: 'textFragment' };
+    await interrupted(signal);
+    yield { text: 'hablando', type: 'textFragment' };
+    yield { type: 'end' };
+  }
+}
+
+/** Resolves the moment a run is cut short, and eventually if nothing cuts it. */
+function interrupted(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 1_000);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 class TestToolSet extends ToolSet {
@@ -196,11 +286,54 @@ class TestBroker implements Broker {
     this.#host?.receive({ conversationId, requestId, resolution, senderId, type: 'permission' });
   }
 
+  /** Says something over the top of the run in flight. */
+  public interrupt(conversationId: string, text: string, senderId = 'someone'): void {
+    this.#messages += 1;
+    this.#host?.receive({
+      conversationId,
+      messageId: `s${String(this.#messages)}`,
+      senderId,
+      text,
+      type: 'steer',
+    });
+  }
+
+  public halt(conversationId: string, scope?: 'run' | 'session', senderId = 'someone'): void {
+    this.#host?.receive({ conversationId, scope, senderId, type: 'stop' });
+  }
+
+  public history(conversationId: string, limit?: number): Promise<BrokerHistory | undefined> {
+    return this.#requireHost().history(conversationId, limit === undefined ? undefined : { limit });
+  }
+
+  public sessions(): Promise<readonly BrokerSession[]> {
+    return this.#requireHost().sessions();
+  }
+
   public texts(type: OutboundEvent['type']): string[] {
     return this.delivered
       .filter((event) => event.type === type)
       .map((event) => ('text' in event ? event.text : ''));
   }
+
+  #requireHost(): BrokerHost {
+    if (this.#host === undefined) throw new Error('The broker was never started.');
+    return this.#host;
+  }
+}
+
+function echoTool(): Tool {
+  return {
+    authority: TEST_AUTHORITY,
+    description: 'echoes',
+    name: 'echo',
+    parameters: z.object({}),
+    prepare: () => ({
+      run: (): Promise<MessageContent[]> => Promise.resolve([{ text: 'echoed', type: 'text' }]),
+      title: 'Echo a value',
+      type: 'immediate' as const,
+    }),
+  };
 }
 
 interface Harness {
@@ -260,6 +393,11 @@ async function harness(
 async function settle(harnessed: Harness): Promise<void> {
   await harnessed.gateway.drain();
   for (const { session } of harnessed.application.sessions) await session.idle;
+}
+
+/** The runs a transport was told about the end of, in the order they ended. */
+function finished(broker: TestBroker): OutboundRunCompleted[] {
+  return broker.delivered.filter((event) => event.type === 'runCompleted');
 }
 
 async function waitFor<T>(read: () => T | undefined, what: string): Promise<T> {
@@ -580,6 +718,399 @@ describe('Gateway', () => {
       expect(executions.count).toBe(0);
       expect(broker.delivered.filter((event) => event.type === 'permission')).toEqual([]);
       expect(harnessed.application.sessions[0]?.session.getPendingPermissions()).toEqual([]);
+    });
+  });
+  /**
+   * What a run produces and what a surface shows are different questions. These
+   * are about the second one belonging to the transport: the same run, watched
+   * by two brokers, is two different amounts of detail.
+   */
+  describe('what a transport declares', () => {
+    async function verbose(broker: TestBroker): Promise<Harness> {
+      return harness(await openDatabase(), broker, {
+        gate: { defaultVerdict: 'allow' },
+        provider: new VerboseProvider(),
+        toolSets: [{ toolSet: new TestToolSet([echoTool()]), toolSetId: 'direct' }],
+      });
+    }
+
+    /** Every kind of event this run produced, in the order it was delivered. */
+    function types(broker: TestBroker): string[] {
+      return [...new Set(broker.delivered.map((event) => event.type))];
+    }
+
+    test('sends a transport that declared nothing the settled reply and nothing else', async () => {
+      const broker = new TestBroker();
+      const harnessed = await verbose(broker);
+
+      broker.say('chat-1', 'usa echo');
+      await settle(harnessed);
+
+      // A bot in a channel can post text. The run reasoned, called a tool, spent
+      // tokens and finished, and none of that is something it could draw.
+      expect(types(broker)).toEqual(['message']);
+      expect(broker.texts('message')).toEqual(['done']);
+    });
+
+    test('sends a transport everything it declared', async () => {
+      const broker = new TestBroker({
+        contextChanges: true,
+        reasoning: true,
+        retries: true,
+        runs: true,
+        streaming: true,
+        toolActivity: true,
+        usage: true,
+      });
+      const harnessed = await verbose(broker);
+
+      broker.say('chat-1', 'usa echo');
+      await settle(harnessed);
+      // The last event of a run reaches the watcher after the runner is idle.
+      const completed = await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runCompleted'),
+        'A completed run',
+      );
+
+      expect(types(broker)).toContainAllValues([
+        'fragment',
+        'message',
+        'reasoning',
+        'reasoningFragment',
+        'runCompleted',
+        'runStarted',
+        'toolCall',
+        'toolResponse',
+        'usage',
+      ]);
+
+      const call = broker.delivered.find((event) => event.type === 'toolCall');
+      expect(call).toMatchObject({ arguments: { value: 'x' }, name: 'echo', trackId: 'echo-1' });
+
+      const response = broker.delivered.find((event) => event.type === 'toolResponse');
+      expect(response).toMatchObject({
+        execution: 'immediate',
+        isError: false,
+        name: 'echo',
+        text: 'echoed',
+        trackId: 'echo-1',
+      });
+
+      expect(completed).toMatchObject({ status: 'completed' });
+      expect(completed.usage?.outputTokens).toBe(10);
+
+      // The reply and everything around it belong to the same run, so a surface
+      // can group them without guessing.
+      expect(new Set(broker.delivered.map((event) => event.turnId)).size).toBe(1);
+    });
+
+    test('keeps token accounting out of a run a transport only wanted the shape of', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await verbose(broker);
+
+      broker.say('chat-1', 'usa echo');
+      await settle(harnessed);
+
+      const completed = await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runCompleted'),
+        'A completed run',
+      );
+
+      expect(completed).toMatchObject({ status: 'completed' });
+      // Declared `runs`, not `usage`: the totals ride along with a run, but they
+      // are token accounting either way.
+      expect(completed.usage).toBeUndefined();
+      expect(types(broker)).not.toContain('usage');
+    });
+
+    test('settles reasoning for a transport that cannot show a thing being written', async () => {
+      const broker = new TestBroker({ reasoning: true });
+      const harnessed = await verbose(broker);
+
+      broker.say('chat-1', 'usa echo');
+      await settle(harnessed);
+
+      // What the model thought, once it is a whole thought. A fragment is only
+      // useful to a surface that can rewrite what it already showed.
+      expect(broker.texts('reasoning')).toEqual(['pienso un poco']);
+      expect(types(broker)).not.toContain('reasoningFragment');
+    });
+  });
+
+  describe('steering and stopping', () => {
+    test('cuts the run short and answers what was said over it', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await harness(await openDatabase(), broker, {
+        provider: new SlowProvider(),
+      });
+
+      broker.say('chat-1', 'contame algo largo');
+      await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runStarted'),
+        'A started run',
+      );
+      broker.interrupt('chat-1', 'mejor no');
+      await settle(harnessed);
+      await waitFor(() => (finished(broker).length === 2 ? true : undefined), 'Two finished runs');
+
+      const runs = broker.delivered.filter((event) => event.type === 'runStarted');
+
+      // The first run never finished saying what it was saying, and the second
+      // is not a reply to it: it is what was said over the top of it.
+      expect(finished(broker).map((run) => run.status)).toEqual(['aborted', 'completed']);
+      expect(runs.map((run) => run.trigger)).toEqual(['user', 'steer']);
+    });
+
+    test('steers an idle conversation, which is only talking', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.interrupt('chat-1', 'hola');
+      await settle(harnessed);
+      await waitFor(() => (finished(broker).length === 1 ? true : undefined), 'A finished run');
+
+      expect(broker.texts('message')).toEqual(['hola mundo']);
+      expect(finished(broker).map((run) => run.status)).toEqual(['completed']);
+    });
+
+    test('stops the run in flight and leaves the conversation open', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await harness(await openDatabase(), broker, {
+        provider: new SlowProvider(),
+      });
+
+      broker.say('chat-1', 'contame algo largo');
+      await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runStarted'),
+        'A started run',
+      );
+      broker.halt('chat-1');
+      await settle(harnessed);
+      await waitFor(() => (finished(broker).length === 1 ? true : undefined), 'A finished run');
+
+      expect(finished(broker).map((run) => run.status)).toEqual(['aborted']);
+      // Told that is enough, not shown the door: the session is still the one
+      // this chat is, and the next message is another turn of it.
+      expect(harnessed.application.sessions).toHaveLength(1);
+      expect(harnessed.application.sessions[0]?.session.state).toBe('idle');
+    });
+
+    test('ends the session on request and reopens the same transcript after it', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.say('chat-1', 'primera');
+      await settle(harnessed);
+      const sessionId = harnessed.application.sessions[0]?.session.sessionId;
+
+      broker.halt('chat-1', 'session');
+      await harnessed.gateway.drain();
+      expect(harnessed.application.sessions).toHaveLength(0);
+
+      // The binding outlives the session, so this is the same conversation
+      // continuing rather than a new one starting.
+      broker.say('chat-1', 'segunda');
+      await settle(harnessed);
+      const reopened = harnessed.application.sessions[0]?.session;
+      expect(reopened?.sessionId).toBe(sessionId);
+      expect(reopened?.getTranscript().filter((message) => message.role === 'user')).toHaveLength(
+        2,
+      );
+    });
+
+    test('has nothing to stop in a conversation that is not open', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.halt('never-spoken-in');
+      await harnessed.gateway.drain();
+
+      expect(harnessed.application.sessions).toHaveLength(0);
+    });
+  });
+
+  describe('reading a conversation back', () => {
+    test('answers with both sides of it, attributed', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.say('chat-1', 'hola', undefined, 'someone');
+      await settle(harnessed);
+
+      const history = await broker.history('chat-1');
+      expect(history?.agentId).toBe('assistant');
+      expect(history?.entries.map((entry) => entry.type)).toEqual(['userMessage', 'message']);
+
+      const [said, replied] = history?.entries ?? [];
+      // The live stream withholds what a participant said; a transcript cannot,
+      // and it says who said it.
+      expect(said).toMatchObject({
+        principal: { issuer: 'test', subject: 'someone' },
+        text: 'hola',
+        type: 'userMessage',
+      });
+      expect(replied).toMatchObject({ text: 'hola mundo', type: 'message' });
+    });
+
+    test('filters a transcript by the capabilities the stream is filtered by', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker, {
+        gate: { defaultVerdict: 'allow' },
+        provider: new VerboseProvider(),
+        toolSets: [{ toolSet: new TestToolSet([echoTool()]), toolSetId: 'direct' }],
+      });
+
+      broker.say('chat-1', 'usa echo');
+      await settle(harnessed);
+
+      // Scrolling up shows what watching would have shown and nothing more: a
+      // transport that never asked for tool activity does not start seeing it.
+      const history = await broker.history('chat-1');
+      expect(history?.entries.map((entry) => entry.type)).toEqual(['userMessage', 'message']);
+    });
+
+    test('shows a verbose transport everything it declared', async () => {
+      const broker = new TestBroker({ reasoning: true, toolActivity: true });
+      const harnessed = await harness(await openDatabase(), broker, {
+        gate: { defaultVerdict: 'allow' },
+        provider: new VerboseProvider(),
+        toolSets: [{ toolSet: new TestToolSet([echoTool()]), toolSetId: 'direct' }],
+      });
+
+      broker.say('chat-1', 'usa echo');
+      await settle(harnessed);
+
+      const history = await broker.history('chat-1');
+      expect(history?.entries.map((entry) => entry.type)).toEqual([
+        'userMessage',
+        'reasoning',
+        'toolCall',
+        'toolResponse',
+        'message',
+      ]);
+
+      // The last of a conversation, which is what a surface redrawing a chat
+      // that has been going for a week actually asks for.
+      const tail = await broker.history('chat-1', 2);
+      expect(tail?.entries.map((entry) => entry.type)).toEqual(['toolResponse', 'message']);
+    });
+
+    test('reads a conversation nobody has reopened, without opening it', async () => {
+      const database = await openDatabase();
+      const before = new TestBroker();
+      const first = await harness(database, before);
+
+      before.say('chat-1', 'hola');
+      await settle(first);
+      await first.application.stop();
+
+      const after = new TestBroker();
+      const second = await harness(database, after);
+
+      const history = await after.history('chat-1');
+      expect(history?.entries.map((entry) => entry.type)).toEqual(['userMessage', 'message']);
+      // Asking what was said is not speaking: nothing was reopened to answer it.
+      expect(second.application.sessions).toHaveLength(0);
+    });
+
+    test('has nothing to say about a chat that was never bound', async () => {
+      const broker = new TestBroker();
+      await harness(await openDatabase(), broker);
+
+      expect(await broker.history('never-spoken-in')).toBeUndefined();
+    });
+  });
+
+  describe('listing what a transport is carrying', () => {
+    test('lists every bound conversation, most recently spoken in first', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.say('chat-1', 'primera');
+      await settle(harnessed);
+      await Bun.sleep(2);
+      broker.say('chat-2', 'segunda');
+      await settle(harnessed);
+
+      const sessions = await broker.sessions();
+      expect(sessions.map((session) => session.conversationId)).toEqual(['chat-2', 'chat-1']);
+      expect(sessions.every((session) => session.state === 'idle')).toBeTrue();
+      expect(sessions[0]?.agentId).toBe('assistant');
+    });
+
+    test('calls a bound conversation nobody has reopened closed', async () => {
+      const database = await openDatabase();
+      const before = new TestBroker();
+      const first = await harness(database, before);
+
+      before.say('chat-1', 'hola');
+      await settle(first);
+      await first.application.stop();
+
+      const after = new TestBroker();
+      await harness(database, after);
+
+      // Bound but not open is the ordinary state of a chat after a restart, and
+      // one missing from the list would look deleted.
+      const [session] = await after.sessions();
+      expect(session).toMatchObject({ conversationId: 'chat-1', state: 'closed' });
+    });
+
+    test('shows a conversation as running while its run is in flight', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await harness(await openDatabase(), broker, {
+        provider: new SlowProvider(),
+      });
+
+      broker.say('chat-1', 'contame algo largo');
+      await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runStarted'),
+        'A started run',
+      );
+
+      const [session] = await broker.sessions();
+      expect(session?.state).toBe('running');
+
+      broker.halt('chat-1');
+      await settle(harnessed);
+    });
+
+    test('does not enumerate what another transport is carrying', async () => {
+      const database = await openDatabase();
+      const mine = new TestBroker();
+      const theirs = new TestBroker();
+
+      const application = new NoxApplication();
+      applications.push(application);
+      await application.start();
+      application.addAgent(
+        new Agent(database, new SayingProvider('ok'), MODEL, {
+          agentId: 'assistant',
+          authorities: catalog,
+          systemPrompt: 'system',
+        }),
+      );
+      const gateway = new Gateway(application, {
+        brokers: [
+          { agentId: 'assistant', broker: mine, brokerId: 'mine' },
+          { agentId: 'assistant', broker: theirs, brokerId: 'theirs' },
+        ],
+        database,
+      });
+      application.setGateway(gateway);
+      await gateway.start();
+      const harnessed = { application, broker: mine, gateway };
+
+      mine.say('chat-1', 'hola');
+      theirs.say('chat-2', 'hola');
+      await settle(harnessed);
+
+      expect((await mine.sessions()).map((session) => session.conversationId)).toEqual(['chat-1']);
+      expect((await theirs.sessions()).map((session) => session.conversationId)).toEqual([
+        'chat-2',
+      ]);
+      // A conversation on another transport is not this one's to read either.
+      expect(await mine.history('chat-2')).toBeUndefined();
     });
   });
 });

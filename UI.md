@@ -6,8 +6,9 @@
 
 ## Estado
 
-Dirección conceptual inicial. El workspace técnico de la UI existe, pero aún no
-se ha comenzado a implementar la experiencia de producto.
+Dirección conceptual inicial. El flujo de acceso y el primer chat en vivo están
+en implementación. Sessions, Audit y las superficies administrativas aún no
+comenzaron.
 
 ## Visión del producto
 
@@ -147,7 +148,14 @@ Password
 [ Enter ]
 ```
 
-El mecanismo de creación de la primera identidad todavía debe definirse.
+La primera identidad reclama la instalación con un código de un solo uso impreso
+en los logs del runtime. El código vive únicamente durante el arranque actual y
+se invalida al registrar la cuenta o reiniciar Nox. El registro inicia sesión
+directamente.
+
+El access token se conserva solo en memoria en la Web UI. La sesión durable se
+renueva mediante una cookie HttpOnly emitida por el backend; la UI nunca recibe
+el refresh token.
 
 No hay un vault planeado y la UI no debe introducir ese concepto. Las
 credenciales requeridas por providers, brokers, extensiones o tools se tratarán
@@ -706,22 +714,25 @@ reducción de movimiento y estado de paneles. No debe persistir globalmente:
 
 ## Contrato HTTP y tiempo real
 
-La dirección inicial es usar HTTP JSON para consultas y comandos, y SSE para el
-flujo desde Nox hacia la Web UI.
+HTTP JSON maneja comandos y un stream SSE autenticado entrega lo que el web
+broker renderiza. El contrato implementado actualmente es:
 
 ```text
-POST /api/sessions/:id/messages
-POST /api/permissions/:id/approve
-POST /api/permissions/:id/deny
-POST /api/sessions/:id/stop
-GET  /api/sessions/:id
-GET  /api/sessions/:id/events     # SSE
+GET  /chat/stream
+POST /chat/conversations/:conversationId/messages
+POST /chat/conversations/:conversationId/permissions/:requestId
 ```
 
-SSE puede transportar fragmentos de respuesta, mensajes, tool calls, resultados
-deferred, cambios de ejecución, solicitudes de permiso y errores. WebSocket se
-añadirá únicamente si aparece un requisito bidireccional que HTTP + SSE no pueda
-resolver correctamente.
+El cliente genera `conversationId`; la conversación se materializa en el
+runtime con su primer mensaje. El stream es único para todas las conversaciones
+y cada evento declara a cuál pertenece. Actualmente transporta fragmentos,
+mensajes asentados, solicitudes y resoluciones de permiso, y errores.
+
+Todavía no existen endpoints de historial, listado de sesiones ni detención de
+runs. La UI conserva únicamente la conversación viva que observó y no inventa
+persistencia que el contrato no ofrece. WebSocket se añadirá únicamente si
+aparece un requisito bidireccional que HTTP + SSE no pueda resolver
+correctamente.
 
 La UI no importa clases internas como `Session`, `Agent` o `SessionGate`:
 
@@ -880,10 +891,10 @@ alternativo y alto contraste.
   futuro justifique WebSocket.
 - Pinia mantiene la proyección de estado de la UI sin sustituir a Nox como fuente
   de verdad.
+- La primera identidad reclama Nox con un código efímero impreso por el runtime.
+- El access token vive solo en memoria y la renovación utiliza una cookie HttpOnly.
 
 ## Preguntas abiertas
-
-- ¿Cómo se crea la primera identidad y qué mecanismo de autenticación se usará?
 - ¿Se abre siempre la última sesión o existe una preferencia para comenzar una
   nueva?
 - ¿Qué información del reasoning debe exponer la UI y bajo qué modo?

@@ -14,7 +14,10 @@ FROM ${BUN_IMAGE} AS deps
 WORKDIR /build
 
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production --ignore-scripts
+# Bun validates every declared workspace before installing. The UI build also
+# needs the workspace's development dependencies (Vite, Vue and Sass).
+COPY src/ui/package.json ./src/ui/package.json
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # --- build -----------------------------------------------------------------
 FROM ${BUN_IMAGE} AS build
@@ -24,12 +27,14 @@ WORKDIR /build
 COPY --from=deps /build/node_modules ./node_modules
 COPY package.json bun.lock tsconfig.json index.ts ./
 COPY src ./src
+COPY --from=deps /build/src/ui/node_modules ./src/ui/node_modules
 
 RUN bun build ./index.ts \
       --target=bun \
       --outfile ./dist/nox.js \
       --minify-whitespace \
       --minify-syntax \
+ && bun --cwd=src/ui run build-only \
  && cp -R ./src/database/migrations ./dist/migrations
 
 # --- runtime ---------------------------------------------------------------
@@ -52,12 +57,14 @@ RUN addgroup -g 10001 nox \
 
 COPY --from=build --chown=root:root /build/dist/nox.js /app/nox.js
 COPY --from=build --chown=root:root /build/dist/migrations /app/migrations
+COPY --from=build --chown=root:root /build/src/ui/dist /app/ui
 
 # --- environment -----------------------------------------------------------
 # Every variable Nox reads, named here rather than left to a default.
 ENV NODE_ENV=production \
     CONFIG_DIR=/etc/nox/config \
     DATA_DIR=/var/lib/nox \
+    UI_DIR=/app/ui \
     HOME=/home/nox \
     TZ=UTC
 

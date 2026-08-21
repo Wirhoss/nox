@@ -34,12 +34,13 @@ async function freshNox(): Promise<{ code: string; url: string }> {
   };
   const registration = RegistrationWindow.open(recording);
 
-  const server = await ApiServer.start({
+  const server = ApiServer.create({
     auth: { registration, store },
     host: '127.0.0.1',
     logger: silentLogger,
     port: 0,
   });
+  await server.listen();
   servers.push(server);
 
   return { code, url: server.url };

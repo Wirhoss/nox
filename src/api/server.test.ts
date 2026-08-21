@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, test } from 'bun:test';
 
 import { ApiServer, type ApiServerOptions } from './server';
@@ -7,7 +11,8 @@ async function withServer(
   options: ApiServerOptions,
   body: (server: ApiServer) => Promise<void>,
 ): Promise<void> {
-  const server = await ApiServer.start({ host: '127.0.0.1', port: 0, ...options });
+  const server = ApiServer.create({ host: '127.0.0.1', port: 0, ...options });
+  await server.listen();
   try {
     await body(server);
   } finally {
@@ -75,6 +80,40 @@ describe('readiness', () => {
   });
 });
 
+describe('web UI', () => {
+  test('serves built assets and the SPA document without swallowing API 404s', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'nox-ui-'));
+    await mkdir(join(directory, 'assets'));
+    await writeFile(join(directory, 'index.html'), '<!doctype html><title>Nox UI</title>');
+    await writeFile(join(directory, 'assets', 'app-a1b2c3d4.js'), 'window.nox = true;');
+
+    try {
+      await withServer({ uiDirectory: directory }, async (server) => {
+        const root = await fetch(`${server.url}/`);
+        expect(root.status).toBe(200);
+        expect(root.headers.get('content-type')).toContain('text/html');
+        expect(root.headers.get('cache-control')).toBe('no-cache');
+        expect(await root.text()).toContain('Nox UI');
+
+        const clientRoute = await fetch(`${server.url}/access`);
+        expect(clientRoute.status).toBe(200);
+        expect(await clientRoute.text()).toContain('Nox UI');
+
+        const asset = await fetch(`${server.url}/assets/app-a1b2c3d4.js`);
+        expect(asset.status).toBe(200);
+        expect(asset.headers.get('cache-control')).toContain('immutable');
+        expect(await asset.text()).toBe('window.nox = true;');
+
+        expect((await fetch(`${server.url}/assets/missing.js`)).status).toBe(404);
+        expect((await fetch(`${server.url}/auth/missing`)).status).toBe(404);
+        expect((await fetch(`${server.url}/chat/missing`)).status).toBe(404);
+      });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+});
+
 describe('the server itself', () => {
   test('reports the port it actually bound to', async () => {
     await withServer({}, (server) => {
@@ -84,7 +123,8 @@ describe('the server itself', () => {
   });
 
   test('stops once, however many times it is disposed', async () => {
-    const server = await ApiServer.start({ host: '127.0.0.1', port: 0 });
+    const server = ApiServer.create({ host: '127.0.0.1', port: 0 });
+    await server.listen();
     await server.dispose();
 
     await server.dispose();

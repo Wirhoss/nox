@@ -538,6 +538,7 @@ describe('readEnvConfig', () => {
       configDir: '/etc/nox/config',
       dataDir: '/var/lib/nox',
       environment: 'development',
+      uiDir: '/app/ui',
     });
   });
 
