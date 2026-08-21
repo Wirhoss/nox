@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { ChatProvider } from '../../provider/provider';
+import { TEST_AUTHORITY, testOrigin } from '../../testFixtures';
 import { Context } from './context';
 import { type Message, messageToString, type UserMessage } from './message';
 import { TokenEstimator } from './tokens';
@@ -22,6 +23,15 @@ function textMessage(
   messageId: string,
   text: string,
 ): Message {
+  if (role === 'user') {
+    return {
+      content: [{ text, type: 'text' }],
+      createdAt: BASE_TIME,
+      messageId,
+      origin: testOrigin(),
+      role,
+    };
+  }
   return { content: [{ text, type: 'text' }], createdAt: BASE_TIME, messageId, role };
 }
 
@@ -105,6 +115,7 @@ describe('Context cache stability', () => {
   test('tools are one immutable, globally sorted and referentially stable prefix', () => {
     const parameters = z.object({ value: z.string() });
     const zebra: Tool<typeof parameters> = {
+      authority: TEST_AUTHORITY,
       description: 'z',
       name: 'zebra',
       parameters,
@@ -130,6 +141,7 @@ describe('Context cache stability', () => {
   test('user tools cannot silently replace a history tool', () => {
     const parameters = z.object({});
     const conflicting: Tool<typeof parameters> = {
+      authority: TEST_AUTHORITY,
       description: 'conflict',
       name: 'search_history',
       parameters,
@@ -584,6 +596,7 @@ describe('Context snapshots', () => {
       content: [{ text: 'original', type: 'text' as const }],
       createdAt: new Date(BASE_TIME),
       messageId: 'u1',
+      origin: testOrigin(),
       role: 'user' as const,
     };
     const context = new Context('system', new SummaryProvider([]));

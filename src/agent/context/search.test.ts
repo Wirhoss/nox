@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { testOrigin } from '../../testFixtures';
 import { HistorySearchToolSet } from './search';
 import { Transcript } from './transcript';
 
@@ -8,7 +9,13 @@ import type { Message, MessageContent } from './message';
 const AT = new Date('2025-01-01T00:00:00.000Z');
 
 function user(messageId: string, text: string): Message {
-  return { content: [{ text, type: 'text' }], createdAt: AT, messageId, role: 'user' };
+  return {
+    content: [{ text, type: 'text' }],
+    createdAt: AT,
+    messageId,
+    origin: testOrigin(),
+    role: 'user',
+  };
 }
 
 function toolResponse(messageId: string, trackId: string, text: string): Message {

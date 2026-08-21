@@ -7,6 +7,13 @@ import { z } from 'zod';
 
 import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
+import {
+  permissiveAuthorization,
+  TEST_AUTHORITY,
+  testCatalog,
+  testOrigin,
+  testPrincipal,
+} from '../testFixtures';
 import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
 
@@ -153,6 +160,7 @@ class RoutingProvider extends ChatProvider {
 
 function echoTool(): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description: 'echoes',
     name: 'echo',
     parameters: z.object({}),
@@ -166,6 +174,7 @@ function echoTool(): Tool {
 
 function versionTool(version: string): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description: 'Returns the current version.',
     name: 'version',
     parameters: z.object({}),
@@ -228,6 +237,7 @@ describe('Agent', () => {
     };
     const agent = new Agent(await openDatabase(), new ToolCallingProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       directToolSets: [grant('direct', guarded)],
       gate: {
         defaultVerdict: 'allow',
@@ -236,9 +246,9 @@ describe('Agent', () => {
       },
       systemPrompt: 'system',
     });
-    const session = await agent.openSession();
+    const session = await agent.openSession({ authorization: permissiveAuthorization });
 
-    session.send('use echo');
+    session.send('use echo', testOrigin());
     const pending = await waitForPermission(session);
 
     expect(executions).toBe(0);
@@ -248,7 +258,9 @@ describe('Agent', () => {
       toolName: 'echo',
       toolSetId: 'direct',
     });
-    expect(session.resolvePermission(pending.requestId, { approved: 'once' })).toBeTrue();
+    expect(
+      session.resolvePermission(pending.requestId, { approved: 'once' }, testPrincipal()),
+    ).toBeTrue();
     await session.idle;
 
     expect(executions).toBe(1);
@@ -261,21 +273,34 @@ describe('Agent', () => {
     expect(events).toContain('permissionRequested');
     expect(events).toContain('permissionResolved');
 
-    const audit = await session.getPermissionAudit();
-    expect(audit).toHaveLength(1);
+    // Both halves of the pipeline land in one timeline, in the order they ran.
+    const audit = await session.getDecisionAudit();
+    expect(audit.map((entry) => entry.stage)).toEqual(['authorization', 'gate']);
     expect(audit[0]).toMatchObject({
+      authority: TEST_AUTHORITY,
+      principal: testPrincipal(),
+      toolName: 'echo',
+      verdict: 'allow',
+    });
+    expect(audit[1]).toMatchObject({
+      authority: TEST_AUTHORITY,
       decidedBy: 'heuristics',
+      principal: testPrincipal(),
       resolution: 'approved',
+      resolvedBy: testPrincipal(),
       scope: 'once',
       toolName: 'echo',
       toolSetId: 'direct',
       verdict: 'escalate',
     });
-    expect(audit[0]?.resolvedAt).toBeInstanceOf(Date);
+    expect(audit[1]?.resolvedAt).toBeInstanceOf(Date);
     await session.stop();
 
-    const reopened = await agent.openSession({ sessionId: session.sessionId });
-    expect(await reopened.getPermissionAudit()).toEqual(audit);
+    const reopened = await agent.openSession({
+      authorization: permissiveAuthorization,
+      sessionId: session.sessionId,
+    });
+    expect(await reopened.getDecisionAudit()).toEqual(audit);
     await reopened.stop();
   });
 
@@ -294,6 +319,7 @@ describe('Agent', () => {
     };
     const agent = new Agent(await openDatabase(), new ToolCallingProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       directToolSets: [grant('direct', guarded)],
       gate: {
         defaultVerdict: 'allow',
@@ -301,20 +327,22 @@ describe('Agent', () => {
       },
       systemPrompt: 'system',
     });
-    const session = await agent.openSession();
+    const session = await agent.openSession({ authorization: permissiveAuthorization });
 
-    session.send('use echo');
+    session.send('use echo', testOrigin());
     await session.idle;
 
     const response = session.getTranscript().find((message) => message.role === 'toolResponse');
     expect(executions).toBe(0);
     expect(response).toMatchObject({ isError: true, name: 'echo', role: 'toolResponse' });
     expect(session.getPendingPermissions()).toEqual([]);
-    expect(await session.getPermissionAudit()).toMatchObject([
+    expect(await session.getDecisionAudit()).toMatchObject([
+      { stage: 'authorization', toolName: 'echo', verdict: 'allow' },
       {
         decidedBy: 'rules',
         reason: 'blocked by policy',
         resolution: undefined,
+        stage: 'gate',
         toolName: 'echo',
         verdict: 'deny',
       },
@@ -325,6 +353,7 @@ describe('Agent', () => {
   test('gates the selected routed tool rather than the call_tool wrapper', async () => {
     const agent = new Agent(await openDatabase(), new RoutingProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       gate: {
         defaultVerdict: 'allow',
         rules: [
@@ -339,9 +368,9 @@ describe('Agent', () => {
       routedToolSets: [grant('versions', versionTool('one'))],
       systemPrompt: 'system',
     });
-    const session = await agent.openSession();
+    const session = await agent.openSession({ authorization: permissiveAuthorization });
 
-    session.send('check version');
+    session.send('check version', testOrigin());
     const pending = await waitForPermission(session);
 
     expect(pending).toMatchObject({
@@ -349,7 +378,7 @@ describe('Agent', () => {
       toolName: 'version',
       toolSetId: 'versions',
     });
-    session.resolvePermission(pending.requestId, { approved: 'once' });
+    session.resolvePermission(pending.requestId, { approved: 'once' }, testPrincipal());
     await session.idle;
 
     const response = session
@@ -365,15 +394,16 @@ describe('Agent', () => {
     const provider = new RecordingProvider();
     const agent = new Agent(await openDatabase(), provider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       directToolSets: [grant('direct', echoTool())],
       systemPrompt: 'you are nox',
     });
 
-    const first = await agent.openSession();
-    const second = await agent.openSession();
-    first.send('hi');
+    const first = await agent.openSession({ authorization: permissiveAuthorization });
+    const second = await agent.openSession({ authorization: permissiveAuthorization });
+    first.send('hi', testOrigin());
     await first.idle;
-    second.send('hi');
+    second.send('hi', testOrigin());
     await second.idle;
 
     expect(provider.requests).toHaveLength(2);
@@ -396,17 +426,21 @@ describe('Agent', () => {
     const routedToolSets: ToolSetGrant[] = [grant('versions', versionTool('one'))];
     const agent = new Agent(await openDatabase(), provider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       directToolSets,
       routedToolSets,
       systemPrompt: 'system',
     });
 
-    const openingFirst = agent.openSession({ sessionId: 'shared' });
+    const openingFirst = agent.openSession({
+      authorization: permissiveAuthorization,
+      sessionId: 'shared',
+    });
     directToolSets.push(grant('direct-beta', { ...echoTool(), name: 'beta' }));
     routedToolSets[0] = grant('versions', versionTool('two'));
     const first = await openingFirst;
 
-    first.send('first');
+    first.send('first', testOrigin());
     await first.idle;
     const firstResponse = first.getTranscript().find((message) => message.role === 'toolResponse');
     expect(firstResponse?.role === 'toolResponse' ? firstResponse.response : []).toEqual([
@@ -419,8 +453,11 @@ describe('Agent', () => {
     expect(provider.toolNames[0]).not.toContain('version');
     await first.stop();
 
-    const loaded = await agent.openSession({ sessionId: 'shared' });
-    loaded.send('second');
+    const loaded = await agent.openSession({
+      authorization: permissiveAuthorization,
+      sessionId: 'shared',
+    });
+    loaded.send('second', testOrigin());
     await loaded.idle;
     const loadedResponses = loaded
       .getTranscript()
@@ -440,12 +477,15 @@ describe('Agent', () => {
     const shared = toolSet(versionTool('one'));
     const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       directToolSets: [{ toolSet: shared, toolSetId: 'direct' }],
       routedToolSets: [{ toolSet: shared, toolSetId: 'routed' }],
       systemPrompt: 'system',
     });
 
-    expect(() => agent.openSession()).toThrow('Tool version cannot be both direct and routed.');
+    expect(() => agent.openSession({ authorization: permissiveAuthorization })).toThrow(
+      'Tool version cannot be both direct and routed.',
+    );
   });
 
   test('uses the separately configured provider and model for compaction', async () => {
@@ -453,6 +493,7 @@ describe('Agent', () => {
     const compactionProvider = new RecordingProvider();
     const agent = new Agent(await openDatabase(), mainProvider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       compactionModel: { modelId: 'compact-model', type: 'text' },
       compactionProvider,
       context: {
@@ -467,8 +508,11 @@ describe('Agent', () => {
       systemPrompt: 'system',
     });
 
-    const session = await agent.openSession();
-    session.send('a long message that puts this deliberately tiny context under pressure');
+    const session = await agent.openSession({ authorization: permissiveAuthorization });
+    session.send(
+      'a long message that puts this deliberately tiny context under pressure',
+      testOrigin(),
+    );
     await session.idle;
 
     expect(compactionProvider.requests).toHaveLength(1);
@@ -482,12 +526,13 @@ describe('Agent', () => {
     const provider = new RecordingProvider();
     const agent = new Agent(await openDatabase(), provider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       systemPrompt: 'system',
     });
 
-    const first = await agent.openSession();
-    const second = await agent.openSession();
-    first.send('only in the first');
+    const first = await agent.openSession({ authorization: permissiveAuthorization });
+    const second = await agent.openSession({ authorization: permissiveAuthorization });
+    first.send('only in the first', testOrigin());
     await first.idle;
 
     expect(first.getTranscript()).toHaveLength(2);
@@ -501,17 +546,24 @@ describe('Agent', () => {
   test('a session resumes by id with its history intact', async () => {
     const database = await openDatabase();
     const provider = new RecordingProvider();
-    const agent = new Agent(database, provider, MODEL, { agentId: 'test', systemPrompt: 'system' });
+    const agent = new Agent(database, provider, MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      systemPrompt: 'system',
+    });
 
     const session = await agent.openSession({ title: 'first run' });
-    session.send('remember this');
+    session.send('remember this', testOrigin());
     await session.idle;
     await session.stop();
 
-    const resumed = await agent.openSession({ sessionId: session.sessionId });
+    const resumed = await agent.openSession({
+      authorization: permissiveAuthorization,
+      sessionId: session.sessionId,
+    });
     expect(resumed.getTranscript().map((message) => message.role)).toEqual(['user', 'assistant']);
 
-    resumed.send('and this');
+    resumed.send('and this', testOrigin());
     await resumed.idle;
     expect(provider.requests.at(-1)?.history.map((message) => message.role)).toEqual([
       'user',
@@ -525,10 +577,14 @@ describe('Agent', () => {
   test('an unknown session id starts a session under that name', async () => {
     const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
       systemPrompt: 'system',
     });
 
-    const session = await agent.openSession({ sessionId: 'discord-channel-42' });
+    const session = await agent.openSession({
+      authorization: permissiveAuthorization,
+      sessionId: 'discord-channel-42',
+    });
 
     expect(session.sessionId).toBe('discord-channel-42');
     expect(session.getTranscript()).toHaveLength(0);

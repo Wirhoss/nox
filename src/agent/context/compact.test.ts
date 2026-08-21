@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { testOrigin } from '../../testFixtures';
 import { applyCompaction, seekSafeCut } from './compact';
 import { freezeMessage } from './immutable';
 
@@ -13,6 +14,15 @@ function requireValue<T>(value: T | undefined): T {
 }
 
 function text(role: 'assistant' | 'user', messageId: string): Message {
+  if (role === 'user') {
+    return freezeMessage({
+      content: [{ text: messageId, type: 'text' }],
+      createdAt: CREATED_AT,
+      messageId,
+      origin: testOrigin(),
+      role,
+    });
+  }
   return freezeMessage({
     content: [{ text: messageId, type: 'text' }],
     createdAt: CREATED_AT,

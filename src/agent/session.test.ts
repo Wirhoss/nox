@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
 import { ChatProvider } from '../provider/provider';
+import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { Session } from './session';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
@@ -90,6 +91,7 @@ function calls(name: string, trackId: string): Script {
 
 function echoTool(): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description: 'echoes',
     name: 'echo',
     parameters: z.object({}),
@@ -118,23 +120,27 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       systemPrompt: 'system',
     });
 
-    session.send('hi');
+    session.send('hi', testOrigin());
     await session.idle;
     await session.stop();
 
     const resumedProvider = new ScriptedProvider([says('again')]);
     const resumed = await Session.open(database, resumedProvider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       sessionId: session.sessionId,
       systemPrompt: 'system',
     });
 
     expect(resumed.getTranscript().map((message) => message.role)).toEqual(['user', 'assistant']);
 
-    resumed.send('and again');
+    resumed.send('and again', testOrigin());
     await resumed.idle;
 
     // The model was handed the history it had before the process restarted.
@@ -150,19 +156,23 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       systemPrompt: 'system',
     });
 
-    session.send('hi');
+    session.send('hi', testOrigin());
     await session.idle;
     await session.stop();
 
     const resumed = await Session.open(database, new ScriptedProvider([says('again')]), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       sessionId: session.sessionId,
       systemPrompt: 'system',
     });
-    resumed.send('and again');
+    resumed.send('and again', testOrigin());
     await resumed.idle;
     await resumed.stop();
 
@@ -185,10 +195,16 @@ describe('Session', () => {
       database,
       new ScriptedProvider([calls('echo', 'track-1'), says('done')]),
       MODEL,
-      { agentId: 'test', context: { tools: { echo: echoTool() } }, systemPrompt: 'system' },
+      {
+        agentId: 'test',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
+        context: { tools: { echo: echoTool() } },
+        systemPrompt: 'system',
+      },
     );
 
-    session.send('use the tool');
+    session.send('use the tool', testOrigin());
     await session.idle;
     await session.stop();
 
@@ -208,11 +224,17 @@ describe('Session', () => {
       database,
       new ScriptedProvider([calls('echo', 'track-1'), says('done')]),
       MODEL,
-      { agentId: 'test', context: { tools: { echo: echoTool() } }, systemPrompt: 'system' },
+      {
+        agentId: 'test',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
+        context: { tools: { echo: echoTool() } },
+        systemPrompt: 'system',
+      },
     );
     const collected = collectUntil(session.events, 'runCompleted');
 
-    session.send('use the tool');
+    session.send('use the tool', testOrigin());
     await session.idle;
 
     const announced = (await collected).filter((event) => event.type === 'message');
@@ -226,6 +248,8 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([]), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       systemPrompt: 'system',
       title: 'First run',
     });
@@ -241,6 +265,8 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([]), MODEL, {
       agentId: 'analyst',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       systemPrompt: 'system',
     });
     await session.stop();
@@ -253,6 +279,8 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([]), MODEL, {
       agentId: 'analyst',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       sessionId: 'shared',
       systemPrompt: 'system',
     });
@@ -261,6 +289,8 @@ describe('Session', () => {
     expect(
       Session.open(database, new ScriptedProvider([]), MODEL, {
         agentId: 'writer',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
         sessionId: 'shared',
         systemPrompt: 'system',
       }),
@@ -274,6 +304,8 @@ describe('Session', () => {
 
     const resumed = await Session.open(database, new ScriptedProvider([]), MODEL, {
       agentId: 'writer',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       sessionId: 'legacy',
       systemPrompt: 'system',
     });
@@ -286,12 +318,14 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       systemPrompt: 'system',
     });
     const collected = collectUntil(session.events, 'runCompleted');
 
     await database.close();
-    session.send('hi');
+    session.send('hi', testOrigin());
     await session.idle;
     await session.flushed;
 
@@ -304,6 +338,8 @@ describe('Session', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       systemPrompt: 'system',
     });
     const drained = (async (): Promise<number> => {
@@ -312,7 +348,7 @@ describe('Session', () => {
       return count;
     })();
 
-    session.send('hi');
+    session.send('hi', testOrigin());
     await session.idle;
     await session.stop();
 

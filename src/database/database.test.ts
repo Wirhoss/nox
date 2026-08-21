@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
 import { Database } from './database';
-import { gateDecisions, messages, sessions } from './schema';
+import { decisions, messages, sessions } from './schema';
 
 const directories: string[] = [];
 let open: Database | undefined;
@@ -107,7 +107,7 @@ describe('Database.open', () => {
       .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
       .map((row) => row.name);
 
-    expect(tables).toContain('gate_decisions');
+    expect(tables).toContain('decisions');
     expect(tables).toContain('messages');
     expect(tables).toContain('sessions');
     expect(tables).toContain('__drizzle_migrations');
@@ -307,15 +307,20 @@ describe('Database schema', () => {
           sessionId: 'session-a',
         })
         .run();
-      tx.insert(gateDecisions)
+      tx.insert(decisions)
         .values({
+          authority: 'nox.test.tool',
           createdAt: Date.now(),
           decidedBy: 'rules',
           decisionId: 'decision-1',
           params: {},
+          principalIssuer: 'test-broker',
+          principalSubject: 'alice',
           reason: 'blocked',
+          runId: 'run-1',
           sessionId: 'session-a',
           signals: [],
+          stage: 'gate',
           title: 'Dangerous action',
           toolName: 'bash',
           toolSetId: 'shell',
@@ -327,7 +332,7 @@ describe('Database schema', () => {
     });
 
     expect(await database.db.select().from(messages)).toHaveLength(0);
-    expect(await database.db.select().from(gateDecisions)).toHaveLength(0);
+    expect(await database.db.select().from(decisions)).toHaveLength(0);
   });
 
   test('rejects a message whose session does not exist', async () => {

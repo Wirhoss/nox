@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { ChatProvider } from '../provider/provider';
+import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { EventLog } from '../utils/eventLog';
 import { Context } from './context/context';
 import { Runner } from './runner';
@@ -86,6 +87,7 @@ function calls(name: string, trackId: string): Script {
 
 function immediateTool(name: string, run: (ctx: ToolContext) => Promise<MessageContent[]>): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description: `the ${name} tool`,
     name,
     parameters: z.object({}),
@@ -95,6 +97,7 @@ function immediateTool(name: string, run: (ctx: ToolContext) => Promise<MessageC
 
 function deferredTool(name: string, result: Promise<MessageContent[]>): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description: `the ${name} tool`,
     name,
     parameters: z.object({}),
@@ -111,6 +114,7 @@ function user(text: string): UserMessage {
     content: [{ text, type: 'text' }],
     createdAt: new Date(),
     messageId: `user-${text}`,
+    origin: testOrigin(),
     role: 'user',
   };
 }
@@ -132,7 +136,12 @@ function setup(
     tools: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
   });
   const events = new EventLog<AgentEvent>();
-  const runner = new Runner(context, events, provider, MODEL, { maxIterations });
+  const runner = new Runner(context, events, provider, MODEL, {
+    authorities: testCatalog(),
+    authorization: permissiveAuthorization,
+    maxIterations,
+    sessionId: 'session-1',
+  });
   return { context, events, provider, runner };
 }
 

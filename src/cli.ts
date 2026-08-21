@@ -1,3 +1,6 @@
+import { nanoid } from 'nanoid';
+
+import { SYSTEM_INTERNAL } from './auth/principal';
 import { bootstrap } from './bootstrap';
 import { loggerService } from './services';
 
@@ -41,6 +44,7 @@ async function printReplies(session: Session, logger: Logger): Promise<void> {
         break;
       }
       case 'assistantReasoningFragment':
+      case 'authorizationDecided':
       case 'message':
       case 'permissionRequested':
       case 'permissionResolved':
@@ -80,7 +84,14 @@ function agentFor(application: NoxApplication): string {
   return only;
 }
 
-/** One terminal attached to one session. A surface, not the application. */
+/**
+ * One terminal attached to one session. A surface, not the application.
+ *
+ * It speaks as the internal system principal, which is granted nothing: grants
+ * belong to a broker, and a terminal is not one. The conversation works; tool
+ * calls are denied before the Gate. This surface exists to exercise the model
+ * loop, and is not the place to introduce a principal nobody authenticated.
+ */
 async function run(): Promise<void> {
   const application = await bootstrap();
   const agentId = agentFor(application);
@@ -117,7 +128,10 @@ async function run(): Promise<void> {
       continue;
     }
 
-    session.send(text);
+    session.send(text, {
+      principal: SYSTEM_INTERNAL,
+      transportMessageId: nanoid(),
+    });
     await session.idle;
     process.stdout.write('\n\n> ');
   }

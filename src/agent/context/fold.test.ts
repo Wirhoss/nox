@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { testOrigin } from '../../testFixtures';
 import { applyFold, foldHistory } from './fold';
 import { freezeMessage } from './immutable';
 import { type FoldedMessage, type Message, messageToString } from './message';
@@ -25,6 +26,7 @@ function user(messageId: string, text = 'user'): Message {
     content: [{ text, type: 'text' }],
     createdAt: CREATED_AT,
     messageId,
+    origin: testOrigin(),
     role: 'user',
   });
 }

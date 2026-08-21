@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { type Message, messageToString } from '../agent/context/message';
+import { testOrigin } from '../testFixtures';
 import { Database } from './database';
 import { messages } from './schema';
 import { SessionStore } from './sessionStore';
@@ -53,6 +54,7 @@ function everyRole(): Message[] {
       content: [{ text: 'hello', type: 'text' }],
       createdAt: CREATED_AT,
       messageId: 'u1',
+      origin: testOrigin(),
       role: 'user',
     },
     {
@@ -125,6 +127,7 @@ describe('SessionStore', () => {
         content: [{ text: `message ${String(index)}`, type: 'text' }],
         createdAt: CREATED_AT,
         messageId: `m${String(index)}`,
+        origin: testOrigin(),
         role: 'user',
       });
     }
@@ -144,6 +147,7 @@ describe('SessionStore', () => {
       content: [{ text: 'before', type: 'text' }],
       createdAt: CREATED_AT,
       messageId: 'before',
+      origin: testOrigin(),
       role: 'user',
     });
     await first.flushed;
@@ -154,6 +158,7 @@ describe('SessionStore', () => {
       content: [{ text: 'after', type: 'text' }],
       createdAt: CREATED_AT,
       messageId: 'after',
+      origin: testOrigin(),
       role: 'user',
     });
     await second.flushed;
@@ -214,6 +219,7 @@ describe('SessionStore', () => {
       content: [{ text: 'lost', type: 'text' }],
       createdAt: CREATED_AT,
       messageId: 'lost',
+      origin: testOrigin(),
       role: 'user',
     });
     await store.flushed;
@@ -231,6 +237,7 @@ describe('SessionStore', () => {
       content: [{ text: 'queued', type: 'text' }],
       createdAt: CREATED_AT,
       messageId: 'queued',
+      origin: testOrigin(),
       role: 'user',
     });
     await store.flushed;

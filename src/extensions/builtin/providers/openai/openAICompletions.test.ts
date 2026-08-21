@@ -8,6 +8,12 @@ import { z } from 'zod';
 import { Session } from '../../../../agent/session';
 import { Database } from '../../../../database/database';
 import { isProviderError, type ProviderErrorCode } from '../../../../provider/error';
+import {
+  permissiveAuthorization,
+  TEST_AUTHORITY,
+  testCatalog,
+  testOrigin,
+} from '../../../../testFixtures';
 import { OpenAICompletions } from './openAICompletions';
 
 import type { Message } from '../../../../agent/context/message';
@@ -84,6 +90,7 @@ function message(partial: Partial<Message> & Pick<Message, 'role'>): Message {
 }
 
 const echoTool: Tool = {
+  authority: TEST_AUTHORITY,
   description: 'Echoes a value back.',
   name: 'echo',
   parameters: z.object({ value: z.string().describe('What to echo.') }),
@@ -367,12 +374,14 @@ describe('OpenAICompletions session regression', () => {
       const instance = provider();
       const session = await Session.open(database, instance, model, {
         agentId: 'test',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
         context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
         sessionId: 'folded-reasoning-turn',
         systemPrompt: 'be brief',
       });
 
-      session.send('use echo');
+      session.send('use echo', testOrigin());
       await session.idle;
       await session.stop();
 
@@ -386,6 +395,8 @@ describe('OpenAICompletions session regression', () => {
       // synthetic assistant anchor must both survive and reconnect by ID.
       const resumed = await Session.open(database, instance, model, {
         agentId: 'test',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
         context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
         sessionId: session.sessionId,
         systemPrompt: 'be brief',
@@ -399,7 +410,7 @@ describe('OpenAICompletions session regression', () => {
       expect(anchor?.role).toBe('assistant');
       expect(fold?.role === 'folded' ? fold.anchorMessageId : undefined).toBe(anchor?.messageId);
 
-      resumed.send('what happened?');
+      resumed.send('what happened?', testOrigin());
       await resumed.idle;
       await resumed.stop();
 

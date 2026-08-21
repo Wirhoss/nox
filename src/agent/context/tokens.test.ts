@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { TEST_AUTHORITY } from '../../testFixtures';
 import { freezeMessage } from './immutable';
 import { resolveContextOptions } from './options';
 import { estimateTokensByCharacters, TokenEstimator } from './tokens';
@@ -48,6 +49,7 @@ describe('TokenEstimator', () => {
   test('includes one stable system-and-tools prefix exactly once per history', () => {
     const schema = z.object({ value: z.string() });
     const tool = {
+      authority: TEST_AUTHORITY,
       description: 'description',
       name: 'tool',
       parameters: schema,
@@ -119,6 +121,7 @@ describe('context token policy', () => {
   test('sorts and freezes configured tools independent of insertion order', () => {
     const schema = z.object({});
     const base = {
+      authority: TEST_AUTHORITY,
       description: 'tool',
       parameters: schema,
       prepare: () => ({

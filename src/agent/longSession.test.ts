@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
 import { ChatProvider } from '../provider/provider';
+import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { COMPACT_PROMPT } from './context/prompt';
 import { Session } from './session';
 
@@ -110,6 +111,7 @@ class RuleProvider extends ChatProvider {
 
 function workTool(): Tool {
   return {
+    authority: TEST_AUTHORITY,
     description: 'does mechanical work',
     name: 'work',
     parameters: z.object({ turn: z.number() }),
@@ -130,7 +132,7 @@ function workTool(): Tool {
 
 async function drive(session: Session, turns: number): Promise<void> {
   for (let turn = 1; turn <= turns; turn += 1) {
-    session.send(`request ${String(turn)}`);
+    session.send(`request ${String(turn)}`, testOrigin());
     await session.idle;
   }
 }
@@ -141,6 +143,8 @@ describe('a session that runs long enough to fold and compact', () => {
     const provider = new RuleProvider();
     const session = await Session.open(database, provider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       sessionId: 'long-run',
       systemPrompt: 'system',
@@ -178,6 +182,8 @@ describe('a session that runs long enough to fold and compact', () => {
     // the identical working set, reductions included.
     const reopened = await Session.open(database, new RuleProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       sessionId: 'long-run',
       systemPrompt: 'system',
@@ -193,6 +199,8 @@ describe('a session that runs long enough to fold and compact', () => {
     const provider = new RuleProvider();
     const session = await Session.open(database, provider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       systemPrompt: 'system',
     });
@@ -230,6 +238,8 @@ describe('a session that runs long enough to fold and compact', () => {
     const database = await openDatabase();
     const session = await Session.open(database, new RuleProvider(), MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
       sessionId: 'durable',
       systemPrompt: 'system',
@@ -252,6 +262,8 @@ describe('a session that runs long enough to fold and compact', () => {
     const provider = new RuleProvider();
     const session = await Session.open(database, provider, MODEL, {
       agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
       // No contextWindow: the default an agent gets when nobody configures one.
       context: { tools: { work: workTool() } },
       systemPrompt: 'system',

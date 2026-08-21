@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { testOrigin } from '../../testFixtures';
 import { freezeMessage } from './immutable';
 
 function requireValue<T>(value: T | undefined): T {
@@ -32,6 +33,7 @@ describe('freezeMessage', () => {
       content: [{ text: 'text', type: 'text' }],
       createdAt: new Date('2025-01-01T00:00:00.000Z'),
       messageId: 'message',
+      origin: testOrigin(),
       role: 'user',
     });
     const original = message.createdAt.toISOString();

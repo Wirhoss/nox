@@ -87,6 +87,6 @@ describe('the server itself', () => {
     const server = await ApiServer.start({ host: '127.0.0.1', port: 0 });
     await server.dispose();
 
-    await expect(server.dispose()).resolves.toBeUndefined();
+    await server.dispose();
   });
 });

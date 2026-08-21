@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { testOrigin } from '../../testFixtures';
 import { type Message, messageToString } from './message';
 import { Transcript } from './transcript';
 
@@ -17,6 +18,7 @@ function user(messageId: string, text: string): Message {
     content: [{ text, type: 'text' }],
     createdAt: CREATED_AT,
     messageId,
+    origin: testOrigin(),
     role: 'user',
   };
 }
