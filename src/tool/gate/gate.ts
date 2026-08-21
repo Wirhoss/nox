@@ -1,6 +1,12 @@
 import { nanoid } from 'nanoid';
 
-import { principalKey, type PrincipalRef, samePrincipal } from '../../auth/principal';
+import {
+  principalKey,
+  type PrincipalRef,
+  samePrincipal,
+  SYSTEM_ISSUER,
+} from '../../auth/principal';
+import { raceWithAbort } from '../../utils/abort';
 import { stableStringify } from '../../utils/json';
 import { parseOrThrow } from '../../utils/validate';
 import { type GatePolicy, type GatePolicyInput, gatePolicySchema } from './config';
@@ -21,6 +27,10 @@ import type {
 interface SessionGateOptions {
   readonly audit?: GateAuditSink;
   readonly evaluators?: readonly GateEvaluator[];
+  /** A non-configurable approval floor derived from the session's participants. */
+  readonly ownerApprovalRequired?: (request: GateRequest) => boolean;
+  /** Behave as no configured Gate until the owner-approval floor activates. */
+  readonly passthrough?: boolean;
 }
 
 interface PendingEntry {
@@ -51,6 +61,8 @@ class SessionGate {
   readonly #approved = new Set<string>();
   readonly #audit?: GateAuditSink;
   readonly #evaluators: readonly GateEvaluator[];
+  readonly #ownerApprovalRequired?: (request: GateRequest) => boolean;
+  readonly #passthrough: boolean;
   readonly #policy: GatePolicy;
   readonly #pending = new Map<string, PendingEntry>();
   readonly #rules: RuleEvaluator;
@@ -62,6 +74,8 @@ class SessionGate {
     this.#sessionId = sessionId;
     this.#policy = parseOrThrow(gatePolicySchema, policy);
     this.#audit = options.audit;
+    this.#ownerApprovalRequired = options.ownerApprovalRequired;
+    this.#passthrough = options.passthrough ?? false;
     this.#rules = new RuleEvaluator(this.#policy.rules);
     this.#evaluators = [
       new RiskHeuristicEvaluator(this.#policy.heuristics),
@@ -69,29 +83,56 @@ class SessionGate {
     ];
   }
 
-  public async evaluate(request: GateRequest): Promise<GateDecision> {
+  public async evaluate(request: GateRequest, signal?: AbortSignal): Promise<GateDecision> {
     this.#assertSession(request);
+    const evaluationSignal = signal ?? new AbortController().signal;
+
+    // An absent blueprint Gate is a true passthrough while one principal owns the
+    // transcript. The derived floor still exists, because configuration may not
+    // weaken the shared-conversation guarantee by omission.
+    if (this.#passthrough) {
+      return this.#needsOwnerApproval(request)
+        ? this.#ownerApprovalFloor(request)
+        : Object.freeze({
+            decidedBy: 'passthrough',
+            decisionId: nanoid(),
+            reason: 'No Gate policy is configured for this session.',
+            signals: Object.freeze([]),
+            verdict: 'allow',
+          });
+    }
 
     // Explicit user policy is authoritative. Evaluators may extend ambiguous
     // cases, but neither heuristics nor a future reviewer can weaken a rule.
     const ruled = this.#rules.evaluate(request);
     if (ruled.verdict === 'deny') return this.#record(request, 'rules', ruled);
+    if (ruled.verdict === 'escalate') return this.#record(request, 'rules', ruled);
+
+    // The shared floor is stronger than an allow rule and than a memo created
+    // before another principal contaminated the transcript. With no explicit
+    // allow, evaluators still run so a deny can remain terminal.
+    const ownerApprovalRequired = this.#needsOwnerApproval(request);
+    if (ownerApprovalRequired && ruled.verdict === 'allow') {
+      return this.#ownerApprovalFloor(request);
+    }
 
     // Session approval is exact-call memoization. It can satisfy escalation but
-    // never reaches this point through a deterministic deny.
-    if (this.#approved.has(callKey(request))) {
+    // never reaches this point through a deterministic deny or the hard floor.
+    if (!ownerApprovalRequired && this.#approved.has(callKey(request))) {
       return this.#record(request, 'memo', {
         reason: 'Approved earlier in this live session.',
         verdict: 'allow',
       });
     }
-    if (ruled.verdict !== 'abstain') return this.#record(request, 'rules', ruled);
+    if (ruled.verdict === 'allow') return this.#record(request, 'rules', ruled);
 
-    const evaluations = await Promise.all(
-      this.#evaluators.map(async (evaluator) => ({
-        evaluation: await evaluator.evaluate(request),
-        evaluatorId: evaluator.id,
-      })),
+    const evaluations = await raceWithAbort(evaluationSignal, () =>
+      Promise.all(
+        this.#evaluators.map(async (evaluator) => ({
+          evaluation: await evaluator.evaluate(request, evaluationSignal),
+          evaluatorId: evaluator.id,
+        })),
+      ),
     );
     const signals = evaluations.flatMap(({ evaluation }) => [...(evaluation.signals ?? [])]);
     const strongest = evaluations.reduce<(typeof evaluations)[number] | undefined>(
@@ -105,6 +146,17 @@ class SessionGate {
       },
       undefined,
     );
+
+    // A deny signal remains terminal; otherwise a principal that arrived while
+    // asynchronous evaluators were running raises the verdict to escalation.
+    if (strongest?.evaluation.verdict === 'deny') {
+      return this.#record(request, strongest.evaluatorId, {
+        ...strongest.evaluation,
+        signals,
+      });
+    }
+    if (this.#needsOwnerApproval(request)) return this.#ownerApprovalFloor(request, signals);
+
     if (strongest !== undefined && strongest.evaluation.verdict !== 'abstain') {
       return this.#record(request, strongest.evaluatorId, {
         ...strongest.evaluation,
@@ -145,6 +197,16 @@ class SessionGate {
       finishOutcome = resolve;
     });
 
+    const pendingForOwner = [...this.#pending.values()].filter(({ request: pending }) =>
+      samePrincipal(pending.runAuthority.principal, request.runAuthority.principal),
+    ).length;
+    if (pendingForOwner >= this.#policy.maxPendingPermissions) {
+      const resolution: PermissionResolution = { resolution: 'denied' };
+      this.#audit?.resolve(requestId, resolution, new Date());
+      finishOutcome(resolution);
+      return Object.freeze({ accepted: false, outcome, request: permission });
+    }
+
     let finished = false;
     const lifecycle: {
       onAbort?: () => void;
@@ -178,7 +240,7 @@ class SessionGate {
     if (this.#stopped || signal?.aborted === true) finish({ resolution: 'aborted' });
     else signal?.addEventListener('abort', lifecycle.onAbort, { once: true });
 
-    return Object.freeze({ outcome, request: permission });
+    return Object.freeze({ accepted: true, outcome, request: permission });
   }
 
   public listPending(): readonly PermissionRequest[] {
@@ -217,17 +279,44 @@ class SessionGate {
     this.#approved.clear();
   }
 
+  #needsOwnerApproval(request: GateRequest): boolean {
+    return this.#ownerApprovalRequired?.(request) === true;
+  }
+
+  #ownerApprovalFloor(request: GateRequest, signals: GateDecision['signals'] = []): GateDecision {
+    return this.#record(request, 'shared-conversation', {
+      reason:
+        'This session contains more than one principal, so an effectful call requires fresh ' +
+        'approval from its owner.',
+      signals,
+      verdict: 'escalate',
+    });
+  }
+
   #record(
     request: GateRequest,
     decidedBy: string,
     evaluation: Exclude<GateEvaluation, { verdict: 'abstain' }>,
   ): GateDecision {
+    // An escalation is a question for a human originator. A system run has none,
+    // so recording an intermediate escalation would leave audit looking pending
+    // forever even though the only possible outcome is terminal denial.
+    const terminal: Exclude<GateEvaluation, { verdict: 'abstain' }> =
+      evaluation.verdict === 'escalate' && request.runAuthority.principal.issuer === SYSTEM_ISSUER
+        ? {
+            ...evaluation,
+            reason:
+              `${evaluation.reason} This run has no human originator, and approval ` +
+              'cannot be delegated.',
+            verdict: 'deny',
+          }
+        : evaluation;
     const decision: GateDecision = Object.freeze({
       decidedBy,
       decisionId: nanoid(),
-      reason: evaluation.reason,
-      signals: Object.freeze([...(evaluation.signals ?? [])]),
-      verdict: evaluation.verdict,
+      reason: terminal.reason,
+      signals: Object.freeze([...(terminal.signals ?? [])]),
+      verdict: terminal.verdict,
     });
     this.#audit?.record({
       ...request,

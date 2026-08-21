@@ -12,7 +12,7 @@ import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
 import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
 import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
-import { Gateway } from './gateway';
+import { type BrokerConversationGrant, Gateway } from './gateway';
 
 import type { Message, MessageContent } from '../agent/context/message';
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
@@ -68,6 +68,32 @@ class TwoFragmentProvider extends ChatProvider {
   ): AsyncIterable<ProviderSourceEvent> {
     yield { text: 'hola ', type: 'textFragment' };
     yield { text: 'mundo', type: 'textFragment' };
+    yield { type: 'end' };
+  }
+}
+
+/** One settled provider reply, useful for proving per-conversation agent routing. */
+class SayingProvider extends ChatProvider {
+  readonly #text: string;
+
+  constructor(text: string) {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    this.#text = text;
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    _messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    yield { text: this.#text, type: 'textFragment' };
     yield { type: 'end' };
   }
 }
@@ -189,6 +215,7 @@ async function harness(
   database: Database,
   broker: TestBroker,
   options: {
+    conversations?: Readonly<Record<string, BrokerConversationGrant>>;
     gate?: GatePolicyInput;
     grants?: Readonly<Record<string, readonly string[]>>;
     provider?: ChatProvider;
@@ -219,6 +246,7 @@ async function harness(
         ),
         broker,
         brokerId: 'test',
+        conversations: options.conversations,
       },
     ],
     database,
@@ -314,6 +342,48 @@ describe('Gateway', () => {
     expect(resumed?.getTranscript().filter((message) => message.role === 'user')).toHaveLength(2);
   });
 
+  test('routes a configured conversation to its replacement agent', async () => {
+    const database = await openDatabase();
+    const broker = new TestBroker();
+    const application = new NoxApplication();
+    applications.push(application);
+    await application.start();
+    for (const [agentId, text] of [
+      ['reader', 'reader reply'],
+      ['admin', 'admin reply'],
+    ] as const) {
+      application.addAgent(
+        new Agent(database, new SayingProvider(text), MODEL, {
+          agentId,
+          authorities: catalog,
+          systemPrompt: 'system',
+        }),
+      );
+    }
+    const gateway = new Gateway(application, {
+      brokers: [
+        {
+          agentId: 'reader',
+          broker,
+          brokerId: 'test',
+          conversations: { admin: { agentId: 'admin' } },
+        },
+      ],
+      database,
+    });
+    application.setGateway(gateway);
+    await gateway.start();
+    const harnessed = { application, broker, gateway };
+
+    broker.say('public', 'hola', undefined, 'alice');
+    await settle(harnessed);
+    broker.say('admin', 'hola', undefined, 'alice');
+    await settle(harnessed);
+
+    expect(broker.texts('message')).toEqual(['reader reply', 'admin reply']);
+    expect(application.sessions.map(({ agentId }) => agentId).sort()).toEqual(['admin', 'reader']);
+  });
+
   test('drops a delivery the transport already made', async () => {
     const broker = new TestBroker();
     const harnessed = await harness(await openDatabase(), broker);
@@ -361,9 +431,11 @@ describe('Gateway', () => {
     async function guarded(
       broker: TestBroker,
       grants?: Readonly<Record<string, readonly string[]>>,
+      conversations?: Readonly<Record<string, BrokerConversationGrant>>,
     ): Promise<{ executions: { count: number }; harnessed: Harness }> {
       const executions = { count: 0 };
       const harnessed = await harness(await openDatabase(), broker, {
+        conversations,
         gate: {
           defaultVerdict: 'allow',
           escalationTimeoutMs: 10_000,
@@ -375,6 +447,40 @@ describe('Gateway', () => {
       });
       return { executions, harnessed };
     }
+
+    test('replaces grants for a configured conversation', async () => {
+      const broker = new TestBroker({ permissions: true });
+      const adminAuthorization = new GrantAuthorizationProvider('test', { alice: ['*'] }, catalog);
+      const { executions, harnessed } = await guarded(
+        broker,
+        {},
+        {
+          admin: {
+            agentId: 'assistant',
+            authorization: adminAuthorization,
+          },
+        },
+      );
+
+      broker.say('public', 'usa echo', undefined, 'alice');
+      await settle(harnessed);
+      expect(broker.delivered.filter((event) => event.type === 'permission')).toEqual([]);
+
+      broker.say('admin', 'usa echo', undefined, 'alice');
+      const asked = await waitFor(
+        () =>
+          broker.delivered.find(
+            (event): event is Extract<OutboundEvent, { type: 'permission' }> =>
+              event.type === 'permission' && event.conversationId === 'admin',
+          ),
+        'An admin permission request',
+      );
+      broker.answer('admin', asked.request.requestId, 'alice', { approved: 'once' });
+      await settle(harnessed);
+
+      expect(executions.count).toBe(1);
+      expect(harnessed.application.sessions).toHaveLength(2);
+    });
 
     test('asks the conversation and runs the tool once the originator answers', async () => {
       const broker = new TestBroker({ permissions: true, streaming: false });
@@ -401,6 +507,34 @@ describe('Gateway', () => {
       expect(executions.count).toBe(1);
       expect(broker.delivered.some((event) => event.type === 'permissionResolved')).toBeTrue();
       expect(broker.texts('message')).toEqual(['done']);
+    });
+
+    test('keeps a detached resolution correlated to its originating turn', async () => {
+      const broker = new TestBroker({ permissions: true, streaming: false });
+      const { harnessed } = await guarded(broker, { alice: ['*'] });
+
+      broker.say('chat-1', 'usa echo', undefined, 'alice');
+      const asked = await waitFor(
+        () => broker.delivered.find((event) => event.type === 'permission'),
+        'A permission request',
+      );
+
+      // Bob is the second principal: his arrival promotes Alice's existing wait
+      // to detached, and his own turn advances the conversation turn ID.
+      broker.say('chat-1', 'hola', undefined, 'bob');
+      await settle(harnessed);
+      expect(
+        broker.delivered.some((event) => event.type === 'message' && event.turnId !== asked.turnId),
+      ).toBeTrue();
+
+      broker.answer('chat-1', asked.request.requestId, 'alice', { approved: 'once' });
+      await harnessed.gateway.drain();
+      const resolved = await waitFor(
+        () => broker.delivered.find((event) => event.type === 'permissionResolved'),
+        'A permission resolution',
+      );
+
+      expect(resolved.turnId).toBe(asked.turnId);
     });
 
     test('never lets prose in the conversation resolve a pending call', async () => {

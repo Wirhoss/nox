@@ -6,6 +6,14 @@ import { toolSetBaseConfigSchema } from '../../../contribution-points/toolsets';
 
 import type { MessageContent } from '../../../../agent/context/message';
 
+/**
+ * This extension's own authorities. They sit under its extension ID, which is
+ * what the catalog checks: nothing here can claim a name belonging to the core
+ * or to another extension.
+ */
+const WEB_SEARCH_AUTHORITY = 'nox.toolset.web.search';
+const WEB_EXTRACT_AUTHORITY = 'nox.toolset.web.extract';
+
 const endpointConfigSchema = z.object({
   apiKey: z.string().min(1).optional(),
   timeoutMs: z.number().int().positive().optional(),
@@ -188,6 +196,7 @@ class WebTools extends ToolSet {
     });
 
     const tool: Tool<typeof parameters> = {
+      authority: WEB_SEARCH_AUTHORITY,
       description: 'Search the public web and return result titles, URLs, and snippets.',
       name: 'web_search',
       parameters,
@@ -256,6 +265,7 @@ class WebTools extends ToolSet {
     });
 
     const tool: Tool<typeof parameters> = {
+      authority: WEB_EXTRACT_AUTHORITY,
       description: 'Extract web pages and return separate Markdown results for each URL.',
       name: 'web_extract',
       parameters,
@@ -304,6 +314,6 @@ class WebTools extends ToolSet {
   }
 }
 
-export { WebTools, webToolsConfigSchema };
+export { WEB_EXTRACT_AUTHORITY, WEB_SEARCH_AUTHORITY, WebTools, webToolsConfigSchema };
 
 export type { WebToolsConfig, WebToolsConfigInput };

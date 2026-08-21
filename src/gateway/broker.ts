@@ -10,9 +10,9 @@ import type { PermissionRequest, PermissionResolution } from '../tool/gate';
  */
 interface BrokerCapabilities {
   /**
-   * The broker can put a permission request in front of a human and return the
-   * answer. Prompts are still only delivered to a broker whose configuration
-   * names who may answer them.
+   * The broker can put a permission request in front of its owner and return the
+   * answer. The request itself names that owner; the transport only authenticates
+   * the sender and renders the prompt.
    */
   readonly permissions?: boolean;
   /**
@@ -92,10 +92,9 @@ interface InboundMessage {
 }
 
 /**
- * Someone answered a permission request. The gateway checks that the sender is
- * one the broker's configuration named as an approver, and that the request
- * belongs to the conversation it arrived in — a transport asserts identity, it
- * does not grant authority.
+ * Someone answered a permission request. The gateway checks that the request
+ * belongs to the conversation and the Gate checks that the sender is its owner —
+ * a transport asserts identity, it does not grant authority.
  */
 interface InboundPermission {
   readonly conversationId: string;
@@ -108,9 +107,10 @@ interface InboundPermission {
 type InboundEvent = InboundMessage | InboundPermission;
 
 /**
- * What the gateway hands a broker when it starts it. `receive` returns nothing
- * and never throws: a transport delivering an event is not the place where a
- * session's failure is handled, and the gateway is the one holding the queue.
+ * What the gateway hands a broker when it starts it. A concrete broker applies
+ * its own channel/sender ingress rules before calling `receive`; rejected traffic
+ * is never a kernel event. `receive` returns nothing and never throws: a transport
+ * delivering an accepted event is not where a session failure is handled.
  */
 interface BrokerHost {
   readonly logger: Logger;

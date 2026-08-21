@@ -60,7 +60,7 @@ class ApiServer implements Disposable {
   /** The address it actually bound to: port 0 in the config resolves here. */
   public get url(): string {
     const port = this.#app.server?.port ?? this.#config.port;
-    return `http://${this.#config.host}:${port}`;
+    return `http://${this.#config.host}:${String(port)}`;
   }
 
   public async dispose(): Promise<void> {

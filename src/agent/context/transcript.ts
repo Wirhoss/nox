@@ -39,7 +39,7 @@ function isIndexable(message: Message): boolean {
     case 'folded':
       return false;
     case 'toolResponse':
-      return message.execution !== 'deferredAck';
+      return message.execution !== 'deferredAck' && message.execution !== 'permissionPending';
     case 'assistant':
     case 'reasoning':
     case 'user':
@@ -271,6 +271,7 @@ class Transcript {
     if (
       message.role === 'toolResponse' &&
       message.execution !== 'deferredAck' &&
+      message.execution !== 'permissionPending' &&
       !this.#toolResponses.has(message.trackId)
     ) {
       this.#toolResponses.set(message.trackId, message);

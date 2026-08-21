@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
 import { providerBaseConfigSchema } from '../../provider/config';
-import { createContributionPoint } from '../contribution';
+import { type ConfigurableContribution, createContributionPoint } from '../contribution';
 
 import type { ChatProvider } from '../../provider/provider';
-import type { ConfigurableContribution } from '../contribution';
 
 /**
  * What every provider configuration must be, whoever contributes it: the base a

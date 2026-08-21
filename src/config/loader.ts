@@ -4,11 +4,10 @@ import { dirname, join } from 'node:path';
 
 import { z } from 'zod';
 
-import { isConfigurable } from '../extensions/contribution';
+import { type ContributionReader, isConfigurable } from '../extensions/contribution';
 import { diffPaths, stableStringify } from '../utils/json';
 import { ConfigError } from './error';
 
-import type { ContributionReader } from '../extensions/contribution';
 import type { Logger } from '../logger/logger';
 import type { ConfigSection, ContributionSection, DirectorySection, FileSection } from './section';
 
@@ -273,18 +272,19 @@ async function updateSection<T>(
     throw new ConfigError('unwritable', filePath, 'is a directory; update its entries instead.');
   }
 
-  if (section.kind === 'contribution' && contributions === undefined) {
-    throw new ConfigError(
-      'unresolved',
-      filePath,
-      'is backed by a contribution point and needs the registry to build its schema.',
-    );
+  let schema: z.ZodType;
+  if (section.kind === 'file') {
+    schema = section.schema;
+  } else {
+    if (contributions === undefined) {
+      throw new ConfigError(
+        'unresolved',
+        filePath,
+        'is backed by a contribution point and needs the registry to build its schema.',
+      );
+    }
+    schema = contributionSchema(section, contributions);
   }
-
-  const schema: z.ZodType<unknown> =
-    section.kind === 'file'
-      ? section.schema
-      : contributionSchema(section, contributions as ContributionReader);
 
   const document = parseDocument(schema, next, filePath);
   const value =

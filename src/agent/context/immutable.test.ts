@@ -28,6 +28,27 @@ const MUTATORS = [
 ] as const;
 
 describe('freezeMessage', () => {
+  test('copies and freezes provenance, so attribution cannot be rewritten later', () => {
+    const principal = { issuer: 'test-broker', subject: 'alice' };
+    const origin = { principal, transportMessageId: 't1' };
+    const message = freezeMessage({
+      content: [{ text: 'hola', type: 'text' as const }],
+      createdAt: new Date('2025-01-01T00:00:00.000Z'),
+      messageId: 'u1',
+      origin,
+      role: 'user' as const,
+    });
+
+    expect(message.origin).not.toBe(origin);
+    expect(message.origin.principal).not.toBe(principal);
+    expect(Object.isFrozen(message.origin)).toBeTrue();
+    expect(Object.isFrozen(message.origin.principal)).toBeTrue();
+
+    // The caller still holds what it passed in; the transcript does not care.
+    principal.subject = 'mallory';
+    expect(message.origin.principal.subject).toBe('alice');
+  });
+
   test('blocks every Date mutator, including legacy setYear', () => {
     const message = freezeMessage({
       content: [{ text: 'text', type: 'text' }],

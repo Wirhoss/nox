@@ -33,7 +33,15 @@ interface ToolRisk {
   readonly volume?: number;
 }
 
+/**
+ * Every tool names the authority it needs, and there is no default. A tool that
+ * did not say would otherwise be authorized against something invented for it —
+ * which is a permission granted by accident, and the one thing this must never
+ * do. An unnamed or unregistered authority is a configuration error, never an
+ * allow.
+ */
 interface Tool<T extends z.ZodObject = z.ZodObject> {
+  authority: string;
   description: string;
   name: string;
   parameters: T;
@@ -41,7 +49,14 @@ interface Tool<T extends z.ZodObject = z.ZodObject> {
   risk?: ToolRisk;
 }
 
+/**
+ * What a prepared call is really about. A routed call arrives through the router
+ * but is not a router call: the subject carries the tool that will actually run,
+ * the set it came from, and the authority that tool declared. Authorization and
+ * the Gate both read this rather than the name the model happened to type.
+ */
 interface ToolExecutionSubject {
+  readonly authority: string;
   readonly params: Readonly<Record<string, unknown>>;
   readonly toolName: string;
   readonly toolSetId: string;
@@ -85,6 +100,53 @@ function prepareToolCall(tool: Tool, rawParams: unknown): PreparedToolCall {
 
 function prepareTool(tool: Tool, rawParams: unknown): ToolExecution {
   return prepareToolCall(tool, rawParams).execution;
+}
+
+function mergeRisk(
+  declared: ToolRisk | undefined,
+  prepared: ToolRisk | undefined,
+): ToolRisk | undefined {
+  if (declared === undefined) return prepared;
+  if (prepared === undefined) return declared;
+  return {
+    effects: [...new Set([...declared.effects, ...prepared.effects])],
+    resources: [...(declared.resources ?? []), ...(prepared.resources ?? [])],
+    reversible: prepared.reversible ?? declared.reversible,
+    volume: prepared.volume ?? declared.volume,
+  };
+}
+
+/**
+ * Ties a tool to the set it was granted from, so every execution it prepares
+ * carries a subject. Nothing may run without one, so binding is not an
+ * optimization — it is where the authority of a call becomes a fact rather than
+ * a lookup.
+ *
+ * An execution that already has a subject is left exactly as it is. That is what
+ * makes routing work — a routed tool prepared through the router has already
+ * stamped its own name and authority, and the router must not overwrite them
+ * with its own — and it is what makes binding idempotent, so a tool that passes
+ * through two binders does not have its declared risk merged in twice.
+ */
+function bindTool(source: Tool, toolSetId: string): Tool {
+  return Object.freeze({
+    ...source,
+    prepare: (params: Parameters<Tool['prepare']>[0]): ToolExecution => {
+      const execution = source.prepare(params);
+      if (execution.gateSubject !== undefined) return execution;
+
+      return {
+        ...execution,
+        gateSubject: {
+          authority: source.authority,
+          params,
+          toolName: source.name,
+          toolSetId,
+        },
+        risk: mergeRisk(source.risk, execution.risk),
+      };
+    },
+  });
 }
 
 interface ToolSetGrant {
@@ -151,7 +213,7 @@ type ToolSetClass<T extends ToolSet = ToolSet, TArguments extends unknown[] = []
 
 type ToolSetFactory<T extends ToolSet = ToolSet> = () => T;
 
-export { prepareTool, prepareToolCall, ToolSet };
+export { bindTool, prepareTool, prepareToolCall, ToolSet };
 
 export type {
   DeferredExecution,

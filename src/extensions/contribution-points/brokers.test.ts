@@ -6,8 +6,9 @@ describe('broker configuration', () => {
   test('defaults to granting nobody anything', () => {
     const parsed = brokerConfigSchema.parse({ agent: 'nox', type: 'discord' });
 
-    // Everyone in the conversation can still talk to the agent. Nobody can make
-    // it act until this names them.
+    // Ingress filtering belongs to the concrete transport. Nobody can make the
+    // agent act until a base route or explicit conversation override grants it.
+    expect(parsed.conversations).toEqual({});
     expect(parsed.grants).toEqual({});
   });
 
@@ -19,6 +20,28 @@ describe('broker configuration', () => {
     });
 
     expect(parsed.grants).toEqual({ '1234567890': ['nox.history.*'] });
+  });
+
+  test('materializes conversation overrides as replacement security boundaries', () => {
+    const parsed = brokerConfigSchema.parse({
+      agent: 'reader',
+      conversations: {
+        admin: {
+          agent: 'admin',
+          grants: { alice: ['*'] },
+        },
+        public: {},
+      },
+      grants: { 'base-user': ['nox.history.*'] },
+      type: 'discord',
+    });
+
+    expect(parsed.conversations.admin).toEqual({
+      agent: 'admin',
+      grants: { alice: ['*'] },
+    });
+    // Missing override values do not inherit privileged base access.
+    expect(parsed.conversations.public).toEqual({ grants: {} });
   });
 
   test('refuses to load a configuration that still names approvers', () => {

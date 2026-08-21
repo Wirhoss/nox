@@ -137,6 +137,32 @@ describe('Transcript', () => {
     expect(() => transcript.readToolResult('track', 0, 200)).toThrow('No tool response');
   });
 
+  test('permission pending is not mistaken for the correlated final result', () => {
+    const transcript = new Transcript([
+      {
+        createdAt: CREATED_AT,
+        execution: 'permissionPending',
+        messageId: 'pending',
+        name: 'work',
+        response: [{ text: 'waiting for approval', type: 'text' }],
+        role: 'toolResponse',
+        trackId: 'track',
+      },
+      {
+        createdAt: new Date(CREATED_AT.getTime() + 1),
+        execution: 'deferredResult',
+        messageId: 'result',
+        name: 'work',
+        response: [{ text: 'finished', type: 'text' }],
+        role: 'toolResponse',
+        trackId: 'track',
+      },
+    ]);
+
+    expect(transcript.search('waiting', 5)).toEqual([]);
+    expect(transcript.readToolResult('track', 0, 200)[0]?.text).toContain('finished');
+  });
+
   test('the append sink sees every live append, frozen, in order', () => {
     const seen: Message[] = [];
     const transcript = new Transcript([], {
