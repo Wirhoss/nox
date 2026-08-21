@@ -8,7 +8,7 @@ export {
   ownerNamespace,
   UnknownAuthorityError,
 } from './authority';
-export { AUTHORIZATION_DECIDER, authorize, GrantAuthorizationProvider } from './authorization';
+export { authorize, GrantAuthorizationProvider } from './authorization';
 export { ConversationParticipants } from './conversation';
 export {
   CORE_AUTHORITIES,
@@ -21,14 +21,12 @@ export {
   messageAuthority,
   principal,
   principalKey,
-  principalRefSchema,
   principalToString,
   samePrincipal,
   SYSTEM_CRON,
   SYSTEM_INTERNAL,
   SYSTEM_ISSUER,
   systemAuthority,
-  systemPrincipal,
 } from './principal';
 
 export type { AuthorityDefinition, GrantPattern } from './authority';

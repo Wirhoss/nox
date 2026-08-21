@@ -60,4 +60,4 @@ function raceWithAbort<T>(signal: AbortSignal, operation: () => PromiseLike<T> |
   });
 }
 
-export { abortError, raceWithAbort };
+export { raceWithAbort };

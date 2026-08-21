@@ -1073,6 +1073,6 @@ class Runner {
   }
 }
 
-export { DEFAULT_MAX_ITERATIONS, Runner };
+export { Runner };
 
 export type { RunnerOptions, RunnerState };

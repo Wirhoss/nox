@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 /**
  * Who is acting, as two halves that only mean something together: the authority
  * that vouched for the identity, and the identity it vouched for. A Discord user
@@ -58,11 +56,6 @@ interface RunAuthority {
  */
 const SYSTEM_ISSUER = 'nox.system';
 
-const principalRefSchema = z.object({
-  issuer: z.string().trim().min(1),
-  subject: z.string().trim().min(1),
-});
-
 function principal(issuer: string, subject: string): PrincipalRef {
   return Object.freeze({ issuer, subject });
 }
@@ -100,14 +93,14 @@ function principalToString(reference: PrincipalRef): string {
  */
 function messageAuthority(origin: MessageOrigin, messageId: string): RunAuthority {
   return Object.freeze({
-    principal: Object.freeze({ ...origin.principal }),
+    principal: principal(origin.principal.issuer, origin.principal.subject),
     source: Object.freeze({ messageId, type: 'message' as const }),
   });
 }
 
 function systemAuthority(subject: PrincipalRef, causeId: string): RunAuthority {
   return Object.freeze({
-    principal: Object.freeze({ ...subject }),
+    principal: principal(subject.issuer, subject.subject),
     source: Object.freeze({ causeId, type: 'system' as const }),
   });
 }
@@ -116,14 +109,12 @@ export {
   messageAuthority,
   principal,
   principalKey,
-  principalRefSchema,
   principalToString,
   samePrincipal,
   SYSTEM_CRON,
   SYSTEM_INTERNAL,
   SYSTEM_ISSUER,
   systemAuthority,
-  systemPrincipal,
 };
 
 export type { MessageOrigin, PrincipalRef, RunAuthority, RunAuthoritySource };

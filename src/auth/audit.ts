@@ -1,4 +1,4 @@
-import type { GateAuditRecord, PermissionResolution, RiskSignal } from '../tool/gate/types';
+import type { GateAuditSink, PermissionResolution, RiskSignal } from '../tool/gate/types';
 import type { ToolRisk } from '../tool/tool';
 import type { PrincipalRef } from './principal';
 
@@ -32,15 +32,8 @@ type DecisionStage = 'authorization' | 'gate';
  * purpose: "why did this call not happen" has two possible answers, and an
  * operator should not have to know which one to look in.
  */
-interface DecisionAuditSink {
+interface DecisionAuditSink extends GateAuditSink {
   authorize(record: AuthorizationAuditRecord): void;
-  record(record: GateAuditRecord): void;
-  resolve(
-    decisionId: string,
-    resolution: PermissionResolution,
-    resolvedAt: Date,
-    resolvedBy?: PrincipalRef,
-  ): void;
 }
 
 /**

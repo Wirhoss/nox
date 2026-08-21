@@ -21,7 +21,7 @@ import type {
 /** How many transport message ids one conversation remembers for deduplication. */
 const SEEN_LIMIT = 256;
 
-/** The complete route and ingress policy selected for one conversation. */
+/** The complete agent route and authorization policy for one conversation. */
 interface BrokerConversationGrant {
   readonly agentId: string;
   /** Absent is not permissive: a session without one authorizes nothing. */
@@ -48,7 +48,6 @@ interface MessageGateway {
 
 /** One live conversation: its binding, its session, and the turn in flight. */
 interface Conversation {
-  readonly binding: BrokerConversationGrant;
   readonly grant: BrokerGrant;
   readonly key: ConversationKey;
   /** Transport message ids already handled, oldest first. */
@@ -337,7 +336,6 @@ class Gateway implements MessageGateway {
     if (bound === undefined) await this.#store.bind(key, binding.agentId, session.sessionId);
 
     const conversation: Conversation = {
-      binding,
       grant,
       key,
       seen: [],

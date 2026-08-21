@@ -69,7 +69,7 @@ class Session {
   readonly #agentId: string;
   readonly #context: Context;
   readonly #events = new EventLog<AgentEvent>();
-  readonly #gate?: SessionGate;
+  readonly #gate: SessionGate;
   readonly #runner: Runner;
   readonly #sessionId: string;
   readonly #store: SessionStore;
@@ -221,7 +221,7 @@ class Session {
   }
 
   public getPendingPermissions(): readonly PermissionRequest[] {
-    return this.#gate?.listPending() ?? Object.freeze([]);
+    return this.#gate.listPending();
   }
 
   /** Authorization and gate decisions for this session, oldest first. */
@@ -238,7 +238,7 @@ class Session {
     resolution: 'denied' | { approved: 'once' | 'session' },
     resolvedBy: PrincipalRef,
   ): boolean {
-    return this.#gate?.resolve(requestId, resolution, resolvedBy) ?? false;
+    return this.#gate.resolve(requestId, resolution, resolvedBy);
   }
 
   public abort(): Promise<boolean> {
@@ -269,7 +269,7 @@ class Session {
     // Mark the runner stopped synchronously before Gate outcomes enqueue their
     // terminal detached results; those results are persisted but start no run.
     const stopping = this.#runner.stop();
-    this.#gate?.stop();
+    this.#gate.stop();
     await stopping;
     await this.#store.flushed;
   }

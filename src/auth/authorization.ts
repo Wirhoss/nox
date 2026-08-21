@@ -189,6 +189,6 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
   }
 }
 
-export { AUTHORIZATION_DECIDER, authorize, GrantAuthorizationProvider };
+export { authorize, GrantAuthorizationProvider };
 
 export type { AuthorizationDecision, AuthorizationProvider, AuthorizationRequest, PrincipalGrants };

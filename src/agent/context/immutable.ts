@@ -1,4 +1,5 @@
-import type { MessageOrigin } from '../../auth/principal';
+import { type MessageOrigin, principal } from '../../auth/principal';
+
 import type { Message, MessageContent } from './message';
 
 const DATE_MUTATOR_NAMES = [
@@ -74,7 +75,7 @@ function freezeDeep(value: unknown, seen = new WeakMap<object, unknown>()): unkn
  */
 function freezeOrigin(origin: MessageOrigin): MessageOrigin {
   return Object.freeze({
-    principal: Object.freeze({ ...origin.principal }),
+    principal: principal(origin.principal.issuer, origin.principal.subject),
     transportMessageId: origin.transportMessageId,
   });
 }

@@ -436,7 +436,7 @@ class SessionStore {
   }
 }
 
-export { authorizationToRow, decisionToRecord, gateDecisionToRow, SessionStore, toMessage, toRow };
+export { SessionStore };
 
 export type { CreateSessionOptions, SessionStoreOptions, StoredSession };
 export type { StoredDecision as DecisionRecord } from '../auth/audit';
