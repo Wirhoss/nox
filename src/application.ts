@@ -13,6 +13,7 @@ import { NOX_VERSION } from './version';
 import type { Agent, OpenSessionOptions } from './agent/agent';
 import type { Session } from './agent/session';
 import type { ExtensionContext, NoxExtension } from './extensions/extension';
+import type { MessageGateway } from './gateway/gateway';
 
 type ApplicationState = 'created' | 'running' | 'starting' | 'stopped' | 'stopping';
 
@@ -47,6 +48,7 @@ class NoxApplication {
   readonly #services = new ServiceCollection();
   readonly #sessions = new Map<string, LiveSession>();
 
+  #gateway?: MessageGateway;
   #state: ApplicationState = 'created';
 
   constructor(options: NoxApplicationOptions = {}) {
@@ -128,6 +130,23 @@ class NoxApplication {
     return this.#resources.add(resource);
   }
 
+  /**
+   * The message gateway, if this Nox has one. It is held apart from the
+   * resources `own` takes because shutdown order is the whole point: transports
+   * go quiet first, and only then are the sessions they were feeding closed.
+   * Anything else would let a message arrive for a conversation being torn down.
+   */
+  public setGateway(gateway: MessageGateway): this {
+    if (this.#state === 'stopped' || this.#state === 'stopping') {
+      throw new Error(`Cannot set the gateway while Nox is ${this.#state}.`);
+    }
+    if (this.#gateway !== undefined) {
+      throw new Error('A message gateway is already set.');
+    }
+    this.#gateway = gateway;
+    return this;
+  }
+
   public provide<T>(token: ServiceToken<T>, service: T): this {
     this.#assertConfigurable('provide services');
     this.#services.provide(token, service);
@@ -199,6 +218,10 @@ class NoxApplication {
     this.#abortController.abort();
 
     try {
+      // Nothing new may arrive while conversations are being closed, so the
+      // transports stop before the sessions they deliver into.
+      await this.#stopGateway();
+
       // Conversations end first: they are still using the provider an extension
       // contributed and the storage this shutdown is about to close.
       for (const { session } of [...this.#sessions.values()].reverse()) {
@@ -234,6 +257,15 @@ class NoxApplication {
       await extension.activate(context);
     } catch (error) {
       throw new ExtensionActivationError(id, error);
+    }
+  }
+
+  async #stopGateway(): Promise<void> {
+    if (this.#gateway === undefined) return;
+    try {
+      await this.#gateway.stop();
+    } catch (error) {
+      this.#logger.error({ err: error }, 'The message gateway failed to stop cleanly.');
     }
   }
 

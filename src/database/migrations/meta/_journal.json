@@ -22,6 +22,13 @@
       "when": 1787283395415,
       "tag": "0002_fancy_dakota_north",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787288917972,
+      "tag": "0003_cheerful_black_bolt",
+      "breakpoints": true
     }
   ]
 }

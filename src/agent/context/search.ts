@@ -51,7 +51,7 @@ class HistorySearchToolSet extends ToolSet {
   readonly #transcript: Transcript;
 
   constructor(transcript: Transcript) {
-    super();
+    super('history_search', 'Searches and reads the complete session transcript.');
     this.#transcript = transcript;
     this.addTools();
   }

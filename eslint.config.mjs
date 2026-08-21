@@ -16,6 +16,10 @@ export default defineConfig([
     'idk_yet/**',
     'dist/**',
     'node_modules/**',
+    // The web UI is its own package, with its own parser, plugins and lint
+    // script. Linting it from here merges two configurations that were never
+    // meant to meet.
+    'nox-ui/**',
     'out/**',
   ]),
   {

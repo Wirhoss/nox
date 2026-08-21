@@ -9,9 +9,11 @@ import { type EnvSource, readEnvConfig } from './config/env';
 import { Database } from './database/database';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
+import { brokers } from './extensions/contribution-points/brokers';
 import { type ProviderConfig, providers } from './extensions/contribution-points/providers';
 import { type ToolSetConfig, toolSets } from './extensions/contribution-points/toolsets';
 import { toDisposable } from './extensions/disposable';
+import { type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService } from './services';
 
@@ -73,6 +75,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 
   try {
     await composeAgents(application, config, database, env.configDir, logger);
+    await openGateway(application, config, database, logger);
   } catch (error) {
     // Everything above is already open. A bootstrap that throws leaves nothing
     // running — a half-composed Nox holding a port and a database file is worse
@@ -179,6 +182,57 @@ async function composeAgents(
       }),
     );
   }
+}
+
+/**
+ * Opens the message gateway over whatever brokers are configured, and hands it
+ * to the application so shutdown silences the transports before it closes the
+ * conversations they feed. A Nox with no configured broker gets no gateway at
+ * all — there is nothing for it to listen to.
+ */
+async function openGateway(
+  application: NoxApplication,
+  config: Config,
+  database: Database,
+  logger: Logger,
+): Promise<void> {
+  const configured = config.get('brokers');
+  const grants: BrokerGrant[] = [];
+
+  for (const [brokerId, entry] of Object.entries(configured)) {
+    if (entry.enabled === false) continue;
+
+    const contribution = application.contributions.get(brokers, entry.type);
+    if (contribution === undefined) {
+      throw new Error(
+        `Broker "${brokerId}" is of type "${entry.type}", which no extension contributed.`,
+      );
+    }
+    if (application.getAgent(entry.agent) === undefined) {
+      throw new Error(
+        `Broker "${brokerId}" answers as agent "${entry.agent}", which no blueprint defines.`,
+      );
+    }
+
+    grants.push(
+      Object.freeze({
+        agentId: entry.agent,
+        approvers: entry.approvers,
+        broker: contribution.value.create(entry),
+        brokerId,
+      }),
+    );
+  }
+
+  if (grants.length === 0) return;
+
+  const gateway = new Gateway(application, {
+    brokers: grants,
+    database,
+    logger: logger.child('gateway'),
+  });
+  application.setGateway(gateway);
+  await gateway.start();
 }
 
 /**
