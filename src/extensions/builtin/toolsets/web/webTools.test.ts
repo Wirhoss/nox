@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 
+import { SecretHandle } from '../../../../config/secrets';
 import { WebTools } from './webTools';
 
 const realFetch = globalThis.fetch;
@@ -47,7 +48,7 @@ describe('WebTools', () => {
 
     const tools = new WebTools({
       search: {
-        apiKey: 'secret',
+        apiKey: new SecretHandle('SEARXNG_API_KEY', 'secret'),
         defaultLanguage: 'es',
         defaultMaxResults: 1,
         maxResults: 2,

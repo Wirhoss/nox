@@ -8,6 +8,13 @@
       "when": 1787323764956,
       "tag": "0000_jazzy_fabian_cortez",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787345815532,
+      "tag": "0001_breezy_the_captain",
+      "breakpoints": true
     }
   ]
 }

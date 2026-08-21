@@ -9,6 +9,7 @@ import { GrantAuthorizationProvider } from './auth/authorization';
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
+import { resolveSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
@@ -19,7 +20,7 @@ import { type ToolSetConfig, toolSets } from './extensions/contribution-points/t
 import { toDisposable } from './extensions/disposable';
 import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
-import { configService, databaseService, loggerService } from './services';
+import { configService, databaseService, loggerService, secretStoreService } from './services';
 
 import type { ApiConfig } from './api/config';
 import type { Blueprint } from './config/blueprint';
@@ -61,13 +62,26 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       : join(env.dataDir, appConfig.database.path),
   });
 
+  let secretStore: SecretStore;
+  try {
+    secretStore = await SecretStore.open({
+      dataDirectory: env.dataDir,
+      database,
+      logger: logger.child('secrets'),
+    });
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
+
   const application = new NoxApplication({
     extensions: [openAIExtension, webToolsExtension],
     logger,
   })
     .provide(configService, config)
     .provide(databaseService, database)
-    .provide(loggerService, logger);
+    .provide(loggerService, logger)
+    .provide(secretStoreService, secretStore);
 
   // Owned before anything activates, so it is released last: an extension handed
   // the database as a service lets go of it before the file closes.
@@ -78,8 +92,15 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   application.own(await openApi(application, appConfig.api, database, logger));
 
   try {
-    const catalog = await composeAgents(application, config, database, env.configDir, logger);
-    await openGateway(application, config, catalog, database, logger);
+    const catalog = await composeAgents(
+      application,
+      config,
+      database,
+      env.configDir,
+      logger,
+      secretStore,
+    );
+    await openGateway(application, config, catalog, database, logger, secretStore);
   } catch (error) {
     // Everything above is already open. A bootstrap that throws leaves nothing
     // running — a half-composed Nox holding a port and a database file is worse
@@ -138,6 +159,7 @@ async function composeAgents(
   database: Database,
   configDir: string,
   logger: Logger,
+  secretStore: SecretStore,
 ): Promise<AuthorityCatalog> {
   await application.start();
 
@@ -160,37 +182,41 @@ async function composeAgents(
   const openedProviders = new Map<string, ChatProvider>();
   const openedToolSets = new Map<string, ToolSet>();
   for (const [agentId, blueprint] of Object.entries(blueprints)) {
-    const provider = openProvider(
+    const provider = await openProvider(
       application,
       configuredProviders,
       openedProviders,
       blueprint.provider,
+      secretStore,
     );
     const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
     const compactionProvider =
       blueprint.compaction === undefined
         ? provider
-        : openProvider(
+        : await openProvider(
             application,
             configuredProviders,
             openedProviders,
             blueprint.compaction.provider,
+            secretStore,
           );
     const compactionModel =
       blueprint.compaction === undefined
         ? model
         : modelConfigFor(compactionProvider, blueprint.compaction.model);
-    const directToolSets = grantToolSets(
+    const directToolSets = await grantToolSets(
       application,
       configuredToolSets,
       openedToolSets,
       blueprint.toolSets.direct,
+      secretStore,
     );
-    const routedToolSets = grantToolSets(
+    const routedToolSets = await grantToolSets(
       application,
       configuredToolSets,
       openedToolSets,
       blueprint.toolSets.routed,
+      secretStore,
     );
 
     application.addAgent(
@@ -225,6 +251,7 @@ async function openGateway(
   catalog: AuthorityCatalog,
   database: Database,
   logger: Logger,
+  secretStore: SecretStore,
 ): Promise<void> {
   const configured = config.get('brokers');
   const grants: BrokerGrant[] = [];
@@ -279,7 +306,12 @@ async function openGateway(
           catalog,
           `grants:${brokerId}`,
         ),
-        broker: contribution.value.create(entry),
+        broker: contribution.value.create(
+          await resolveSecrets(entry, secretStore, {
+            extensionId: contribution.extensionId,
+            location: `brokers.${brokerId}`,
+          }),
+        ),
         brokerId,
         conversations: Object.freeze(conversationGrants),
       }),
@@ -302,12 +334,13 @@ async function openGateway(
  * instance: two agents naming the same one share the adapter, and the connection
  * settings behind it, rather than opening it twice.
  */
-function openProvider(
+async function openProvider(
   application: NoxApplication,
   configured: Record<string, ProviderConfig>,
   opened: Map<string, ChatProvider>,
   providerId: string,
-): ChatProvider {
+  secretStore: SecretStore,
+): Promise<ChatProvider> {
   const existing = opened.get(providerId);
   if (existing !== undefined) return existing;
 
@@ -327,18 +360,24 @@ function openProvider(
     );
   }
 
-  const provider = contribution.value.create(entry);
+  const provider = contribution.value.create(
+    await resolveSecrets(entry, secretStore, {
+      extensionId: contribution.extensionId,
+      location: `providers.${providerId}`,
+    }),
+  );
   opened.set(providerId, provider);
   return provider;
 }
 
 /** Opens configured tool-set instances once and grants them under their config IDs. */
-function grantToolSets(
+async function grantToolSets(
   application: NoxApplication,
   configured: Record<string, ToolSetConfig>,
   opened: Map<string, ToolSet>,
   toolSetIds: readonly string[],
-): ToolSetGrant[] {
+  secretStore: SecretStore,
+): Promise<ToolSetGrant[]> {
   const grants: ToolSetGrant[] = [];
   const seen = new Set<string>();
 
@@ -368,7 +407,12 @@ function grantToolSets(
         );
       }
 
-      toolSet = contribution.value.create(entry);
+      toolSet = contribution.value.create(
+        await resolveSecrets(entry, secretStore, {
+          extensionId: contribution.extensionId,
+          location: `toolSets.${toolSetId}`,
+        }),
+      );
       opened.set(toolSetId, toolSet);
     }
 

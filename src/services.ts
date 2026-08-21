@@ -1,6 +1,7 @@
 import { createServiceToken } from './extensions/service';
 
 import type { Config } from './config/config';
+import type { SecretStore } from './config/secrets';
 import type { Database } from './database/database';
 import type { Logger } from './logger/logger';
 
@@ -11,5 +12,6 @@ import type { Logger } from './logger/logger';
 const configService = createServiceToken<Config>('nox.config');
 const databaseService = createServiceToken<Database>('nox.database');
 const loggerService = createServiceToken<Logger>('nox.logger');
+const secretStoreService = createServiceToken<SecretStore>('nox.secret-store');
 
-export { configService, databaseService, loggerService };
+export { configService, databaseService, loggerService, secretStoreService };

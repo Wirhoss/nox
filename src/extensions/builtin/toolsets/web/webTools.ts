@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { SecretHandle, secretRefSchema } from '../../../../config/secrets';
 import { type Tool, ToolSet } from '../../../../tool/tool';
 import { stableStringify } from '../../../../utils/json';
 import { toolSetBaseConfigSchema } from '../../../contribution-points/toolsets';
@@ -14,60 +15,68 @@ import type { MessageContent } from '../../../../agent/context/message';
 const WEB_SEARCH_AUTHORITY = 'nox.toolset.web.search';
 const WEB_EXTRACT_AUTHORITY = 'nox.toolset.web.extract';
 
-const endpointConfigSchema = z.object({
-  apiKey: z.string().min(1).optional(),
-  timeoutMs: z.number().int().positive().optional(),
-  url: httpUrlSchema('The HTTP(S) base URL of the backing service.'),
-});
-
-const searchConfigSchema = endpointConfigSchema.extend({
-  defaultLanguage: z.string().min(1).default('all'),
-  defaultMaxResults: z.number().int().positive().default(8),
-  maxResults: z.number().int().positive().default(20),
-});
-
-const extractConfigSchema = endpointConfigSchema.extend({
-  defaultMaxCharactersPerPage: z.number().int().positive().default(30_000),
-  maxCharactersPerPage: z.number().int().positive().default(100_000),
-  maxUrls: z.number().int().positive().default(5),
-});
-
-const webToolsConfigSchema = toolSetBaseConfigSchema
-  .extend({
-    extract: extractConfigSchema.optional(),
-    search: searchConfigSchema.optional(),
-    type: z.literal('web'),
-  })
-  .superRefine((config, context) => {
-    if (config.search === undefined && config.extract === undefined) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Configure at least one of search or extract.',
-      });
-    }
-    if (config.search !== undefined && config.search.defaultMaxResults > config.search.maxResults) {
-      context.addIssue({
-        code: 'custom',
-        message: 'defaultMaxResults cannot exceed maxResults.',
-        path: ['search', 'defaultMaxResults'],
-      });
-    }
-    if (
-      config.extract !== undefined &&
-      config.extract.defaultMaxCharactersPerPage > config.extract.maxCharactersPerPage
-    ) {
-      context.addIssue({
-        code: 'custom',
-        message: 'defaultMaxCharactersPerPage cannot exceed maxCharactersPerPage.',
-        path: ['extract', 'defaultMaxCharactersPerPage'],
-      });
-    }
+function createWebToolsConfigSchema<TApiKey extends z.ZodType>(apiKey: TApiKey) {
+  const endpoint = z.object({
+    apiKey: apiKey.optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    url: httpUrlSchema('The HTTP(S) base URL of the backing service.'),
   });
+  const search = endpoint.extend({
+    defaultLanguage: z.string().min(1).default('all'),
+    defaultMaxResults: z.number().int().positive().default(8),
+    maxResults: z.number().int().positive().default(20),
+  });
+  const extract = endpoint.extend({
+    defaultMaxCharactersPerPage: z.number().int().positive().default(30_000),
+    maxCharactersPerPage: z.number().int().positive().default(100_000),
+    maxUrls: z.number().int().positive().default(5),
+  });
+
+  return toolSetBaseConfigSchema
+    .extend({
+      extract: extract.optional(),
+      search: search.optional(),
+      type: z.literal('web'),
+    })
+    .superRefine((config, context) => {
+      if (config.search === undefined && config.extract === undefined) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Configure at least one of search or extract.',
+        });
+      }
+      if (
+        config.search !== undefined &&
+        config.search.defaultMaxResults > config.search.maxResults
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'defaultMaxResults cannot exceed maxResults.',
+          path: ['search', 'defaultMaxResults'],
+        });
+      }
+      if (
+        config.extract !== undefined &&
+        config.extract.defaultMaxCharactersPerPage > config.extract.maxCharactersPerPage
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'defaultMaxCharactersPerPage cannot exceed maxCharactersPerPage.',
+          path: ['extract', 'defaultMaxCharactersPerPage'],
+        });
+      }
+    });
+}
+
+const webToolsConfigSchema = createWebToolsConfigSchema(secretRefSchema);
+const webToolsRuntimeConfigSchema = createWebToolsConfigSchema(z.instanceof(SecretHandle));
 
 type WebToolsConfig = z.infer<typeof webToolsConfigSchema>;
 type WebToolsConfigInput = z.input<typeof webToolsConfigSchema>;
-type SearchConfig = NonNullable<WebToolsConfig['search']>;
-type ExtractConfig = NonNullable<WebToolsConfig['extract']>;
+type WebToolsRuntimeConfig = z.infer<typeof webToolsRuntimeConfigSchema>;
+type WebToolsRuntimeConfigInput = z.input<typeof webToolsRuntimeConfigSchema>;
+type SearchConfig = NonNullable<WebToolsRuntimeConfig['search']>;
+type ExtractConfig = NonNullable<WebToolsRuntimeConfig['extract']>;
 
 interface SearxngResult {
   content?: string;
@@ -104,11 +113,11 @@ function requestSignal(parent: AbortSignal, timeoutMs: number): AbortSignal {
   return AbortSignal.any([parent, AbortSignal.timeout(timeoutMs)]);
 }
 
-function headersFor(apiKey: string | undefined, contentType = false): Record<string, string> {
+function headersFor(apiKey: SecretHandle | undefined, contentType = false): Record<string, string> {
   return {
     Accept: 'application/json',
     ...(contentType ? { 'Content-Type': 'application/json' } : {}),
-    ...(apiKey === undefined ? {} : { Authorization: `Bearer ${apiKey}` }),
+    ...(apiKey === undefined ? {} : { Authorization: `Bearer ${apiKey.reveal()}` }),
   };
 }
 
@@ -159,10 +168,10 @@ function markdownFrom(result: CrawlResult): string {
 class WebTools extends ToolSet {
   static readonly configSchema = webToolsConfigSchema;
 
-  readonly #config: WebToolsConfig;
+  readonly #config: WebToolsRuntimeConfig;
 
-  constructor(input: WebToolsConfigInput) {
-    const config = webToolsConfigSchema.parse(input);
+  constructor(input: WebToolsRuntimeConfigInput) {
+    const config = webToolsRuntimeConfigSchema.parse(input);
     super(
       'Web tools',
       'Search the public web and extract readable content from web pages.',

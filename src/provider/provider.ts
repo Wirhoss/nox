@@ -1,14 +1,16 @@
 import { parseOrThrow } from '../utils/validate';
 import {
   type ModelConfig,
-  type ProviderBaseConfigInput,
   providerBaseConfigSchema,
+  type ProviderRuntimeConfigInput,
+  providerRuntimeConfigSchema,
   type TextGenerateOptions,
 } from './config';
 import { toProviderError } from './error';
 import { type ProviderSourceEvent, ProviderStream } from './stream';
 
 import type { Message } from '../agent/context/message';
+import type { SecretHandle } from '../config/secrets';
 import type { Tool } from '../tool/tool';
 
 function abortReason(signal: AbortSignal): Error {
@@ -39,7 +41,7 @@ function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
 abstract class BaseProvider {
   static readonly configSchema = providerBaseConfigSchema;
 
-  protected apiKey?: string;
+  protected apiKey?: SecretHandle;
   protected baseUrl: string;
   protected timeoutMs?: number;
 
@@ -49,8 +51,8 @@ abstract class BaseProvider {
   protected readonly maxRetryDelayMs: number;
   protected readonly retryDelayMs: number;
 
-  constructor(input: ProviderBaseConfigInput) {
-    const config = parseOrThrow(providerBaseConfigSchema, input);
+  constructor(input: ProviderRuntimeConfigInput) {
+    const config = parseOrThrow(providerRuntimeConfigSchema, input);
     this.baseUrl = config.baseUrl;
     this.apiKey = config.apiKey;
     this.maxRetries = config.maxRetries;
