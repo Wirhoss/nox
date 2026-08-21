@@ -4,18 +4,28 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "src/ui"
+  ],
   "scripts": {
     "start": "bun run index.ts",
+    "dev:ui": "bun --cwd=src/ui run dev",
+    "build:ui": "bun --cwd=src/ui run build",
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",
     "db:studio": "drizzle-kit studio",
     "test": "bun test --pass-with-no-tests ./src/",
+    "test:ui": "bun --cwd=src/ui run test:unit",
     "typecheck": "tsc --noEmit",
+    "typecheck:ui": "bun --cwd=src/ui run type-check",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
+    "lint:ui": "bun --cwd=src/ui run lint",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
-    "check": "bun run typecheck && bun run lint && bun run format:check && bun run test"
+    "check:kernel": "bun run typecheck && bun run lint && bun run format:check && bun run test",
+    "check:ui": "bun --cwd=src/ui run check",
+    "check": "bun run check:kernel && bun run check:ui"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -36,6 +46,7 @@
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.4.29",
+    "jose": "^6.2.10",
     "nanoid": "^6.0.1",
     "semver": "^7.8.5",
     "zod": "^4.4.3"

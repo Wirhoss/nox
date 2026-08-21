@@ -19,7 +19,7 @@ export default defineConfig([
     // The web UI is its own package, with its own parser, plugins and lint
     // script. Linting it from here merges two configurations that were never
     // meant to meet.
-    'nox-ui/**',
+    'src/ui/**',
     'out/**',
   ]),
   {

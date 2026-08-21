@@ -1,13 +1,13 @@
 # Nox — Dirección de UI
 
 > Documento de exploración del producto y la experiencia de usuario.
-> No define implementación ni modifica la definición arquitectónica de
-> [NOX.md](NOX.md). Las decisiones técnicas y de alcance continúan perteneciendo
-> a ese documento.
+> Registra la dirección de la Web UI, pero no redefine la arquitectura interna
+> del runtime.
 
 ## Estado
 
-Dirección conceptual inicial. Aún no se ha comenzado a implementar la UI.
+Dirección conceptual inicial. El workspace técnico de la UI existe, pero aún no
+se ha comenzado a implementar la experiencia de producto.
 
 ## Visión del producto
 
@@ -533,12 +533,12 @@ un segundo consumidor real.
 
 ### Organización del código
 
-La ubicación definitiva de la superficie web debe respetar el único árbol
-`src/` y evitar que una dependencia de Vue entre al kernel. Su estructura
-conceptual será:
+La Web UI vive en `src/ui/` como un workspace aislado dentro del único árbol
+`src/`. La frontera evita que Vue entre al kernel y prohíbe que la UI importe
+sus clases internas. Su estructura conceptual será:
 
 ```text
-surfaces/web/
+src/ui/
 ├── app/
 │   ├── App.vue
 │   ├── router.ts
@@ -580,7 +580,7 @@ Cada componente reutilizable puede mantener juntos sus archivos relevantes:
 ```text
 PermissionRequest/
 ├── PermissionRequest.vue
-├── PermissionRequest.test.ts
+├── PermissionRequest.vitest.ts
 ├── PermissionRequest.stories.ts
 └── index.ts
 ```
@@ -900,5 +900,5 @@ alternativo y alto contraste.
   provenientes de repositorios Git cuando esa maquinaria sea necesaria?
 - ¿Qué estados y diagnósticos reales estarán disponibles durante el arranque del
   contenedor y de la Web UI?
-- ¿La superficie web vivirá como builtin contribution o como otra clase de
+- ¿La superficie HTTP que sirve la UI vivirá como builtin contribution o como otra clase de
   superficie concreta alrededor de `NoxApplication`?

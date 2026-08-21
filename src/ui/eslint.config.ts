@@ -25,7 +25,7 @@ export default defineConfigWithVueTs(
 
   {
     ...pluginVitest.configs.recommended,
-    files: ['src/**/__tests__/*'],
+    files: ['**/*.vitest.{ts,mts,tsx}'],
   },
 
   {

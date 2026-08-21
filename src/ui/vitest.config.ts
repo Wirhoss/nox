@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url'
 
 import { configDefaults, defineConfig, mergeConfig } from 'vitest/config'
 
-import viteConfig from './vite.config'
+import viteConfig from './vite.config.ts'
 
 export default mergeConfig(
   viteConfig,
@@ -10,6 +10,7 @@ export default mergeConfig(
     test: {
       environment: 'jsdom',
       exclude: [...configDefaults.exclude, 'e2e/**'],
+      include: ['**/*.vitest.ts'],
       root: fileURLToPath(new URL('./', import.meta.url)),
     },
   }),
