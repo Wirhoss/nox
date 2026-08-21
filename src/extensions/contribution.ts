@@ -4,6 +4,8 @@ import { type Disposable, type DisposableRegistry, toDisposable } from './dispos
 import { DuplicateContributionError } from './error';
 import { assertIdentifier } from './identifier';
 
+import type { ResolvedSecrets } from '../config/secrets';
+
 declare const contributionType: unique symbol;
 
 /**
@@ -35,7 +37,8 @@ type ContributionConfigSchema = z.ZodObject<{ type: z.ZodLiteral<string> }>;
  */
 interface ConfigurableContribution<TSchema extends ContributionConfigSchema, TValue> {
   readonly configSchema: TSchema;
-  create(config: z.infer<TSchema>): TValue;
+  /** Config has already been validated; secret references arrive as opaque handles. */
+  create(config: ResolvedSecrets<z.infer<TSchema>>): TValue;
 }
 
 /** The erased view the configuration module reads. */

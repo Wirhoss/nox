@@ -22,11 +22,8 @@ Individual steps: `bun run typecheck`, `bun run lint`, `bun run format`,
 ## Running it
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required
-export OPENAI_MODEL=gpt-4o-mini       # required: the model id to talk to
-export OPENAI_BASE_URL=...            # optional, defaults to the OpenAI API
 export CONFIG_DIR=./.nox/config       # optional, see src/config/env.ts
-export DATA_DIR=./.nox/data           # optional: where nox.db is written
+export DATA_DIR=./.nox/data           # optional: database and local secret key
 export NOX_SESSION_ID=my-session      # optional: resumes that session
 
 bun run start
@@ -39,6 +36,19 @@ session. Replies stream to stdout and every log line goes to stderr, so
 
 Anything that speaks the OpenAI Chat Completions API works — point
 `OPENAI_BASE_URL` at it.
+
+Credentials never belong inline in ordinary configuration. Nox manages them as encrypted records in
+its database; an authenticated administrative surface can create, replace and delete values through the
+host `SecretStore`, but cannot read them back. Configuration contains only a global reference:
+
+```json
+{ "apiKey": { "$secret": "OPENAI_API_KEY" } }
+```
+
+The store generates `.secret-key` in `DATA_DIR` with owner-only permissions. Back up that key together
+with the database: losing it makes the encrypted values intentionally unrecoverable. Values are handed
+to configured contributions as redacted snapshot handles, so rotating a secret requires restarting its
+existing consumers. Environment variables and mounted secret directories are not alternate sources.
 
 Tool sets are configured as instances in `toolsets.json` and granted from a
 blueprint as either direct or routed. The builtin `web` kind can expose SearXNG

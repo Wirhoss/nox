@@ -6,10 +6,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import { ApiServer } from './api/server';
 import { bootstrap } from './bootstrap';
+import { SecretStore } from './config/secrets';
+import { Database } from './database/database';
 import { providers } from './extensions/contribution-points/providers';
 import { toolSets } from './extensions/contribution-points/toolsets';
 import { silentLogger } from './logger/logger';
-import { configService, databaseService, loggerService } from './services';
+import { configService, databaseService, loggerService, secretStoreService } from './services';
 
 import type { NoxApplication } from './application';
 import type { EnvSource } from './config/env';
@@ -21,7 +23,7 @@ let booted: NoxApplication | undefined;
 const NOX = { model: 'gpt-test', provider: 'main', systemPrompt: 'be exact' };
 const PROVIDERS = {
   main: {
-    apiKey: 'sk-test',
+    apiKey: { $secret: 'OPENAI_API_KEY' },
     baseUrl: 'https://api.example.test/v1',
     defaultModel: 'gpt-test',
     type: 'openai_completions',
@@ -53,11 +55,13 @@ interface BootOptions {
   blueprints?: Record<string, unknown>;
   dataDir?: string;
   providers?: unknown;
+  secrets?: Readonly<Record<string, string>>;
   toolSets?: unknown;
 }
 
-function seed(options: BootOptions = {}): EnvSource {
+async function seed(options: BootOptions = {}): Promise<EnvSource> {
   const configDir = temporary('nox-config-');
+  const dataDir = options.dataDir ?? temporary('nox-data-');
   // Port 0 unless a test says otherwise: every boot listens, and no two boots
   // — or a Nox already running on this machine — fight over the same socket.
   writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
@@ -69,23 +73,32 @@ function seed(options: BootOptions = {}): EnvSource {
     writeFileSync(join(configDir, 'blueprints', `${name}.json`), JSON.stringify(blueprint));
   }
 
-  return {
-    CONFIG_DIR: configDir,
-    DATA_DIR: options.dataDir ?? temporary('nox-data-'),
-    NODE_ENV: 'test',
-  };
+  const database = await Database.open({ path: join(dataDir, 'nox.db') });
+  try {
+    const store = await SecretStore.open({ dataDirectory: dataDir, database });
+    for (const [secretId, value] of Object.entries(
+      options.secrets ?? { OPENAI_API_KEY: 'sk-test' },
+    )) {
+      await store.set(secretId, value);
+    }
+  } finally {
+    await database.close();
+  }
+
+  return { CONFIG_DIR: configDir, DATA_DIR: dataDir, NODE_ENV: 'test' };
 }
 
 async function boot(options: BootOptions = {}): Promise<NoxApplication> {
-  booted = await bootstrap({ env: seed(options), logger: silentLogger });
+  booted = await bootstrap({ env: await seed(options), logger: silentLogger });
   return booted;
 }
 
 /** Resolves with the error bootstrap rejected with, or undefined if it booted. */
 async function failure(options: BootOptions): Promise<unknown> {
-  const result: unknown = await bootstrap({ env: seed(options), logger: silentLogger }).catch(
-    (error: unknown) => error,
-  );
+  const result: unknown = await bootstrap({
+    env: await seed(options),
+    logger: silentLogger,
+  }).catch((error: unknown) => error);
   if (result instanceof Error) return result;
 
   booted = result as NoxApplication;
@@ -110,9 +123,13 @@ describe('bootstrap', () => {
       blueprints: {
         nox: { ...NOX, toolSets: { direct: ['internet'], routed: [] } },
       },
+      secrets: { OPENAI_API_KEY: 'sk-test', SEARXNG_API_KEY: 'search-secret' },
       toolSets: {
         internet: {
-          search: { url: 'https://search.example.test' },
+          search: {
+            apiKey: { $secret: 'SEARXNG_API_KEY' },
+            url: 'https://search.example.test',
+          },
           type: 'web',
         },
       },
@@ -120,6 +137,9 @@ describe('bootstrap', () => {
 
     expect(application.contributions.get(toolSets, 'web')?.extensionId).toBe('nox.toolset.web');
     expect(application.services.get(configService).get('toolSets')).toHaveProperty('internet');
+    expect(application.services.get(secretStoreService).consumers('SEARXNG_API_KEY')).toEqual([
+      { extensionId: 'nox.toolset.web', location: 'toolSets.internet.search.apiKey' },
+    ]);
 
     const session = await application.openSession('nox');
     await application.closeSession(session.sessionId);
@@ -196,8 +216,14 @@ describe('bootstrap', () => {
     const application = await boot();
 
     expect(application.services.get(configService).get('app').logLevel).toBeString();
+    expect(application.services.get(configService).get('providers').main?.apiKey).toMatchObject({
+      $secret: 'OPENAI_API_KEY',
+    });
     expect(application.services.get(databaseService).isOpen).toBe(true);
     expect(application.services.get(loggerService)).toBe(silentLogger);
+    expect(application.services.get(secretStoreService).consumers('OPENAI_API_KEY')).toEqual([
+      { extensionId: 'nox.provider.openai', location: 'providers.main.apiKey' },
+    ]);
   });
 
   test('opens storage under the configured data directory', async () => {
@@ -323,5 +349,21 @@ describe('bootstrap', () => {
     // `baseUrl` is required by the adapter schema, and the adapter is the only
     // thing that knows that, which is why it hands the schema over.
     expect(String(error)).toContain('baseUrl');
+  });
+
+  test('rejects a plaintext credential in ordinary configuration', async () => {
+    const error = await failure({
+      providers: { main: { ...PROVIDERS.main, apiKey: 'plaintext' } },
+    });
+
+    expect(String(error)).toContain('apiKey');
+    expect(String(error)).toContain('$secret');
+  });
+
+  test('fails closed when a configured secret cannot be resolved', async () => {
+    const error = await failure({ secrets: {} });
+
+    expect(String(error)).toContain('OPENAI_API_KEY');
+    expect(String(error)).toContain('providers.main.apiKey');
   });
 });

@@ -41,7 +41,9 @@ describe('openAIExtension', () => {
       type: 'openai_completions',
     });
 
-    const provider = app.contributions.get(providers, 'openai_completions')?.value.create(config);
+    const provider = app.contributions
+      .get(providers, 'openai_completions')
+      ?.value.create({ ...config, apiKey: undefined });
 
     expect(provider).toBeInstanceOf(OpenAICompletions);
     await app.stop();

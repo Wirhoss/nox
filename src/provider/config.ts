@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { SecretHandle, secretRefSchema } from '../config/secrets';
+
 const samplingParametersConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
   maxTokens: z.number().int().positive().optional(),
@@ -24,18 +26,30 @@ const modelConfigSchema = z.discriminatedUnion('type', [textModelConfigSchema]);
 
 type ModelConfig = z.infer<typeof modelConfigSchema>;
 
-const providerBaseConfigSchema = z.object({
-  apiKey: z.string().optional(),
+const providerConfigShape = {
   baseUrl: z.string(),
   maxRetries: z.number().int().nonnegative().default(2),
   maxRetryDelayMs: z.number().nonnegative().default(30_000),
   modelConfigs: z.array(modelConfigSchema).optional(),
   retryDelayMs: z.number().nonnegative().default(500),
   timeoutMs: z.number().positive().optional(),
+};
+
+/** Stored configuration accepts references only; plaintext credentials are invalid. */
+const providerBaseConfigSchema = z.object({
+  ...providerConfigShape,
+  apiKey: secretRefSchema.optional(),
+});
+
+/** Factories receive the same validated shape after the host resolves its references. */
+const providerRuntimeConfigSchema = z.object({
+  ...providerConfigShape,
+  apiKey: z.instanceof(SecretHandle).optional(),
 });
 
 type ProviderBaseConfig = z.infer<typeof providerBaseConfigSchema>;
 type ProviderBaseConfigInput = z.input<typeof providerBaseConfigSchema>;
+type ProviderRuntimeConfigInput = z.input<typeof providerRuntimeConfigSchema>;
 
 const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -50,9 +64,16 @@ export {
   modelBaseConfigSchema,
   modelConfigSchema,
   providerBaseConfigSchema,
+  providerRuntimeConfigSchema,
   samplingParametersConfigSchema,
   textGenerateOptionsSchema,
   textModelConfigSchema,
 };
 
-export type { ModelConfig, ProviderBaseConfig, ProviderBaseConfigInput, TextGenerateOptions };
+export type {
+  ModelConfig,
+  ProviderBaseConfig,
+  ProviderBaseConfigInput,
+  ProviderRuntimeConfigInput,
+  TextGenerateOptions,
+};

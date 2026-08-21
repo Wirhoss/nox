@@ -10,6 +10,7 @@ import { type Logger, silentLogger } from '../../../../logger/logger';
 import {
   type ModelConfig,
   providerBaseConfigSchema,
+  providerRuntimeConfigSchema,
   type TextGenerateOptions,
 } from '../../../../provider/config';
 import { ProviderError, type ProviderErrorCode } from '../../../../provider/error';
@@ -23,8 +24,14 @@ const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
   type: z.literal('openai_completions'),
 });
 
+const openAICompletionsRuntimeConfigSchema = providerRuntimeConfigSchema.extend({
+  defaultModel: z.string().min(1).optional(),
+  type: z.literal('openai_completions'),
+});
+
 type OpenAICompletionsConfig = z.infer<typeof openAICompletionsConfigSchema>;
 type OpenAICompletionsConfigInput = z.input<typeof openAICompletionsConfigSchema>;
+type OpenAICompletionsRuntimeConfigInput = z.input<typeof openAICompletionsRuntimeConfigSchema>;
 
 interface OpenAICompletionsOptions {
   logger?: Logger;
@@ -238,7 +245,8 @@ class OpenAICompletions extends ChatProvider {
   private readonly defaultModel?: string;
   private readonly logger: Logger;
 
-  constructor(config: OpenAICompletionsConfigInput, options: OpenAICompletionsOptions = {}) {
+  constructor(input: OpenAICompletionsRuntimeConfigInput, options: OpenAICompletionsOptions = {}) {
+    const config = openAICompletionsRuntimeConfigSchema.parse(input);
     super(config);
     this.defaultModel = config.defaultModel;
     this.logger = options.logger ?? silentLogger;
@@ -259,7 +267,7 @@ class OpenAICompletions extends ChatProvider {
   }
 
   private get authHeaders(): Record<string, string> {
-    return this.apiKey === undefined ? {} : { Authorization: `Bearer ${this.apiKey}` };
+    return this.apiKey === undefined ? {} : { Authorization: `Bearer ${this.apiKey.reveal()}` };
   }
 
   private get normalizedBaseUrl(): string {

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { Session } from '../../../../agent/session';
+import { SecretHandle } from '../../../../config/secrets';
 import { Database } from '../../../../database/database';
 import { isProviderError, type ProviderErrorCode } from '../../../../provider/error';
 import {
@@ -61,7 +62,7 @@ function textDelta(text: string): unknown {
 
 function provider(overrides: Record<string, unknown> = {}): OpenAICompletions {
   return new OpenAICompletions({
-    apiKey: 'sk-test',
+    apiKey: new SecretHandle('OPENAI_API_KEY', 'sk-test'),
     baseUrl: 'https://api.example.test/v1/',
     defaultModel: 'gpt-test',
     maxRetries: 0,
