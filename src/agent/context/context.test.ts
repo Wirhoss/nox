@@ -164,6 +164,9 @@ describe('Context compaction', () => {
       compactGuardBeginningTokens: beginningTokens,
       compactGuardEndTokens: endTokens,
       compactMinTokens: 1,
+      // Small enough to be under pressure from the first message. Compaction is
+      // budget-triggered, so without a window it is unreachable by design.
+      contextWindow: 100,
       fullHistory: messages,
       tokenCounter: (text) => text.length,
     });

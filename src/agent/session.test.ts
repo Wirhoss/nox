@@ -144,6 +144,37 @@ describe('Session', () => {
     await resumed.stop();
   });
 
+  test('a resumed session persists where the stored transcript left off', async () => {
+    const database = await openDatabase();
+    const session = await Session.open(database, new ScriptedProvider([says('hello')]), MODEL, {
+      systemPrompt: 'system',
+    });
+
+    session.send('hi');
+    await session.idle;
+    await session.stop();
+
+    const resumed = await Session.open(database, new ScriptedProvider([says('again')]), MODEL, {
+      sessionId: session.sessionId,
+      systemPrompt: 'system',
+    });
+    resumed.send('and again');
+    await resumed.idle;
+    await resumed.stop();
+
+    // Read back from storage, not from the live session: a resumed session that
+    // restarts its sequence at zero collides with every stored row, reports the
+    // failure, and carries on with a transcript that only exists in memory.
+    const stored = await new SessionStore(database).load(session.sessionId);
+
+    expect(stored?.messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+  });
+
   test('tool traffic reaches storage as well as the event log', async () => {
     const database = await openDatabase();
     const session = await Session.open(

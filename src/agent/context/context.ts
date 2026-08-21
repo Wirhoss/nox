@@ -109,12 +109,16 @@ class Context {
 
   public async compact(): Promise<CompactResult> {
     return this.#mutations.run(async () => {
-      let folded = false;
-      if (this.#pressureTokenLimit !== undefined) {
-        if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
-        folded = this.#reclaimByFolding();
-        if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
+      // Compaction is budget-triggered by definition. Without a configured
+      // context window there is no budget, and summarizing on a guess is worse
+      // than not summarizing: the working set is not known to be in trouble,
+      // the reduction is lossy, and nobody asked for it.
+      if (this.#pressureTokenLimit === undefined || !this.isUnderPressure()) {
+        return Object.freeze({ compacted: false, folded: false });
       }
+
+      const folded = this.#reclaimByFolding();
+      if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
 
       const middle = this.#selectCompactionRange();
       if (middle === undefined) return Object.freeze({ compacted: false, folded });

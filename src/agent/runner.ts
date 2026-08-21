@@ -279,7 +279,16 @@ class Runner {
       for (const response of responses) this.#context.addMessage(response);
 
       if (this.#runSignal().aborted) return 'aborted';
-      if (responses.length === 0 && this.#queue.length === 0) return 'completed';
+
+      if (responses.length === 0) {
+        // The model answered instead of asking for another tool, so it has
+        // consumed the results and this run's mechanical traffic is settled.
+        // Folding it here is deterministic and lossless — the originals stay in
+        // the transcript — and a fold that reclaims too little to pay for the
+        // head rewrite is rejected inside the context.
+        await this.#context.fold();
+        if (this.#queue.length === 0) return 'completed';
+      }
     }
 
     // Not a failure, but the reply is probably cut off mid-thought.

@@ -51,21 +51,14 @@ class Session {
 
   private constructor(
     sessionId: string,
-    database: Database,
+    store: SessionStore,
     provider: ChatProvider,
     model: ModelConfig,
     history: readonly Message[],
     options: SessionOptions,
   ) {
     this.#sessionId = sessionId;
-    this.#store = new SessionStore(database, {
-      logger: options.logger,
-      onError: (error) => {
-        // Durability is gone, the conversation is not. Whoever is watching gets
-        // to decide whether that is worth acting on.
-        this.#emit({ error, type: 'error' });
-      },
-    });
+    this.#store = store;
 
     this.#context = new Context(options.systemPrompt, provider, {
       ...options.context,
@@ -90,14 +83,32 @@ class Session {
     options: SessionOptions,
   ): Promise<Session> {
     const sessionId = options.sessionId ?? nanoid();
-    const store = new SessionStore(database, { logger: options.logger });
-    const stored = options.sessionId === undefined ? undefined : await store.load(sessionId);
 
+    // Exactly one store per session. It carries both the write queue and the
+    // next sequence number, so a session handed a second one would restart the
+    // sequence at zero and collide with every row already stored — which the
+    // store reports and the conversation survives, silently, until the next
+    // time someone looks at the transcript.
+    // The store needs somewhere to report a failed write before the session
+    // that owns it can exist, so the sink is handed a holder rather than one.
+    const owner: { session?: Session } = {};
+    const store = new SessionStore(database, {
+      logger: options.logger,
+      onError: (error) => {
+        // Durability is gone, the conversation is not. Whoever is watching gets
+        // to decide whether that is worth acting on.
+        const { session } = owner;
+        if (session !== undefined) session.#emit({ error, type: 'error' });
+      },
+    });
+
+    const stored = options.sessionId === undefined ? undefined : await store.load(sessionId);
     if (stored === undefined) {
       await store.create(sessionId, { metadata: options.metadata, title: options.title });
     }
 
-    return new Session(sessionId, database, provider, model, stored?.messages ?? [], options);
+    owner.session = new Session(sessionId, store, provider, model, stored?.messages ?? [], options);
+    return owner.session;
   }
 
   /** Everything an observer can see, from the first event of the session. */

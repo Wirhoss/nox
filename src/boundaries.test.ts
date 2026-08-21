@@ -7,6 +7,11 @@ import { describe, expect, test } from 'bun:test';
 const SRC = import.meta.dir;
 const BUILTIN = 'extensions/builtin/';
 
+// The composition root is the one layer allowed to name concrete
+// capabilities — that is what makes it the composition root. Naming it here
+// rather than pattern-matching keeps a second one from appearing quietly.
+const COMPOSITION_ROOT = 'main.ts';
+
 function posix(path: string): string {
   return path.replaceAll('\\', '/');
 }
@@ -37,7 +42,7 @@ describe('builtin extensions', () => {
     const violations: string[] = [];
 
     for (const file of sourceFiles()) {
-      if (file.startsWith(BUILTIN)) continue;
+      if (file.startsWith(BUILTIN) || file === COMPOSITION_ROOT) continue;
 
       for (const target of localImports(file)) {
         if (target.startsWith(BUILTIN)) {
@@ -77,6 +82,16 @@ describe('builtin extensions', () => {
     const files = sourceFiles();
 
     expect(files).toContain('application.ts');
+    expect(files).toContain(COMPOSITION_ROOT);
     expect(files.some((file) => file.startsWith(BUILTIN))).toBe(true);
+  });
+
+  test('the composition root is the only file that names one', () => {
+    const importers = sourceFiles().filter(
+      (file) =>
+        !file.startsWith(BUILTIN) && localImports(file).some((path) => path.startsWith(BUILTIN)),
+    );
+
+    expect(importers).toEqual([COMPOSITION_ROOT]);
   });
 });

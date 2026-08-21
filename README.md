@@ -19,6 +19,27 @@ bun run check     # typecheck + lint + format + tests, green on every commit
 Individual steps: `bun run typecheck`, `bun run lint`, `bun run format`,
 `bun test ./src/`.
 
+## Running it
+
+```bash
+export OPENAI_API_KEY=sk-...          # required
+export OPENAI_MODEL=gpt-4o-mini       # required: the model id to talk to
+export OPENAI_BASE_URL=...            # optional, defaults to the OpenAI API
+export CONFIG_DIR=./.nox/config       # optional, see src/config/env.ts
+export DATA_DIR=./.nox/data           # optional: where nox.db is written
+export NOX_SESSION_ID=my-session      # optional: resumes that session
+
+bun run start
+```
+
+The first run writes `app.json` into `CONFIG_DIR` with defaults and migrates a
+SQLite database into `DATA_DIR`. Type to talk; `/exit` or Ctrl-C ends the
+session. Replies stream to stdout and every log line goes to stderr, so
+`bun run start 2>/dev/null` gives you the conversation alone.
+
+Anything that speaks the OpenAI Chat Completions API works — point
+`OPENAI_BASE_URL` at it.
+
 ## Kernel and contributions
 
 Nox is a **kernel** plus **contributions**. The kernel owns the laws and imports

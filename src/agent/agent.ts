@@ -120,7 +120,8 @@ class Agent {
 
     return Session.open(this.#database, this.#provider, this.#model, {
       ...options,
-      context: { ...this.#context, tools },
+      // The model's own window is the budget unless the agent overrode it.
+      context: { contextWindow: this.#model.contextWindow, ...this.#context, tools },
       logger: this.#logger,
       maxIterations: this.#maxIterations,
       systemPrompt: this.#systemPrompt,

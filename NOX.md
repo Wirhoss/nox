@@ -490,8 +490,39 @@ in it.
   another. "The kernel imports nothing concrete" stopped being a review
   convention the moment there was something concrete to import.
 
+**The process has an entrypoint.** `src/main.ts` is the composition root: it
+reads the environment, loads configuration, opens storage, activates the builtin
+extensions, resolves a provider from what they contributed, builds an agent and
+runs a session on stdin. `index.ts` is the eight lines that call it. It is the
+only file allowed to name a builtin, and `boundaries.test.ts` names it.
+
+- **Provider settings come from the environment, not a config section.** An API
+  key does not belong in a file on disk, and a second provider is what earns a
+  `providers.json`. `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
+- **`bootstrap()` is separable from the REPL** so the wiring can be tested
+  without a terminal or a network. That test is what proves the composition
+  composes, which no unit test had ever covered.
+
+**What running it found immediately** — the argument for running things:
+
+> `Session.open` built a `SessionStore`, loaded the transcript through it (which
+> seeds the next sequence number), and then handed the constructor a *second,
+> empty* store. A resumed session therefore restarted `seq` at zero and every
+> insert collided with `UNIQUE(session_id, seq)`. The store reported the failure
+> and the conversation carried on exactly as designed — so a resumed session
+> looked perfectly healthy while persisting nothing.
+
+It passed all 79 agent tests. The existing reopen test resumed a session, sent
+another turn, and asserted what the *provider* received — the in-memory history,
+which was correct. Nothing read back from storage after the resume. The fix is
+one store per session, created in `open` and handed to the constructor; the
+regression test reads the transcript back from a fresh store.
+
 `openAICompletions.ts` was the last port between the tree and the v1 criterion —
-a session that runs for hours against a real model. What remains is running it.
+a session that runs for hours against a real model. The stack now runs
+end-to-end against a stub. **The criterion is still not met:** there is no test
+that drives hundreds of turns through folding and compaction under sustained
+pressure, and nothing has yet talked to a real model.
 
 **The prefix is an invariant, not a subsystem.** `prompt.ts` holds the compaction
 prompt and nothing else; no separate prefix builder is missing. `Agent` fixes the
