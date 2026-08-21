@@ -23,6 +23,11 @@ import type { ChatProvider } from '../provider/provider';
 const created: string[] = [];
 
 const apiDefaults = { host: '0.0.0.0', port: 8080 } as const;
+const authDefaults = {
+  accessTtlSeconds: 900,
+  refreshTtlSeconds: 2_592_000,
+  secureCookies: false,
+} as const;
 const databaseDefaults = { busyTimeoutMs: 5000, path: 'nox.db', synchronous: 'normal' } as const;
 
 async function configDir(): Promise<string> {
@@ -148,7 +153,12 @@ describe('config files', () => {
 
     const value = await loadSection(appSection, context(dir));
 
-    expect(value).toEqual({ api: apiDefaults, database: databaseDefaults, logLevel: 'info' });
+    expect(value).toEqual({
+      api: apiDefaults,
+      auth: authDefaults,
+      database: databaseDefaults,
+      logLevel: 'info',
+    });
     expect(await read(dir, 'app.json')).toEqual(value);
   });
 
@@ -161,6 +171,7 @@ describe('config files', () => {
     expect(value.database).toEqual(databaseDefaults);
     expect(await read(dir, 'app.json')).toEqual({
       api: apiDefaults,
+      auth: authDefaults,
       database: databaseDefaults,
       logLevel: 'warn',
     });
@@ -170,6 +181,7 @@ describe('config files', () => {
     const dir = await configDir();
     await write(dir, 'app.json', {
       api: apiDefaults,
+      auth: authDefaults,
       database: databaseDefaults,
       logLevel: 'warn',
     });
@@ -321,6 +333,7 @@ describe('Config', () => {
     expect(config.env.environment).toBe('test');
     expect(config.get('app')).toEqual({
       api: apiDefaults,
+      auth: authDefaults,
       database: databaseDefaults,
       logLevel: 'info',
     });
@@ -333,6 +346,7 @@ describe('Config', () => {
 
     const result = await config.update('app', {
       api: apiDefaults,
+      auth: authDefaults,
       database: databaseDefaults,
       logLevel: 'debug',
     });
@@ -350,7 +364,12 @@ describe('Config', () => {
     const levels = ['debug', 'error', 'info', 'trace', 'warn'] as const;
     const results = await Promise.all(
       levels.map(async (logLevel) =>
-        config.update('app', { api: apiDefaults, database: databaseDefaults, logLevel }),
+        config.update('app', {
+          api: apiDefaults,
+          auth: authDefaults,
+          database: databaseDefaults,
+          logLevel,
+        }),
       ),
     );
 
@@ -369,6 +388,7 @@ describe('Config', () => {
 
     await first.update('app', {
       api: apiDefaults,
+      auth: authDefaults,
       database: databaseDefaults,
       logLevel: 'error',
     });

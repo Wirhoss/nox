@@ -2,7 +2,9 @@ import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
 import { Agent } from './agent/agent';
-import { ApiServer } from './api/server';
+import { RegistrationWindow } from './api/auth/registration';
+import { AuthStore } from './api/auth/store';
+import { type ApiAuth, ApiServer } from './api/server';
 import { NoxApplication } from './application';
 import { AuthorityCatalog, type AuthorityDefinition } from './auth/authority';
 import { GrantAuthorizationProvider } from './auth/authorization';
@@ -22,6 +24,7 @@ import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gatew
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService, secretStoreService } from './services';
 
+import type { AuthConfig } from './api/auth/config';
 import type { ApiConfig } from './api/config';
 import type { Blueprint } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
@@ -89,7 +92,8 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 
   // Registered after the database and therefore released before it: the socket
   // stops answering while the storage its answers came from is still open.
-  application.own(await openApi(application, appConfig.api, database, logger));
+  const auth = await openAuth(appConfig.auth, database, env.dataDir, logger);
+  application.own(await openApi(application, appConfig.api, auth, database, logger));
 
   try {
     const catalog = await composeAgents(
@@ -120,11 +124,13 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 async function openApi(
   application: NoxApplication,
   config: ApiConfig,
+  auth: ApiAuth,
   database: Database,
   logger: Logger,
 ): Promise<ApiServer> {
   return ApiServer.start({
     ...config,
+    auth,
     checks: {
       database: () => database.isOpen,
       nox: () => application.state === 'running',
@@ -132,6 +138,27 @@ async function openApi(
     logger: logger.child('api'),
     version: application.noxVersion,
   });
+}
+
+/**
+ * Who may reach the HTTP surface, and — for an installation nobody has claimed
+ * yet — the code that decides who gets to be first. The window is opened only
+ * when there is no account: a code printed on every restart of a Nox that
+ * already has one is noise that teaches the operator to skim past it.
+ */
+async function openAuth(
+  config: AuthConfig,
+  database: Database,
+  dataDirectory: string,
+  logger: Logger,
+): Promise<ApiAuth> {
+  const authLogger = logger.child('auth');
+  const store = await AuthStore.open({ ...config, database, dataDirectory, logger: authLogger });
+  const registration = (await store.isRegistered())
+    ? RegistrationWindow.closed()
+    : RegistrationWindow.open(authLogger);
+
+  return { registration, store };
 }
 
 /**

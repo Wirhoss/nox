@@ -15,6 +15,13 @@
       "when": 1787345815532,
       "tag": "0001_breezy_the_captain",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787347916107,
+      "tag": "0002_great_jack_murdock",
+      "breakpoints": true
     }
   ]
 }

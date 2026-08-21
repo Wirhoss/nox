@@ -6,6 +6,7 @@ import { describe, expect, test } from 'bun:test';
 
 const SRC = import.meta.dir;
 const BUILTIN = 'extensions/builtin/';
+const UI = 'ui/';
 
 // The composition root is the one layer allowed to name concrete
 // capabilities — that is what makes it the composition root. Naming it here
@@ -36,6 +37,25 @@ function builtinPackage(path: string): string | undefined {
   const [point, name] = path.slice(BUILTIN.length).split('/');
   return point === undefined || name === undefined ? undefined : `${BUILTIN}${point}/${name}`;
 }
+
+describe('kernel boundaries', () => {
+  test('the UI and kernel communicate only through the HTTP surface', () => {
+    const violations: string[] = [];
+
+    for (const file of sourceFiles()) {
+      for (const target of localImports(file)) {
+        const crossesIntoUi = !file.startsWith(UI) && target.startsWith(UI);
+        const crossesIntoKernel = file.startsWith(UI) && !target.startsWith(UI);
+
+        if (crossesIntoUi || crossesIntoKernel) {
+          violations.push(`${file} imports ${target}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+});
 
 describe('builtin extensions', () => {
   test('are imported by nothing else in the tree', () => {
