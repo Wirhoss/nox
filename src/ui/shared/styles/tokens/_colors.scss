@@ -1,0 +1,30 @@
+:root {
+  color-scheme: dark;
+
+  --nox-canvas: #0a0d0b;
+  --nox-canvas-raised: #0d110e;
+  --nox-surface-1: #111612;
+  --nox-surface-2: #161c17;
+  --nox-surface-input: #0d110e;
+  --nox-surface-hover: #1c251e;
+  --nox-text-primary: #e7eee8;
+  --nox-text-secondary: #a8b4aa;
+  --nox-text-muted: #718076;
+  --nox-text-inverse: #081009;
+  --nox-border-subtle: #29332b;
+  --nox-border-strong: #465448;
+  --nox-action-primary: #a8ff60;
+  --nox-action-primary-hover: #c0ff8a;
+  --nox-action-muted: #253328;
+  --nox-focus-ring: #b8ff7a;
+  --nox-status-success: #a8ff60;
+  --nox-status-warning: #ffbf5b;
+  --nox-status-danger: #ff6b62;
+  --nox-status-info: #8fa7ff;
+  --nox-selection: rgb(168 255 96 / 24%);
+  --nox-shadow-panel: 0 24px 80px rgb(0 0 0 / 46%);
+  --nox-glow-operational: 0 0 24px rgb(168 255 96 / 14%);
+  --nox-atmosphere: radial-gradient(circle at 18% 18%, rgb(168 255 96 / 7%), transparent 28%),
+    radial-gradient(circle at 82% 72%, rgb(113 74 255 / 6%), transparent 32%);
+  --nox-scanline: rgb(255 255 255 / 1.4%);
+}

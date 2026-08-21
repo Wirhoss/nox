@@ -28,3 +28,11 @@ bun run check:ui
 ```
 
 Or run the corresponding scripts directly from `src/ui`.
+
+During development, Vite proxies `/auth` and the live `/chat` endpoints to `http://localhost:8080`. Point them at another Nox HTTP surface when needed:
+
+```sh
+NOX_API_TARGET=http://localhost:9090 bun run dev:ui
+```
+
+The access token exists only in the Pinia auth store. The rotating refresh token remains in the backend-issued HttpOnly cookie and is never exposed to UI code.

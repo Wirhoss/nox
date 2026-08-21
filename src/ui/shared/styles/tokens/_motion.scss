@@ -1,0 +1,18 @@
+:root {
+  --nox-motion-fast: 120ms;
+  --nox-motion-normal: 220ms;
+  --nox-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --nox-glow-strength: 1;
+  --nox-noise-opacity: 0.18;
+  --nox-scanline-opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --nox-motion-fast: 0ms;
+    --nox-motion-normal: 0ms;
+    --nox-glow-strength: 0;
+    --nox-noise-opacity: 0;
+    --nox-scanline-opacity: 0;
+  }
+}

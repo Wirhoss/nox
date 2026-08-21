@@ -1,0 +1,13 @@
+:root {
+  --nox-font-interface: Inter, Aptos, "Segoe UI", sans-serif;
+  --nox-font-content: Inter, Aptos, "Segoe UI", sans-serif;
+  --nox-font-mono: "Cascadia Code", "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --nox-text-xs: 0.72rem;
+  --nox-text-sm: 0.875rem;
+  --nox-text-md: 1rem;
+  --nox-text-lg: 1.125rem;
+  --nox-text-xl: clamp(1.75rem, 4vw, 2.75rem);
+  --nox-leading-tight: 1.15;
+  --nox-leading-body: 1.6;
+  --nox-tracking-system: 0.14em;
+}

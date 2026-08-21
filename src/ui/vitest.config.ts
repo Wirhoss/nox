@@ -12,6 +12,7 @@ export default mergeConfig(
       exclude: [...configDefaults.exclude, 'e2e/**'],
       include: ['**/*.vitest.ts'],
       root: fileURLToPath(new URL('./', import.meta.url)),
+      setupFiles: ['./tests/setup.ts'],
     },
   }),
 )
