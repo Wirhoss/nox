@@ -1,5 +1,5 @@
-import { providerContribution, providers } from '../../contribution-points/providers';
-import { defineExtension } from '../../extension';
+import { providerContribution, providers } from '../../../contribution-points/providers';
+import { defineExtension } from '../../../extension';
 import { OpenAICompletions } from './openAICompletions';
 
 /**

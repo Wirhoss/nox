@@ -48,7 +48,7 @@ class ToolRouter extends ToolSet {
   readonly #toolsByName = new Map<string, Tool>();
 
   constructor(tools: readonly Tool[]) {
-    super();
+    super('tool_router', 'Searches and invokes tools from the routed tool catalog.');
 
     for (const source of [...tools].sort((a, b) => a.name.localeCompare(b.name))) {
       if (ROUTER_TOOL_NAME_SET.has(source.name)) {

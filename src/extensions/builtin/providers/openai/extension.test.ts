@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { NoxApplication } from '../../../application';
-import { providers } from '../../contribution-points/providers';
+import { NoxApplication } from '../../../../application';
+import { providers } from '../../../contribution-points/providers';
 import { openAIExtension } from './extension';
 import { OpenAICompletions } from './openAICompletions';
 

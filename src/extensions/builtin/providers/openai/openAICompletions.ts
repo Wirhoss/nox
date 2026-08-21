@@ -1,17 +1,17 @@
 import { z } from 'zod';
 
-import { type Logger, silentLogger } from '../../../logger/logger';
+import { type Logger, silentLogger } from '../../../../logger/logger';
 import {
   type ModelConfig,
   providerBaseConfigSchema,
   type TextGenerateOptions,
-} from '../../../provider/config';
-import { ProviderError, type ProviderErrorCode } from '../../../provider/error';
-import { ChatProvider } from '../../../provider/provider';
+} from '../../../../provider/config';
+import { ProviderError, type ProviderErrorCode } from '../../../../provider/error';
+import { ChatProvider } from '../../../../provider/provider';
 
-import type { Message, MessageContent, ToolCallMessage } from '../../../agent/context/message';
-import type { ProviderSourceEvent, ToolCallDraft } from '../../../provider/stream';
-import type { Tool } from '../../../tool/tool';
+import type { Message, MessageContent, ToolCallMessage } from '../../../../agent/context/message';
+import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
+import type { Tool } from '../../../../tool/tool';
 
 const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
   defaultModel: z.string().min(1).optional(),

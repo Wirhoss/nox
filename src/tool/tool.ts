@@ -93,13 +93,26 @@ interface ToolSetGrant {
 }
 
 abstract class ToolSet {
+  readonly #name: string;
+  readonly #description: string;
+
   readonly #enabledTools: ReadonlySet<string>;
   readonly #tools = new Map<string, Tool>();
 
   #visibleTools?: Readonly<Record<string, Tool>>;
 
-  constructor(enabledTools?: readonly string[]) {
+  constructor(name: string, description: string, enabledTools?: readonly string[]) {
+    this.#name = name;
+    this.#description = description;
     this.#enabledTools = new Set(enabledTools ?? []);
+  }
+
+  public get description(): string {
+    return this.#description;
+  }
+
+  public get name(): string {
+    return this.#name;
   }
 
   public get tools(): Readonly<Record<string, Tool>> {

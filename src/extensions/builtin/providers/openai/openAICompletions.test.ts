@@ -5,15 +5,15 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
-import { Session } from '../../../agent/session';
-import { Database } from '../../../database/database';
-import { isProviderError, type ProviderErrorCode } from '../../../provider/error';
+import { Session } from '../../../../agent/session';
+import { Database } from '../../../../database/database';
+import { isProviderError, type ProviderErrorCode } from '../../../../provider/error';
 import { OpenAICompletions } from './openAICompletions';
 
-import type { Message } from '../../../agent/context/message';
-import type { ModelConfig } from '../../../provider/config';
-import type { ProviderStreamEvent } from '../../../provider/stream';
-import type { Tool } from '../../../tool/tool';
+import type { Message } from '../../../../agent/context/message';
+import type { ModelConfig } from '../../../../provider/config';
+import type { ProviderStreamEvent } from '../../../../provider/stream';
+import type { Tool } from '../../../../tool/tool';
 
 interface RecordedRequest {
   body: Record<string, unknown>;

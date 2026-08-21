@@ -40,6 +40,30 @@ session. Replies stream to stdout and every log line goes to stderr, so
 Anything that speaks the OpenAI Chat Completions API works — point
 `OPENAI_BASE_URL` at it.
 
+Tool sets are configured as instances in `toolsets.json` and granted from a
+blueprint as either direct or routed. The builtin `web` kind can expose SearXNG
+search, Crawl4AI extraction, or both:
+
+`toolsets.json`:
+
+```json
+{
+  "internet": {
+    "type": "web",
+    "search": { "url": "http://localhost:8081" },
+    "extract": { "url": "http://localhost:11235" }
+  }
+}
+```
+
+The corresponding field inside `blueprints/nox.json`:
+
+```json
+{
+  "toolSets": { "direct": [], "routed": ["internet"] }
+}
+```
+
 ## Kernel and contributions
 
 Nox is a **kernel** plus **contributions**. The kernel owns the laws and imports
@@ -107,8 +131,10 @@ What the runtime guarantees:
   one contribution registry, so tests and multiple runtimes stay isolated.
 
 Builtins are contributions too, and they are whole ones: each lives in its own
-directory under `src/extensions/builtin/`, holding both the capability and the
-extension that registers it. Nothing else in the tree may import one —
+directory under `src/extensions/builtin/<contribution-point>/`, holding both the
+capability and the extension that registers it. Providers and tool sets therefore
+live under `builtin/providers/` and `builtin/toolsets/`, respectively. Nothing else
+in the tree may import one —
 `src/boundaries.test.ts` fails the build if it does — so a builtin can be
 published as its own package later by moving the directory.
 
@@ -127,7 +153,9 @@ repo or fail without taking the process down.
 | Tools, tool sets, the `search_tool`/`call_tool` router | Ported and tested |
 | Config (zod-validated sections), SQLite via Drizzle, logger | Ported and tested |
 | Provider layer | `BaseProvider`, `ChatProvider`, `ProviderStream` and retries |
-| OpenAI Chat Completions, as a self-contained builtin extension | Ported and tested |
+| OpenAI Chat Completions, as a self-contained builtin provider extension | Ported and tested |
+| Configurable tool-set contributions and blueprint grants | Ported and tested |
+| SearXNG search and Crawl4AI extraction builtin tool set | Ported and tested |
 
 Deferred, each with the trigger that un-defers it, in
 [NOX.md](NOX.md#v1-scope): extension machinery, memory, web UI, message brokers,
@@ -138,7 +166,7 @@ blueprints, gates, embedding retrieval, apps, multi-provider.
 ```
 src/agent/          agent, session, runner, and the context engine
 src/extensions/     the contribution contract; contribution-points/ is what Nox accepts
-src/extensions/builtin/   one directory per builtin extension, package-shaped
+src/extensions/builtin/   builtins grouped by contribution point, then package
 src/provider/       the provider contract: BaseProvider, ChatProvider, streaming
 src/tool/           tools, tool sets, the router
 src/config/         zod-validated configuration sections
