@@ -109,12 +109,12 @@ function deferredTool(name: string, result: Promise<MessageContent[]>): Tool {
   };
 }
 
-function user(text: string): UserMessage {
+function user(text: string, subject = 'alice'): UserMessage {
   return {
     content: [{ text, type: 'text' }],
     createdAt: new Date(),
     messageId: `user-${text}`,
-    origin: testOrigin(),
+    origin: testOrigin(subject),
     role: 'user',
   };
 }
@@ -343,6 +343,35 @@ describe('Runner', () => {
     expect(failure?.type === 'error' && failure.error.message).toContain('boom');
     expect(events.snapshot().at(-1)).toMatchObject({ status: 'failed' });
     expect(runner.state).toBe('idle');
+  });
+
+  test("a failed principal's run does not consume another principal's queued turn", async () => {
+    const entered = gate<undefined>();
+    const release = gate<undefined>();
+    const { events, provider, runner } = setup([
+      // eslint-disable-next-line require-yield
+      async function* (): AsyncIterable<ProviderSourceEvent> {
+        entered.resolve(undefined);
+        await release.promise;
+        throw new Error('alice failed');
+      },
+      says('bob answered'),
+    ]);
+
+    runner.send(user('first', 'alice'));
+    await entered.promise;
+    runner.send(user('second', 'bob'));
+    release.resolve(undefined);
+    await runner.idle;
+
+    expect(provider.requests).toHaveLength(2);
+    expect(provider.requests[1]?.at(-1)).toMatchObject({ role: 'user' });
+    expect(
+      events
+        .snapshot()
+        .filter((event) => event.type === 'runStarted')
+        .map((event) => event.authority.principal.subject),
+    ).toEqual(['alice', 'bob']);
   });
 
   test('an unknown tool answers the call instead of breaking the pairing', async () => {

@@ -13,13 +13,13 @@ import { SessionStore } from '../database/sessionStore';
 import { ChatProvider } from '../provider/provider';
 import { TEST_AUTHORITY, testCatalog, testPrincipal } from '../testFixtures';
 import { ToolRouter } from '../tool/router';
-import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
+import { type Tool, type ToolEffect, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
+import { type Message, type MessageContent, userContentForModel } from './context/message';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
-import type { GatePolicyInput } from '../tool/gate';
-import type { Message, MessageContent } from './context/message';
+import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
 import type { Session } from './session';
 
 const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
@@ -50,6 +50,8 @@ async function openDatabase(): Promise<Database> {
 /** Asks for `echo` on every user turn, and answers in prose otherwise. */
 class EchoingProvider extends ChatProvider {
   public readonly toolNames: string[][] = [];
+  /** The user turns visible on each request, so a leak into a run is provable. */
+  public readonly userTurns: string[][] = [];
 
   constructor() {
     super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
@@ -68,6 +70,13 @@ class EchoingProvider extends ChatProvider {
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
     this.toolNames.push(tools.map((tool) => tool.name).sort((a, b) => a.localeCompare(b)));
+    this.userTurns.push(
+      messageHistory
+        .filter((message) => message.role === 'user')
+        .map((message) =>
+          message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+        ),
+    );
 
     if (messageHistory.at(-1)?.role === 'user') {
       yield {
@@ -79,6 +88,55 @@ class EchoingProvider extends ChatProvider {
         },
         type: 'toolCall',
       };
+    } else {
+      yield { text: 'done', type: 'textFragment' };
+    }
+    yield { type: 'end' };
+  }
+}
+
+/** Calls one named tool only when the newest user turn explicitly says `tool`. */
+class SelectiveToolProvider extends ChatProvider {
+  #calls = 0;
+
+  readonly #failAfterCall: boolean;
+  readonly #toolName: string;
+
+  constructor(toolName = 'echo', failAfterCall = false) {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    this.#failAfterCall = failAfterCall;
+    this.#toolName = toolName;
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    const last = messageHistory.at(-1);
+    const asksForTool =
+      last?.role === 'user' &&
+      last.content.some((part) => part.type === 'text' && part.text.includes('tool'));
+
+    if (asksForTool) {
+      this.#calls += 1;
+      yield {
+        toolCall: {
+          arguments: {},
+          name: this.#toolName,
+          role: 'toolCall',
+          trackId: `${this.#toolName}-${String(this.#calls)}`,
+        },
+        type: 'toolCall',
+      };
+      if (this.#failAfterCall) throw new Error('provider failed after tool call');
     } else {
       yield { text: 'done', type: 'textFragment' };
     }
@@ -251,6 +309,7 @@ interface OpenOptions {
   authorization?: AuthorizationProvider;
   directToolSets?: readonly ToolSetGrant[];
   gate?: GatePolicyInput;
+  gateEvaluators?: readonly GateEvaluator[];
   provider?: ChatProvider;
   routedToolSets?: readonly ToolSetGrant[];
   sessionId?: string;
@@ -262,6 +321,7 @@ async function openSession(options: OpenOptions = {}): Promise<Session> {
     authorities: CATALOG,
     directToolSets: options.directToolSets,
     gate: options.gate,
+    gateEvaluators: options.gateEvaluators,
     routedToolSets: options.routedToolSets,
     systemPrompt: 'system',
   });
@@ -589,6 +649,73 @@ describe('what a tool asks for', () => {
 });
 
 describe('deferred work', () => {
+  test('an abort abandons an authorization provider that never resolves', async () => {
+    const runs = { count: 0 };
+    let receivedSignal: AbortSignal | undefined;
+    const unreachable: AuthorizationProvider = {
+      authorize: (_request, signal) => {
+        receivedSignal = signal;
+        return new Promise(() => undefined);
+      },
+      id: 'unreachable',
+    };
+
+    const session = await openSession({
+      authorization: unreachable,
+      directToolSets: [
+        grant('direct', deferredTool(runs, Promise.resolve([])), echoTool({ count: 0 })),
+      ],
+      provider: new DeferringProvider(),
+    });
+
+    session.send('arranca', alice());
+    await Bun.sleep(5);
+    const aborted = await Promise.race([
+      session.abort().then(() => true),
+      Bun.sleep(250).then(() => false),
+    ]);
+
+    // The provider deliberately remains pending forever. The run still closes,
+    // and deferred work cannot start after the authority question was abandoned.
+    expect(aborted).toBeTrue();
+    expect(receivedSignal?.aborted).toBeTrue();
+    expect(runs.count).toBe(0);
+    expect(lastToolResponse(session)).toContain('aborted before it settled');
+    await session.stop();
+  });
+
+  test('session stop abandons a gate evaluator that never resolves', async () => {
+    let entered!: () => void;
+    const evaluating = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const unreachable: GateEvaluator = {
+      evaluate: (_request, signal) => {
+        receivedSignal = signal;
+        entered();
+        return new Promise(() => undefined);
+      },
+      id: 'unreachable',
+    };
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'] }),
+      directToolSets: [grant('direct', echoTool({ count: 0 }))],
+      gate: { defaultVerdict: 'allow' },
+      gateEvaluators: [unreachable],
+    });
+
+    session.send('arranca', alice());
+    await evaluating;
+    const stopped = await Promise.race([
+      session.stop().then(() => true),
+      Bun.sleep(250).then(() => false),
+    ]);
+
+    expect(stopped).toBeTrue();
+    expect(receivedSignal?.aborted).toBeTrue();
+  });
+
   test('the gate decides before run(), not after the acknowledgement', async () => {
     const runs = { count: 0 };
     const session = await openSession({
@@ -657,6 +784,392 @@ describe('deferred work', () => {
   });
 });
 
+describe('one run, one principal', () => {
+  test('a message from someone else never joins the run in flight', async () => {
+    const executions = { count: 0 };
+    let entered!: () => void;
+    const running = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const blocking: Tool = {
+      authority: TEST_AUTHORITY,
+      description: 'echoes, slowly',
+      name: 'echo',
+      parameters: z.object({}),
+      prepare: () => ({
+        run: async (): Promise<MessageContent[]> => {
+          executions.count += 1;
+          entered();
+          await held;
+          return [{ text: 'echoed', type: 'text' }];
+        },
+        title: 'Echo a value',
+        type: 'immediate',
+      }),
+    };
+
+    const provider = new EchoingProvider();
+    // Alice may use the tool. Bob may talk, and nothing else.
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'] }),
+      directToolSets: [grant('direct', blocking)],
+      provider,
+    });
+
+    const starts: string[] = [];
+    const watching = (async () => {
+      for await (const event of session.events) {
+        if (event.type === 'runStarted') starts.push(event.authority.principal.subject);
+      }
+    })();
+
+    session.send('usa echo', alice());
+    await running;
+    // Bob speaks while Alice's privileged turn is mid-tool.
+    session.send('borra todo', bob());
+    release();
+    await session.idle;
+
+    // Alice's run saw only Alice. Bob's words reached the model in Bob's own
+    // run, which is the whole point: a tool call they provoke is authorized as
+    // Bob, and Bob was granted nothing.
+    expect(provider.userTurns[0]).toEqual(['usa echo']);
+    expect(provider.userTurns[1]).toEqual(['usa echo']);
+    expect(provider.userTurns[2]).toEqual(['usa echo', 'borra todo']);
+    expect(starts).toEqual(['alice', 'bob']);
+
+    const audit = await session.getDecisionAudit();
+    expect(
+      audit.map((entry) => [entry.principal.subject, entry.verdict, entry.stage].join(' ')),
+    ).toEqual(['alice allow authorization', 'bob deny authorization']);
+    expect(executions.count).toBe(1);
+
+    await session.stop();
+    await watching;
+  });
+
+  test('a second message from the same principal still joins the run', async () => {
+    const provider = new EchoingProvider();
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'] }),
+      directToolSets: [grant('direct', echoTool({ count: 0 }))],
+      provider,
+    });
+
+    const starts: string[] = [];
+    const watching = (async () => {
+      for await (const event of session.events) {
+        if (event.type === 'runStarted') starts.push(event.authority.principal.subject);
+      }
+    })();
+
+    session.send('primera', alice());
+    session.send('segunda', alice());
+    await session.idle;
+
+    // Splitting on principal must not split on message: Alice talking twice is
+    // one turn, exactly as before.
+    expect(starts).toEqual(['alice']);
+    // The second message is picked up by a later iteration of the same run,
+    // exactly as it was before runs were split by principal.
+    expect(provider.userTurns.at(-1)).toEqual(['primera', 'segunda']);
+
+    await session.stop();
+    await watching;
+  });
+});
+
+describe('shared-conversation permission floor', () => {
+  test('a second principal promotes an already-blocking permission to detached', async () => {
+    const executions = { count: 0 };
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      directToolSets: [grant('direct', echoTool(executions))],
+      gate: { defaultVerdict: 'escalate', escalationTimeoutMs: 10_000 },
+      provider: new SelectiveToolProvider(),
+    });
+
+    session.send('tool', alice());
+    const requestId = await waitForPermission(session);
+    session.send('hola', bob());
+    await session.idle;
+
+    expect(executions.count).toBe(0);
+    expect(
+      session
+        .getTranscript()
+        .some(
+          (message) => message.role === 'toolResponse' && message.execution === 'permissionPending',
+        ),
+    ).toBeTrue();
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    expect(
+      session.resolvePermission(requestId, { approved: 'once' }, testPrincipal('alice')),
+    ).toBeTrue();
+    await Bun.sleep(5);
+    await session.idle;
+
+    expect(executions.count).toBe(1);
+    expect(
+      session
+        .getTranscript()
+        .some(
+          (message) => message.role === 'toolResponse' && message.execution === 'deferredResult',
+        ),
+    ).toBeTrue();
+    const audit = await session.getDecisionAudit();
+    expect(audit.filter((entry) => entry.stage === 'authorization')).toHaveLength(2);
+    await session.stop();
+  });
+
+  test('unknown risk escalates above an allow rule, while explicit no-effects does not', async () => {
+    const effectfulRuns = { count: 0 };
+    const effectful = await openSession({
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      directToolSets: [grant('direct', echoTool(effectfulRuns))],
+      gate: {
+        defaultVerdict: 'allow',
+        rules: [{ reason: 'trusted', tools: ['echo'], verdict: 'allow' }],
+      },
+      provider: new SelectiveToolProvider(),
+    });
+    effectful.send('hola', alice());
+    await effectful.idle;
+    effectful.send('hola', bob());
+    await effectful.idle;
+    effectful.send('tool', alice());
+    await effectful.idle;
+
+    expect(effectfulRuns.count).toBe(0);
+    expect(effectful.getPendingPermissions()).toHaveLength(1);
+    expect(
+      (await effectful.getDecisionAudit()).some(
+        (entry) => entry.stage === 'gate' && entry.decidedBy === 'shared-conversation',
+      ),
+    ).toBeTrue();
+    await effectful.stop();
+
+    const pureRuns = { count: 0 };
+    const pureTool: Tool = { ...echoTool(pureRuns), risk: { effects: [] } };
+    const pure = await openSession({
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      directToolSets: [grant('direct', pureTool)],
+      gate: {
+        defaultVerdict: 'allow',
+        rules: [{ reason: 'trusted', tools: ['echo'], verdict: 'allow' }],
+      },
+      provider: new SelectiveToolProvider(),
+    });
+    pure.send('hola', alice());
+    await pure.idle;
+    pure.send('hola', bob());
+    await pure.idle;
+    pure.send('tool', alice());
+    await pure.idle;
+
+    expect(pureRuns.count).toBe(1);
+    expect(pure.getPendingPermissions()).toEqual([]);
+    await pure.stop();
+  });
+
+  test('freezes the exact prepared call before asking its owner', async () => {
+    const risk: { effects: ToolEffect[] } = { effects: ['write'] };
+    let prepared:
+      | undefined
+      | {
+          risk: { effects: ToolEffect[] };
+          title: string;
+        };
+    const tool: Tool = {
+      authority: TEST_AUTHORITY,
+      description: 'mutable metadata test',
+      name: 'echo',
+      parameters: z.object({}),
+      prepare: () => {
+        const execution = {
+          risk,
+          run: () => Promise.resolve([{ text: 'done', type: 'text' as const }]),
+          title: 'Original title',
+          type: 'immediate' as const,
+        };
+        prepared = execution;
+        return execution;
+      },
+    };
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      directToolSets: [grant('direct', tool)],
+      provider: new SelectiveToolProvider(),
+    });
+    session.send('hola', alice());
+    await session.idle;
+    session.send('hola', bob());
+    await session.idle;
+    session.send('tool', alice());
+    await waitForPermission(session);
+
+    risk.effects.push('delete');
+    if (prepared !== undefined) prepared.title = 'Changed later';
+    const request = session.getPendingPermissions()[0];
+    expect(request?.title).toBe('Original title');
+    expect(request?.risk?.effects).toEqual(['write']);
+    expect(Object.isFrozen(request?.risk?.effects)).toBeTrue();
+    expect(Object.isFrozen(request?.params)).toBeTrue();
+    await session.stop();
+  });
+
+  test('revalidates grants immediately before an approved detached execution', async () => {
+    let granted = true;
+    const authorization: AuthorizationProvider = {
+      authorize: () =>
+        granted
+          ? { allowed: true, decidedBy: 'mutable', matchedGrant: '*', reason: 'granted' }
+          : { allowed: false, decidedBy: 'mutable', reason: 'revoked' },
+      id: 'mutable',
+    };
+    const executions = { count: 0 };
+    const session = await openSession({
+      authorization,
+      directToolSets: [grant('direct', echoTool(executions))],
+      provider: new SelectiveToolProvider(),
+    });
+    session.send('hola', alice());
+    await session.idle;
+    session.send('hola', bob());
+    await session.idle;
+    session.send('tool', alice());
+    const requestId = await waitForPermission(session);
+    await session.idle;
+
+    granted = false;
+    expect(
+      session.resolvePermission(requestId, { approved: 'once' }, testPrincipal('alice')),
+    ).toBeTrue();
+    await Bun.sleep(5);
+    await session.idle;
+
+    expect(executions.count).toBe(0);
+    expect(lastToolResponse(session)).toContain('no longer authorized');
+    const decisions = (await session.getDecisionAudit()).filter(
+      (entry) => entry.stage === 'authorization',
+    );
+    expect(decisions.map((entry) => entry.verdict)).toEqual(['allow', 'deny']);
+    await session.stop();
+  });
+
+  test('preserves a deferred acknowledgement in the final approved result', async () => {
+    const runs = { count: 0 };
+    let finish!: (result: MessageContent[]) => void;
+    const result = new Promise<MessageContent[]>((resolve) => {
+      finish = resolve;
+    });
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      directToolSets: [grant('direct', deferredTool(runs, result))],
+      provider: new SelectiveToolProvider('background'),
+    });
+    session.send('hola', alice());
+    await session.idle;
+    session.send('hola', bob());
+    await session.idle;
+    session.send('tool', alice());
+    const requestId = await waitForPermission(session);
+    await session.idle;
+
+    expect(
+      session.resolvePermission(requestId, { approved: 'once' }, testPrincipal('alice')),
+    ).toBeTrue();
+    await Bun.sleep(5);
+    expect(runs.count).toBe(1);
+    finish([{ text: 'finished', type: 'text' }]);
+    await Bun.sleep(5);
+    await session.idle;
+
+    const final = [...session.getTranscript()]
+      .reverse()
+      .find((message) => message.role === 'toolResponse' && message.execution === 'deferredResult');
+    expect(final?.role === 'toolResponse' ? final.response : []).toEqual([
+      { text: 'started', type: 'text' },
+      { text: 'finished', type: 'text' },
+    ]);
+    await session.stop();
+  });
+
+  test('rebuilds the sticky shared flag from the full transcript on reopen', async () => {
+    const database = await openDatabase();
+    const executions = { count: 0 };
+    const agent = new Agent(database, new SelectiveToolProvider(), MODEL, {
+      agentId: 'test',
+      authorities: CATALOG,
+      directToolSets: [grant('direct', echoTool(executions))],
+      gate: {
+        defaultVerdict: 'allow',
+        rules: [{ reason: 'trusted', tools: ['echo'], verdict: 'allow' }],
+      },
+      systemPrompt: 'system',
+    });
+    const authorization = grantsFor({ alice: ['*'], bob: ['*'] });
+    const first = await agent.openSession({ authorization });
+    first.send('hola', alice());
+    await first.idle;
+    first.send('hola', bob());
+    await first.idle;
+    await first.stop();
+
+    const reopened = await agent.openSession({
+      authorization,
+      sessionId: first.sessionId,
+    });
+    reopened.send('tool', alice());
+    await reopened.idle;
+
+    expect(executions.count).toBe(0);
+    expect(reopened.getPendingPermissions()).toHaveLength(1);
+    expect(
+      (await reopened.getDecisionAudit()).some(
+        (entry) => entry.stage === 'gate' && entry.decidedBy === 'shared-conversation',
+      ),
+    ).toBeTrue();
+    await reopened.stop();
+  });
+
+  test('discards a detached operation from provider output that never committed', async () => {
+    const executions = { count: 0 };
+    const session = await openSession({
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      directToolSets: [grant('direct', echoTool(executions))],
+      provider: new SelectiveToolProvider('echo', true),
+    });
+    session.send('hola', alice());
+    await session.idle;
+    session.send('hola', bob());
+    await session.idle;
+    session.send('tool', alice());
+    await session.idle;
+    await Bun.sleep(5);
+
+    expect(executions.count).toBe(0);
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(
+      session
+        .getTranscript()
+        .some((message) => message.role === 'toolCall' || message.role === 'toolResponse'),
+    ).toBeFalse();
+    expect(
+      (await session.getDecisionAudit()).some(
+        (entry) => entry.stage === 'gate' && entry.resolution === 'aborted',
+      ),
+    ).toBeTrue();
+    await session.stop();
+  });
+});
+
 describe('runs nobody sent a message to start', () => {
   test('a system principal is explicit, and holds nothing by default', () => {
     expect(SYSTEM_CRON).toEqual({ issuer: 'nox.system', subject: 'cron' });
@@ -677,6 +1190,21 @@ describe('runs nobody sent a message to start', () => {
 });
 
 describe('provenance', () => {
+  test('the model is told who spoke', () => {
+    const rendered = userContentForModel({
+      content: [{ text: 'hola', type: 'text' }],
+      createdAt: new Date(0),
+      messageId: 'u1',
+      origin: { principal: testPrincipal('alice'), transportMessageId: 't1' },
+      role: 'user',
+    });
+
+    // Without this every participant of a shared channel reaches the model as
+    // the same anonymous `user`, and it cannot tell who asked for what.
+    expect(rendered[0]).toEqual({ text: '[from test-broker:alice]\n', type: 'text' });
+    expect(rendered.slice(1)).toEqual([{ text: 'hola', type: 'text' }]);
+  });
+
   test('the principal and transport ID survive storage and a reopen', async () => {
     const database = await openDatabase();
     const agent = new Agent(database, new EchoingProvider(), MODEL, {

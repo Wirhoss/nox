@@ -1,13 +1,34 @@
 import { nanoid } from 'nanoid';
 
-import { prepareToolCall, type ToolExecution } from '../tool/tool';
+import {
+  type AuthorizationDecision,
+  type AuthorizationProvider,
+  authorize,
+} from '../auth/authorization';
+import { ConversationParticipants } from '../auth/conversation';
+import {
+  messageAuthority,
+  type PrincipalRef,
+  type RunAuthority,
+  samePrincipal,
+  SYSTEM_ISSUER,
+} from '../auth/principal';
+import { prepareToolCall, type ToolExecution, type ToolExecutionSubject } from '../tool/tool';
+import { freezeMessage, freezeValue } from './context/immutable';
 
+import type { DecisionAuditSink } from '../auth/audit';
+import type { AuthorityCatalog } from '../auth/authority';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ProviderError } from '../provider/error';
 import type { ChatProvider } from '../provider/provider';
 import type { Usage } from '../provider/stream';
-import type { GateRequest, PermissionResolution, SessionGate } from '../tool/gate';
+import type {
+  GateRequest,
+  PendingPermission,
+  PermissionResolution,
+  SessionGate,
+} from '../tool/gate';
 import type { EventLog } from '../utils/eventLog';
 import type { Context } from './context/context';
 import type {
@@ -31,9 +52,54 @@ interface RunnerOptions {
 }
 
 interface RunnerConstructionOptions extends RunnerOptions {
+  /** Where both halves of the decision pipeline write their one timeline. */
+  audit?: DecisionAuditSink;
+  /** Every authority this Nox knows. Absent means nothing can be authorized. */
+  authorities?: AuthorityCatalog;
+  /**
+   * Consulted per tool call, never snapshotted: the tool catalog is stable for a
+   * conversation, but who may use what can change while it is still going.
+   * Absent is not permissive — it denies, like every other unanswered question.
+   */
+  authorization?: AuthorizationProvider;
   gate?: SessionGate;
-  sessionId?: string;
+  participants?: ConversationParticipants;
+  sessionId: string;
 }
+
+/**
+ * Something waiting to enter the context, and the authority it would run under.
+ *
+ * A run takes the authority of the item that started it and keeps it to the end.
+ * Anything that joins the queue afterwards is context, not authority: in a shared
+ * conversation other people keep talking, and a run does not change hands because
+ * somebody spoke into it.
+ */
+interface QueuedMessage {
+  readonly authority: RunAuthority;
+  readonly message: Message;
+  readonly trigger: RunTrigger;
+}
+
+type PendingOperationState = 'awaitingApproval' | 'discarded' | 'executing' | 'settled';
+
+interface PendingOwnedOperation {
+  readonly authority: RunAuthority;
+  readonly call: ToolCallMessage;
+  readonly execution: ToolExecution;
+  readonly pendingResponseId: string;
+  readonly publish: () => void;
+  readonly runId: string;
+  readonly subject: ToolExecutionSubject;
+  readonly whenPublished: Promise<void>;
+  completion?: ToolResponseMessage;
+  published: boolean;
+  state: PendingOperationState;
+}
+
+type PermissionWait =
+  | { readonly resolution: PermissionResolution; readonly type: 'resolution' }
+  | { readonly type: 'shared' };
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -59,17 +125,22 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
  * wake anything.
  */
 class Runner {
+  readonly #audit?: DecisionAuditSink;
+  readonly #authorities?: AuthorityCatalog;
+  readonly #authorization?: AuthorizationProvider;
   readonly #context: Context;
   readonly #events: EventLog<AgentEvent>;
   readonly #gate?: SessionGate;
   readonly #logger?: Logger;
   readonly #maxIterations: number;
   readonly #model: ModelConfig;
+  readonly #participants: ConversationParticipants;
+  readonly #pendingOperations = new Map<string, PendingOwnedOperation>();
   readonly #provider: ChatProvider;
-  readonly #sessionId?: string;
+  readonly #sessionId: string;
 
   /** Waiting to enter the context: user messages and deferred results alike. */
-  readonly #queue: Message[] = [];
+  readonly #queue: QueuedMessage[] = [];
 
   /** Outlives every run, so background work survives `abort()` and `steer()`. */
   readonly #session = new AbortController();
@@ -77,6 +148,8 @@ class Runner {
   #run?: AbortController;
   #idle: Promise<void> = Promise.resolve();
   #resolveIdle?: () => void;
+  #runAuthority?: RunAuthority;
+  #runId?: string;
   #state: RunnerState = 'idle';
 
   constructor(
@@ -84,8 +157,11 @@ class Runner {
     events: EventLog<AgentEvent>,
     provider: ChatProvider,
     model: ModelConfig,
-    options: RunnerConstructionOptions = {},
+    options: RunnerConstructionOptions,
   ) {
+    this.#audit = options.audit;
+    this.#authorities = options.authorities;
+    this.#authorization = options.authorization;
     this.#context = context;
     this.#events = events;
     this.#provider = provider;
@@ -93,10 +169,15 @@ class Runner {
     this.#gate = options.gate;
     this.#logger = options.logger;
     this.#maxIterations = resolveMaxIterations(options.maxIterations);
+    this.#participants =
+      options.participants ??
+      new ConversationParticipants(
+        context
+          .getFullHistory()
+          .filter((message): message is UserMessage => message.role === 'user')
+          .map((message) => message.origin.principal),
+      );
     this.#sessionId = options.sessionId;
-    if (this.#gate !== undefined && this.#sessionId === undefined) {
-      throw new Error('A gated runner requires a sessionId.');
-    }
   }
 
   /** Resolves when the current run finishes; already resolved while idle. */
@@ -121,15 +202,28 @@ class Runner {
     return true;
   }
 
-  /** Queues a message, and wakes the runner if nothing is running. */
+  /**
+   * Queues a message, and wakes the runner if nothing is running. The authority
+   * comes from the message's own authenticated origin, and from nowhere else.
+   */
   public send(message: UserMessage): void {
-    this.#enqueue(message, 'user');
+    this.#participants.observe(message.origin.principal);
+    this.#enqueue({
+      authority: messageAuthority(message.origin, message.messageId),
+      message,
+      trigger: 'user',
+    });
   }
 
   /** Cuts the current run short and speaks over it. */
   public async steer(message: UserMessage): Promise<void> {
     await this.abort();
-    this.#enqueue(message, 'steer');
+    this.#participants.observe(message.origin.principal);
+    this.#enqueue({
+      authority: messageAuthority(message.origin, message.messageId),
+      message,
+      trigger: 'steer',
+    });
   }
 
   /**
@@ -139,52 +233,130 @@ class Runner {
   public async stop(): Promise<void> {
     if (this.#state === 'stopped') return;
 
-    this.#run?.abort();
-    await this.#idle;
-    this.#state = 'stopped';
+    // Stop background and pending work before waiting for the foreground run;
+    // otherwise continuing the queue after an abort could start another turn
+    // while the session is trying to close.
     this.#session.abort();
+    this.#run?.abort();
+    this.#state = 'stopped';
+    await this.#idle;
     this.#events.close();
   }
 
-  /** Empties the queue into the context. Never starts anything. */
-  #drain(): void {
-    for (const message of this.#queue.splice(0)) {
+  /**
+   * Takes the longest run of queued entries this run is entitled to absorb, and
+   * stops at the first one belonging to somebody else.
+   *
+   * This is the whole of what keeps one principal's words out of another's run.
+   * A run's authority is fixed when it starts, so anything it swallows is read
+   * by the model *under that authority* — which means a message from Bob landing
+   * mid-turn could ask for a tool and have it authorized as Alice. It waits for
+   * its own run instead.
+   *
+   * It stops at the first foreign entry rather than picking its own out of the
+   * middle, because the transcript is a record of a conversation and reordering
+   * who spoke when to suit whose turn it is would make it a false one.
+   */
+  #drainOwn(principal: PrincipalRef): void {
+    let owned = 0;
+    while (owned < this.#queue.length) {
+      const entry = this.#queue[owned];
+      if (entry === undefined || !samePrincipal(entry.authority.principal, principal)) break;
+      owned += 1;
+    }
+
+    for (const { message } of this.#queue.splice(0, owned)) {
       this.#context.addMessage(message);
     }
   }
 
-  #enqueue(message: Message, trigger: RunTrigger): void {
+  /** Empties the queue into the context. Never starts anything. */
+  #drainAll(): void {
+    for (const { message } of this.#queue.splice(0)) {
+      this.#context.addMessage(message);
+    }
+  }
+
+  /** Whether the queue starts with something this run may still take. */
+  #hasOwnQueued(principal: PrincipalRef): boolean {
+    const next = this.#queue[0];
+    return next !== undefined && samePrincipal(next.authority.principal, principal);
+  }
+
+  #enqueue(entry: QueuedMessage): void {
     // A late result still belongs to the transcript, which is permanent and
     // complete; dropping it to save the trouble would be deleting it.
     if (this.#state === 'stopped') {
-      this.#context.addMessage(message);
+      this.#context.addMessage(entry.message);
       return;
     }
 
-    this.#queue.push(message);
+    this.#queue.push(entry);
     if (this.#state === 'running') return;
 
-    void this.#execute(trigger).catch((error: unknown) => {
+    void this.#execute().catch((error: unknown) => {
       // #execute reports failures as events; nobody may be subscribed, so the
       // log is the backstop rather than an unhandled rejection.
       this.#logger?.error({ err: error }, 'Agent run failed.');
     });
   }
 
-  async #execute(trigger: RunTrigger): Promise<void> {
+  /**
+   * Drains the queue as a chain of runs, one per principal in the order they
+   * spoke, and stays busy until nothing is left.
+   *
+   * A turn that ends with somebody else's message waiting is not the end of the
+   * work — it is the end of *that person's* work. Chaining here rather than
+   * returning to idle is what makes `idle` still mean "the conversation has
+   * caught up" now that one queue can hold several people's turns.
+   */
+  async #execute(): Promise<void> {
     // Set before the first await: a second enqueue in this same tick has to see
     // a running runner, or it would start a second run.
     this.#state = 'running';
-    this.#run = new AbortController();
     this.#idle = new Promise<void>((resolve) => {
       this.#resolveIdle = resolve;
     });
 
+    try {
+      for (let next = this.#queue[0]; next !== undefined; next = this.#queue[0]) {
+        const status = await this.#runTurn(next.authority, next.trigger);
+        if (this.#session.signal.aborted) break;
+
+        if (status === 'aborted') {
+          // Abort cancels the current owner's turn, not unrelated work already
+          // requested by another principal. Same-owner messages that arrived in
+          // the interrupted turn are recorded without silently restarting it.
+          this.#drainOwn(next.authority.principal);
+        }
+        // A provider failure is local to its run. The next queued item explicitly
+        // requested its own run and must not be consumed as collateral damage.
+      }
+    } finally {
+      // Session shutdown may leave entries behind. They still belong to the
+      // append-only transcript, but a stopped runner starts no further work.
+      this.#drainAll();
+      this.#runAuthority = undefined;
+      this.#runId = undefined;
+      this.#state = this.#session.signal.aborted ? 'stopped' : 'idle';
+      this.#resolveIdle?.();
+    }
+  }
+
+  /** One run, under one authority, from one entry on the queue. */
+  async #runTurn(authority: RunAuthority, trigger: RunTrigger): Promise<RunStatus> {
+    this.#run = new AbortController();
+
     const runId = nanoid();
+    // Fixed here and read by every tool call this run makes. Nothing that lands
+    // in the queue afterwards can move it.
+    this.#runAuthority = authority;
+    this.#runId = runId;
     const startedAt = new Date();
     const usage: Usage = { cacheReadTokens: 0, inputTokens: 0, outputTokens: 0 };
 
     this.#events.push({
+      authority,
       modelId: this.#model.modelId,
       runId,
       startedAt,
@@ -193,19 +365,21 @@ class Runner {
     });
 
     try {
-      this.#finish(runId, await this.#runLoop(usage), startedAt, usage);
+      const status = await this.#runLoop(usage);
+      this.#finish(runId, status, startedAt, usage);
+      return status;
     } catch (error) {
       const failure = toError(error);
+      // Any permission detached from partial provider output must close before
+      // that uncommitted call can ever execute.
+      this.#run.abort(failure);
+      this.#discardUnpublishedOperations(runId);
       this.#logger?.error({ err: failure, modelId: this.#model.modelId }, 'Agent run failed.');
       this.#events.push({ error: failure, type: 'error' });
       this.#finish(runId, 'failed', startedAt, usage);
+      return 'failed';
     } finally {
-      // An aborted run can leave the queue loaded. Its contents are recorded so
-      // nothing is lost, but they do not get to start a run nobody asked for.
-      this.#drain();
       this.#run = undefined;
-      this.#state = 'idle';
-      this.#resolveIdle?.();
     }
   }
 
@@ -290,12 +464,17 @@ class Runner {
   }
 
   async #runLoop(usage: Usage): Promise<RunStatus> {
+    const { principal } = this.#authority();
+
     for (let iteration = 0; iteration < this.#maxIterations; iteration++) {
-      this.#drain();
+      this.#drainOwn(principal);
       await this.#context.compact();
 
       const responses = await this.#request(usage);
-      for (const response of responses) this.#context.addMessage(response);
+      for (const response of responses) {
+        this.#context.addMessage(response);
+        this.#publishPendingOperation(response.messageId);
+      }
 
       if (this.#runSignal().aborted) return 'aborted';
 
@@ -306,7 +485,7 @@ class Runner {
         // the transcript — and a fold that reclaims too little to pay for the
         // head rewrite is rejected inside the context.
         await this.#context.fold();
-        if (this.#queue.length === 0) return 'completed';
+        if (!this.#hasOwnQueued(principal)) return 'completed';
       }
     }
 
@@ -322,7 +501,8 @@ class Runner {
     return this.#run?.signal ?? this.#session.signal;
   }
 
-  async #runTool(call: ToolCallMessage): Promise<ToolResponseMessage> {
+  async #runTool(sourceCall: ToolCallMessage): Promise<ToolResponseMessage> {
+    const call = freezeMessage(sourceCall);
     const tool = this.#context.getTools()[call.name];
     if (tool === undefined) {
       // The model asked for something it was never given: a wiring problem.
@@ -332,13 +512,49 @@ class Runner {
 
     const startedAt = Date.now();
     try {
-      const { execution, params } = prepareToolCall(tool, call.arguments);
-      const rejected = await this.#authorize(call, execution, params);
+      // Preparation is side-effect free by contract, which is what makes it safe
+      // to run before anyone has decided this call may happen at all. Everything
+      // needed to decide — authority, risk, params, preview — exists by now.
+      const prepared = prepareToolCall(tool, call.arguments);
+      const execution = freezeValue(prepared.execution);
+      const subject = execution.gateSubject;
+      if (subject === undefined) {
+        // A tool reached the model without being bound to a set, so nothing can
+        // say what it is allowed to do. That is a wiring bug, and the only safe
+        // reading of it is no.
+        this.#logger?.error(
+          { toolName: call.name },
+          'Refused a tool call that carries no execution subject.',
+        );
+        return this.#toolResponse(
+          call,
+          'immediate',
+          `Tool ${call.name} is not bound to a tool set, so it cannot be authorized.`,
+          true,
+        );
+      }
+
+      const unauthorized = await this.#authorizeCall(call, subject);
+      if (unauthorized !== undefined) return unauthorized;
+
+      const rejected = await this.#gateCall(call, execution, subject);
       if (rejected !== undefined) return rejected;
 
+      // Deciding takes real time: a provider over the network, an evaluator, a
+      // human answering a prompt. If the run was abandoned while that ran, the
+      // answer arrives for something nobody is waiting on any more.
+      //
+      // This matters most for deferred work, which is deliberately handed the
+      // session signal so it outlives an abort — without this check an aborted
+      // run would still start background work, and the abort would be a lie.
+      if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
+
       if (execution.type === 'deferred') {
+        // Authorization and the Gate are behind us, so the whole deferred
+        // operation is approved. The ack and the result that follow are not new
+        // executions and are never authorized again.
         const { ack, result } = await execution.run({ abortSignal: this.#session.signal });
-        this.#trackDeferred(call, result);
+        this.#trackDeferred(call, result, this.#authority());
         this.#logger?.debug(
           { durationMs: Date.now() - startedAt, toolName: call.name },
           'Deferred tool acknowledged.',
@@ -353,6 +569,8 @@ class Runner {
       );
       return this.#toolResponse(call, 'immediate', response, false);
     } catch (error) {
+      if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
+
       // Reported to the model as tool output, and to the operator as a log: an
       // error only the model can see is an error nobody can debug.
       this.#logger?.error(
@@ -368,29 +586,121 @@ class Runner {
     }
   }
 
-  async #authorize(
+  /**
+   * The half that asks who is acting, before the half that asks what they are
+   * doing. It runs on every call — including one the Gate has already memoized an
+   * approval for — because a memo is about a decision somebody made, and a grant
+   * can be taken away between two calls of the same conversation.
+   *
+   * Deliberately not a `GateEvaluator`: the Gate consults its session memo before
+   * some evaluators run, so authorization living there could be skipped by an
+   * approval given earlier.
+   */
+  async #authorizeCall(
+    call: ToolCallMessage,
+    subject: ToolExecutionSubject,
+  ): Promise<ToolResponseMessage | undefined> {
+    const runAuthority = this.#authority();
+    const runId = this.#currentRunId();
+    const decision = await this.#decideAuthorization(
+      call,
+      subject,
+      runAuthority,
+      runId,
+      this.#runSignal(),
+    );
+
+    if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
+    if (decision.allowed) return undefined;
+
+    // No permission request follows. Someone without `use` has not asked a
+    // question a human could answer; there is nothing to put a button on.
+    return this.#toolResponse(
+      call,
+      'immediate',
+      `Tool call not authorized: ${decision.reason} ` +
+        'Do not retry; this needs a change of permissions, not a different attempt.',
+      true,
+    );
+  }
+
+  async #decideAuthorization(
+    call: ToolCallMessage,
+    subject: ToolExecutionSubject,
+    runAuthority: RunAuthority,
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<AuthorizationDecision> {
+    const decision = await authorize(
+      {
+        authority: subject.authority,
+        principal: runAuthority.principal,
+        runId,
+        sessionId: this.#sessionId,
+        toolName: subject.toolName,
+        toolSetId: subject.toolSetId,
+        trackId: call.trackId,
+      },
+      this.#authorization,
+      this.#authorities,
+      signal,
+      this.#logger,
+    );
+
+    // Written whichever way it went. A deny never reaches the Gate, so this is
+    // the only record that the call was ever attempted. An approved detached
+    // operation writes a second line here when it is revalidated before run().
+    this.#audit?.authorize({
+      authority: subject.authority,
+      createdAt: new Date(),
+      decidedBy: decision.decidedBy,
+      decisionId: nanoid(),
+      matchedGrant: decision.matchedGrant,
+      params: subject.params,
+      principal: runAuthority.principal,
+      reason: decision.reason,
+      runId,
+      sessionId: this.#sessionId,
+      toolName: subject.toolName,
+      toolSetId: subject.toolSetId,
+      trackId: call.trackId,
+      verdict: decision.allowed ? 'allow' : 'deny',
+    });
+    this.#emit({
+      authority: subject.authority,
+      decision,
+      principal: runAuthority.principal,
+      runId,
+      toolName: subject.toolName,
+      trackId: call.trackId,
+      type: 'authorizationDecided',
+    });
+    return decision;
+  }
+
+  async #gateCall(
     call: ToolCallMessage,
     execution: ToolExecution,
-    params: Readonly<Record<string, unknown>>,
+    subject: ToolExecutionSubject,
   ): Promise<ToolResponseMessage | undefined> {
-    if (this.#gate === undefined || this.#sessionId === undefined) return undefined;
+    if (this.#gate === undefined) return undefined;
 
-    const subject = execution.gateSubject ?? {
-      params,
-      toolName: call.name,
-      toolSetId: 'nox.internal',
-    };
+    const runAuthority = this.#authority();
     const request: GateRequest = {
+      authority: subject.authority,
       params: subject.params,
       preview: execution.preview,
       risk: execution.risk,
+      runAuthority,
+      runId: this.#currentRunId(),
       sessionId: this.#sessionId,
       title: execution.title,
       toolName: subject.toolName,
       toolSetId: subject.toolSetId,
       trackId: call.trackId,
     };
-    const decision = await this.#gate.evaluate(request);
+    const decision = await this.#gate.evaluate(request, this.#runSignal());
+    if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
     if (decision.verdict === 'allow') return undefined;
     if (decision.verdict === 'deny') {
       return this.#toolResponse(
@@ -401,22 +711,282 @@ class Runner {
       );
     }
 
+    // An escalation is a question for the principal who started the run, and for
+    // nobody else. A run Nox started on its own has no one to ask, and there is
+    // no delegated approval to fall back on, so it ends here.
+    if (runAuthority.principal.issuer === SYSTEM_ISSUER) {
+      this.#logger?.warn(
+        { authority: subject.authority, toolName: subject.toolName },
+        'Denied an escalation on a system run: there is no originator to ask.',
+      );
+      return this.#toolResponse(
+        call,
+        'immediate',
+        `Tool call not executed: ${decision.reason} ` +
+          'This run has no human originator, and approval cannot be delegated.',
+        true,
+      );
+    }
+
     const pending = this.#gate.requestPermission(request, decision, this.#runSignal());
-    this.#events.push({ request: pending.request, type: 'permissionRequested' });
-    const resolution = await pending.outcome;
-    this.#events.push({
-      requestId: pending.request.requestId,
-      resolution,
-      type: 'permissionResolved',
-    });
-    if (resolution.resolution === 'approved') return undefined;
+    if (!pending.accepted) {
+      return this.#toolResponse(
+        call,
+        'immediate',
+        'Tool call not executed: this principal already has the maximum number of pending ' +
+          'permission requests in this session.',
+        true,
+      );
+    }
+
+    this.#emit({ request: pending.request, type: 'permissionRequested' });
+    if (this.#participants.isShared) {
+      return this.#detachPermission(call, execution, subject, runAuthority, request.runId, pending);
+    }
+
+    // A session may become shared while this escalation is already blocking.
+    // The second accepted speaker promotes the exact prepared operation to the
+    // detached lifecycle instead of waiting behind its owner.
+    const waited = await Promise.race<PermissionWait>([
+      pending.outcome.then((resolution) => ({ resolution, type: 'resolution' })),
+      this.#participants.whenShared.then(() => ({ type: 'shared' })),
+    ]);
+    if (waited.type === 'shared') {
+      return this.#detachPermission(call, execution, subject, runAuthority, request.runId, pending);
+    }
+
+    this.#emitPermissionResolved(pending, waited.resolution, request.runId);
+    if (waited.resolution.resolution === 'approved') return undefined;
 
     return this.#toolResponse(
       call,
       'immediate',
-      Runner.#permissionFailure(decision.reason, resolution),
+      Runner.#permissionFailure(decision.reason, waited.resolution),
       true,
     );
+  }
+
+  #detachPermission(
+    call: ToolCallMessage,
+    execution: ToolExecution,
+    subject: ToolExecutionSubject,
+    authority: RunAuthority,
+    runId: string,
+    pending: PendingPermission,
+  ): ToolResponseMessage {
+    const response = this.#toolResponse(
+      call,
+      'permissionPending',
+      'Permission is pending from the owner of this exact call. Do not retry it; a correlated ' +
+        'result will arrive after approval, denial, timeout, or cancellation.',
+      false,
+    );
+    let publish!: () => void;
+    const whenPublished = new Promise<void>((resolve) => {
+      publish = resolve;
+    });
+    const operation: PendingOwnedOperation = {
+      authority,
+      call,
+      execution,
+      pendingResponseId: response.messageId,
+      publish,
+      published: false,
+      runId,
+      state: 'awaitingApproval',
+      subject,
+      whenPublished,
+    };
+    this.#pendingOperations.set(response.messageId, operation);
+
+    void this.#resolvePendingOperation(operation, pending).catch((error: unknown) => {
+      operation.state = 'settled';
+      this.#logger?.error(
+        { err: error, requestId: pending.request.requestId, toolName: call.name },
+        'Detached permission operation failed.',
+      );
+      this.#completePendingOperation(
+        operation,
+        `Permission operation for ${call.name} failed: ${toError(error).message}`,
+        true,
+      );
+    });
+    return response;
+  }
+
+  async #resolvePendingOperation(
+    operation: PendingOwnedOperation,
+    pending: PendingPermission,
+  ): Promise<void> {
+    const resolution = await pending.outcome;
+    this.#emitPermissionResolved(pending, resolution, operation.runId);
+    if (operation.state !== 'awaitingApproval') return;
+
+    if (resolution.resolution !== 'approved') {
+      operation.state = 'settled';
+      this.#completePendingOperation(
+        operation,
+        Runner.#permissionFailure(pending.request.reason, resolution),
+        true,
+      );
+      return;
+    }
+
+    // Claim the only execution transition before any await. Duplicate answers,
+    // timeout and stop all lose this transition and can never call run() twice.
+    operation.state = 'executing';
+    await operation.whenPublished;
+    if (!this.#isOperationExecuting(operation)) return;
+    if (this.#sessionAborted()) {
+      operation.state = 'settled';
+      this.#completePendingOperation(
+        operation,
+        `Tool ${operation.call.name} was not executed: the session stopped before it started.`,
+        true,
+      );
+      return;
+    }
+
+    const authorization = await this.#decideAuthorization(
+      operation.call,
+      operation.subject,
+      operation.authority,
+      operation.runId,
+      this.#session.signal,
+    );
+    if (!this.#isOperationExecuting(operation)) return;
+    if (this.#sessionAborted()) {
+      operation.state = 'settled';
+      this.#completePendingOperation(
+        operation,
+        `Tool ${operation.call.name} was not executed: the session stopped before it started.`,
+        true,
+      );
+      return;
+    }
+    if (!authorization.allowed) {
+      operation.state = 'settled';
+      this.#completePendingOperation(
+        operation,
+        `Tool call no longer authorized: ${authorization.reason}`,
+        true,
+      );
+      return;
+    }
+
+    try {
+      let response: MessageContent[];
+      if (operation.execution.type === 'deferred') {
+        const started = await operation.execution.run({ abortSignal: this.#session.signal });
+        const result = await started.result;
+        // The original call is already paired with permissionPending, so a late
+        // deferred ack cannot be emitted as an OpenAI `tool` message. Preserve
+        // its information by folding it into the one correlated final result.
+        response = [...started.ack, ...result];
+      } else {
+        response = await operation.execution.run({ abortSignal: this.#session.signal });
+      }
+
+      operation.state = 'settled';
+      this.#completePendingOperation(operation, response, false);
+    } catch (error) {
+      operation.state = 'settled';
+      this.#completePendingOperation(
+        operation,
+        `Error executing approved tool ${operation.call.name}: ${toError(error).message}`,
+        true,
+      );
+    }
+  }
+
+  #isOperationExecuting(operation: PendingOwnedOperation): boolean {
+    return operation.state === 'executing';
+  }
+
+  #sessionAborted(): boolean {
+    return this.#session.signal.aborted;
+  }
+
+  #completePendingOperation(
+    operation: PendingOwnedOperation,
+    response: readonly MessageContent[] | string,
+    isError: boolean,
+  ): void {
+    if (operation.state === 'discarded') return;
+
+    const message = this.#toolResponse(operation.call, 'deferredResult', response, isError);
+    if (!operation.published) {
+      operation.completion = message;
+      return;
+    }
+
+    this.#pendingOperations.delete(operation.pendingResponseId);
+    this.#enqueue({
+      authority: operation.authority,
+      message,
+      trigger: 'deferredResult',
+    });
+  }
+
+  #publishPendingOperation(responseId: string): void {
+    const operation = this.#pendingOperations.get(responseId);
+    if (operation === undefined || operation.published) return;
+
+    operation.published = true;
+    operation.publish();
+    const { completion } = operation;
+    if (completion === undefined) return;
+
+    this.#pendingOperations.delete(responseId);
+    this.#enqueue({
+      authority: operation.authority,
+      message: completion,
+      trigger: 'deferredResult',
+    });
+  }
+
+  #discardUnpublishedOperations(runId: string): void {
+    for (const [responseId, operation] of this.#pendingOperations) {
+      if (operation.runId !== runId || operation.published) continue;
+      operation.state = 'discarded';
+      operation.publish();
+      this.#pendingOperations.delete(responseId);
+    }
+  }
+
+  #emitPermissionResolved(
+    pending: PendingPermission,
+    resolution: PermissionResolution,
+    runId: string,
+  ): void {
+    this.#emit({
+      requestId: pending.request.requestId,
+      resolution,
+      runId,
+      trackId: pending.request.trackId,
+      type: 'permissionResolved',
+    });
+  }
+
+  #emit(event: AgentEvent): void {
+    if (!this.#events.isClosed) this.#events.push(event);
+  }
+
+  /** The authority of the run in flight. There is never a run without one. */
+  #authority(): RunAuthority {
+    const authority = this.#runAuthority;
+    if (authority === undefined) {
+      throw new Error('A tool call was made outside a run, which has no authority.');
+    }
+    return authority;
+  }
+
+  #currentRunId(): string {
+    const runId = this.#runId;
+    if (runId === undefined) {
+      throw new Error('A tool call was made outside a run, which has no run ID.');
+    }
+    return runId;
   }
 
   static #permissionFailure(reason: string, resolution: PermissionResolution): string {
@@ -430,6 +1000,19 @@ class Runner {
       case 'approved':
         throw new Error('An approved permission is not a failure.');
     }
+  }
+
+  #abortedToolResponse(call: ToolCallMessage): ToolResponseMessage {
+    this.#logger?.debug(
+      { toolName: call.name },
+      'Skipped a tool call whose run was aborted before it could settle.',
+    );
+    return this.#toolResponse(
+      call,
+      'immediate',
+      `Tool ${call.name} was not executed: the run was aborted before it settled.`,
+      true,
+    );
   }
 
   #toolResponse(
@@ -450,28 +1033,41 @@ class Runner {
     };
   }
 
-  /** The result queues like anything else, and wakes the runner if it is idle. */
-  #trackDeferred(call: ToolCallMessage, result: Promise<MessageContent[]>): void {
+  /**
+   * The result queues like anything else, and wakes the runner if it is idle.
+   *
+   * It carries the authority of the run that started the operation, so a result
+   * landing long after that run ended is not an unattributed one — and if it
+   * makes the model ask for another tool, that call is authorized and gated
+   * afresh under the same principal.
+   */
+  #trackDeferred(
+    call: ToolCallMessage,
+    result: Promise<MessageContent[]>,
+    authority: RunAuthority,
+  ): void {
     void result.then(
       (response) => {
         this.#logger?.debug({ toolName: call.name }, 'Deferred tool result received.');
-        this.#enqueue(
-          this.#toolResponse(call, 'deferredResult', response, false),
-          'deferredResult',
-        );
+        this.#enqueue({
+          authority,
+          message: this.#toolResponse(call, 'deferredResult', response, false),
+          trigger: 'deferredResult',
+        });
       },
       (error: unknown) => {
         // Out-of-band: nothing else is watching this promise.
         this.#logger?.error({ err: error, toolName: call.name }, 'Deferred tool failed.');
-        this.#enqueue(
-          this.#toolResponse(
+        this.#enqueue({
+          authority,
+          message: this.#toolResponse(
             call,
             'deferredResult',
             `Deferred tool ${call.name} failed: ${toError(error).message}`,
             true,
           ),
-          'deferredResult',
-        );
+          trigger: 'deferredResult',
+        });
       },
     );
   }

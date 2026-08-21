@@ -32,6 +32,7 @@ const gatePolicySchema = z
       maxBatchSize: 100,
       sensitivePathPatterns: ['(^|[\\\\/])\\.env($|[.\\\\/])', 'id_rsa', 'credentials', '\\.pem$'],
     }),
+    maxPendingPermissions: z.number().int().positive().default(8),
     rules: z.array(gateRuleSchema).default([]),
   })
   .superRefine(({ heuristics, rules }, ctx) => {

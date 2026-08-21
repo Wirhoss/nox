@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 
-import { messageAuthority, type RunAuthority } from '../../auth/principal';
+import {
+  messageAuthority,
+  type RunAuthority,
+  SYSTEM_CRON,
+  systemAuthority,
+} from '../../auth/principal';
 import { TEST_AUTHORITY, testOrigin, testPrincipal } from '../../testFixtures';
 import { SessionGate } from './gate';
 
 import type { GatePolicyInput } from './config';
-import type { GateRequest, PendingPermission } from './types';
+import type { GateAuditRecord, GateRequest, PendingPermission } from './types';
 
 const ALICE = testPrincipal('alice');
 
@@ -187,11 +192,114 @@ describe('SessionGate risk evaluation', () => {
       verdict: 'escalate',
     });
   });
+
+  test('abandons an evaluator that never resolves when the run is aborted', () => {
+    let receivedSignal: AbortSignal | undefined;
+    const gate = new SessionGate('session-1', policy(), {
+      evaluators: [
+        {
+          evaluate: (_call, signal) => {
+            receivedSignal = signal;
+            return new Promise(() => undefined);
+          },
+          id: 'unreachable',
+        },
+      ],
+    });
+    const controller = new AbortController();
+
+    const deciding = gate.evaluate(request(), controller.signal);
+    controller.abort();
+
+    expect(deciding).rejects.toHaveProperty('name', 'AbortError');
+    expect(receivedSignal).toBe(controller.signal);
+  });
 });
 
 describe('SessionGate escalation', () => {
   const escalating = (): SessionGate =>
     new SessionGate('session-1', policy({ defaultVerdict: 'escalate' }));
+
+  test('records a system escalation as a terminal denial', async () => {
+    const records: GateAuditRecord[] = [];
+    const gate = new SessionGate('session-1', policy({ defaultVerdict: 'escalate' }), {
+      audit: {
+        record: (record) => {
+          records.push(record);
+        },
+        resolve: () => undefined,
+      },
+    });
+
+    const decision = await gate.evaluate(
+      request({ runAuthority: systemAuthority(SYSTEM_CRON, 'scheduled-job') }),
+    );
+
+    expect(decision).toMatchObject({ decidedBy: 'default', verdict: 'deny' });
+    expect(decision.reason).toContain('no human originator');
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ verdict: 'deny' });
+    expect(records[0]?.resolution).toBeUndefined();
+    expect(gate.listPending()).toEqual([]);
+  });
+
+  test('the shared-conversation floor beats allow rules and an earlier memo', async () => {
+    let shared = false;
+    const gate = new SessionGate('session-1', policy({ defaultVerdict: 'escalate' }), {
+      ownerApprovalRequired: () => shared,
+    });
+    const call = request();
+    const pending = await requestApproval(gate, call);
+    expect(gate.resolve(pending.request.requestId, { approved: 'session' }, ALICE)).toBeTrue();
+    await pending.outcome;
+
+    shared = true;
+    expect(await gate.evaluate(call)).toMatchObject({
+      decidedBy: 'shared-conversation',
+      verdict: 'escalate',
+    });
+
+    const allowed = new SessionGate(
+      'session-1',
+      policy({ rules: [{ reason: 'trusted', tools: '*', verdict: 'allow' }] }),
+      { ownerApprovalRequired: () => true },
+    );
+    expect(await allowed.evaluate(call)).toMatchObject({
+      decidedBy: 'shared-conversation',
+      verdict: 'escalate',
+    });
+
+    const denied = new SessionGate('session-1', policy(), {
+      evaluators: [
+        {
+          evaluate: () => ({ reason: 'terminal risk', verdict: 'deny' }),
+          id: 'terminal-risk',
+        },
+      ],
+      ownerApprovalRequired: () => true,
+    });
+    expect(await denied.evaluate(call)).toMatchObject({
+      decidedBy: 'terminal-risk',
+      verdict: 'deny',
+    });
+  });
+
+  test('bounds pending permissions per principal', async () => {
+    const gate = new SessionGate(
+      'session-1',
+      policy({ defaultVerdict: 'escalate', maxPendingPermissions: 1 }),
+    );
+    const first = await requestApproval(gate, request({ trackId: 'first' }));
+    const secondDecision = await gate.evaluate(request({ trackId: 'second' }));
+    if (secondDecision.verdict !== 'escalate') throw new Error('Expected an escalation.');
+    const second = gate.requestPermission(request({ trackId: 'second' }), secondDecision);
+
+    expect(first.accepted).toBeTrue();
+    expect(second.accepted).toBeFalse();
+    expect(await second.outcome).toEqual({ resolution: 'denied' });
+    expect(gate.listPending()).toHaveLength(1);
+    gate.stop();
+  });
 
   test('remembers only exact calls approved for this live session', async () => {
     const gate = escalating();

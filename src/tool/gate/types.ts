@@ -41,7 +41,7 @@ type GateEvaluation =
 
 interface GateEvaluator {
   readonly id: string;
-  evaluate(request: GateRequest): GateEvaluation | Promise<GateEvaluation>;
+  evaluate(request: GateRequest, signal: AbortSignal): GateEvaluation | Promise<GateEvaluation>;
 }
 
 interface GateDecision {
@@ -65,6 +65,8 @@ interface PermissionRequest extends GateRequest {
 }
 
 interface PendingPermission {
+  /** False when the per-principal pending limit closed the decision immediately. */
+  readonly accepted: boolean;
   readonly outcome: Promise<PermissionResolution>;
   readonly request: PermissionRequest;
 }

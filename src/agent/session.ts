@@ -1,17 +1,22 @@
 import { nanoid } from 'nanoid';
 
-import { SessionStore } from '../database/sessionStore';
+import { ConversationParticipants } from '../auth/conversation';
+import { type DecisionRecord, SessionStore } from '../database/sessionStore';
 import {
-  type GateAuditRecord,
   type GateEvaluator,
   type GatePolicyInput,
   type PermissionRequest,
+  type PermissionResolution,
   SessionGate,
 } from '../tool/gate';
 import { EventLog } from '../utils/eventLog';
 import { Context } from './context/context';
 import { Runner, type RunnerOptions, type RunnerState } from './runner';
 
+import type { DecisionAuditSink } from '../auth/audit';
+import type { AuthorityCatalog } from '../auth/authority';
+import type { AuthorizationProvider } from '../auth/authorization';
+import type { MessageOrigin, PrincipalRef } from '../auth/principal';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
@@ -23,6 +28,10 @@ import type { AgentEvent } from './events';
 interface SessionOptions extends RunnerOptions {
   /** The agent holding the conversation, stored so the transcript stays attributable. */
   agentId: string;
+  /** Every authority this Nox knows. Absent means nothing can be authorized. */
+  authorities?: AuthorityCatalog;
+  /** Held as a reference and consulted per call, never snapshotted here. */
+  authorization?: AuthorizationProvider;
   /** Provider used for internal compaction requests; defaults to the main provider. */
   compactionProvider?: ChatProvider;
   /** Everything the context needs except the history, which comes from storage. */
@@ -37,11 +46,12 @@ interface SessionOptions extends RunnerOptions {
   title?: string;
 }
 
-function toUserMessage(text: string): UserMessage {
+function toUserMessage(text: string, origin: MessageOrigin): UserMessage {
   return {
     content: [{ text, type: 'text' }],
     createdAt: new Date(),
     messageId: nanoid(),
+    origin,
     role: 'user',
   };
 }
@@ -76,6 +86,12 @@ class Session {
     this.#sessionId = sessionId;
     this.#store = store;
 
+    const participants = new ConversationParticipants(
+      history
+        .filter((message): message is UserMessage => message.role === 'user')
+        .map((message) => message.origin.principal),
+    );
+
     this.#context = new Context(options.systemPrompt, options.compactionProvider ?? provider, {
       ...options.context,
       fullHistory: history,
@@ -85,24 +101,44 @@ class Session {
       },
     });
 
-    this.#gate =
-      options.gate === undefined
-        ? undefined
-        : new SessionGate(sessionId, options.gate, {
-            audit: {
-              record: (record) => {
-                this.#store.recordGateDecision(record);
-              },
-              resolve: (decisionId, resolution, resolvedAt) => {
-                this.#store.resolveGateDecision(sessionId, decisionId, resolution, resolvedAt);
-              },
-            },
-            evaluators: options.gateEvaluators,
-          });
+    // Authorization and the Gate write the same timeline through one sink, so
+    // "why did this call not happen" has one place to look rather than two.
+    const audit = {
+      authorize: (record: Parameters<DecisionAuditSink['authorize']>[0]): void => {
+        this.#store.recordAuthorizationDecision(record);
+      },
+      record: (record: Parameters<DecisionAuditSink['record']>[0]): void => {
+        this.#store.recordGateDecision(record);
+      },
+      resolve: (
+        decisionId: string,
+        resolution: PermissionResolution,
+        resolvedAt: Date,
+        resolvedBy?: PrincipalRef,
+      ): void => {
+        this.#store.resolveGateDecision(sessionId, decisionId, resolution, resolvedAt, resolvedBy);
+      },
+    } satisfies DecisionAuditSink;
+
+    this.#gate = new SessionGate(
+      sessionId,
+      options.gate ?? { defaultVerdict: 'allow', heuristics: { enabled: false } },
+      {
+        audit,
+        evaluators: options.gateEvaluators,
+        ownerApprovalRequired: (request) =>
+          participants.isShared && (request.risk === undefined || request.risk.effects.length > 0),
+        passthrough: options.gate === undefined,
+      },
+    );
     this.#runner = new Runner(this.#context, this.#events, provider, model, {
+      audit,
+      authorities: options.authorities,
+      authorization: options.authorization,
       gate: this.#gate,
       logger: options.logger,
       maxIterations: options.maxIterations,
+      participants,
       sessionId,
     });
   }
@@ -151,6 +187,7 @@ class Session {
       );
     }
 
+    if (stored !== undefined) await store.abortUnresolvedGateDecisions(sessionId);
     owner.session = new Session(sessionId, store, provider, model, stored?.messages ?? [], options);
     return owner.session;
   }
@@ -187,15 +224,21 @@ class Session {
     return this.#gate?.listPending() ?? Object.freeze([]);
   }
 
-  public getPermissionAudit(): Promise<readonly GateAuditRecord[]> {
-    return this.#store.loadGateDecisions(this.#sessionId);
+  /** Authorization and gate decisions for this session, oldest first. */
+  public getDecisionAudit(): Promise<readonly DecisionRecord[]> {
+    return this.#store.loadDecisions(this.#sessionId);
   }
 
+  /**
+   * Answers a pending permission. `resolvedBy` has to be the principal whose run
+   * asked for it — only the originator may approve, on any surface.
+   */
   public resolvePermission(
     requestId: string,
     resolution: 'denied' | { approved: 'once' | 'session' },
+    resolvedBy: PrincipalRef,
   ): boolean {
-    return this.#gate?.resolve(requestId, resolution) ?? false;
+    return this.#gate?.resolve(requestId, resolution, resolvedBy) ?? false;
   }
 
   public abort(): Promise<boolean> {
@@ -212,18 +255,22 @@ class Session {
     return this.#context.getFullHistory();
   }
 
-  public send(text: string): void {
-    this.#runner.send(toUserMessage(text));
+  /** Says something as a principal. There is no unattributed way in. */
+  public send(text: string, origin: MessageOrigin): void {
+    this.#runner.send(toUserMessage(text, origin));
   }
 
-  public steer(text: string): Promise<void> {
-    return this.#runner.steer(toUserMessage(text));
+  public steer(text: string, origin: MessageOrigin): Promise<void> {
+    return this.#runner.steer(toUserMessage(text, origin));
   }
 
   /** Ends the session and waits for what it wrote to reach storage. */
   public async stop(): Promise<void> {
+    // Mark the runner stopped synchronously before Gate outcomes enqueue their
+    // terminal detached results; those results are persisted but start no run.
+    const stopping = this.#runner.stop();
     this.#gate?.stop();
-    await this.#runner.stop();
+    await stopping;
     await this.#store.flushed;
   }
 
