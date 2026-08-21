@@ -1,5 +1,5 @@
 type ConfigErrorCode =
-  'invalid_json' | 'invalid_schema' | 'unknown_keys' | 'unreadable' | 'unwritable';
+  'invalid_json' | 'invalid_schema' | 'unknown_keys' | 'unreadable' | 'unresolved' | 'unwritable';
 
 /** A configuration failure that always names the file or directory it came from. */
 class ConfigError extends Error {

@@ -19,6 +19,7 @@ const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
 });
 
 type OpenAICompletionsConfig = z.infer<typeof openAICompletionsConfigSchema>;
+type OpenAICompletionsConfigInput = z.input<typeof openAICompletionsConfigSchema>;
 
 interface OpenAICompletionsOptions {
   logger?: Logger;
@@ -232,7 +233,7 @@ class OpenAICompletions extends ChatProvider {
   private readonly defaultModel?: string;
   private readonly logger: Logger;
 
-  constructor(config: OpenAICompletionsConfig, options: OpenAICompletionsOptions = {}) {
+  constructor(config: OpenAICompletionsConfigInput, options: OpenAICompletionsOptions = {}) {
     super(config);
     this.defaultModel = config.defaultModel;
     this.logger = options.logger ?? silentLogger;
@@ -699,4 +700,4 @@ class OpenAICompletions extends ChatProvider {
 
 export { OpenAICompletions, openAICompletionsConfigSchema };
 
-export type { OpenAICompletionsConfig, OpenAICompletionsOptions };
+export type { OpenAICompletionsConfig, OpenAICompletionsConfigInput, OpenAICompletionsOptions };

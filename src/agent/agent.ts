@@ -16,8 +16,13 @@ interface AgentOptions extends RunnerOptions {
    * transcript stays attributable to the prompt and tools that produced it.
    */
   agentId: string;
+  /** Model used for compaction; defaults to the agent's main model. */
+  compactionModel?: ModelConfig;
   /** Context policy, minus what a session supplies: history, sink and tools. */
-  context?: Omit<ContextOptions, 'fullHistory' | 'logger' | 'onAppend' | 'tools'>;
+  context?: Omit<
+    ContextOptions,
+    'compactionModel' | 'fullHistory' | 'logger' | 'onAppend' | 'tools'
+  >;
   directToolSets?: readonly ToolSetGrant[];
   gate?: GatePolicyInput;
   gateEvaluators?: readonly GateEvaluator[];
@@ -123,7 +128,11 @@ function composeSessionTools(
  */
 class Agent {
   readonly #agentId: string;
-  readonly #context?: Omit<ContextOptions, 'fullHistory' | 'logger' | 'onAppend' | 'tools'>;
+  readonly #compactionModel: ModelConfig;
+  readonly #context?: Omit<
+    ContextOptions,
+    'compactionModel' | 'fullHistory' | 'logger' | 'onAppend' | 'tools'
+  >;
   readonly #database: Database;
   readonly #directToolSets: readonly ToolSetGrant[];
   readonly #gate?: GatePolicyInput;
@@ -142,6 +151,7 @@ class Agent {
     options: AgentOptions,
   ) {
     this.#agentId = options.agentId;
+    this.#compactionModel = options.compactionModel ?? model;
     this.#database = database;
     this.#provider = provider;
     this.#model = model;
@@ -177,7 +187,12 @@ class Agent {
       ...options,
       agentId: this.#agentId,
       // The model's own window is the budget unless the agent overrode it.
-      context: { contextWindow: this.#model.contextWindow, ...this.#context, tools },
+      context: {
+        contextWindow: this.#model.contextWindow,
+        ...this.#context,
+        compactionModel: this.#compactionModel,
+        tools,
+      },
       gate: this.#gate,
       gateEvaluators: this.#gateEvaluators,
       logger: this.#logger,

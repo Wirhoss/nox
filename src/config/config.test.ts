@@ -5,13 +5,20 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { ContributionRegistry } from '../extensions/contribution';
+import { providerContribution, providers } from '../extensions/contribution-points/providers';
+import { DisposableStore } from '../extensions/disposable';
 import { silentLogger } from '../logger/logger';
+import { providerBaseConfigSchema } from '../provider/config';
 import { appConfigSchema } from './app';
+import { blueprintSchema } from './blueprint';
 import { Config } from './config';
 import { readEnvConfig } from './env';
 import { isConfigError } from './error';
-import { type LoaderContext, writeJson } from './loader';
+import { type LoaderContext, loadSection, updateSection, writeJson } from './loader';
 import { directorySection, fileSection } from './section';
+
+import type { ChatProvider } from '../provider/provider';
 
 const created: string[] = [];
 
@@ -89,11 +96,45 @@ afterEach(async () => {
   await Promise.all(created.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
+describe('blueprint config', () => {
+  test('materializes agent policy defaults and accepts explicit overrides', () => {
+    expect(
+      blueprintSchema.parse({ model: 'main-model', provider: 'main', systemPrompt: 'be exact' }),
+    ).toEqual({
+      compaction: {},
+      context: {},
+      description: '',
+      generation: {},
+      maxIterations: 90,
+      model: 'main-model',
+      provider: 'main',
+      systemPrompt: 'be exact',
+    });
+
+    expect(
+      blueprintSchema.parse({
+        compaction: { model: 'small-model' },
+        context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
+        generation: { maxTokens: 1000, temperature: 0.2 },
+        maxIterations: 'unlimited',
+        model: 'main-model',
+        provider: 'main',
+        systemPrompt: 'be exact',
+      }),
+    ).toMatchObject({
+      compaction: { model: 'small-model' },
+      context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
+      generation: { maxTokens: 1000, temperature: 0.2 },
+      maxIterations: 'unlimited',
+    });
+  });
+});
+
 describe('config files', () => {
   test('writes a complete file from the schema when none exists', async () => {
     const dir = await configDir();
 
-    const value = await appSection.load(context(dir));
+    const value = await loadSection(appSection, context(dir));
 
     expect(value).toEqual({ database: databaseDefaults, logLevel: 'info' });
     expect(await read(dir, 'app.json')).toEqual(value);
@@ -103,7 +144,7 @@ describe('config files', () => {
     const dir = await configDir();
     await write(dir, 'app.json', { logLevel: 'warn' });
 
-    const value = await appSection.load(context(dir));
+    const value = await loadSection(appSection, context(dir));
 
     expect(value.database).toEqual(databaseDefaults);
     expect(await read(dir, 'app.json')).toEqual({
@@ -114,10 +155,13 @@ describe('config files', () => {
 
   test('leaves an already complete file untouched', async () => {
     const dir = await configDir();
-    await write(dir, 'app.json', { database: databaseDefaults, logLevel: 'warn' });
+    await write(dir, 'app.json', {
+      database: databaseDefaults,
+      logLevel: 'warn',
+    });
     const before = await readFile(join(dir, 'app.json'), 'utf8');
 
-    await appSection.load(context(dir));
+    await loadSection(appSection, context(dir));
 
     expect(await readFile(join(dir, 'app.json'), 'utf8')).toBe(before);
   });
@@ -126,13 +170,13 @@ describe('config files', () => {
     const dir = await configDir();
     await writeFile(join(dir, 'app.json'), '   ');
 
-    expect(await appSection.load(context(dir))).toMatchObject({ logLevel: 'info' });
+    expect(await loadSection(appSection, context(dir))).toMatchObject({ logLevel: 'info' });
   });
 
   test('leaves no temporary file behind after a write', async () => {
     const dir = await configDir();
 
-    await appSection.load(context(dir));
+    await loadSection(appSection, context(dir));
 
     expect(await readdir(dir)).toEqual(['app.json']);
   });
@@ -141,7 +185,7 @@ describe('config files', () => {
     const dir = await configDir();
     await writeFile(join(dir, 'app.json'), '{ "logLevel": ');
 
-    const error = await rejection(appSection.load(context(dir)));
+    const error = await rejection(loadSection(appSection, context(dir)));
 
     expect(isConfigError(error) && error.code).toBe('invalid_json');
     expect(String(error)).toContain('app.json');
@@ -151,7 +195,7 @@ describe('config files', () => {
     const dir = await configDir();
     await write(dir, 'app.json', { logLevel: 'chatty' });
 
-    const error = await rejection(appSection.load(context(dir)));
+    const error = await rejection(loadSection(appSection, context(dir)));
 
     expect(isConfigError(error) && error.code).toBe('invalid_schema');
     expect(String(error)).toContain('logLevel');
@@ -161,7 +205,7 @@ describe('config files', () => {
     const dir = await configDir();
     await write(dir, 'app.json', { logLevle: 'warn' });
 
-    const error = await rejection(appSection.load(context(dir)));
+    const error = await rejection(loadSection(appSection, context(dir)));
 
     expect(isConfigError(error) && error.code).toBe('unknown_keys');
     expect(String(error)).toContain('logLevle');
@@ -173,7 +217,7 @@ describe('config secrets', () => {
   test('a section that does not materialise is never written on load', async () => {
     const dir = await configDir();
 
-    expect(await secretSection.load(context(dir))).toEqual({ url: 'https://example.test' });
+    expect(await loadSection(secretSection, context(dir))).toEqual({ url: 'https://example.test' });
     expect(await readdir(dir)).toEqual([]);
   });
 
@@ -181,7 +225,13 @@ describe('config secrets', () => {
     const dir = await configDir();
     await write(dir, 'secret.json', { apiKey: 'kept', url: 'https://example.test' });
 
-    const value = await secretSection.update(context(dir), { url: 'https://other.test' });
+    const previous = await loadSection(secretSection, context(dir));
+    const value = await updateSection(
+      secretSection,
+      context(dir),
+      { url: 'https://other.test' },
+      previous,
+    );
 
     expect(value).toEqual({ apiKey: 'kept', url: 'https://other.test' });
     expect(await read(dir, 'secret.json')).toEqual(value);
@@ -191,10 +241,13 @@ describe('config secrets', () => {
     const dir = await configDir();
     await write(dir, 'secret.json', { apiKey: 'kept', url: 'https://example.test' });
 
-    const value = await secretSection.update(context(dir), {
-      apiKey: '',
-      url: 'https://example.test',
-    });
+    const previous = await loadSection(secretSection, context(dir));
+    const value = await updateSection(
+      secretSection,
+      context(dir),
+      { apiKey: '', url: 'https://example.test' },
+      previous,
+    );
 
     expect(value).toEqual({ url: 'https://example.test' });
     expect(await read(dir, 'secret.json')).toEqual(value);
@@ -205,10 +258,10 @@ describe('config directories', () => {
   test('creates the directory and reads entries by filename', async () => {
     const dir = await configDir();
 
-    expect(await blueprintSection.load(context(dir))).toEqual({});
+    expect(await loadSection(blueprintSection, context(dir))).toEqual({});
 
     await write(dir, join('blueprints', 'architect.json'), { name: 'Architect' });
-    const loaded = await blueprintSection.load(context(dir));
+    const loaded = await loadSection(blueprintSection, context(dir));
 
     expect(loaded).toEqual({ architect: { name: 'Architect', temperature: 0.7 } });
     expect(await read(dir, join('blueprints', 'architect.json'))).toEqual({
@@ -217,10 +270,10 @@ describe('config directories', () => {
     });
   });
 
-  test('refuses entry writes, naming what is missing', async () => {
+  test('refuses a whole-document write, pointing at the entries', async () => {
     const dir = await configDir();
 
-    const error = await rejection(blueprintSection.updateEntry(context(dir), 'architect', {}));
+    const error = await rejection(updateSection(blueprintSection, context(dir), {}, undefined));
 
     expect(isConfigError(error) && error.code).toBe('unwritable');
     expect(String(error)).toContain('blueprints');
@@ -252,7 +305,10 @@ describe('Config', () => {
     const config = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
 
     expect(config.env.environment).toBe('test');
-    expect(config.get('app')).toEqual({ database: databaseDefaults, logLevel: 'info' });
+    expect(config.get('app')).toEqual({
+      database: databaseDefaults,
+      logLevel: 'info',
+    });
     expect(await read(dir, 'app.json')).toMatchObject({ logLevel: 'info' });
   });
 
@@ -260,7 +316,10 @@ describe('Config', () => {
     const dir = await configDir();
     const config = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
 
-    const result = await config.update('app', { database: databaseDefaults, logLevel: 'debug' });
+    const result = await config.update('app', {
+      database: databaseDefaults,
+      logLevel: 'debug',
+    });
 
     expect(result.restartRequired).toBeTrue();
     expect(result.value.logLevel).toBe('debug');
@@ -292,10 +351,147 @@ describe('Config', () => {
     const first = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
     const second = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
 
-    await first.update('app', { database: databaseDefaults, logLevel: 'error' });
+    await first.update('app', {
+      database: databaseDefaults,
+      logLevel: 'error',
+    });
 
     expect(first.get('app').logLevel).toBe('error');
     expect(second.get('app').logLevel).toBe('info');
+  });
+});
+
+/** A provider kind that exists only here, to prove the union is built from the
+ *  registry rather than from anything the kernel imported. */
+const fakeSchema = providerBaseConfigSchema.extend({ type: z.literal('fake_provider') });
+
+function registryWith(...ids: string[]): ContributionRegistry {
+  const registry = new ContributionRegistry();
+  const scoped = registry.scoped('test.extension', new DisposableStore());
+  for (const id of ids) {
+    scoped.register(
+      providers,
+      id,
+      providerContribution({
+        configSchema: providerBaseConfigSchema.extend({ type: z.literal(id) }),
+        create: () => ({}) as unknown as ChatProvider,
+      }),
+    );
+  }
+  return registry;
+}
+
+async function loadedConfig(dir: string): Promise<Config> {
+  return Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }), {
+    logger: silentLogger,
+  });
+}
+
+describe('contributed sections', () => {
+  test('has no value before the extensions that describe it have activated', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+
+    // Not an empty value, which would be a wrong answer rather than no answer:
+    // the schema does not exist yet, so neither does the section.
+    expect(config.loaded).toEqual(['app', 'blueprints']);
+    expect(() => config.get('providers')).toThrow('resolve');
+  });
+
+  test('validates entries against the schema each contribution declared', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', {
+      local: { baseUrl: 'https://local.test', type: 'fake_provider' },
+    });
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registryWith('fake_provider'));
+
+    expect(config.get('providers')).toEqual({
+      local: {
+        baseUrl: 'https://local.test',
+        maxRetries: 2,
+        maxRetryDelayMs: 30_000,
+        retryDelayMs: 500,
+        type: 'fake_provider',
+      },
+    });
+    expect(await read(dir, 'providers.json')).toEqual(config.get('providers'));
+  });
+
+  test('holds several instances of one kind, told apart by their key', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', {
+      one: { baseUrl: 'https://one.test', type: 'fake_provider' },
+      two: { baseUrl: 'https://two.test', type: 'fake_provider' },
+    });
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registryWith('fake_provider'));
+
+    expect(Object.keys(config.get('providers'))).toEqual(['one', 'two']);
+  });
+
+  test('rejects a kind nobody registered, naming the kinds there are', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', { local: { baseUrl: 'https://x.test', type: 'ghost' } });
+    const config = await loadedConfig(dir);
+
+    const error = await rejection(config.resolve(registryWith('fake_provider')));
+
+    expect(isConfigError(error) && error.code).toBe('invalid_schema');
+    expect(String(error)).toContain('fake_provider');
+  });
+
+  test('rejects every entry when nothing is registered at the point', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', { local: { baseUrl: 'https://x.test', type: 'ghost' } });
+    const config = await loadedConfig(dir);
+
+    const error = await rejection(config.resolve(new ContributionRegistry()));
+
+    expect(String(error)).toContain('nox.providers');
+  });
+
+  test('generates an empty file so there is something to configure', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registryWith('fake_provider'));
+
+    expect(config.get('providers')).toEqual({});
+    expect(await read(dir, 'providers.json')).toEqual({});
+  });
+
+  test('an update is validated against the registry too', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+    await config.resolve(registryWith('fake_provider'));
+
+    const result = await config.update('providers', {
+      local: {
+        baseUrl: 'https://local.test',
+        maxRetries: 2,
+        maxRetryDelayMs: 30_000,
+        retryDelayMs: 500,
+        type: 'fake_provider',
+      },
+    });
+
+    expect(result.restartRequired).toBeTrue();
+    expect(await read(dir, 'providers.json')).toEqual(result.value);
+  });
+
+  test('refuses a contribution whose discriminator is not its own ID', () => {
+    const scoped = new ContributionRegistry().scoped('test.extension', new DisposableStore());
+
+    expect(() =>
+      scoped.register(
+        providers,
+        'renamed',
+        providerContribution({ configSchema: fakeSchema, create: () => ({}) as ChatProvider }),
+      ),
+    ).toThrow('fake_provider');
   });
 });
 

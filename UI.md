@@ -494,6 +494,371 @@ La meta no es “cyberpunk genérico”. La mezcla buscada es:
 
 > Terminal ochentera + hardware clandestino + interfaz futurista funcional.
 
+## Stack tecnológico de la Web UI
+
+La UI debe conservar la libertad visual de Nox sin sacrificar accesibilidad,
+legibilidad, organización ni límites arquitectónicos.
+
+| Área | Decisión inicial |
+|---|---|
+| Framework | Vue 3 |
+| Lenguaje | TypeScript estricto |
+| Componentes | Vue Single File Components |
+| Build | Vite, ejecutado con Bun |
+| Estado | Pinia |
+| Navegación | Vue Router |
+| Estilos | SCSS scoped/modules + CSS Custom Properties |
+| Primitivos accesibles | Reka UI, sin estilos visuales |
+| Formularios | VeeValidate + Zod |
+| Superficie HTTP | Hono sobre Bun, sujeto al diseño del contrato de superficie |
+| Tiempo real | HTTP para comandos + Server-Sent Events para eventos y streaming |
+| Tests unitarios | Vitest + Vue Testing Library |
+| Mocks de API | MSW |
+| Tests end-to-end | Playwright |
+| Calidad | ESLint + Prettier + Stylelint |
+
+React, JSX y frameworks construidos alrededor de React quedan explícitamente
+fuera del stack de Nox.
+
+### Vue y Vite
+
+Vue permite componentes legibles con template, lógica tipada y estilos
+co-localizados. Vite proporciona un build de cliente pequeño y directo, sin
+introducir capacidades de SSR o SEO que una aplicación local servida desde
+Docker no necesita.
+
+No se propone Next.js, Tailwind, Redux, GraphQL, Electron, Tauri,
+microfrontends ni un design system empaquetado por separado antes de que exista
+un segundo consumidor real.
+
+### Organización del código
+
+La ubicación definitiva de la superficie web debe respetar el único árbol
+`src/` y evitar que una dependencia de Vue entre al kernel. Su estructura
+conceptual será:
+
+```text
+surfaces/web/
+├── app/
+│   ├── App.vue
+│   ├── router.ts
+│   └── bootstrap.ts
+├── routes/
+├── features/
+│   ├── chat/
+│   ├── sessions/
+│   ├── permissions/
+│   ├── audit/
+│   └── settings/
+├── shared/
+│   ├── api/
+│   ├── lib/
+│   ├── ui/
+│   └── styles/
+└── assets/
+```
+
+Los stores, componentes y composables que pertenecen a una feature permanecen
+junto a ella. Solo se mueven a `shared/` cuando tienen un segundo consumidor
+real. Se evitarán carpetas globales de `utils`, `hooks` o `components` sin un
+dominio claro.
+
+### Capas de componentes
+
+1. **Primitives:** Button, TextField, Dialog, Select, Tabs, Tooltip, Panel.
+2. **Patterns:** SystemStatus, EmptyState, SettingsField, EventCard.
+3. **Domain components:** ChatMessage, ToolActivityCard,
+   PermissionRequestCard, AuditDecisionCard.
+4. **Features:** ChatTimeline, AgentEditor, AuditExplorer, ExtensionManager.
+
+Los primitives no conocen features. Las features pueden componer primitives y
+patterns. Un componente no debe convertirse en universal mediante decenas de
+props booleanas.
+
+Cada componente reutilizable puede mantener juntos sus archivos relevantes:
+
+```text
+PermissionRequest/
+├── PermissionRequest.vue
+├── PermissionRequest.test.ts
+├── PermissionRequest.stories.ts
+└── index.ts
+```
+
+## Arquitectura de estado con Pinia
+
+Pinia será el sistema oficial de estado de la Web UI. Inicialmente no se añadirá
+una segunda cache como TanStack Query: si las necesidades reales de caching,
+deduplicación o invalidación lo justifican, se reconsiderará entonces.
+
+El flujo de datos esperado es:
+
+```text
+HTTP / SSE
+    ↓
+API client
+    ↓
+Validación del DTO
+    ↓
+Pinia action
+    ↓
+Estado normalizado
+    ↓
+Getters
+    ↓
+Componentes Vue
+```
+
+Los componentes no realizan `fetch` ni interpretan eventos crudos directamente.
+Nox continúa siendo la fuente de verdad; Pinia conserva una proyección de ese
+estado para la interfaz.
+
+### Propiedad del estado
+
+- **Vue Router:** sesión seleccionada, sección de Settings, filtros y cualquier
+  estado que deba tener una URL recuperable.
+- **Pinia:** datos del runtime, estado compartido de la aplicación, proyecciones
+  de eventos y preferencias globales.
+- **Estado local del componente:** hover, tooltip, expansión y valores efímeros
+  que no necesitan sobrevivir al componente.
+
+No se debe duplicar en Pinia información que ya puede derivarse de la ruta o de
+otro valor canónico.
+
+### Stores iniciales
+
+```text
+app/stores/
+├── auth.store.ts
+├── runtime.store.ts
+├── preferences.store.ts
+├── theme.store.ts
+└── notifications.store.ts
+
+features/chat/stores/
+├── sessions.store.ts
+├── activeSession.store.ts
+└── composer.store.ts
+
+features/permissions/stores/
+└── permissions.store.ts
+```
+
+Los demás dominios, como agents, audit, tools, brokers y extensions, tendrán un
+store dentro de su feature cuando lo necesiten. No existirá un único
+`useAppStore` dueño de toda la aplicación.
+
+`permissions.store` es transversal porque una solicitud de autorización puede
+provenir de una sesión que no esté visible. `activeSession.store` es responsable
+del stream, la ejecución actual y la ventana cargada del transcript.
+
+### Estados explícitos
+
+Los procesos asíncronos se representan mediante uniones discriminadas, no con
+varios booleanos que puedan contradecirse.
+
+```ts
+type RunStatus =
+  | { type: 'idle' }
+  | { type: 'submitting'; clientMessageId: string }
+  | { type: 'running'; runId: string }
+  | { type: 'waiting-permission'; requestId: string }
+  | { type: 'stopping'; runId: string }
+  | { type: 'failed'; error: NoxError };
+```
+
+### Eventos y sesiones largas
+
+Los eventos SSE se validan, deduplican y aplican mediante una única action. Los
+componentes no escuchan el stream por separado.
+
+```text
+SSE event → validar → deduplicar → applyEvent(event) → actualizar stores
+```
+
+Las sesiones pueden contener cientos de turnos. El listado de sesiones conserva
+solo resúmenes y metadata; el store de la sesión activa mantiene una ventana
+paginada del transcript y los eventos nuevos. Los mensajes se identifican por
+`messageId` para evitar duplicados después de una reconexión.
+
+### Persistencia local
+
+La persistencia es explícita y por allowlist. Puede incluir tema, densidad,
+reducción de movimiento y estado de paneles. No debe persistir globalmente:
+
+- Credenciales o tokens.
+- Transcripts completos.
+- Solicitudes de permiso.
+- Resultados sensibles de tools.
+- Configuración secreta.
+
+### Reglas de Pinia
+
+1. Cada store representa un dominio concreto.
+2. Las llamadas HTTP viven en clientes API tipados.
+3. Los componentes llaman actions y no conocen endpoints.
+4. Los getters no producen efectos secundarios.
+5. Los eventos en tiempo real entran por un único punto.
+6. No se duplica información derivable.
+7. Se evitan dependencias circulares entre stores.
+8. Solo se persisten campos autorizados expresamente.
+9. Stores y transiciones se prueban sin montar toda la aplicación.
+
+## Contrato HTTP y tiempo real
+
+La dirección inicial es usar HTTP JSON para consultas y comandos, y SSE para el
+flujo desde Nox hacia la Web UI.
+
+```text
+POST /api/sessions/:id/messages
+POST /api/permissions/:id/approve
+POST /api/permissions/:id/deny
+POST /api/sessions/:id/stop
+GET  /api/sessions/:id
+GET  /api/sessions/:id/events     # SSE
+```
+
+SSE puede transportar fragmentos de respuesta, mensajes, tool calls, resultados
+deferred, cambios de ejecución, solicitudes de permiso y errores. WebSocket se
+añadirá únicamente si aparece un requisito bidireccional que HTTP + SSE no pueda
+resolver correctamente.
+
+La UI no importa clases internas como `Session`, `Agent` o `SessionGate`:
+
+```text
+Kernel objects → HTTP surface → API DTOs → Web UI
+```
+
+Todo DTO recibido se valida antes de entrar a Pinia.
+
+## Estilos y temas custom
+
+SCSS y CSS Custom Properties tienen responsabilidades diferentes:
+
+- **SCSS:** estructura, responsive, estados, mixins y estilos locales.
+- **CSS variables:** design tokens, temas y valores modificables en runtime.
+
+Los componentes no escriben colores visuales directamente y no asumen que el
+tema siempre será oscuro.
+
+```scss
+.message {
+  color: var(--nox-text-primary);
+  background: var(--nox-surface-message);
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-message);
+}
+```
+
+### Organización de SCSS
+
+```text
+shared/styles/
+├── tokens/
+│   ├── _colors.scss
+│   ├── _spacing.scss
+│   ├── _typography.scss
+│   ├── _motion.scss
+│   └── _layers.scss
+├── themes/
+├── base/
+├── mixins/
+└── global.scss
+```
+
+Reglas iniciales:
+
+- No escribir colores o medidas temáticas directamente en componentes.
+- Limitar la anidación de selectores.
+- Evitar `!important` y `@extend`.
+- No depender de una estructura DOM distante.
+- Limitar estilos globales a tokens, temas, reset, fuentes y documento.
+- Usar scoped SCSS o SCSS Modules de forma consistente según la categoría del
+  componente; la convención definitiva se cerrará antes de implementar.
+
+### Contrato de tema
+
+Los temas reemplazan tokens semánticos, no detalles internos del DOM:
+
+```text
+--nox-canvas
+--nox-surface-1
+--nox-text-primary
+--nox-text-muted
+--nox-border-subtle
+--nox-action-primary
+--nox-focus-ring
+--nox-status-success
+--nox-status-warning
+--nox-status-danger
+--nox-font-interface
+--nox-font-content
+--nox-font-mono
+--nox-radius-control
+--nox-glow-strength
+--nox-noise-opacity
+--nox-scanline-opacity
+```
+
+Los nombres describen función, no un color concreto. Cada variable tiene un
+fallback seguro en el tema base.
+
+### Temas oficiales y custom
+
+Nox podrá incluir temas oficiales y permitir:
+
+- Seleccionar e instalar temas.
+- Editar tokens mediante Settings.
+- Previsualizar antes de aplicar.
+- Importar y exportar un tema declarativo.
+- Instalar temas desde repositorios cuando exista la maquinaria correspondiente.
+- Revertir automáticamente una preview ilegible.
+
+Un tema custom será inicialmente datos y assets, no JavaScript, Vue ni CSS
+arbitrario:
+
+```text
+Theme package
+├── theme.json
+├── preview.webp
+├── fonts/
+└── assets/
+```
+
+Su manifest podrá declarar identidad, autor, versión, compatibilidad con Nox,
+apariencia y tokens. Nox validará valores permitidos, tokens desconocidos,
+contraste, tamaño y procedencia de assets, tipografías y compatibilidad.
+
+Un tema no puede ocultar controles de autorización, focus rings, errores
+críticos, identidad del agente, tool solicitada ni recursos afectados. Las
+preferencias de accesibilidad —reducción de movimiento, contraste y tamaño de
+texto— tienen prioridad sobre el tema.
+
+No se permitirá inicialmente que un tema o extensión externa inyecte React, Vue,
+JavaScript o CSS arbitrario en la interfaz. Una UI custom ejecutable requeriría
+un modelo explícito de aislamiento, seguridad y compatibilidad.
+
+### Configuración dinámica
+
+Las contribuciones pueden requerir configuraciones diferentes. La dirección
+inicial es que el servidor entregue un descriptor serializable, la UI lo renderice
+con fields compartidos y el servidor valide nuevamente al guardar. Los
+formularios declarativos son preferibles a permitir que una extensión ejecute su
+propia UI.
+
+## Estrategia de pruebas de UI
+
+- **Vitest + Vue Testing Library:** comportamiento, estados, teclado y
+  accesibilidad de componentes y stores.
+- **MSW:** contratos de API durante desarrollo y tests.
+- **Playwright:** login, chat, streaming, permisos, configuración y auditoría.
+- **Storybook para Vue o Histoire:** se evaluará cuando existan los primeros
+  primitives; no se añadirá antes de tener componentes que documentar.
+- **Stylelint:** consistencia y restricciones de SCSS.
+
+Los componentes críticos se probarán al menos con el tema principal, un tema
+alternativo y alto contraste.
+
 ## Decisiones actuales
 
 - El chat es la pantalla principal.
@@ -507,6 +872,14 @@ La meta no es “cyberpunk genérico”. La mezcla buscada es:
 - La actividad de tools se muestra de forma compacta y expandible.
 - Las solicitudes de autorización ocurren dentro del chat.
 - Sessions y Audit son vistas distintas.
+- Vue 3, TypeScript, Vite y Pinia forman la base de la Web UI.
+- React y JSX no forman parte del stack.
+- SCSS y CSS Custom Properties sostienen el sistema visual y los temas.
+- Los temas custom son inicialmente declarativos y no ejecutan código.
+- HTTP maneja comandos y SSE maneja streaming y eventos, salvo que un requisito
+  futuro justifique WebSocket.
+- Pinia mantiene la proyección de estado de la UI sin sustituir a Nox como fuente
+  de verdad.
 
 ## Preguntas abiertas
 
@@ -516,6 +889,9 @@ La meta no es “cyberpunk genérico”. La mezcla buscada es:
 - ¿Qué información del reasoning debe exponer la UI y bajo qué modo?
 - ¿Cómo se presentan tareas deferred o en segundo plano entre sesiones?
 - ¿Qué acento cromático hará reconocible a Nox?
+- ¿Qué temas oficiales acompañarán el primer release de la Web UI?
+- ¿Se usará scoped SCSS, SCSS Modules o una convención híbrida y estrictamente
+  definida?
 - ¿Qué configuración de provider/model pertenecerá a la aplicación y cuál a cada
   agente o blueprint?
 - ¿Cómo se generarán formularios de configuración específicos para
@@ -524,3 +900,5 @@ La meta no es “cyberpunk genérico”. La mezcla buscada es:
   provenientes de repositorios Git cuando esa maquinaria sea necesaria?
 - ¿Qué estados y diagnósticos reales estarán disponibles durante el arranque del
   contenedor y de la Web UI?
+- ¿La superficie web vivirá como builtin contribution o como otra clase de
+  superficie concreta alrededor de `NoxApplication`?

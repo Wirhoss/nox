@@ -34,6 +34,7 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
+    "elysia": "^1.4.29",
     "nanoid": "^6.0.1",
     "semver": "^7.8.5",
     "zod": "^4.4.3"

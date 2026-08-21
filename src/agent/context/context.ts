@@ -11,6 +11,7 @@ import { TokenEstimator } from './tokens';
 import { Transcript } from './transcript';
 
 import type { Logger } from '../../logger/logger';
+import type { ModelConfig } from '../../provider/config';
 import type { ChatProvider } from '../../provider/provider';
 import type { Tool } from '../../tool/tool';
 import type { AssistantMessage, CompactedMessage, Message, UserMessage } from './message';
@@ -44,6 +45,7 @@ class Context {
   readonly #compactGuardBeginningTokens: number;
   readonly #compactGuardEndTokens: number;
   readonly #compactMinTokens: number;
+  readonly #compactionModel?: ModelConfig;
   readonly #compactProvider: ChatProvider;
   readonly #foldMinReductionRatio: number;
   readonly #pressureTokenLimit?: number;
@@ -67,6 +69,7 @@ class Context {
 
     this.#systemPrompt = systemPrompt;
     this.#compactProvider = compactProvider;
+    this.#compactionModel = options.compactionModel;
     this.#compactGuardBeginningTokens = options.compactGuardBeginningTokens;
     this.#compactGuardEndTokens = options.compactGuardEndTokens;
     this.#compactMinTokens = options.compactMinTokens;
@@ -308,6 +311,7 @@ class Context {
       COMPACT_PROMPT,
       [...middle, createHandoffRequest()],
       [],
+      { model: this.#compactionModel },
     );
     const summary = (await stream.completed).filter(hasUsableText);
 

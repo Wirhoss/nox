@@ -1,0 +1,44 @@
+# Everything the build does not need. Keeps the context small and keeps
+# secrets, local state and host-specific artefacts out of every layer.
+
+# dependencies — reinstalled inside the image from the lockfile
+node_modules
+nox-ui
+
+# version control and tooling
+.git
+.gitignore
+.codegraph
+.idea
+.vscode
+.DS_Store
+
+# local state and build output
+out
+dist
+coverage
+*.lcov
+*.tgz
+*.db
+*.db-shm
+*.db-wal
+logs
+*.log
+.cache
+.eslintcache
+*.tsbuildinfo
+
+# secrets and local overrides
+.env
+.env.*
+*.pem
+*.key
+
+# not part of the runtime bundle
+**/*.test.ts
+Dockerfile
+.dockerignore
+README.md
+NOX.md
+UI.md
+package-lock.json

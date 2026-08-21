@@ -16,8 +16,8 @@ class ScriptedProvider extends ChatProvider {
 
   readonly #script: Attempt[];
 
-  constructor(script: Attempt[], maxRetries = 2) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries, retryDelayMs: 1 });
+  constructor(script: Attempt[], maxRetries = 2, retryDelayMs = 1, maxRetryDelayMs = 30_000) {
+    super({ baseUrl: 'https://provider.invalid', maxRetries, maxRetryDelayMs, retryDelayMs });
     this.#script = [...script];
   }
 
@@ -110,6 +110,20 @@ describe('ChatProvider retries', () => {
     expect(retries.map((event) => event.delayMs)).toEqual([1, 2]);
     expect(retries.map((event) => event.resetOutput)).toEqual([true, true]);
     expect(events.at(-1)?.type).toBe('end');
+  });
+
+  test('caps exponential backoff at the provider-configured maximum', async () => {
+    const provider = new ScriptedProvider(
+      [() => fails('connection'), () => fails('connection'), () => succeeds('finally')],
+      2,
+      2,
+      3,
+    );
+
+    const events = await collect(provider);
+    const retries = events.filter((event) => event.type === 'retry');
+
+    expect(retries.map((event) => event.delayMs)).toEqual([2, 3]);
   });
 
   test('discards output produced before a retry instead of duplicating it', async () => {

@@ -6,7 +6,7 @@ import { Context } from './context';
 import { type Message, messageToString, type UserMessage } from './message';
 import { TokenEstimator } from './tokens';
 
-import type { TextGenerateOptions } from '../../provider/config';
+import type { ModelConfig, TextGenerateOptions } from '../../provider/config';
 import type { ProviderSourceEvent } from '../../provider/stream';
 import type { Tool } from '../../tool/tool';
 
@@ -31,6 +31,7 @@ function bytes(messages: readonly Message[]): string[] {
 
 interface CapturedRequest {
   history: Message[];
+  model?: ModelConfig;
   systemPrompt: string;
   tools: Tool[];
 }
@@ -58,11 +59,11 @@ class SummaryProvider extends ChatProvider {
     systemPrompt: string,
     messageHistory: Message[],
     tools: Tool[],
-    _opts: TextGenerateOptions | undefined,
+    opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
     const requestIndex = this.requests.length;
-    this.requests.push({ history: messageHistory, systemPrompt, tools });
+    this.requests.push({ history: messageHistory, model: opts?.model, systemPrompt, tools });
     this.lifecycle.push(`start:${String(requestIndex)}`);
     this.#active++;
     this.maxConcurrent = Math.max(this.maxConcurrent, this.#active);
@@ -160,8 +161,10 @@ describe('Context compaction', () => {
     const beginningTokens = estimator.estimateMessage(requireValue(messages[0]));
     const endTokens = estimator.estimateMessage(requireValue(messages[3]));
     const provider = new SummaryProvider(['small handoff']);
+    const compactionModel: ModelConfig = { modelId: 'compact-model', type: 'text' };
     const context = new Context('system', provider, {
       compactGuardBeginningTokens: beginningTokens,
+      compactionModel,
       compactGuardEndTokens: endTokens,
       compactMinTokens: 1,
       // Small enough to be under pressure from the first message. Compaction is
@@ -178,6 +181,7 @@ describe('Context compaction', () => {
     expect(result).toEqual({ compacted: true });
     expect(Object.isFrozen(result)).toBeTrue();
     expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0]?.model).toBe(compactionModel);
     expect(provider.requests[0]?.history.slice(0, -1).map((message) => message.messageId)).toEqual([
       'a1',
       'u2',

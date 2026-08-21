@@ -27,13 +27,15 @@ type ModelConfig = z.infer<typeof modelConfigSchema>;
 const providerBaseConfigSchema = z.object({
   apiKey: z.string().optional(),
   baseUrl: z.string(),
-  maxRetries: z.number().int().nonnegative().optional(),
+  maxRetries: z.number().int().nonnegative().default(2),
+  maxRetryDelayMs: z.number().nonnegative().default(30_000),
   modelConfigs: z.array(modelConfigSchema).optional(),
-  retryDelayMs: z.number().nonnegative().optional(),
+  retryDelayMs: z.number().nonnegative().default(500),
   timeoutMs: z.number().positive().optional(),
 });
 
 type ProviderBaseConfig = z.infer<typeof providerBaseConfigSchema>;
+type ProviderBaseConfigInput = z.input<typeof providerBaseConfigSchema>;
 
 const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -53,4 +55,4 @@ export {
   textModelConfigSchema,
 };
 
-export type { ModelConfig, ProviderBaseConfig, TextGenerateOptions };
+export type { ModelConfig, ProviderBaseConfig, ProviderBaseConfigInput, TextGenerateOptions };

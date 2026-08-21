@@ -1,7 +1,8 @@
-import { bootstrap, DEFAULT_AGENT_ID } from './bootstrap';
+import { bootstrap } from './bootstrap';
 import { loggerService } from './services';
 
 import type { Session } from './agent/session';
+import type { NoxApplication } from './application';
 import type { Logger } from './logger/logger';
 
 /** Yields complete lines, so a message split across chunks arrives whole. */
@@ -54,11 +55,37 @@ async function printReplies(session: Session, logger: Logger): Promise<void> {
   }
 }
 
+/**
+ * Which agent this terminal talks to. The choice belongs to the surface, not to
+ * the installation: another surface attached to the same Nox answers it its own
+ * way. With a single blueprint there is nothing to choose.
+ */
+function agentFor(application: NoxApplication): string {
+  const named = process.env.NOX_AGENT_ID;
+  const agentIds = application.agentIds;
+
+  if (named !== undefined && named.length > 0) {
+    if (!agentIds.includes(named)) {
+      throw new Error(
+        `NOX_AGENT_ID is "${named}"; no blueprint defines it. Defined: ${agentIds.join(', ')}.`,
+      );
+    }
+    return named;
+  }
+
+  const only = agentIds[0];
+  if (agentIds.length !== 1 || only === undefined) {
+    throw new Error(`Set NOX_AGENT_ID to one of: ${agentIds.join(', ')}.`);
+  }
+  return only;
+}
+
 /** One terminal attached to one session. A surface, not the application. */
 async function run(): Promise<void> {
   const application = await bootstrap();
+  const agentId = agentFor(application);
   const logger = application.services.get(loggerService);
-  const session = await application.openSession(DEFAULT_AGENT_ID, {
+  const session = await application.openSession(agentId, {
     sessionId: process.env.NOX_SESSION_ID,
   });
   const printing = printReplies(session, logger);

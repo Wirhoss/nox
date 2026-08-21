@@ -1,6 +1,7 @@
+import { parseOrThrow } from '../utils/validate';
 import {
   type ModelConfig,
-  type ProviderBaseConfig,
+  type ProviderBaseConfigInput,
   providerBaseConfigSchema,
   type TextGenerateOptions,
 } from './config';
@@ -9,10 +10,6 @@ import { type ProviderSourceEvent, ProviderStream } from './stream';
 
 import type { Message } from '../agent/context/message';
 import type { Tool } from '../tool/tool';
-
-const DEFAULT_MAX_RETRIES = 2;
-const DEFAULT_RETRY_DELAY_MS = 500;
-const MAX_RETRY_DELAY_MS = 30_000;
 
 function abortReason(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
@@ -49,13 +46,16 @@ abstract class BaseProvider {
   protected modelConfigs: Record<string, ModelConfig> = {};
 
   protected readonly maxRetries: number;
+  protected readonly maxRetryDelayMs: number;
   protected readonly retryDelayMs: number;
 
-  constructor(config: ProviderBaseConfig) {
+  constructor(input: ProviderBaseConfigInput) {
+    const config = parseOrThrow(providerBaseConfigSchema, input);
     this.baseUrl = config.baseUrl;
     this.apiKey = config.apiKey;
-    this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
-    this.retryDelayMs = config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+    this.maxRetries = config.maxRetries;
+    this.maxRetryDelayMs = config.maxRetryDelayMs;
+    this.retryDelayMs = config.retryDelayMs;
     this.timeoutMs = config.timeoutMs;
 
     for (const modelConfig of config.modelConfigs ?? []) {
@@ -128,7 +128,7 @@ abstract class ChatProvider extends BaseProvider {
           throw providerError;
         }
 
-        const delayMs = Math.min(this.retryDelayMs * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
+        const delayMs = Math.min(this.retryDelayMs * 2 ** (attempt - 1), this.maxRetryDelayMs);
         yield {
           attempt,
           delayMs,

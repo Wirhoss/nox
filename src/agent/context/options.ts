@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { parseOrThrow } from '../../utils/validate';
 
 import type { Logger } from '../../logger/logger';
+import type { ModelConfig } from '../../provider/config';
 import type { Tool } from '../../tool/tool';
 import type { Message } from './message';
 
@@ -55,6 +56,8 @@ const contextPolicySchema = z
 type ContextPolicy = z.infer<typeof contextPolicySchema>;
 
 interface ContextOptions extends ContextPolicy {
+  /** Model used for the internal compaction request; structural, not context policy. */
+  compactionModel?: ModelConfig;
   fullHistory?: readonly Message[];
   logger?: Logger;
   /** Handed to the transcript: one call per live append, whoever wrote it. */
@@ -64,6 +67,7 @@ interface ContextOptions extends ContextPolicy {
 }
 
 interface ResolvedContextOptions {
+  compactionModel?: ModelConfig;
   compactGuardBeginningTokens: number;
   compactGuardEndTokens: number;
   compactMinTokens: number;
@@ -114,6 +118,7 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
   const pressureTokenLimit = resolvePressureTokenLimit(policy);
 
   return {
+    compactionModel: options.compactionModel,
     compactGuardBeginningTokens:
       policy.compactGuardBeginningTokens ??
       resolveDefaultTokenBudget(

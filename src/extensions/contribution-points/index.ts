@@ -1,3 +1,3 @@
-export { providers } from './providers';
+export { providerConfigSchema, providerContribution, providers } from './providers';
 
-export type { ProviderContribution } from './providers';
+export type { ProviderConfig, ProviderConfigSchema, ProviderContribution } from './providers';

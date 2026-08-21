@@ -1,73 +1,40 @@
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
-import { z } from 'zod';
-
 import { Agent } from './agent/agent';
 import { NoxApplication } from './application';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { Database } from './database/database';
 import { openAIExtension } from './extensions/builtin/openai/extension';
-import { providers } from './extensions/contribution-points/providers';
+import { type ProviderConfig, providers } from './extensions/contribution-points/providers';
 import { toDisposable } from './extensions/disposable';
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService } from './services';
-import { parseOrThrow } from './utils/validate';
 
-const DEFAULT_SYSTEM_PROMPT =
-  'You are Nox, a precise assistant. Answer directly and admit what you do not know.';
-
-/** The agent every surface talks to until blueprints make more than one. */
-const DEFAULT_AGENT_ID = 'default';
-
-/**
- * Provider settings come from the environment rather than a config section: an
- * API key does not belong in a file on disk, and a second provider is what
- * earns a `providers.json`. This is the door until then.
- */
-const providerEnvSchema = z.object({
-  apiKey: z.string().min(1, 'Set OPENAI_API_KEY.'),
-  baseUrl: z.string().min(1, 'Set OPENAI_BASE_URL or leave it unset for the default.'),
-  /** The compaction budget. Without it nothing compacts — see NOX.md, Law 2. */
-  contextWindow: z.number().int().positive().optional(),
-  modelId: z.string().min(1, 'Set OPENAI_MODEL to the model id to talk to.'),
-});
-
-type ProviderEnv = z.infer<typeof providerEnvSchema>;
+import type { Blueprint } from './config/blueprint';
+import type { ModelConfig } from './provider/config';
+import type { ChatProvider } from './provider/provider';
 
 interface BootstrapOptions {
   env?: EnvSource;
   /** Defaults to a logger at the configured level; tests pass a silent one. */
   logger?: Logger;
-  systemPrompt?: string;
-}
-
-function readProviderEnv(env: EnvSource): ProviderEnv {
-  const contextWindow = env.OPENAI_CONTEXT_WINDOW;
-
-  return parseOrThrow(providerEnvSchema, {
-    apiKey: env.OPENAI_API_KEY ?? '',
-    baseUrl: env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
-    contextWindow: contextWindow === undefined ? undefined : Number(contextWindow),
-    modelId: env.OPENAI_MODEL ?? '',
-  });
 }
 
 /**
  * The composition root of the process: the one place allowed to name concrete
  * capabilities. It reads the environment, loads configuration, opens storage,
  * hands all three to the application as services, activates the builtin
- * extensions, resolves a provider from what they contributed and registers the
- * agent it makes. Nothing below it imports a builtin.
+ * extensions, builds the providers that were configured from what those
+ * extensions contributed, and registers one agent per blueprint on disk.
+ * Nothing below it imports a builtin.
  *
  * What comes back is the running Nox itself — the process holds one object, and
  * stopping it stops everything this function opened.
  */
 async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication> {
-  const source = options.env ?? process.env;
-  const env = readEnvConfig(source);
-  const providerEnv = readProviderEnv(source);
+  const env = readEnvConfig(options.env ?? process.env);
 
   // Configuration decides the log level, so loading it needs a logger already.
   const config = await Config.load(env, { logger: options.logger ?? createLogger('nox') });
@@ -94,34 +61,93 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 
   await application.start();
 
-  const contribution = application.contributions.get(providers, 'openai_completions');
-  if (contribution === undefined) {
-    throw new Error('No provider was contributed at nox.providers.');
+  // Only now does `providers.json` have a schema: it is the union of what the
+  // extensions just contributed, and before activation there was nothing to
+  // validate it against.
+  await config.resolve(application.contributions);
+
+  const blueprints = config.get('blueprints');
+  if (Object.keys(blueprints).length === 0) {
+    throw new Error(
+      `No agent is configured. Add a blueprint to ${join(env.configDir, 'blueprints')}.`,
+    );
   }
 
-  const provider = contribution.value.create({
-    apiKey: providerEnv.apiKey,
-    baseUrl: providerEnv.baseUrl,
-    defaultModel: providerEnv.modelId,
-    type: 'openai_completions',
-  });
+  const opened = new Map<string, ChatProvider>();
+  for (const [agentId, blueprint] of Object.entries(blueprints)) {
+    const provider = openProvider(application, config.get('providers'), opened, blueprint);
+    const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
+    const compactionModel =
+      blueprint.compaction.model === undefined
+        ? model
+        : modelConfigFor(provider, blueprint.compaction.model);
 
-  application.addAgent(
-    new Agent(
-      database,
-      provider,
-      { contextWindow: providerEnv.contextWindow, modelId: providerEnv.modelId, type: 'text' },
-      {
-        agentId: DEFAULT_AGENT_ID,
+    application.addAgent(
+      new Agent(database, provider, model, {
+        agentId,
+        compactionModel,
+        context: blueprint.context,
+        gate: blueprint.gate,
         logger,
-        systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      },
-    ),
-  );
+        maxIterations: blueprint.maxIterations,
+        systemPrompt: blueprint.systemPrompt,
+      }),
+    );
+  }
 
   return application;
 }
 
-export { bootstrap, DEFAULT_AGENT_ID };
+/**
+ * Builds the provider instance a blueprint talks through, once per configured
+ * instance: two agents naming the same one share the adapter, and the connection
+ * settings behind it, rather than opening it twice.
+ */
+function openProvider(
+  application: NoxApplication,
+  configured: Record<string, ProviderConfig>,
+  opened: Map<string, ChatProvider>,
+  blueprint: Blueprint,
+): ChatProvider {
+  const existing = opened.get(blueprint.provider);
+  if (existing !== undefined) return existing;
+
+  const entry = configured[blueprint.provider];
+  if (entry === undefined) {
+    const known = Object.keys(configured);
+    throw new Error(
+      `A blueprint names provider "${blueprint.provider}", which providers.json does not ` +
+        (known.length === 0 ? 'configure at all.' : `configure. Configured: ${known.join(', ')}.`),
+    );
+  }
+
+  const contribution = application.contributions.get(providers, entry.type);
+  if (contribution === undefined) {
+    throw new Error(
+      `Provider "${blueprint.provider}" is of type "${entry.type}", which no extension contributed.`,
+    );
+  }
+
+  const provider = contribution.value.create(entry);
+  opened.set(blueprint.provider, provider);
+  return provider;
+}
+
+/**
+ * The model an agent runs on. Its budget comes from the provider entry that
+ * declared it — `contextWindow` is a property of a model, and Law 2 needs it to
+ * fold before it compacts — so a model the configuration never described runs
+ * without one rather than with a guess.
+ */
+function modelConfigFor(
+  provider: ChatProvider,
+  modelId: string,
+  generation: Blueprint['generation'] = {},
+): ModelConfig {
+  const configured = provider.getModelConfig(modelId) ?? { modelId, type: 'text' };
+  return { ...configured, ...generation };
+}
+
+export { bootstrap };
 
 export type { BootstrapOptions };

@@ -21,29 +21,41 @@ describe('openAIExtension', () => {
     await app.stop();
   });
 
-  test('builds an adapter from a valid configuration', async () => {
+  test('declares the adapter schema rather than hiding it', async () => {
     const app = await started();
 
-    const provider = app.contributions.get(providers, 'openai_completions')?.value.create({
+    // The configuration module can only validate `providers.json` by reading
+    // this; a schema kept inside `create` would leave the file uncheckable.
+    const contribution = app.contributions.get(providers, 'openai_completions');
+
+    expect(contribution?.value.configSchema).toBe(OpenAICompletions.configSchema);
+    expect(contribution?.value.configSchema.shape.type.value).toBe('openai_completions');
+    await app.stop();
+  });
+
+  test('builds an adapter from a valid configuration', async () => {
+    const app = await started();
+    const config = OpenAICompletions.configSchema.parse({
       baseUrl: 'https://api.example.test/v1',
       defaultModel: 'gpt-test',
       type: 'openai_completions',
     });
 
+    const provider = app.contributions.get(providers, 'openai_completions')?.value.create(config);
+
     expect(provider).toBeInstanceOf(OpenAICompletions);
     await app.stop();
   });
 
-  test('refuses a configuration that is not its own', () => {
-    const app = new NoxApplication({ extensions: [openAIExtension] });
+  test('its schema refuses a configuration that is not its own', async () => {
+    const app = await started();
+    const contribution = app.contributions.get(providers, 'openai_completions');
 
-    return app.start().then(() => {
-      const contribution = app.contributions.get(providers, 'openai_completions');
+    // No `baseUrl`, and the discriminator names another provider entirely.
+    const result = contribution?.value.configSchema.safeParse({ type: 'anthropic' });
 
-      // No `baseUrl`, and the discriminator names another provider entirely.
-      expect(() => contribution?.value.create({ type: 'anthropic' })).toThrow(RangeError);
-      return app.stop();
-    });
+    expect(result?.success).toBeFalse();
+    await app.stop();
   });
 
   test('the contribution is gone once the extension is disposed', async () => {
