@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { TOOL_CALL_AUTHORITY, TOOL_SEARCH_AUTHORITY } from '../auth/coreAuthorities';
 import { BM25 } from '../utils/bm25';
 import { stableStringify } from '../utils/json';
 import { UnknownToolError } from './error';
@@ -94,6 +95,10 @@ class ToolRouter extends ToolSet {
 
   protected override addTools(): void {
     const callTool: Tool<typeof callToolSchema> = {
+      // Nominal only: `prepareRouted` returns the routed tool's own execution,
+      // which already carries that tool's subject and authority. This is what an
+      // unbound router would ask for, and nothing grants it.
+      authority: TOOL_CALL_AUTHORITY,
       description:
         'Call a tool returned by search_tool. Pass params as a JSON string encoding one object ' +
         'whose values directly match that tool schema. Do not add wrapper objects.',
@@ -103,6 +108,7 @@ class ToolRouter extends ToolSet {
     };
 
     const searchTool: Tool<typeof searchToolSchema> = {
+      authority: TOOL_SEARCH_AUTHORITY,
       description:
         'Search the routed tool catalog by capability. Returns matching tools with their exact ' +
         'names, descriptions, and parameter schemas. Use the returned schema before call_tool; ' +

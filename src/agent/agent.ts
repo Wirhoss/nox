@@ -1,16 +1,24 @@
 import { ROUTER_TOOL_NAMES, ToolRouter } from '../tool/router';
+import { bindTool, type Tool, type ToolSetGrant } from '../tool/tool';
 import { Session } from './session';
 
+import type { AuthorityCatalog } from '../auth/authority';
+import type { AuthorizationProvider } from '../auth/authorization';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
-import type { Tool, ToolExecution, ToolRisk, ToolSetGrant } from '../tool/tool';
 import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
 
 interface AgentOptions extends RunnerOptions {
+  /**
+   * Every authority this Nox knows. A tool naming one that is not in here is a
+   * configuration error, caught when a session composes its tools rather than
+   * when somebody eventually calls it.
+   */
+  authorities: AuthorityCatalog;
   /**
    * Who this agent is. Every session it opens is stored under it, so a
    * transcript stays attributable to the prompt and tools that produced it.
@@ -33,6 +41,12 @@ interface AgentOptions extends RunnerOptions {
 }
 
 interface OpenSessionOptions {
+  /**
+   * Where this conversation's authority comes from. It belongs to the surface
+   * that opened the session — a broker knows its own issuer and its own people —
+   * so the agent carries it through rather than inventing one.
+   */
+  authorization?: AuthorizationProvider;
   metadata?: Readonly<Record<string, unknown>>;
   /** Omit for a new session; pass one to resume it, or to name a new one. */
   sessionId?: string;
@@ -41,37 +55,10 @@ interface OpenSessionOptions {
 
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
 
-function mergeRisk(
-  declared: ToolRisk | undefined,
-  prepared: ToolRisk | undefined,
-): ToolRisk | undefined {
-  if (declared === undefined) return prepared;
-  if (prepared === undefined) return declared;
-  return {
-    effects: [...new Set([...declared.effects, ...prepared.effects])],
-    resources: [...(declared.resources ?? []), ...(prepared.resources ?? [])],
-    reversible: prepared.reversible ?? declared.reversible,
-    volume: prepared.volume ?? declared.volume,
-  };
-}
-
-function bindTool(source: Tool, toolSetId: string): Tool {
-  return Object.freeze({
-    ...source,
-    prepare: (params: Parameters<Tool['prepare']>[0]): ToolExecution => {
-      const execution = source.prepare(params);
-      return {
-        ...execution,
-        gateSubject: execution.gateSubject ?? { params, toolName: source.name, toolSetId },
-        risk: mergeRisk(source.risk, execution.risk),
-      };
-    },
-  });
-}
-
 function snapshotToolSets(
   grants: readonly ToolSetGrant[],
   kind: 'direct' | 'routed',
+  authorities: AuthorityCatalog,
 ): Readonly<Record<string, Tool>> {
   const tools = new Map<string, Tool>();
   const toolSetIds = new Set<string>();
@@ -92,6 +79,7 @@ function snapshotToolSets(
       if (tools.has(name)) {
         throw new Error(`${kind} tool ${name} is granted by more than one tool set.`);
       }
+      authorities.assertKnown(source.authority, `${kind} tool "${name}" in set "${toolSetId}"`);
       tools.set(name, bindTool(source, toolSetId));
     }
   }
@@ -102,9 +90,10 @@ function snapshotToolSets(
 function composeSessionTools(
   directSource: readonly ToolSetGrant[],
   routedSource: readonly ToolSetGrant[],
+  authorities: AuthorityCatalog,
 ): Readonly<Record<string, Tool>> {
-  const directTools = snapshotToolSets(directSource, 'direct');
-  const routedTools = snapshotToolSets(routedSource, 'routed');
+  const directTools = snapshotToolSets(directSource, 'direct', authorities);
+  const routedTools = snapshotToolSets(routedSource, 'routed', authorities);
 
   for (const name of Object.keys(routedTools)) {
     if (directTools[name] !== undefined) {
@@ -129,6 +118,7 @@ function composeSessionTools(
  */
 class Agent {
   readonly #agentId: string;
+  readonly #authorities: AuthorityCatalog;
   readonly #compactionModel: ModelConfig;
   readonly #compactionProvider: ChatProvider;
   readonly #context?: Omit<
@@ -153,6 +143,7 @@ class Agent {
     options: AgentOptions,
   ) {
     this.#agentId = options.agentId;
+    this.#authorities = options.authorities;
     this.#compactionModel = options.compactionModel ?? model;
     this.#compactionProvider = options.compactionProvider ?? provider;
     this.#database = database;
@@ -184,11 +175,16 @@ class Agent {
   public openSession(options: OpenSessionOptions = {}): Promise<Session> {
     // Snapshot before Session.open reaches storage: changes after this call
     // belong to later sessions, even while this one is still loading.
-    const tools = composeSessionTools(this.#directToolSets, this.#routedToolSets);
+    const tools = composeSessionTools(
+      this.#directToolSets,
+      this.#routedToolSets,
+      this.#authorities,
+    );
 
     return Session.open(this.#database, this.#provider, this.#model, {
       ...options,
       agentId: this.#agentId,
+      authorities: this.#authorities,
       // The model's own window is the budget unless the agent overrode it.
       compactionProvider: this.#compactionProvider,
       context: {
