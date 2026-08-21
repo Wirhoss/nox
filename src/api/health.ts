@@ -1,7 +1,7 @@
 import { Elysia } from 'elysia';
 
 /** What a single readiness check answers: reachable, or not and why. */
-type ReadinessCheck = () => Promise<boolean> | boolean;
+type ReadinessCheck = () => boolean | Promise<boolean>;
 
 /** The dependencies readiness is the conjunction of, named for the response. */
 type ReadinessChecks = Readonly<Record<string, ReadinessCheck>>;
@@ -51,7 +51,7 @@ async function report(checks: ReadinessChecks): Promise<ReadinessReport> {
  * not a reason to kill a process that is otherwise answering — restarting it
  * will not bring the database back.
  */
-function health(options: HealthOptions = {}) {
+function createHealth(options: HealthOptions) {
   const { checks = {}, startedAt = Date.now(), version } = options;
 
   return new Elysia({ name: 'nox.api.health' })
@@ -65,6 +65,10 @@ function health(options: HealthOptions = {}) {
       set.status = result.status === 'pass' ? 200 : 503;
       return { ...result, version };
     });
+}
+
+function health(options: HealthOptions = {}): ReturnType<typeof createHealth> {
+  return createHealth(options);
 }
 
 export { health };

@@ -3,12 +3,11 @@ import { join } from 'node:path';
 import { type Logger, silentLogger } from '../logger/logger';
 import { Mutex } from '../utils/mutex';
 import { ConfigError } from './error';
-import { loadSection, updateSection } from './loader';
+import { type LoaderContext, loadSection, updateSection } from './loader';
 import { type ConfigKey, type ConfigMap, sections } from './sections';
 
 import type { ContributionReader } from '../extensions/contribution';
 import type { EnvConfig } from './env';
-import type { LoaderContext } from './loader';
 import type { ConfigSection } from './section';
 
 interface ConfigOptions {
@@ -20,11 +19,11 @@ interface ConfigUpdate<T> {
   value: T;
 }
 
-function erase(key: ConfigKey): ConfigSection<unknown> {
-  return sections[key] as ConfigSection<unknown>;
+function erase(key: ConfigKey): ConfigSection {
+  return sections[key] as ConfigSection;
 }
 
-function isDeferred(section: ConfigSection<unknown>): boolean {
+function isDeferred(section: ConfigSection): boolean {
   return section.kind === 'contribution';
 }
 
