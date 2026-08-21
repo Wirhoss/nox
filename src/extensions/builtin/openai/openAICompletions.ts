@@ -436,14 +436,17 @@ class OpenAICompletions extends ChatProvider {
           break;
         }
         case 'folded': {
-          // Chat Completions has no notion of a folded turn, so the summary
-          // rides along on the assistant message whose tool traffic it replaced
+          // Chat Completions has no notion of a folded turn, so the placeholder
+          // rides along on the assistant turn whose tool traffic it replaced
           // rather than becoming a turn of its own and breaking alternation.
           const foldText = this.toAssistantText(message.content);
           const previous = messages.at(-1);
 
-          if (previous?.role === 'assistant' && previous.content !== null) {
-            previous.content = `${previous.content}\n${foldText ?? ''}`;
+          if (previous?.role === 'assistant') {
+            if (foldText !== null) {
+              previous.content =
+                previous.content === null ? foldText : `${previous.content}\n${foldText}`;
+            }
           } else {
             messages.push({ content: foldText, role: 'assistant' });
           }

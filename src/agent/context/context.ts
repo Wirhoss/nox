@@ -19,7 +19,6 @@ const HANDOFF_REQUEST_PREFIX = 'compaction-request';
 
 interface CompactResult {
   readonly compacted: boolean;
-  readonly folded: boolean;
 }
 
 function createHandoffRequest(): UserMessage {
@@ -57,6 +56,7 @@ class Context {
   readonly #mutations = new Mutex();
 
   #activeHistory: Message[];
+  #providerTokenOffset?: number;
 
   constructor(
     systemPrompt: string,
@@ -114,17 +114,27 @@ class Context {
       // than not summarizing: the working set is not known to be in trouble,
       // the reduction is lossy, and nobody asked for it.
       if (this.#pressureTokenLimit === undefined || !this.isUnderPressure()) {
-        return Object.freeze({ compacted: false, folded: false });
+        return Object.freeze({ compacted: false });
       }
 
-      const folded = this.#reclaimByFolding();
-      if (!this.isUnderPressure()) return Object.freeze({ compacted: false, folded });
+      // Fold first — Law 2 — but only over traffic the model has already
+      // consumed. A tool loop still in flight is off limits until it settles,
+      // so a long loop under pressure collapses its finished predecessors and
+      // leaves its own pairs alone. Without this, pressure inside one long loop
+      // reaches the lossy path while the lossless one is still waiting.
+      const settled = this.#settledBoundaryId();
+      if (settled !== undefined) {
+        this.#applyFoldResult(
+          foldHistory(this.#activeHistory, this.#foldOptions(undefined, settled)),
+        );
+        if (!this.isUnderPressure()) return Object.freeze({ compacted: false });
+      }
 
       const middle = this.#selectCompactionRange();
-      if (middle === undefined) return Object.freeze({ compacted: false, folded });
+      if (middle === undefined) return Object.freeze({ compacted: false });
 
       const compacted = await this.#summarize(middle);
-      if (compacted === undefined) return Object.freeze({ compacted: false, folded });
+      if (compacted === undefined) return Object.freeze({ compacted: false });
 
       const replacedTokens = this.#estimateMessages(middle);
       const compactedTokens = this.#estimator.estimateMessage(compacted);
@@ -133,13 +143,13 @@ class Context {
           { compactedTokens, messageCount: middle.length, replacedTokens },
           'Compaction did not reduce the context; keeping the range intact.',
         );
-        return Object.freeze({ compacted: false, folded });
+        return Object.freeze({ compacted: false });
       }
 
       const history = applyCompaction(this.#activeHistory, compacted);
       this.#transcript.append(compacted);
       this.#rewriteHistory(history);
-      return Object.freeze({ compacted: true, folded });
+      return Object.freeze({ compacted: true });
     });
   }
 
@@ -167,14 +177,31 @@ class Context {
     return this.#estimator.estimateHistory(this.#activeHistory);
   }
 
+  /**
+   * Anchors local accounting to the provider's count for the exact request that
+   * produced the usage. Later appends and reductions remain an estimated delta
+   * until another provider count refreshes the anchor.
+   */
+  public recordInputUsage(inputTokens: number, requestTokenEstimate: number): void {
+    if (!Number.isFinite(inputTokens) || inputTokens < 0) {
+      throw new RangeError('inputTokens must be a finite, non-negative number.');
+    }
+    if (!Number.isFinite(requestTokenEstimate) || requestTokenEstimate < 0) {
+      throw new RangeError('requestTokenEstimate must be a finite, non-negative number.');
+    }
+    this.#providerTokenOffset = inputTokens - requestTokenEstimate;
+  }
+
   public getTools(): Readonly<Record<string, Tool>> {
     return this.#tools;
   }
 
   public isUnderPressure(): boolean {
-    return (
-      this.#pressureTokenLimit !== undefined && this.getTokenEstimate() > this.#pressureTokenLimit
-    );
+    if (this.#pressureTokenLimit === undefined) return false;
+
+    const estimate = this.getTokenEstimate();
+    const accountedTokens = Math.max(0, estimate + (this.#providerTokenOffset ?? 0));
+    return accountedTokens > this.#pressureTokenLimit;
   }
 
   #applyFoldResult({
@@ -192,23 +219,29 @@ class Context {
 
   #rewriteHistory(history: Message[]): void {
     this.#activeHistory = history;
+    // The provider's count described the history this just replaced. Carrying
+    // an absolute correction from one scale onto a much smaller one would keep
+    // reporting pressure that is no longer there; the next request re-anchors.
+    this.#providerTokenOffset = undefined;
   }
 
-  #reclaimByFolding(): boolean {
+  /**
+   * The last message the model has demonstrably consumed. Everything after it
+   * belongs to a tool loop still in flight, which nothing may collapse yet.
+   */
+  #settledBoundaryId(): string | undefined {
     const history = this.#activeHistory;
-    const firstAssistant = history.findIndex((message) => message.role === 'assistant');
-    if (firstAssistant === -1) return false;
+    const lastAssistant = history.findLastIndex((message) => message.role === 'assistant');
+    if (lastAssistant === -1) return undefined;
 
-    const from = firstAssistant + 1;
-    const to = this.#guardedEnd(history) - 1;
-    if (to < from) return false;
+    const inFlight = history
+      .slice(lastAssistant + 1)
+      .some((message) => message.role === 'toolCall' || message.role === 'toolResponse');
 
-    return this.#applyFoldResult(
-      foldHistory(history, this.#foldOptions(history[from]?.messageId, history[to]?.messageId)),
-    );
+    return history[inFlight ? lastAssistant : history.length - 1]?.messageId;
   }
 
-  /** Folding is measured with the same estimator that decides pressure. */
+  /** Folding is measured with the same estimator used for unobserved token deltas. */
   #foldOptions(fromMessageId?: string, toMessageId?: string): FoldOptions {
     return {
       estimateTokens: (message) => this.#estimator.estimateMessage(message),

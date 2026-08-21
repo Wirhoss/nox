@@ -175,7 +175,7 @@ describe('Context compaction', () => {
 
     const result = await context.compact();
 
-    expect(result).toEqual({ compacted: true, folded: false });
+    expect(result).toEqual({ compacted: true });
     expect(Object.isFrozen(result)).toBeTrue();
     expect(provider.requests).toHaveLength(1);
     expect(provider.requests[0]?.history.slice(0, -1).map((message) => message.messageId)).toEqual([
@@ -199,6 +199,7 @@ describe('Context compaction', () => {
       compactGuardBeginningTokens: 0,
       compactGuardEndTokens: 0,
       compactMinTokens: 1,
+      contextWindow: 100,
       fullHistory: [
         textMessage('user', 'u1', 'x'.repeat(2000)),
         textMessage('assistant', 'a1', 'y'.repeat(2000)),
@@ -226,7 +227,7 @@ describe('Context compaction', () => {
     });
 
     expect(context.isUnderPressure()).toBeTrue();
-    expect(await context.compact()).toEqual({ compacted: true, folded: false });
+    expect(await context.compact()).toEqual({ compacted: true });
     expect(context.getHistory()).toHaveLength(1);
     expect(context.getHistory()[0]?.role).toBe('compacted');
   });
@@ -237,13 +238,14 @@ describe('Context compaction', () => {
       compactGuardBeginningTokens: 0,
       compactGuardEndTokens: 0,
       compactMinTokens: 1,
+      contextWindow: 10,
       fullHistory: [textMessage('user', 'u1', 'small')],
       tokenCounter: (text) => text.length,
     });
     const activeBefore = context.getHistory();
     const fullBefore = context.getFullHistory();
 
-    expect(await context.compact()).toEqual({ compacted: false, folded: false });
+    expect(await context.compact()).toEqual({ compacted: false });
     expect(context.getHistory()).toEqual(activeBefore);
     expect(context.getHistory()[0]).toBe(activeBefore[0]);
     expect(context.getFullHistory()).toEqual(fullBefore);
@@ -254,17 +256,98 @@ describe('Context compaction', () => {
       compactGuardBeginningTokens: 0,
       compactGuardEndTokens: 0,
       compactMinTokens: 1,
+      contextWindow: 100,
       fullHistory: [textMessage('user', 'u1', 'x'.repeat(1000))],
     });
     const activeBefore = context.getHistory();
     const fullBefore = context.getFullHistory();
 
-    expect(await context.compact()).toEqual({ compacted: false, folded: false });
+    expect(await context.compact()).toEqual({ compacted: false });
     expect(context.getHistory()).toEqual(activeBefore);
     expect(context.getFullHistory()).toEqual(fullBefore);
   });
 
-  test('folding can relieve pressure without calling the lossy provider', async () => {
+  test('provider input usage anchors pressure and only later changes use estimated deltas', () => {
+    const context = new Context('system', new SummaryProvider([]), {
+      contextWindow: 10_000,
+      fullHistory: [textMessage('user', 'large', 'x'.repeat(20_000))],
+      reserveForOutput: 2_000,
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(context.isUnderPressure()).toBeTrue();
+
+    const sentEstimate = context.getTokenEstimate();
+    context.recordInputUsage(100, sentEstimate);
+    expect(context.isUnderPressure()).toBeFalse();
+
+    context.addMessage(textMessage('assistant', 'later', 'y'.repeat(7_000)));
+    expect(context.isUnderPressure()).toBeTrue();
+  });
+
+  test('under pressure it folds settled traffic and leaves the loop in flight alone', async () => {
+    const heavy = 'x'.repeat(9_000);
+    const light = 'y'.repeat(400);
+    const call = (id: string, track: string, payload: string): Message => ({
+      arguments: { payload },
+      createdAt: BASE_TIME,
+      messageId: id,
+      name: 'work',
+      role: 'toolCall',
+      trackId: track,
+    });
+    const response = (id: string, track: string, payload: string): Message => ({
+      createdAt: BASE_TIME,
+      execution: 'immediate',
+      messageId: id,
+      name: 'work',
+      response: [{ text: payload, type: 'text' }],
+      role: 'toolResponse',
+      trackId: track,
+    });
+
+    const provider = new SummaryProvider([]);
+    const context = new Context('system', provider, {
+      contextWindow: 10_000,
+      foldMinReductionRatio: 0.1,
+      fullHistory: [
+        textMessage('user', 'u1', 'first'),
+        // A fold hangs its placeholder on the assistant turn that asked for the
+        // work, so what it replaces must have one in front of it.
+        textMessage('assistant', 'a0', 'calling'),
+        call('c1', 't1', heavy),
+        response('r1', 't1', heavy),
+        // The model answered, so everything above it is consumed and settled.
+        textMessage('assistant', 'a1', 'done'),
+        textMessage('user', 'u2', 'second'),
+        textMessage('assistant', 'a2', 'calling again'),
+        // This pair belongs to a loop still in flight, and is small on purpose:
+        // once the settled pair folds, pressure is gone, so reaching the lossy
+        // path at all would mean the fold never happened.
+        call('c2', 't2', light),
+        response('r2', 't2', light),
+      ],
+      reserveForOutput: 2_000,
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(context.isUnderPressure()).toBeTrue();
+
+    const result = await context.compact();
+
+    // Folding alone relieved it, so the lossy path was never reached.
+    expect(result).toEqual({ compacted: false });
+    expect(provider.requests).toHaveLength(0);
+
+    const ids = context.getHistory().map((message) => message.messageId);
+    expect(ids).toContain('c2');
+    expect(ids).toContain('r2');
+    expect(ids).not.toContain('c1');
+    expect(ids).not.toContain('r1');
+    expect(context.getHistory().some((message) => message.role === 'folded')).toBeTrue();
+  });
+
+  test('folding can relieve pressure before a separate compaction check', async () => {
     const provider = new SummaryProvider([]);
     const context = new Context('system', provider, {
       compactGuardEndTokens: 0,
@@ -295,9 +378,48 @@ describe('Context compaction', () => {
     });
 
     expect(context.isUnderPressure()).toBeTrue();
-    expect(await context.compact()).toEqual({ compacted: false, folded: true });
+    expect(await context.fold()).toBeTrue();
+    expect(context.isUnderPressure()).toBeFalse();
+    expect(await context.compact()).toEqual({ compacted: false });
     expect(provider.requests).toHaveLength(0);
     expect(context.getHistory().map((message) => message.role)).toEqual(['assistant', 'folded']);
+  });
+
+  test('compaction does not fold tool traffic on its own', async () => {
+    const provider = new SummaryProvider(['small']);
+    const context = new Context('system', provider, {
+      compactGuardBeginningTokens: 0,
+      compactGuardEndTokens: 0,
+      compactMinTokens: 1,
+      contextWindow: 10_000,
+      foldMinReductionRatio: 0.01,
+      fullHistory: [
+        textMessage('assistant', 'anchor', 'ready'),
+        {
+          arguments: { payload: 'x'.repeat(8_000) },
+          createdAt: BASE_TIME,
+          messageId: 'call',
+          name: 'work',
+          role: 'toolCall',
+          trackId: 'track',
+        },
+        {
+          createdAt: BASE_TIME,
+          execution: 'immediate',
+          messageId: 'response',
+          name: 'work',
+          response: [{ text: 'y'.repeat(8_000), type: 'text' }],
+          role: 'toolResponse',
+          trackId: 'track',
+        },
+      ],
+      reserveForOutput: 2_000,
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(await context.compact()).toEqual({ compacted: true });
+    expect(context.getFullHistory().some((message) => message.role === 'folded')).toBeFalse();
+    expect(provider.requests).toHaveLength(1);
   });
 
   test('the append sink sees the compaction the context writes on its own', async () => {
@@ -310,7 +432,7 @@ describe('Context compaction', () => {
       tokenCounter: (text) => text.length,
     });
 
-    expect(await context.compact()).toEqual({ compacted: true, folded: false });
+    expect(await context.compact()).toEqual({ compacted: true });
     expect(appended.map((message) => message.role)).toEqual(['compacted']);
   });
 
@@ -345,7 +467,7 @@ describe('Context compaction', () => {
       tokenCounter: (text) => text.length,
     });
 
-    expect(await context.compact()).toEqual({ compacted: false, folded: true });
+    expect(await context.fold()).toBeTrue();
     expect(appended.map((message) => message.role)).toEqual(['folded']);
   });
 
@@ -414,6 +536,7 @@ describe('Context compaction', () => {
       compactGuardBeginningTokens: 0,
       compactGuardEndTokens: 0,
       compactMinTokens: 1,
+      contextWindow: 100,
       fullHistory: [textMessage('user', 'old', 'x'.repeat(2000))],
       tokenCounter: (text) => text.length,
     });
@@ -439,6 +562,7 @@ describe('Context compaction', () => {
       compactGuardBeginningTokens: 0,
       compactGuardEndTokens: 0,
       compactMinTokens: 1,
+      contextWindow: 100,
       fullHistory: [textMessage('user', 'u1', 'x'.repeat(3000))],
       tokenCounter: (text) => text.length,
     });

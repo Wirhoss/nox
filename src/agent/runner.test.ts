@@ -119,6 +119,7 @@ function setup(
   scripts: Script[],
   tools: Tool[] = [],
   maxIterations?: 'unlimited' | number,
+  contextWindow?: number,
 ): {
   context: Context;
   events: EventLog<AgentEvent>;
@@ -127,6 +128,7 @@ function setup(
 } {
   const provider = new ScriptedProvider(scripts);
   const context = new Context('system', provider, {
+    contextWindow,
     tools: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
   });
   const events = new EventLog<AgentEvent>();
@@ -167,7 +169,13 @@ describe('Runner', () => {
     await runner.idle;
 
     expect(provider.requests).toHaveLength(2);
-    expect(roles(context)).toEqual(['user', 'toolCall', 'toolResponse', 'assistant']);
+    expect(roles(context)).toEqual([
+      'user',
+      'assistant', // textless tool-call turn
+      'toolCall',
+      'toolResponse',
+      'assistant',
+    ]);
   });
 
   test('tool calls in one reply run concurrently', async () => {
@@ -233,6 +241,7 @@ describe('Runner', () => {
     expect(provider.requests).toHaveLength(3);
     expect(roles(context)).toEqual([
       'user',
+      'assistant', // textless tool-call turn
       'toolCall',
       'toolResponse', // deferredAck
       'assistant',
@@ -282,7 +291,14 @@ describe('Runner', () => {
     await runner.idle;
 
     expect(eventTypes(events).filter((type) => type === 'runStarted')).toHaveLength(1);
-    expect(roles(context)).toEqual(['user', 'toolCall', 'toolResponse', 'user', 'assistant']);
+    expect(roles(context)).toEqual([
+      'user',
+      'assistant', // textless tool-call turn
+      'toolCall',
+      'toolResponse',
+      'user',
+      'assistant',
+    ]);
     // The second message was drained before the request that followed it.
     expect(provider.requests[1]?.at(-1)).toMatchObject({ role: 'user' });
   });
@@ -326,8 +342,14 @@ describe('Runner', () => {
     runner.send(user('hi'));
     await runner.idle;
 
-    expect(roles(context)).toEqual(['user', 'toolCall', 'toolResponse', 'assistant']);
-    expect(context.getHistory()[2]).toMatchObject({ isError: true });
+    expect(roles(context)).toEqual([
+      'user',
+      'assistant', // textless tool-call turn
+      'toolCall',
+      'toolResponse',
+      'assistant',
+    ]);
+    expect(context.getHistory()[3]).toMatchObject({ isError: true });
   });
 
   test('abort leaves every tool call paired with a response', async () => {
@@ -348,7 +370,7 @@ describe('Runner', () => {
     await settle();
 
     expect(await runner.abort()).toBeTrue();
-    expect(roles(context)).toEqual(['user', 'toolCall', 'toolResponse']);
+    expect(roles(context)).toEqual(['user', 'assistant', 'toolCall', 'toolResponse']);
     expect(events.snapshot().at(-1)).toMatchObject({ status: 'aborted' });
     expect(await runner.abort()).toBeFalse();
   });
@@ -375,30 +397,47 @@ describe('Runner', () => {
     await runner.steer(user('change of plans'));
     await runner.idle;
 
-    expect(roles(context)).toEqual(['user', 'toolCall', 'toolResponse', 'user', 'assistant']);
+    expect(roles(context)).toEqual([
+      'user',
+      'assistant', // textless tool-call turn
+      'toolCall',
+      'toolResponse',
+      'user',
+      'assistant',
+    ]);
     expect(events.snapshot().filter((event) => event.type === 'runStarted')).toMatchObject([
       { trigger: 'user' },
       { trigger: 'steer' },
     ]);
   });
 
-  test('usage is reported per call and totalled for the run', async () => {
-    const { events, runner } = setup([
-      // eslint-disable-next-line @typescript-eslint/require-await
-      async function* (): AsyncIterable<ProviderSourceEvent> {
-        yield { text: 'hi', type: 'textFragment' };
-        yield { type: 'end', usage: { cacheReadTokens: 2, inputTokens: 10, outputTokens: 5 } };
-      },
-    ]);
+  test('usage is reported, totalled and used to calibrate context pressure', async () => {
+    const { context, events, runner } = setup(
+      [
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async function* (): AsyncIterable<ProviderSourceEvent> {
+          yield { text: 'hi', type: 'textFragment' };
+          yield {
+            type: 'end',
+            usage: { cacheReadTokens: 2, inputTokens: 700, outputTokens: 5 },
+          };
+        },
+      ],
+      [],
+      undefined,
+      1_000,
+    );
 
+    expect(context.isUnderPressure()).toBeFalse();
     runner.send(user('hi'));
     await runner.idle;
 
+    expect(context.isUnderPressure()).toBeTrue();
     expect(events.snapshot().find((event) => event.type === 'usage')).toMatchObject({
-      usage: { inputTokens: 10, outputTokens: 5 },
+      usage: { inputTokens: 700, outputTokens: 5 },
     });
     expect(events.snapshot().at(-1)).toMatchObject({
-      usage: { cacheReadTokens: 2, inputTokens: 10, outputTokens: 5 },
+      usage: { cacheReadTokens: 2, inputTokens: 700, outputTokens: 5 },
     });
   });
 

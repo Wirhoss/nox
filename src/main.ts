@@ -35,6 +35,8 @@ type ProviderEnv = z.infer<typeof providerEnvSchema>;
 
 interface BootstrapOptions {
   env?: EnvSource;
+  /** Defaults to a logger at the configured level; tests pass a silent one. */
+  logger?: Logger;
   systemPrompt?: string;
 }
 
@@ -70,9 +72,9 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxRuntime> {
   const providerEnv = readProviderEnv(source);
 
   // Configuration decides the log level, so loading it needs a logger already.
-  const config = await Config.load(env, { logger: createLogger('nox') });
+  const config = await Config.load(env, { logger: options.logger ?? createLogger('nox') });
   const appConfig = config.get('app');
-  const logger = createLogger('nox', { level: appConfig.logLevel });
+  const logger = options.logger ?? createLogger('nox', { level: appConfig.logLevel });
 
   await mkdir(env.dataDir, { recursive: true });
   const database = await Database.open({

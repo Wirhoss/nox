@@ -211,6 +211,9 @@ class Runner {
    * after the stream closes, so a slow tool overlaps the rest of the reply.
    */
   async #request(usage: Usage): Promise<ToolResponseMessage[]> {
+    // Usage reported at the end belongs to this exact input snapshot, not to
+    // the assistant output or tool results appended while the call is running.
+    const requestTokenEstimate = this.#context.getTokenEstimate();
     const stream = this.#provider.getMessageStream(
       this.#context.getSystemPrompt(),
       [...this.#context.getHistory()],
@@ -224,8 +227,11 @@ class Runner {
     for await (const event of stream) {
       switch (event.type) {
         case 'end': {
+          if (event.usage !== undefined) {
+            this.#context.recordInputUsage(event.usage.inputTokens, requestTokenEstimate);
+            this.#recordUsage(usage, event.usage);
+          }
           for (const message of event.messages) this.#context.addMessage(message);
-          if (event.usage !== undefined) this.#recordUsage(usage, event.usage);
           break;
         }
         case 'error': {

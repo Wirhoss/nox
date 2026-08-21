@@ -110,6 +110,7 @@ class ProviderStream {
     let reasoningStartedAt: number | undefined;
     let textAccumulated = '';
     let textStartedAt: number | undefined;
+    let assistantMaterialized = false;
 
     /** Materializes buffered fragments so order matches arrival order. */
     const flush = (): void => {
@@ -130,6 +131,7 @@ class ProviderStream {
           messageId: nanoid(),
           role: 'assistant',
         });
+        assistantMaterialized = true;
         textAccumulated = '';
         textStartedAt = undefined;
       }
@@ -187,6 +189,7 @@ class ProviderStream {
             reasoningStartedAt = undefined;
             textAccumulated = '';
             textStartedAt = undefined;
+            assistantMaterialized = false;
             messages.length = 0;
             this.push(event);
             break;
@@ -198,8 +201,21 @@ class ProviderStream {
             break;
           }
           case 'toolCall': {
-            // Flush first: a tool call always follows the text that requested it.
+            // Every tool call belongs to an assistant turn, even when the model
+            // emitted reasoning and calls without visible text. Materialize that
+            // turn here, before it enters the provider-independent transcript,
+            // so folding never has to treat reasoning (or a user turn) as an
+            // assistant anchor.
             flush();
+            if (!assistantMaterialized) {
+              messages.push({
+                content: [],
+                createdAt: this.stamp(),
+                messageId: nanoid(),
+                role: 'assistant',
+              });
+              assistantMaterialized = true;
+            }
             const toolCall: ToolCallMessage = {
               ...event.toolCall,
               createdAt: this.stamp(),

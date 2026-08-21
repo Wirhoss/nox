@@ -1,10 +1,17 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { Session } from '../../../agent/session';
+import { Database } from '../../../database/database';
 import { isProviderError, type ProviderErrorCode } from '../../../provider/error';
 import { OpenAICompletions } from './openAICompletions';
 
 import type { Message } from '../../../agent/context/message';
+import type { ModelConfig } from '../../../provider/config';
 import type { ProviderStreamEvent } from '../../../provider/stream';
 import type { Tool } from '../../../tool/tool';
 
@@ -265,6 +272,30 @@ describe('OpenAICompletions message mapping', () => {
     ]);
   });
 
+  test('rides a fold onto a textless assistant anchor after reasoning', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(provider(), [
+      message({ content: [{ text: 'do it', type: 'text' }], role: 'user' }),
+      message({ content: [{ text: 'thinking', type: 'text' }], role: 'reasoning' }),
+      // ProviderStream materializes this turn when a model emits tool calls
+      // without visible assistant text. The fold remains assistant-anchored.
+      message({ content: [], messageId: 'anchor', role: 'assistant' }),
+      message({
+        anchorMessageId: 'anchor',
+        content: [{ text: '[folded 2 calls]', type: 'text' }],
+        foldedMessageIds: ['c1', 'r1'],
+        role: 'folded',
+      }),
+    ]);
+
+    expect(requests[0]?.body.messages).toEqual([
+      { content: 'be brief', role: 'system' },
+      { content: 'do it', role: 'user' },
+      { content: '[folded 2 calls]', role: 'assistant' },
+    ]);
+  });
+
   test('surfaces a late deferred result as correlated user content', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
@@ -282,6 +313,113 @@ describe('OpenAICompletions message mapping', () => {
       content: '[deferred result for build (call_9)]\nexit 0',
       role: 'user',
     });
+  });
+});
+
+describe('OpenAICompletions session regression', () => {
+  test('persists and replays a folded tool-only reasoning turn into the next request', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-openai-fold-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    const model: ModelConfig = { modelId: 'gpt-test', type: 'text' };
+    const bulkyEcho: Tool = {
+      ...echoTool,
+      prepare: () => ({
+        run: () => Promise.resolve([{ text: 'echoed '.repeat(1000), type: 'text' as const }]),
+        title: 'echo',
+        type: 'immediate' as const,
+      }),
+    };
+
+    stubFetch(() => {
+      switch (requests.length) {
+        case 1:
+          return sse(
+            { choices: [{ delta: { reasoning_content: 'thinking before the call' } }] },
+            {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      {
+                        function: { arguments: '{"value":"x"}', name: 'echo' },
+                        id: 'call_1',
+                        index: 0,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          );
+        case 2:
+          return sse(
+            { choices: [{ delta: { reasoning_content: 'checking the result' } }] },
+            textDelta('first turn done'),
+          );
+        case 3:
+          return sse(textDelta('second turn done'));
+        default:
+          throw new Error(`Unexpected request ${String(requests.length)}.`);
+      }
+    });
+
+    try {
+      const instance = provider();
+      const session = await Session.open(database, instance, model, {
+        context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
+        sessionId: 'folded-reasoning-turn',
+        systemPrompt: 'be brief',
+      });
+
+      session.send('use echo');
+      await session.idle;
+      await session.stop();
+
+      // ProviderStream inserted this assistant before the call, so the request
+      // answering the tool result has a valid assistant/tool/tool sequence.
+      const secondWire = requests[1]?.body.messages as { content: null | string; role: string }[];
+      expect(secondWire.map(({ role }) => role)).toEqual(['system', 'user', 'assistant', 'tool']);
+      expect(secondWire[2]).toMatchObject({ content: null, role: 'assistant' });
+
+      // Reopen from storage, not from the live Context. The fold and its
+      // synthetic assistant anchor must both survive and reconnect by ID.
+      const resumed = await Session.open(database, instance, model, {
+        context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
+        sessionId: session.sessionId,
+        systemPrompt: 'be brief',
+      });
+      const transcript = resumed.getTranscript();
+      const anchor = transcript.find(
+        (entry) => entry.role === 'assistant' && entry.content.length === 0,
+      );
+      const fold = transcript.find((entry) => entry.role === 'folded');
+
+      expect(anchor?.role).toBe('assistant');
+      expect(fold?.role === 'folded' ? fold.anchorMessageId : undefined).toBe(anchor?.messageId);
+
+      resumed.send('what happened?');
+      await resumed.idle;
+      await resumed.stop();
+
+      const replayedWire = requests[2]?.body.messages as { content: null | string; role: string }[];
+      expect(
+        replayedWire.some(
+          (entry) =>
+            entry.role === 'assistant' &&
+            entry.content?.includes('-----Folded tool calls-----') === true,
+        ),
+      ).toBeTrue();
+      expect(JSON.stringify(replayedWire)).not.toContain('thinking before the call');
+      expect(JSON.stringify(replayedWire)).not.toContain('checking the result');
+      expect(replayedWire.at(-1)).toEqual({ content: 'what happened?', role: 'user' });
+    } finally {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may retain the SQLite handle briefly; the directory is disposable.
+      }
+    }
   });
 });
 

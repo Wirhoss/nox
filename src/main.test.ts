@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { providers } from './extensions/contribution-points/providers';
+import { silentLogger } from './logger/logger';
 import { bootstrap, type NoxRuntime } from './main';
 
 import type { EnvSource } from './config/env';
@@ -44,7 +45,11 @@ function environment(overrides: EnvSource = {}): EnvSource {
 }
 
 async function boot(overrides: EnvSource = {}): Promise<NoxRuntime> {
-  booted = await bootstrap({ env: environment(overrides), systemPrompt: 'be exact' });
+  booted = await bootstrap({
+    env: environment(overrides),
+    logger: silentLogger,
+    systemPrompt: 'be exact',
+  });
   return booted;
 }
 
@@ -92,7 +97,10 @@ describe('bootstrap', () => {
   });
 
   test('refuses to boot without an API key, and says which variable', async () => {
-    const failure: unknown = await bootstrap({ env: environment({ OPENAI_API_KEY: undefined }) })
+    const failure: unknown = await bootstrap({
+      env: environment({ OPENAI_API_KEY: undefined }),
+      logger: silentLogger,
+    })
       .then(() => undefined)
       .catch((error: unknown) => error);
 
@@ -101,7 +109,10 @@ describe('bootstrap', () => {
   });
 
   test('refuses to boot without a model id', async () => {
-    const failure: unknown = await bootstrap({ env: environment({ OPENAI_MODEL: undefined }) })
+    const failure: unknown = await bootstrap({
+      env: environment({ OPENAI_MODEL: undefined }),
+      logger: silentLogger,
+    })
       .then(() => undefined)
       .catch((error: unknown) => error);
 

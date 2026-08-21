@@ -191,6 +191,7 @@ describe('Session', () => {
     const stored = await new SessionStore(database).load(session.sessionId);
     expect(stored?.messages.map((message) => message.role)).toEqual([
       'user',
+      'assistant', // textless tool-call turn
       'toolCall',
       'toolResponse',
       'assistant',

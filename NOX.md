@@ -63,9 +63,16 @@ already been applied and the working set is still over budget.
 
 Consequences:
 
-- Every reduction attempt tries deterministic folding to exhaustion first.
+- A settled tool loop tries deterministic folding before a later request may
+  compact. Folding never runs in the middle of a tool loop just because token
+  pressure rose; the model must first consume the tool results.
 - Compaction is an explicit, recorded, budget-triggered event — never a routine
   step in the loop, never a background convenience.
+- **No budget, no compaction.** Without a configured context window there is no
+  pressure signal, and `compact()` is a no-op. Summarizing lossily on a guess is
+  not a smaller version of compaction; it is the thing compaction is the last
+  resort *for*, performed for no reason. An agent takes its window from the
+  model unless its own policy sets one.
 - Both are transcript events, not destructive mutations. The full history
   survives. "Deleted to save space" is never the mechanism.
 - **A fold must reduce the active context, and that reduction is measured in
@@ -301,8 +308,9 @@ v1 is done when this is demonstrably true:
 - Append-only immutable transcript, complete and searchable.
 - Active working set reconstructed by deterministic replay.
 - Deterministic folding of mechanical traffic.
-- Token budgeting with reserved output headroom; pressure detected before the
-  provider rejects.
+- Token budgeting with reserved output headroom; provider-reported input usage
+  anchors pressure when available, with local estimation only for the delta
+  since that request (or for the whole context when usage is absent).
 - Deterministic, append-stable request inputs: fixed instructions, name-sorted
   tool schemas and immutable history.
 - Compaction — implemented, tested, and *rarely reached*.
@@ -503,6 +511,81 @@ only file allowed to name a builtin, and `boundaries.test.ts` names it.
   without a terminal or a network. That test is what proves the composition
   composes, which no unit test had ever covered.
 
+**What the long-session test found** — the argument for testing whole sessions:
+
+> `Context.compact()` kept its folding step *inside* the pressure branch. With no
+> configured `contextWindow` that branch was skipped entirely and control fell
+> through to compaction, so the configuration folded **zero** times and compacted
+> twice in sixty turns: Law 2 exactly inverted, the lossy path running as the
+> first resort while the lossless one never ran at all. `main.ts` passed no
+> context options, so the entrypoint ran in precisely that configuration.
+
+Three parts, complementary rather than alternative: folding moved to the end of
+the tool loop where Law 2 says it belongs and needs no budget to justify itself;
+`compact()` is a no-op without a pressure limit; and an agent derives its window
+from the model, with `OPENAI_CONTEXT_WINDOW` wiring it through the entrypoint.
+Folding always happens. Compaction happens only against a budget.
+
+**Four more, found by reading the fix rather than running it:**
+
+- **Compaction folds the settled traffic first, bounded by the loop in flight.**
+  Moving folding to the end of the tool loop left a hole: `compact()` runs at the
+  top of every iteration, so a long loop under pressure reached the lossy path
+  while the lossless one was still waiting for the loop to settle. Folding now
+  runs inside `compact()` again, restricted to everything before the current
+  loop — the model's own constraint applies to the loop it is still working in,
+  not to the ones it already finished.
+- **Every tool call has an assistant anchor before it reaches history.** Models
+  routinely answer with reasoning and tool calls, or with tool calls alone. The
+  provider-neutral stream now materializes an empty assistant turn in that case,
+  preserving the semantic contract that tool traffic belongs to an assistant
+  turn. Folding therefore stays assistant-anchored instead of teaching every
+  adapter that a reasoning, user, or other message secretly stands for one.
+- **The provider's token anchor is cleared whenever active history is
+  replaced.** `recordInputUsage` corrects the local estimate with what the
+  provider actually counted, which is right for growth — new content is measured
+  locally and added to a true anchor. But the correction is absolute, and
+  reapplying it after a fold or compaction carries a number from one scale onto
+  a much smaller one, reporting pressure that is no longer there. The next
+  request re-anchors it.
+- **`CompactResult.folded` was removed.** Nothing consumed it; the runner
+  ignores the result entirely.
+
+**Nox has talked to a real model.** Qwen3.8-27B on a llama.cpp server, through
+`OpenAICompletions`, over three sessions: plain chat, a tool loop with two real
+tools, and a run with the window squeezed to 2000 tokens to force compaction.
+What that established, none of which any test had shown:
+
+- **Reasoning arrives and is kept separate.** The model emits `reasoning_content`
+  and it lands as its own `reasoning` message, never merged into the answer.
+- **Tool calls work end to end**, with the model's JSON arguments parsed and
+  validated against the tool's schema before execution.
+- **The provider reports cache reads.** `cacheReadTokens` came back at 742, 758
+  and 888 across consecutive turns. Law 1 is not a theory here: the head stayed
+  stable enough for the server to reuse it, and it says so.
+- **Compaction ran against a real summarizer** and the handoff came back in the
+  shape `prompt.ts` asks for — Task, Established facts, with identifiers and the
+  user's wording preserved verbatim.
+- **The model reached for `search_history` unprompted** after compaction, to
+  recover the questions it had been asked, and the second handoff cites what the
+  search returned. Bounded retrieval is not decoration; the loop closes.
+
+**A fold anchored to reasoning broke the internal contract, and the model found
+it first.** Real provider output can look like `reasoning toolCall`, with no
+visible assistant text. Treating that reasoning message as the assistant anchor
+leaks a provider's wire-format decisions into folding and forces every adapter to
+repair the role later. `ProviderStream` now materializes a textless assistant
+turn before the first tool call. The transcript and every provider adapter see
+one provider-independent truth: tool traffic is anchored to an assistant turn.
+
+**The two paths nothing had ever asserted now have tests.** `src/provider/` had
+no test file at all: the retry loop, its exponential backoff and the
+`resetOutput` discard had never executed once, in any test, because every
+scripted provider set `maxRetries: 0`. Bounded BM25 retrieval — a named v1 item,
+wired into every session's tool list — had none either. Breaking the retry
+condition on purpose fails four of the five new tests, which is the only evidence
+that a test is doing anything.
+
 **What running it found immediately** — the argument for running things:
 
 > `Session.open` built a `SessionStore`, loaded the transcript through it (which
@@ -519,10 +602,13 @@ one store per session, created in `open` and handed to the constructor; the
 regression test reads the transcript back from a fresh store.
 
 `openAICompletions.ts` was the last port between the tree and the v1 criterion —
-a session that runs for hours against a real model. The stack now runs
-end-to-end against a stub. **The criterion is still not met:** there is no test
-that drives hundreds of turns through folding and compaction under sustained
-pressure, and nothing has yet talked to a real model.
+a session that runs for hours against a real model. That criterion is now met:
+`longSession.test.ts` drives 120 turns through sustained folding and compaction,
+then reopens the stored transcript and proves the active history replays
+identically. The OpenAI session regression covers the real adapter path from a
+reasoning-only tool call through assistant-anchor materialization, persistence,
+folding, reopen and the next wire request. Separate live runs against Qwen3.8-27B
+have exercised plain chat, tools, provider usage, compaction and history search.
 
 **The prefix is an invariant, not a subsystem.** `prompt.ts` holds the compaction
 prompt and nothing else; no separate prefix builder is missing. `Agent` fixes the
