@@ -23,6 +23,8 @@ import type { AgentEvent } from './events';
 interface SessionOptions extends RunnerOptions {
   /** The agent holding the conversation, stored so the transcript stays attributable. */
   agentId: string;
+  /** Provider used for internal compaction requests; defaults to the main provider. */
+  compactionProvider?: ChatProvider;
   /** Everything the context needs except the history, which comes from storage. */
   context?: Omit<ContextOptions, 'fullHistory' | 'onAppend'>;
   gate?: GatePolicyInput;
@@ -74,7 +76,7 @@ class Session {
     this.#sessionId = sessionId;
     this.#store = store;
 
-    this.#context = new Context(options.systemPrompt, provider, {
+    this.#context = new Context(options.systemPrompt, options.compactionProvider ?? provider, {
       ...options.context,
       fullHistory: history,
       logger: options.logger,

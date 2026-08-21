@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
+import { ApiServer } from './api/server';
 import { bootstrap } from './bootstrap';
 import { providers } from './extensions/contribution-points/providers';
 import { silentLogger } from './logger/logger';
@@ -55,7 +56,9 @@ interface BootOptions {
 
 function seed(options: BootOptions = {}): EnvSource {
   const configDir = temporary('nox-config-');
-  writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? {}));
+  // Port 0 unless a test says otherwise: every boot listens, and no two boots
+  // — or a Nox already running on this machine — fight over the same socket.
+  writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
   writeFileSync(join(configDir, 'providers.json'), JSON.stringify(options.providers ?? PROVIDERS));
 
   mkdirSync(join(configDir, 'blueprints'), { recursive: true });
@@ -205,6 +208,40 @@ describe('bootstrap', () => {
     expect(application.sessions).toEqual([]);
     expect(database.isOpen).toBe(false);
     expect(application.contributions.has(providers, 'openai_completions')).toBe(false);
+  });
+
+  test('answers the health probes over HTTP, and stops answering once stopped', async () => {
+    const api = { host: '127.0.0.1', port: 39_517 };
+    const application = await boot({ app: { api } });
+    const url = `http://${api.host}:${api.port}`;
+
+    const live = await fetch(`${url}/health/live`);
+    expect(live.status).toBe(200);
+    expect(await live.json()).toMatchObject({ status: 'pass' });
+
+    const ready = await fetch(`${url}/health/ready`);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({
+      checks: { database: 'pass', nox: 'pass' },
+      status: 'pass',
+    });
+
+    await application.stop();
+
+    // The listener goes with everything else: another server can take the port.
+    const rebound = await ApiServer.start(api);
+    await rebound.dispose();
+  });
+
+  test('releases the port when composing fails, rather than holding it', async () => {
+    const api = { host: '127.0.0.1', port: 39_518 };
+
+    expect(await failure({ app: { api }, blueprints: {} })).toBeInstanceOf(Error);
+
+    // A boot that threw left nothing running, so the next one can listen where
+    // the last one did.
+    const application = await boot({ app: { api } });
+    expect(application.state).toBe('running');
   });
 
   test('refuses to boot with no blueprint at all, saying where they go', async () => {

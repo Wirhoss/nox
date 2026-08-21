@@ -16,8 +16,9 @@ interface AgentOptions extends RunnerOptions {
    * transcript stays attributable to the prompt and tools that produced it.
    */
   agentId: string;
-  /** Model used for compaction; defaults to the agent's main model. */
+  /** Provider and model used for compaction; each defaults to the agent's main one. */
   compactionModel?: ModelConfig;
+  compactionProvider?: ChatProvider;
   /** Context policy, minus what a session supplies: history, sink and tools. */
   context?: Omit<
     ContextOptions,
@@ -129,6 +130,7 @@ function composeSessionTools(
 class Agent {
   readonly #agentId: string;
   readonly #compactionModel: ModelConfig;
+  readonly #compactionProvider: ChatProvider;
   readonly #context?: Omit<
     ContextOptions,
     'compactionModel' | 'fullHistory' | 'logger' | 'onAppend' | 'tools'
@@ -152,6 +154,7 @@ class Agent {
   ) {
     this.#agentId = options.agentId;
     this.#compactionModel = options.compactionModel ?? model;
+    this.#compactionProvider = options.compactionProvider ?? provider;
     this.#database = database;
     this.#provider = provider;
     this.#model = model;
@@ -187,6 +190,7 @@ class Agent {
       ...options,
       agentId: this.#agentId,
       // The model's own window is the budget unless the agent overrode it.
+      compactionProvider: this.#compactionProvider,
       context: {
         contextWindow: this.#model.contextWindow,
         ...this.#context,

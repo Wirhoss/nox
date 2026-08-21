@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
 import { Agent } from './agent/agent';
+import { ApiServer } from './api/server';
 import { NoxApplication } from './application';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
@@ -12,6 +13,7 @@ import { toDisposable } from './extensions/disposable';
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService } from './services';
 
+import type { ApiConfig } from './api/config';
 import type { Blueprint } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
@@ -59,6 +61,53 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   // the database as a service lets go of it before the file closes.
   application.own(toDisposable(() => database.close()));
 
+  // Registered after the database and therefore released before it: the socket
+  // stops answering while the storage its answers came from is still open.
+  application.own(await openApi(application, appConfig.api, database, logger));
+
+  try {
+    await composeAgents(application, config, database, env.configDir, logger);
+  } catch (error) {
+    // Everything above is already open. A bootstrap that throws leaves nothing
+    // running — a half-composed Nox holding a port and a database file is worse
+    // than one that never started.
+    await application.stop();
+    throw error;
+  }
+
+  return application;
+}
+
+/**
+ * The HTTP surface, listening before the application does. Liveness answers
+ * while Nox is still starting, which is the point of the probe; readiness says
+ * no until everything below is up, which is the point of that one.
+ */
+async function openApi(
+  application: NoxApplication,
+  config: ApiConfig,
+  database: Database,
+  logger: Logger,
+): Promise<ApiServer> {
+  return ApiServer.start({
+    ...config,
+    checks: {
+      database: () => database.isOpen,
+      nox: () => application.state === 'running',
+    },
+    logger: logger.child('api'),
+    version: application.noxVersion,
+  });
+}
+
+/** Activates the extensions and registers one agent per blueprint on disk. */
+async function composeAgents(
+  application: NoxApplication,
+  config: Config,
+  database: Database,
+  configDir: string,
+  logger: Logger,
+): Promise<void> {
   await application.start();
 
   // Only now does `providers.json` have a schema: it is the union of what the
@@ -68,24 +117,28 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 
   const blueprints = config.get('blueprints');
   if (Object.keys(blueprints).length === 0) {
-    throw new Error(
-      `No agent is configured. Add a blueprint to ${join(env.configDir, 'blueprints')}.`,
-    );
+    throw new Error(`No agent is configured. Add a blueprint to ${join(configDir, 'blueprints')}.`);
   }
 
+  const configuredProviders = config.get('providers');
   const opened = new Map<string, ChatProvider>();
   for (const [agentId, blueprint] of Object.entries(blueprints)) {
-    const provider = openProvider(application, config.get('providers'), opened, blueprint);
+    const provider = openProvider(application, configuredProviders, opened, blueprint.provider);
     const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
+    const compactionProvider =
+      blueprint.compaction === undefined
+        ? provider
+        : openProvider(application, configuredProviders, opened, blueprint.compaction.provider);
     const compactionModel =
-      blueprint.compaction.model === undefined
+      blueprint.compaction === undefined
         ? model
-        : modelConfigFor(provider, blueprint.compaction.model);
+        : modelConfigFor(compactionProvider, blueprint.compaction.model);
 
     application.addAgent(
       new Agent(database, provider, model, {
         agentId,
         compactionModel,
+        compactionProvider,
         context: blueprint.context,
         gate: blueprint.gate,
         logger,
@@ -94,8 +147,6 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       }),
     );
   }
-
-  return application;
 }
 
 /**
@@ -107,16 +158,16 @@ function openProvider(
   application: NoxApplication,
   configured: Record<string, ProviderConfig>,
   opened: Map<string, ChatProvider>,
-  blueprint: Blueprint,
+  providerId: string,
 ): ChatProvider {
-  const existing = opened.get(blueprint.provider);
+  const existing = opened.get(providerId);
   if (existing !== undefined) return existing;
 
-  const entry = configured[blueprint.provider];
+  const entry = configured[providerId];
   if (entry === undefined) {
     const known = Object.keys(configured);
     throw new Error(
-      `A blueprint names provider "${blueprint.provider}", which providers.json does not ` +
+      `A blueprint names provider "${providerId}", which providers.json does not ` +
         (known.length === 0 ? 'configure at all.' : `configure. Configured: ${known.join(', ')}.`),
     );
   }
@@ -124,12 +175,12 @@ function openProvider(
   const contribution = application.contributions.get(providers, entry.type);
   if (contribution === undefined) {
     throw new Error(
-      `Provider "${blueprint.provider}" is of type "${entry.type}", which no extension contributed.`,
+      `Provider "${providerId}" is of type "${entry.type}", which no extension contributed.`,
     );
   }
 
   const provider = contribution.value.create(entry);
-  opened.set(blueprint.provider, provider);
+  opened.set(providerId, provider);
   return provider;
 }
 

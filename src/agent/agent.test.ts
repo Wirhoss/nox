@@ -20,6 +20,7 @@ const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
 
 interface Request {
   history: Message[];
+  modelId?: string;
   systemPrompt: string;
   toolNames: string[];
 }
@@ -64,11 +65,12 @@ class RecordingProvider extends ChatProvider {
     systemPrompt: string,
     messageHistory: Message[],
     tools: Tool[],
-    _opts: TextGenerateOptions | undefined,
+    opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
     this.requests.push({
       history: [...messageHistory],
+      modelId: opts?.model?.modelId,
       systemPrompt,
       toolNames: tools.map((tool) => tool.name),
     });
@@ -444,6 +446,36 @@ describe('Agent', () => {
     });
 
     expect(() => agent.openSession()).toThrow('Tool version cannot be both direct and routed.');
+  });
+
+  test('uses the separately configured provider and model for compaction', async () => {
+    const mainProvider = new RecordingProvider();
+    const compactionProvider = new RecordingProvider();
+    const agent = new Agent(await openDatabase(), mainProvider, MODEL, {
+      agentId: 'test',
+      compactionModel: { modelId: 'compact-model', type: 'text' },
+      compactionProvider,
+      context: {
+        compactAtRatio: 0.5,
+        compactGuardBeginningTokens: 0,
+        compactGuardEndTokens: 0,
+        compactMinTokens: 1,
+        contextWindow: 100,
+        reserveForOutput: 1,
+        tokenCounter: (text) => text.length,
+      },
+      systemPrompt: 'system',
+    });
+
+    const session = await agent.openSession();
+    session.send('a long message that puts this deliberately tiny context under pressure');
+    await session.idle;
+
+    expect(compactionProvider.requests).toHaveLength(1);
+    expect(compactionProvider.requests[0]?.modelId).toBe('compact-model');
+    expect(mainProvider.requests).toHaveLength(1);
+    expect(mainProvider.requests[0]?.modelId).toBe('test-model');
+    await session.stop();
   });
 
   test('sessions from one agent keep separate transcripts', async () => {

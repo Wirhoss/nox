@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
+import { apiConfigSchema } from '../api/config';
 import { databaseConfigSchema } from '../database/config';
 import { LOG_LEVELS } from '../logger/logger';
 
 const appConfigSchema = z.object({
+  api: apiConfigSchema.prefault({}),
   database: databaseConfigSchema.prefault({}),
   logLevel: z.enum(LOG_LEVELS).default('info'),
 });

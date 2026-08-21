@@ -22,6 +22,7 @@ import type { ChatProvider } from '../provider/provider';
 
 const created: string[] = [];
 
+const apiDefaults = { host: '0.0.0.0', port: 8080 } as const;
 const databaseDefaults = { busyTimeoutMs: 5000, path: 'nox.db', synchronous: 'normal' } as const;
 
 async function configDir(): Promise<string> {
@@ -101,7 +102,6 @@ describe('blueprint config', () => {
     expect(
       blueprintSchema.parse({ model: 'main-model', provider: 'main', systemPrompt: 'be exact' }),
     ).toEqual({
-      compaction: {},
       context: {},
       description: '',
       generation: {},
@@ -113,7 +113,7 @@ describe('blueprint config', () => {
 
     expect(
       blueprintSchema.parse({
-        compaction: { model: 'small-model' },
+        compaction: { model: 'small-model', provider: 'compact-provider' },
         context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
         generation: { maxTokens: 1000, temperature: 0.2 },
         maxIterations: 'unlimited',
@@ -122,11 +122,20 @@ describe('blueprint config', () => {
         systemPrompt: 'be exact',
       }),
     ).toMatchObject({
-      compaction: { model: 'small-model' },
+      compaction: { model: 'small-model', provider: 'compact-provider' },
       context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
       generation: { maxTokens: 1000, temperature: 0.2 },
       maxIterations: 'unlimited',
     });
+
+    expect(
+      blueprintSchema.safeParse({
+        compaction: { model: 'small-model' },
+        model: 'main-model',
+        provider: 'main',
+        systemPrompt: 'be exact',
+      }).success,
+    ).toBeFalse();
   });
 });
 
@@ -136,7 +145,7 @@ describe('config files', () => {
 
     const value = await loadSection(appSection, context(dir));
 
-    expect(value).toEqual({ database: databaseDefaults, logLevel: 'info' });
+    expect(value).toEqual({ api: apiDefaults, database: databaseDefaults, logLevel: 'info' });
     expect(await read(dir, 'app.json')).toEqual(value);
   });
 
@@ -148,6 +157,7 @@ describe('config files', () => {
 
     expect(value.database).toEqual(databaseDefaults);
     expect(await read(dir, 'app.json')).toEqual({
+      api: apiDefaults,
       database: databaseDefaults,
       logLevel: 'warn',
     });
@@ -156,6 +166,7 @@ describe('config files', () => {
   test('leaves an already complete file untouched', async () => {
     const dir = await configDir();
     await write(dir, 'app.json', {
+      api: apiDefaults,
       database: databaseDefaults,
       logLevel: 'warn',
     });
@@ -306,6 +317,7 @@ describe('Config', () => {
 
     expect(config.env.environment).toBe('test');
     expect(config.get('app')).toEqual({
+      api: apiDefaults,
       database: databaseDefaults,
       logLevel: 'info',
     });
@@ -317,6 +329,7 @@ describe('Config', () => {
     const config = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
 
     const result = await config.update('app', {
+      api: apiDefaults,
       database: databaseDefaults,
       logLevel: 'debug',
     });
@@ -334,7 +347,7 @@ describe('Config', () => {
     const levels = ['debug', 'error', 'info', 'trace', 'warn'] as const;
     const results = await Promise.all(
       levels.map(async (logLevel) =>
-        config.update('app', { database: databaseDefaults, logLevel }),
+        config.update('app', { api: apiDefaults, database: databaseDefaults, logLevel }),
       ),
     );
 
@@ -352,6 +365,7 @@ describe('Config', () => {
     const second = await Config.load(readEnvConfig({ CONFIG_DIR: dir, NODE_ENV: 'test' }));
 
     await first.update('app', {
+      api: apiDefaults,
       database: databaseDefaults,
       logLevel: 'error',
     });

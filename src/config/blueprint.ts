@@ -19,14 +19,15 @@ import { gatePolicySchema } from '../tool/gate/config';
  * for it here would be configuration nothing reads.
  */
 const compactionConfigSchema = z.object({
-  /** Omit to compact with the agent's configured model. */
-  model: z.string().min(1).optional(),
+  model: z.string().min(1),
+  provider: z.string().min(1),
 });
 
 const maxIterationsSchema = z.union([z.number().int().positive(), z.literal('unlimited')]);
 
 const blueprintSchema = z.object({
-  compaction: compactionConfigSchema.prefault({}),
+  /** Omit the whole block to inherit the agent's provider and model. */
+  compaction: compactionConfigSchema.optional(),
   context: contextPolicySchema.prefault({}),
   description: z.string().default(''),
   gate: gatePolicySchema.optional(),
