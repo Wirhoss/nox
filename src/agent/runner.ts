@@ -1,12 +1,13 @@
 import { nanoid } from 'nanoid';
 
-import { prepareTool } from '../tool/tool';
+import { prepareToolCall, type ToolExecution } from '../tool/tool';
 
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ProviderError } from '../provider/error';
 import type { ChatProvider } from '../provider/provider';
 import type { Usage } from '../provider/stream';
+import type { GateRequest, PermissionResolution, SessionGate } from '../tool/gate';
 import type { EventLog } from '../utils/eventLog';
 import type { Context } from './context/context';
 import type {
@@ -27,6 +28,11 @@ interface RunnerOptions {
   logger?: Logger;
   /** `'unlimited'` runs until the model stops asking for tools. At your risk. */
   maxIterations?: 'unlimited' | number;
+}
+
+interface RunnerConstructionOptions extends RunnerOptions {
+  gate?: SessionGate;
+  sessionId?: string;
 }
 
 function toError(error: unknown): Error {
@@ -55,10 +61,12 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
 class Runner {
   readonly #context: Context;
   readonly #events: EventLog<AgentEvent>;
+  readonly #gate?: SessionGate;
   readonly #logger?: Logger;
   readonly #maxIterations: number;
   readonly #model: ModelConfig;
   readonly #provider: ChatProvider;
+  readonly #sessionId?: string;
 
   /** Waiting to enter the context: user messages and deferred results alike. */
   readonly #queue: Message[] = [];
@@ -76,14 +84,19 @@ class Runner {
     events: EventLog<AgentEvent>,
     provider: ChatProvider,
     model: ModelConfig,
-    options: RunnerOptions = {},
+    options: RunnerConstructionOptions = {},
   ) {
     this.#context = context;
     this.#events = events;
     this.#provider = provider;
     this.#model = model;
+    this.#gate = options.gate;
     this.#logger = options.logger;
     this.#maxIterations = resolveMaxIterations(options.maxIterations);
+    this.#sessionId = options.sessionId;
+    if (this.#gate !== undefined && this.#sessionId === undefined) {
+      throw new Error('A gated runner requires a sessionId.');
+    }
   }
 
   /** Resolves when the current run finishes; already resolved while idle. */
@@ -319,7 +332,9 @@ class Runner {
 
     const startedAt = Date.now();
     try {
-      const execution = prepareTool(tool, call.arguments);
+      const { execution, params } = prepareToolCall(tool, call.arguments);
+      const rejected = await this.#authorize(call, execution, params);
+      if (rejected !== undefined) return rejected;
 
       if (execution.type === 'deferred') {
         const { ack, result } = await execution.run({ abortSignal: this.#session.signal });
@@ -350,6 +365,70 @@ class Runner {
         `Error executing tool ${call.name}: ${toError(error).message}`,
         true,
       );
+    }
+  }
+
+  async #authorize(
+    call: ToolCallMessage,
+    execution: ToolExecution,
+    params: Readonly<Record<string, unknown>>,
+  ): Promise<ToolResponseMessage | undefined> {
+    if (this.#gate === undefined || this.#sessionId === undefined) return undefined;
+
+    const subject = execution.gateSubject ?? {
+      params,
+      toolName: call.name,
+      toolSetId: 'nox.internal',
+    };
+    const request: GateRequest = {
+      params: subject.params,
+      preview: execution.preview,
+      risk: execution.risk,
+      sessionId: this.#sessionId,
+      title: execution.title,
+      toolName: subject.toolName,
+      toolSetId: subject.toolSetId,
+      trackId: call.trackId,
+    };
+    const decision = await this.#gate.evaluate(request);
+    if (decision.verdict === 'allow') return undefined;
+    if (decision.verdict === 'deny') {
+      return this.#toolResponse(
+        call,
+        'immediate',
+        `Tool call denied by policy: ${decision.reason} Do not retry unless the user changes the request.`,
+        true,
+      );
+    }
+
+    const pending = this.#gate.requestPermission(request, decision, this.#runSignal());
+    this.#events.push({ request: pending.request, type: 'permissionRequested' });
+    const resolution = await pending.outcome;
+    this.#events.push({
+      requestId: pending.request.requestId,
+      resolution,
+      type: 'permissionResolved',
+    });
+    if (resolution.resolution === 'approved') return undefined;
+
+    return this.#toolResponse(
+      call,
+      'immediate',
+      Runner.#permissionFailure(decision.reason, resolution),
+      true,
+    );
+  }
+
+  static #permissionFailure(reason: string, resolution: PermissionResolution): string {
+    switch (resolution.resolution) {
+      case 'aborted':
+        return `Tool call not executed: ${reason} The run was interrupted before approval.`;
+      case 'denied':
+        return `Tool call not executed: ${reason} The user denied permission.`;
+      case 'timeout':
+        return `Tool call not executed: ${reason} Permission timed out.`;
+      case 'approved':
+        throw new Error('An approved permission is not a failure.');
     }
   }
 

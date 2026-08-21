@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
 import { Database } from './database';
-import { messages, sessions } from './schema';
+import { gateDecisions, messages, sessions } from './schema';
 
 const directories: string[] = [];
 let open: Database | undefined;
@@ -107,6 +107,7 @@ describe('Database.open', () => {
       .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
       .map((row) => row.name);
 
+    expect(tables).toContain('gate_decisions');
     expect(tables).toContain('messages');
     expect(tables).toContain('sessions');
     expect(tables).toContain('__drizzle_migrations');
@@ -292,7 +293,7 @@ describe('Database schema', () => {
     expect(rows[3]?.refMessageIds).toEqual(['user-1', 'call-1']);
   });
 
-  test('cascades message deletion with its session', async () => {
+  test('cascades transcript and gate audit deletion with its session', async () => {
     const database = await openDatabase();
     await seedSession(database, 'session-a');
 
@@ -306,10 +307,27 @@ describe('Database schema', () => {
           sessionId: 'session-a',
         })
         .run();
+      tx.insert(gateDecisions)
+        .values({
+          createdAt: Date.now(),
+          decidedBy: 'rules',
+          decisionId: 'decision-1',
+          params: {},
+          reason: 'blocked',
+          sessionId: 'session-a',
+          signals: [],
+          title: 'Dangerous action',
+          toolName: 'bash',
+          toolSetId: 'shell',
+          trackId: 'track-1',
+          verdict: 'deny',
+        })
+        .run();
       tx.delete(sessions).where(eq(sessions.sessionId, 'session-a')).run();
     });
 
     expect(await database.db.select().from(messages)).toHaveLength(0);
+    expect(await database.db.select().from(gateDecisions)).toHaveLength(0);
   });
 
   test('rejects a message whose session does not exist', async () => {

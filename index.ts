@@ -1,9 +1,9 @@
-import { main } from './src/main';
+import { run } from './src/cli';
 
 try {
-  await main();
+  await run();
 } catch (error) {
-  // The composition root is the last place an error can still be readable.
+  // The entry point is the last place an error can still be readable.
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 }

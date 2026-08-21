@@ -319,7 +319,8 @@ v1 is done when this is demonstrably true:
 
 **Contribution model** ✅ — the contract half of `idk_yet/` is ported to
 `src/extensions/`: contribution points, service tokens, disposables, `defineExtension`.
-No manifests, no host. `src/application.ts` activates and disposes them.
+No manifests, no host. `src/application.ts` activates and disposes them, and is
+also where agents and live sessions are held.
 
 ~~**Write boundary**~~ — cut from the design, not deferred. See "What the kernel
 keeps instead: no way in but append".
@@ -333,12 +334,23 @@ keeps instead: no way in but append".
 | Web UI | There is a session worth watching |
 | Message gateway / brokers | A session runs end-to-end locally |
 | Agent blueprints | More than one agent config exists in practice |
-| Gates / permissions | Tools can do something worth gating |
 | Embedding retrieval | Keyed + BM25 recall is demonstrably insufficient |
 | Apps (council, D&D) | The kernel and surfaces are stable |
 | Multi-provider | One provider works completely |
 
 Nothing on that list is cancelled. Every one of them is *later*.
+
+**Gates are no longer deferred.** Tool execution is real, including routed and
+background work, so the trigger was met. The deterministic core has agent policy
+rules, explicit defaults, exact live-session approvals, concurrent human
+escalation, timeout/abort handling, stable tool-set grants and enforcement
+between validated preparation and `run()`. Tools may now declare effects,
+resources, reversibility and volume; configurable built-in heuristics turn those
+facts into structured risk signals, and additional evaluators plug into the same
+contract without gaining authority over explicit policy. Every decision and
+human resolution is persisted outside the transcript for audit and survives
+session reopen. No reviewer model is implemented; if one is ever earned, it will
+be only another advisory evaluator and can never weaken deterministic policy.
 
 ---
 
@@ -498,11 +510,13 @@ in it.
   another. "The kernel imports nothing concrete" stopped being a review
   convention the moment there was something concrete to import.
 
-**The process has an entrypoint.** `src/main.ts` is the composition root: it
-reads the environment, loads configuration, opens storage, activates the builtin
-extensions, resolves a provider from what they contributed, builds an agent and
-runs a session on stdin. `index.ts` is the eight lines that call it. It is the
-only file allowed to name a builtin, and `boundaries.test.ts` names it.
+**The process has an entrypoint, and it is three files, not one.**
+`src/bootstrap.ts` is the composition root: it reads the environment, loads
+configuration, opens storage, hands all three to the application as services,
+activates the builtin extensions, resolves a provider from what they contributed
+and registers the agent it builds. It is the only file allowed to name a builtin,
+and `boundaries.test.ts` names it. `src/cli.ts` is a surface — one terminal
+attached to one session — and `index.ts` is the eight lines that call it.
 
 - **Provider settings come from the environment, not a config section.** An API
   key does not belong in a file on disk, and a second provider is what earns a
@@ -517,8 +531,9 @@ only file allowed to name a builtin, and `boundaries.test.ts` names it.
 > configured `contextWindow` that branch was skipped entirely and control fell
 > through to compaction, so the configuration folded **zero** times and compacted
 > twice in sixty turns: Law 2 exactly inverted, the lossy path running as the
-> first resort while the lossless one never ran at all. `main.ts` passed no
-> context options, so the entrypoint ran in precisely that configuration.
+> first resort while the lossless one never ran at all. The composition root
+> passed no context options, so the entrypoint ran in precisely that
+> configuration.
 
 Three parts, complementary rather than alternative: folding moved to the end of
 the tool loop where Law 2 says it belongs and needs no budget to justify itself;
@@ -638,7 +653,7 @@ covered the right cases and were still read as a checklist, not copied.
 5. service.ts        tokens, locked collection         (error)            ✅
 6. manifest.ts       identity + engines, no deps graph (identifier)       ✅
 7. extension.ts      ExtensionContext, defineExtension (manifest)         ✅
-8. application.ts    the composition root              (all of the above) ✅
+8. application.ts    the running application           (all of the above) ✅
 ```
 
 `host.ts` stays in `idk_yet/`, deferred as planned. `manifest.ts` came across
@@ -686,11 +701,26 @@ distributed yet.
   activation still releases what it took. A returned disposable is lost in
   exactly that case, and it was a second way to do what `subscriptions` already
   did.
-- **`NoxApplication` is a composition root, not an extension host.** It activates in
-  registration order, deactivates in reverse, disposes what extensions owned, and
-  refuses configuration once started. It does **not** roll back a failed
-  activation: a builtin that cannot start is a wiring bug, and recovering from
-  one is the deferred machinery. `stop()` still releases whatever activated.
+- **`NoxApplication` is the running application, not an extension host and not
+  the composition root.** It activates in registration order, deactivates in
+  reverse, disposes what extensions owned, and refuses configuration once
+  started. It does **not** roll back a failed activation: a builtin that cannot
+  start is a wiring bug, and recovering from one is the deferred machinery.
+  `stop()` still releases whatever activated.
+- **It holds the agents and the live sessions, so "what is running" has an
+  answer.** `addAgent` / `getAgent` / `agentIds`, and `openSession` /
+  `closeSession` / `sessions`. The registry is self-cleaning: a session stopped
+  through its own handle drops out of `sessions`, so the list is never a set of
+  conversations that already ended. Agents may join a Nox that is already
+  running — authoring one is something a surface does, not something a restart
+  does — while extensions and services stay frozen at start, because an
+  extension already activated would otherwise see the set move.
+- **`own()` exists so shutdown has one owner.** The composition root hands the
+  application the database as a disposable and the application releases it once
+  every extension is down. The alternative — a `shutdown` closure beside the
+  application, closing what the application does not know about — is how the
+  teardown order came to be split across two files in the first place. `stop()`
+  is the whole shutdown: sessions, then extensions, then what it owns.
 - **`nox.providers` is the only contribution point declared.** Its consumer
   (`Agent`) and its producer (the provider adapter) both exist or are next. A
   `nox.toolSets` point waits for the first concrete tool set — `src/` has none:
@@ -702,7 +732,9 @@ distributed yet.
   which may reload. `ProviderContribution` is an object rather than a bare
   function so later fields do not break every registration site.
 - **Three service tokens: `nox.config`, `nox.database`, `nox.logger`.** Types
-  only, so declaring them keeps the kernel free of concrete imports.
+  only, so declaring them keeps the kernel free of concrete imports. The
+  composition root `provide()`s all three: a token nothing provides is a
+  `MissingServiceError` waiting for the first extension that asks.
 
 **Debt to fix during the port, not after** — from the previous architecture
 review:
@@ -725,8 +757,11 @@ review:
 - **Validation is zod.** The old `validate.ts` assert helpers are gone.
   `utils/validate.ts` now holds `parseOrThrow`, which collapses a zod issue list
   into a single-line `RangeError` — a config mistake has to read like a sentence.
-- **Gates were dropped from `ToolSet`.** Its only tie to the deferred gate
-  subsystem. It comes back when gates do.
+- **Gate policy belongs to the agent, not `ToolSet`.** Tool sets are granted with
+  stable IDs so policy can name their provenance, but a capability does not
+  decide its own authorization. Routed calls carry the selected underlying
+  tool's identity through `call_tool`, so the wrapper cannot hide what will
+  actually execute.
 - **Folding is measured.** See Law 2.
 - **`maxMessageTokens` was removed, not ported forward.** It rejected any
   message over a token ceiling, which meant the one case it ever fired on — an

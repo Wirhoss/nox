@@ -1,6 +1,13 @@
 import { nanoid } from 'nanoid';
 
 import { SessionStore } from '../database/sessionStore';
+import {
+  type GateAuditRecord,
+  type GateEvaluator,
+  type GatePolicyInput,
+  type PermissionRequest,
+  SessionGate,
+} from '../tool/gate';
 import { EventLog } from '../utils/eventLog';
 import { Context } from './context/context';
 import { Runner, type RunnerOptions, type RunnerState } from './runner';
@@ -16,6 +23,8 @@ import type { AgentEvent } from './events';
 interface SessionOptions extends RunnerOptions {
   /** Everything the context needs except the history, which comes from storage. */
   context?: Omit<ContextOptions, 'fullHistory' | 'onAppend'>;
+  gate?: GatePolicyInput;
+  gateEvaluators?: readonly GateEvaluator[];
   logger?: Logger;
   metadata?: Readonly<Record<string, unknown>>;
   /** Omit to start a new session; pass one to resume it. */
@@ -45,6 +54,7 @@ function toUserMessage(text: string): UserMessage {
 class Session {
   readonly #context: Context;
   readonly #events = new EventLog<AgentEvent>();
+  readonly #gate?: SessionGate;
   readonly #runner: Runner;
   readonly #sessionId: string;
   readonly #store: SessionStore;
@@ -69,9 +79,25 @@ class Session {
       },
     });
 
+    this.#gate =
+      options.gate === undefined
+        ? undefined
+        : new SessionGate(sessionId, options.gate, {
+            audit: {
+              record: (record) => {
+                this.#store.recordGateDecision(record);
+              },
+              resolve: (decisionId, resolution, resolvedAt) => {
+                this.#store.resolveGateDecision(sessionId, decisionId, resolution, resolvedAt);
+              },
+            },
+            evaluators: options.gateEvaluators,
+          });
     this.#runner = new Runner(this.#context, this.#events, provider, model, {
+      gate: this.#gate,
       logger: options.logger,
       maxIterations: options.maxIterations,
+      sessionId,
     });
   }
 
@@ -134,6 +160,21 @@ class Session {
     return this.#runner.state;
   }
 
+  public getPendingPermissions(): readonly PermissionRequest[] {
+    return this.#gate?.listPending() ?? Object.freeze([]);
+  }
+
+  public getPermissionAudit(): Promise<readonly GateAuditRecord[]> {
+    return this.#store.loadGateDecisions(this.#sessionId);
+  }
+
+  public resolvePermission(
+    requestId: string,
+    resolution: 'denied' | { approved: 'once' | 'session' },
+  ): boolean {
+    return this.#gate?.resolve(requestId, resolution) ?? false;
+  }
+
   public abort(): Promise<boolean> {
     return this.#runner.abort();
   }
@@ -158,6 +199,7 @@ class Session {
 
   /** Ends the session and waits for what it wrote to reach storage. */
   public async stop(): Promise<void> {
+    this.#gate?.stop();
     await this.#runner.stop();
     await this.#store.flushed;
   }

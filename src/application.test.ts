@@ -10,12 +10,49 @@ import {
 import { defineExtension, type NoxExtension } from './extensions/extension';
 import { createServiceToken } from './extensions/service';
 
+import type { Agent, OpenSessionOptions } from './agent/agent';
+import type { RunnerState } from './agent/runner';
+import type { Session } from './agent/session';
+
 interface Greeter {
   greet(): string;
 }
 
+/** Only what the application actually touches on a session it is holding. */
+interface FakeSession {
+  sessionId: string;
+  state: RunnerState;
+  stop(): Promise<void>;
+}
+
 const greeters = createContributionPoint<Greeter>('nox.greeters');
 const clockService = createServiceToken<{ now(): number }>('nox.clock');
+
+function stubSession(sessionId: string, order: string[]): FakeSession {
+  const session: FakeSession = {
+    sessionId,
+    state: 'idle',
+    stop(): Promise<void> {
+      session.state = 'stopped';
+      order.push(`stop:${sessionId}`);
+      return Promise.resolve();
+    },
+  };
+  return session;
+}
+
+/** An agent that hands out sessions without a provider or a database behind it. */
+function stubAgent(order: string[]): Agent {
+  let opened = 0;
+
+  return {
+    openSession(options: OpenSessionOptions = {}): Promise<Session> {
+      opened += 1;
+      const session = stubSession(options.sessionId ?? `session-${String(opened)}`, order);
+      return Promise.resolve(session as unknown as Session);
+    },
+  } as unknown as Agent;
+}
 
 /** Records its lifecycle into a shared log so ordering is observable. */
 function tracer(id: string, order: string[]): NoxExtension {
@@ -212,5 +249,105 @@ describe('NoxApplication', () => {
     await app.stop();
 
     expect(order.filter((entry) => entry === 'dispose:nox.only')).toHaveLength(1);
+  });
+});
+
+describe('NoxApplication agents and sessions', () => {
+  test('lists registered agents, sorted, and refuses a duplicate id', () => {
+    const order: string[] = [];
+    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    app.addAgent('analyst', stubAgent(order));
+
+    expect(app.agentIds).toEqual(['analyst', 'writer']);
+    expect(app.getAgent('writer')).toBeDefined();
+    expect(app.getAgent('missing')).toBeUndefined();
+    expect(() => app.addAgent('writer', stubAgent(order))).toThrow('already registered');
+  });
+
+  test('holds the sessions it opened and drops them when they are closed', async () => {
+    const order: string[] = [];
+    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    await app.start();
+
+    const first = await app.openSession('writer', { sessionId: 'a' });
+    await app.openSession('writer', { sessionId: 'b' });
+
+    expect(app.sessions.map((live) => live.session.sessionId)).toEqual(['a', 'b']);
+    expect(app.sessions.every((live) => live.agentId === 'writer')).toBe(true);
+
+    expect(await app.closeSession(first.sessionId)).toBe(true);
+    expect(await app.closeSession(first.sessionId)).toBe(false);
+    expect(app.sessions.map((live) => live.session.sessionId)).toEqual(['b']);
+    expect(order).toEqual(['stop:a']);
+  });
+
+  test('a session stopped through its own handle is no longer running', async () => {
+    const order: string[] = [];
+    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    await app.start();
+
+    const session = await app.openSession('writer', { sessionId: 'a' });
+    expect(app.sessions).toHaveLength(1);
+
+    await session.stop();
+
+    expect(app.sessions).toEqual([]);
+  });
+
+  test('refuses to open a session for an unknown agent, or while not running', async () => {
+    const order: string[] = [];
+    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+
+    const beforeStart: unknown = await app.openSession('writer').catch((error: unknown) => error);
+    expect((beforeStart as Error).message).toBe('Nox cannot open a session while it is created.');
+
+    await app.start();
+    const unknownAgent: unknown = await app.openSession('ghost').catch((error: unknown) => error);
+    expect((unknownAgent as Error).message).toBe('No agent is registered as ghost.');
+
+    await app.stop();
+    const afterStop: unknown = await app.openSession('writer').catch((error: unknown) => error);
+    expect((afterStop as Error).message).toBe('Nox cannot open a session while it is stopped.');
+  });
+
+  test('shutdown ends conversations, then extensions, then what it was given to own', async () => {
+    const order: string[] = [];
+    const app = new NoxApplication({ extensions: [tracer('nox.only', order)] });
+    app.addAgent('writer', stubAgent(order));
+    app.own({
+      dispose() {
+        order.push('dispose:storage');
+      },
+    });
+
+    await app.start();
+    await app.openSession('writer', { sessionId: 'a' });
+    await app.stop();
+
+    expect(order).toEqual([
+      'activate:nox.only',
+      'stop:a',
+      'deactivate:nox.only',
+      'dispose:nox.only',
+      'dispose:storage',
+    ]);
+    expect(app.sessions).toEqual([]);
+  });
+
+  test('refuses ownership of a resource once it has started, and agents once stopped', async () => {
+    const order: string[] = [];
+    const app = new NoxApplication().addAgent('writer', stubAgent(order));
+    await app.start();
+
+    expect(() =>
+      app.own({
+        dispose() {
+          order.push('dispose:never');
+        },
+      }),
+    ).toThrow('while Nox is running');
+
+    await app.stop();
+    expect(() => app.addAgent('late', stubAgent(order))).toThrow('while Nox is stopped');
   });
 });

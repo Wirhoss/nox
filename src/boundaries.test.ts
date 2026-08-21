@@ -10,7 +10,7 @@ const BUILTIN = 'extensions/builtin/';
 // The composition root is the one layer allowed to name concrete
 // capabilities — that is what makes it the composition root. Naming it here
 // rather than pattern-matching keeps a second one from appearing quietly.
-const COMPOSITION_ROOT = 'main.ts';
+const COMPOSITION_ROOT = 'bootstrap.ts';
 
 function posix(path: string): string {
   return path.replaceAll('\\', '/');

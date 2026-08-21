@@ -7,12 +7,14 @@ import { z } from 'zod';
 
 import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
-import { type Tool, ToolSet } from '../tool/tool';
+import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
+import type { PermissionRequest } from '../tool/gate';
 import type { Message, MessageContent } from './context/message';
+import type { Session } from './session';
 
 const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
 
@@ -71,6 +73,40 @@ class RecordingProvider extends ChatProvider {
       toolNames: tools.map((tool) => tool.name),
     });
     yield { text: 'ok', type: 'textFragment' };
+    yield { type: 'end' };
+  }
+}
+
+class ToolCallingProvider extends ChatProvider {
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  constructor() {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    if (messageHistory.at(-1)?.role === 'user') {
+      yield {
+        toolCall: {
+          arguments: {},
+          name: 'echo',
+          role: 'toolCall',
+          trackId: `echo-${String(messageHistory.length)}`,
+        },
+        type: 'toolCall',
+      };
+    } else {
+      yield { text: 'done', type: 'textFragment' };
+    }
     yield { type: 'end' };
   }
 }
@@ -157,11 +193,173 @@ function toolSet(...tools: Tool[]): ToolSet {
   return new TestToolSet(tools);
 }
 
+function grant(toolSetId: string, ...tools: Tool[]): ToolSetGrant {
+  return { toolSet: toolSet(...tools), toolSetId };
+}
+
+async function waitForPermission(session: Session): Promise<PermissionRequest> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const pending = session.getPendingPermissions()[0];
+    if (pending !== undefined) return pending;
+    await Bun.sleep(1);
+  }
+  throw new Error('Permission request did not appear.');
+}
+
 describe('Agent', () => {
+  test('holds a tool before execution until the session approves it', async () => {
+    let executions = 0;
+    const guarded = {
+      ...echoTool(),
+      prepare: () => ({
+        run: () => {
+          executions += 1;
+          return Promise.resolve([{ text: 'echoed', type: 'text' as const }]);
+        },
+        title: 'Echo a value',
+        type: 'immediate' as const,
+      }),
+      risk: {
+        effects: ['write'] as const,
+        resources: [{ kind: 'file' as const, value: '/outside/result.txt' }],
+      },
+    };
+    const agent = new Agent(await openDatabase(), new ToolCallingProvider(), MODEL, {
+      directToolSets: [grant('direct', guarded)],
+      gate: {
+        defaultVerdict: 'allow',
+        escalationTimeoutMs: 1_000,
+        heuristics: { allowedRoots: ['/workspace'] },
+      },
+      systemPrompt: 'system',
+    });
+    const session = await agent.openSession();
+
+    session.send('use echo');
+    const pending = await waitForPermission(session);
+
+    expect(executions).toBe(0);
+    expect(pending).toMatchObject({
+      signals: [{ code: 'outside_allowed_root', severity: 'approval' }],
+      title: 'Echo a value',
+      toolName: 'echo',
+      toolSetId: 'direct',
+    });
+    expect(session.resolvePermission(pending.requestId, { approved: 'once' })).toBeTrue();
+    await session.idle;
+
+    expect(executions).toBe(1);
+    expect(session.getTranscript().some((message) => message.role === 'toolResponse')).toBeTrue();
+    const events = [];
+    for await (const event of session.events) {
+      events.push(event.type);
+      if (event.type === 'runCompleted') break;
+    }
+    expect(events).toContain('permissionRequested');
+    expect(events).toContain('permissionResolved');
+
+    const audit = await session.getPermissionAudit();
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({
+      decidedBy: 'heuristics',
+      resolution: 'approved',
+      scope: 'once',
+      toolName: 'echo',
+      toolSetId: 'direct',
+      verdict: 'escalate',
+    });
+    expect(audit[0]?.resolvedAt).toBeInstanceOf(Date);
+    await session.stop();
+
+    const reopened = await agent.openSession({ sessionId: session.sessionId });
+    expect(await reopened.getPermissionAudit()).toEqual(audit);
+    await reopened.stop();
+  });
+
+  test('turns a policy denial into a paired error response without executing', async () => {
+    let executions = 0;
+    const guarded = {
+      ...echoTool(),
+      prepare: () => ({
+        run: () => {
+          executions += 1;
+          return Promise.resolve([]);
+        },
+        title: 'Echo',
+        type: 'immediate' as const,
+      }),
+    };
+    const agent = new Agent(await openDatabase(), new ToolCallingProvider(), MODEL, {
+      directToolSets: [grant('direct', guarded)],
+      gate: {
+        defaultVerdict: 'allow',
+        rules: [{ reason: 'blocked by policy', tools: ['echo'], verdict: 'deny' }],
+      },
+      systemPrompt: 'system',
+    });
+    const session = await agent.openSession();
+
+    session.send('use echo');
+    await session.idle;
+
+    const response = session.getTranscript().find((message) => message.role === 'toolResponse');
+    expect(executions).toBe(0);
+    expect(response).toMatchObject({ isError: true, name: 'echo', role: 'toolResponse' });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(await session.getPermissionAudit()).toMatchObject([
+      {
+        decidedBy: 'rules',
+        reason: 'blocked by policy',
+        resolution: undefined,
+        toolName: 'echo',
+        verdict: 'deny',
+      },
+    ]);
+    await session.stop();
+  });
+
+  test('gates the selected routed tool rather than the call_tool wrapper', async () => {
+    const agent = new Agent(await openDatabase(), new RoutingProvider(), MODEL, {
+      gate: {
+        defaultVerdict: 'allow',
+        rules: [
+          {
+            reason: 'version access needs approval',
+            tools: ['version'],
+            toolSets: ['versions'],
+            verdict: 'escalate',
+          },
+        ],
+      },
+      routedToolSets: [grant('versions', versionTool('one'))],
+      systemPrompt: 'system',
+    });
+    const session = await agent.openSession();
+
+    session.send('check version');
+    const pending = await waitForPermission(session);
+
+    expect(pending).toMatchObject({
+      reason: 'version access needs approval',
+      toolName: 'version',
+      toolSetId: 'versions',
+    });
+    session.resolvePermission(pending.requestId, { approved: 'once' });
+    await session.idle;
+
+    const response = session
+      .getTranscript()
+      .find((message) => message.role === 'toolResponse' && message.name === 'call_tool');
+    expect(response?.role === 'toolResponse' ? response.response : []).toEqual([
+      { text: 'one', type: 'text' },
+    ]);
+    await session.stop();
+  });
+
   test('sessions opened from the same tool configuration send the same request head', async () => {
     const provider = new RecordingProvider();
     const agent = new Agent(await openDatabase(), provider, MODEL, {
-      directToolSets: [toolSet(echoTool())],
+      directToolSets: [grant('direct', echoTool())],
       systemPrompt: 'you are nox',
     });
 
@@ -186,8 +384,10 @@ describe('Agent', () => {
 
   test('new and loaded sessions snapshot the current direct and routed tools', async () => {
     const provider = new RoutingProvider();
-    const directToolSets: ToolSet[] = [toolSet({ ...echoTool(), name: 'alpha' })];
-    const routedToolSets: ToolSet[] = [toolSet(versionTool('one'))];
+    const directToolSets: ToolSetGrant[] = [
+      grant('direct-alpha', { ...echoTool(), name: 'alpha' }),
+    ];
+    const routedToolSets: ToolSetGrant[] = [grant('versions', versionTool('one'))];
     const agent = new Agent(await openDatabase(), provider, MODEL, {
       directToolSets,
       routedToolSets,
@@ -195,8 +395,8 @@ describe('Agent', () => {
     });
 
     const openingFirst = agent.openSession({ sessionId: 'shared' });
-    directToolSets.push(toolSet({ ...echoTool(), name: 'beta' }));
-    routedToolSets[0] = toolSet(versionTool('two'));
+    directToolSets.push(grant('direct-beta', { ...echoTool(), name: 'beta' }));
+    routedToolSets[0] = grant('versions', versionTool('two'));
     const first = await openingFirst;
 
     first.send('first');
@@ -232,8 +432,8 @@ describe('Agent', () => {
   test('rejects ambiguous direct and routed tool assignments before opening', async () => {
     const shared = toolSet(versionTool('one'));
     const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
-      directToolSets: [shared],
-      routedToolSets: [shared],
+      directToolSets: [{ toolSet: shared, toolSetId: 'direct' }],
+      routedToolSets: [{ toolSet: shared, toolSetId: 'routed' }],
       systemPrompt: 'system',
     });
 

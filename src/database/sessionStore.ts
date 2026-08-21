@@ -2,6 +2,9 @@ import { asc, eq } from 'drizzle-orm';
 
 import { type Logger, silentLogger } from '../logger/logger';
 import {
+  type GateDecisionRow,
+  type GateDecisionRowInsert,
+  gateDecisions,
   type MessageRow,
   type MessageRowInsert,
   messages,
@@ -10,6 +13,7 @@ import {
 } from './schema';
 
 import type { Message } from '../agent/context/message';
+import type { GateAuditRecord, PermissionResolution } from '../tool/gate';
 import type { Database, NoxDrizzle } from './database';
 
 interface SessionStoreOptions {
@@ -26,6 +30,50 @@ interface CreateSessionOptions {
 interface StoredSession {
   messages: Message[];
   session: SessionRow;
+}
+
+function gateDecisionToRow(record: GateAuditRecord): GateDecisionRowInsert {
+  return {
+    createdAt: record.createdAt.getTime(),
+    decidedBy: record.decidedBy,
+    decisionId: record.decisionId,
+    params: record.params,
+    preview: record.preview,
+    reason: record.reason,
+    resolution: record.resolution,
+    resolvedAt: record.resolvedAt?.getTime(),
+    risk: record.risk,
+    scope: record.scope,
+    sessionId: record.sessionId,
+    signals: record.signals,
+    title: record.title,
+    toolName: record.toolName,
+    toolSetId: record.toolSetId,
+    trackId: record.trackId,
+    verdict: record.verdict,
+  };
+}
+
+function gateDecisionToRecord(row: GateDecisionRow): GateAuditRecord {
+  return {
+    createdAt: new Date(row.createdAt),
+    decidedBy: row.decidedBy,
+    decisionId: row.decisionId,
+    params: row.params,
+    preview: row.preview ?? undefined,
+    reason: row.reason,
+    resolution: row.resolution ?? undefined,
+    resolvedAt: row.resolvedAt === null ? undefined : new Date(row.resolvedAt),
+    risk: row.risk ?? undefined,
+    scope: row.scope ?? undefined,
+    sessionId: row.sessionId,
+    signals: row.signals,
+    title: row.title,
+    toolName: row.toolName,
+    toolSetId: row.toolSetId,
+    trackId: row.trackId,
+    verdict: row.verdict,
+  };
 }
 
 function fail(row: MessageRow, missing: string): never {
@@ -185,6 +233,45 @@ class SessionStore {
     });
   }
 
+  public recordGateDecision(record: GateAuditRecord): void {
+    const row = gateDecisionToRow(record);
+    this.#enqueue(record.sessionId, (database) => {
+      database.insert(gateDecisions).values(row).run();
+    });
+  }
+
+  public resolveGateDecision(
+    sessionId: string,
+    decisionId: string,
+    resolution: PermissionResolution,
+    resolvedAt: Date,
+  ): void {
+    this.#enqueue(sessionId, (database) => {
+      database
+        .update(gateDecisions)
+        .set({
+          resolution: resolution.resolution,
+          resolvedAt: resolvedAt.getTime(),
+          scope: resolution.resolution === 'approved' ? resolution.scope : null,
+        })
+        .where(eq(gateDecisions.decisionId, decisionId))
+        .run();
+    });
+  }
+
+  public async loadGateDecisions(sessionId: string): Promise<GateAuditRecord[]> {
+    await this.#writes;
+    return this.#database.exclusive((database) =>
+      database
+        .select()
+        .from(gateDecisions)
+        .where(eq(gateDecisions.sessionId, sessionId))
+        .orderBy(asc(gateDecisions.createdAt))
+        .all()
+        .map(gateDecisionToRecord),
+    );
+  }
+
   public async create(sessionId: string, options: CreateSessionOptions = {}): Promise<SessionRow> {
     const now = Date.now();
     const row: SessionRow = {
@@ -244,6 +331,6 @@ class SessionStore {
   }
 }
 
-export { SessionStore, toMessage, toRow };
+export { gateDecisionToRecord, gateDecisionToRow, SessionStore, toMessage, toRow };
 
 export type { CreateSessionOptions, SessionStoreOptions, StoredSession };

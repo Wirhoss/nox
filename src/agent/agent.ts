@@ -5,16 +5,19 @@ import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
-import type { Tool, ToolSet } from '../tool/tool';
+import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
+import type { Tool, ToolExecution, ToolRisk, ToolSetGrant } from '../tool/tool';
 import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
 
 interface AgentOptions extends RunnerOptions {
   /** Context policy, minus what a session supplies: history, sink and tools. */
   context?: Omit<ContextOptions, 'fullHistory' | 'logger' | 'onAppend' | 'tools'>;
-  directToolSets?: readonly ToolSet[];
+  directToolSets?: readonly ToolSetGrant[];
+  gate?: GatePolicyInput;
+  gateEvaluators?: readonly GateEvaluator[];
   logger?: Logger;
-  routedToolSets?: readonly ToolSet[];
+  routedToolSets?: readonly ToolSetGrant[];
   systemPrompt: string;
 }
 
@@ -27,13 +30,47 @@ interface OpenSessionOptions {
 
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
 
+function mergeRisk(
+  declared: ToolRisk | undefined,
+  prepared: ToolRisk | undefined,
+): ToolRisk | undefined {
+  if (declared === undefined) return prepared;
+  if (prepared === undefined) return declared;
+  return {
+    effects: [...new Set([...declared.effects, ...prepared.effects])],
+    resources: [...(declared.resources ?? []), ...(prepared.resources ?? [])],
+    reversible: prepared.reversible ?? declared.reversible,
+    volume: prepared.volume ?? declared.volume,
+  };
+}
+
+function bindTool(source: Tool, toolSetId: string): Tool {
+  return Object.freeze({
+    ...source,
+    prepare: (params: Parameters<Tool['prepare']>[0]): ToolExecution => {
+      const execution = source.prepare(params);
+      return {
+        ...execution,
+        gateSubject: execution.gateSubject ?? { params, toolName: source.name, toolSetId },
+        risk: mergeRisk(source.risk, execution.risk),
+      };
+    },
+  });
+}
+
 function snapshotToolSets(
-  toolSets: readonly ToolSet[],
+  grants: readonly ToolSetGrant[],
   kind: 'direct' | 'routed',
 ): Readonly<Record<string, Tool>> {
   const tools = new Map<string, Tool>();
+  const toolSetIds = new Set<string>();
 
-  for (const toolSet of [...toolSets]) {
+  for (const { toolSet, toolSetId } of [...grants]) {
+    if (toolSetIds.has(toolSetId)) {
+      throw new Error(`${kind} tool set ${toolSetId} is granted more than once.`);
+    }
+    toolSetIds.add(toolSetId);
+
     for (const [name, source] of Object.entries(toolSet.tools)) {
       if (source.name !== name) {
         throw new Error(`${kind} tool key ${name} does not match tool name ${source.name}.`);
@@ -44,7 +81,7 @@ function snapshotToolSets(
       if (tools.has(name)) {
         throw new Error(`${kind} tool ${name} is granted by more than one tool set.`);
       }
-      tools.set(name, Object.freeze({ ...source }));
+      tools.set(name, bindTool(source, toolSetId));
     }
   }
 
@@ -52,8 +89,8 @@ function snapshotToolSets(
 }
 
 function composeSessionTools(
-  directSource: readonly ToolSet[],
-  routedSource: readonly ToolSet[],
+  directSource: readonly ToolSetGrant[],
+  routedSource: readonly ToolSetGrant[],
 ): Readonly<Record<string, Tool>> {
   const directTools = snapshotToolSets(directSource, 'direct');
   const routedTools = snapshotToolSets(routedSource, 'routed');
@@ -68,7 +105,10 @@ function composeSessionTools(
   if (routed.length === 0) return directTools;
 
   const router = new ToolRouter(routed);
-  return Object.freeze({ ...directTools, ...router.tools });
+  const routerTools = Object.fromEntries(
+    Object.entries(router.tools).map(([name, tool]) => [name, bindTool(tool, 'nox.router')]),
+  );
+  return Object.freeze({ ...directTools, ...routerTools });
 }
 
 /**
@@ -79,12 +119,14 @@ function composeSessionTools(
 class Agent {
   readonly #context?: Omit<ContextOptions, 'fullHistory' | 'logger' | 'onAppend' | 'tools'>;
   readonly #database: Database;
-  readonly #directToolSets: readonly ToolSet[];
+  readonly #directToolSets: readonly ToolSetGrant[];
+  readonly #gate?: GatePolicyInput;
+  readonly #gateEvaluators: readonly GateEvaluator[];
   readonly #logger?: Logger;
   readonly #maxIterations?: 'unlimited' | number;
   readonly #model: ModelConfig;
   readonly #provider: ChatProvider;
-  readonly #routedToolSets: readonly ToolSet[];
+  readonly #routedToolSets: readonly ToolSetGrant[];
   readonly #systemPrompt: string;
 
   constructor(
@@ -98,6 +140,8 @@ class Agent {
     this.#model = model;
     this.#context = options.context;
     this.#directToolSets = options.directToolSets ?? [];
+    this.#gate = options.gate;
+    this.#gateEvaluators = Object.freeze([...(options.gateEvaluators ?? [])]);
     this.#logger = options.logger;
     this.#maxIterations = options.maxIterations;
     this.#routedToolSets = options.routedToolSets ?? [];
@@ -122,6 +166,8 @@ class Agent {
       ...options,
       // The model's own window is the budget unless the agent overrode it.
       context: { contextWindow: this.#model.contextWindow, ...this.#context, tools },
+      gate: this.#gate,
+      gateEvaluators: this.#gateEvaluators,
       logger: this.#logger,
       maxIterations: this.#maxIterations,
       systemPrompt: this.#systemPrompt,

@@ -7,15 +7,50 @@ interface ToolContext {
   abortSignal: AbortSignal;
 }
 
+type ToolEffect =
+  | 'authentication'
+  | 'credential'
+  | 'delete'
+  | 'execute'
+  | 'network'
+  | 'payment'
+  | 'privilege'
+  | 'read'
+  | 'upload'
+  | 'write';
+
+type ToolResourceKind = 'account' | 'command' | 'file' | 'payment' | 'url';
+
+interface ToolResource {
+  readonly kind: ToolResourceKind;
+  readonly value: string;
+}
+
+interface ToolRisk {
+  readonly effects: readonly ToolEffect[];
+  readonly resources?: readonly ToolResource[];
+  readonly reversible?: boolean;
+  readonly volume?: number;
+}
+
 interface Tool<T extends z.ZodObject = z.ZodObject> {
   description: string;
   name: string;
   parameters: T;
   prepare(params: z.infer<T>): ToolExecution;
+  risk?: ToolRisk;
+}
+
+interface ToolExecutionSubject {
+  readonly params: Readonly<Record<string, unknown>>;
+  readonly toolName: string;
+  readonly toolSetId: string;
 }
 
 interface ExecutionBase {
+  gateSubject?: ToolExecutionSubject;
   preview?: string;
+  risk?: ToolRisk;
   title: string;
 }
 
@@ -34,12 +69,27 @@ interface DeferredExecution extends ExecutionBase {
 
 type ToolExecution = DeferredExecution | ImmediateExecution;
 
-function prepareTool(tool: Tool, rawParams: unknown): ToolExecution {
+interface PreparedToolCall {
+  readonly execution: ToolExecution;
+  readonly params: Readonly<Record<string, unknown>>;
+}
+
+/** Validation and preparation are side-effect free; only execution.run may act. */
+function prepareToolCall(tool: Tool, rawParams: unknown): PreparedToolCall {
   const parsed = tool.parameters.safeParse(rawParams);
   if (!parsed.success) {
     throw new InvalidToolParamsError(tool, parsed.error);
   }
-  return tool.prepare(parsed.data);
+  return { execution: tool.prepare(parsed.data), params: parsed.data };
+}
+
+function prepareTool(tool: Tool, rawParams: unknown): ToolExecution {
+  return prepareToolCall(tool, rawParams).execution;
+}
+
+interface ToolSetGrant {
+  readonly toolSet: ToolSet;
+  readonly toolSetId: string;
 }
 
 abstract class ToolSet {
@@ -88,14 +138,21 @@ type ToolSetClass<T extends ToolSet = ToolSet, TArguments extends unknown[] = []
 
 type ToolSetFactory<T extends ToolSet = ToolSet> = () => T;
 
-export { prepareTool, ToolSet };
+export { prepareTool, prepareToolCall, ToolSet };
 
 export type {
   DeferredExecution,
   ImmediateExecution,
+  PreparedToolCall,
   Tool,
   ToolContext,
+  ToolEffect,
   ToolExecution,
+  ToolExecutionSubject,
+  ToolResource,
+  ToolResourceKind,
+  ToolRisk,
   ToolSetClass,
   ToolSetFactory,
+  ToolSetGrant,
 };

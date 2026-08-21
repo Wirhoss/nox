@@ -1,5 +1,6 @@
 import type { ProviderError } from '../provider/error';
 import type { Usage } from '../provider/stream';
+import type { PermissionRequest, PermissionResolution } from '../tool/gate';
 import type { Message } from './context/message';
 
 /** How a run ended. `maxIterations` means the answer is probably truncated. */
@@ -27,6 +28,8 @@ type AgentEvent =
   | { type: 'assistantTextFragment'; text: string }
   | { type: 'error'; error: Error }
   | { type: 'message'; message: Message }
+  | { type: 'permissionRequested'; request: PermissionRequest }
+  | { type: 'permissionResolved'; requestId: string; resolution: PermissionResolution }
   | { type: 'retry'; attempt: number; delayMs: number; error: ProviderError }
   | { type: 'runCompleted'; runId: string; status: RunStatus; durationMs: number; usage: Usage }
   | { type: 'runStarted'; runId: string; modelId: string; startedAt: Date; trigger: RunTrigger }

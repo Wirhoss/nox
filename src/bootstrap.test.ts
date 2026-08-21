@@ -4,17 +4,19 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
+import { bootstrap, DEFAULT_AGENT_ID } from './bootstrap';
 import { providers } from './extensions/contribution-points/providers';
 import { silentLogger } from './logger/logger';
-import { bootstrap, type NoxRuntime } from './main';
+import { configService, databaseService, loggerService } from './services';
 
+import type { NoxApplication } from './application';
 import type { EnvSource } from './config/env';
 
 const directories: string[] = [];
-let booted: NoxRuntime | undefined;
+let booted: NoxApplication | undefined;
 
 afterEach(async () => {
-  await booted?.shutdown();
+  await booted?.stop();
   booted = undefined;
   for (const directory of directories.splice(0)) {
     // Windows keeps the SQLite file handle briefly after close(); the temp
@@ -44,7 +46,7 @@ function environment(overrides: EnvSource = {}): EnvSource {
   };
 }
 
-async function boot(overrides: EnvSource = {}): Promise<NoxRuntime> {
+async function boot(overrides: EnvSource = {}): Promise<NoxApplication> {
   booted = await bootstrap({
     env: environment(overrides),
     logger: silentLogger,
@@ -55,45 +57,59 @@ async function boot(overrides: EnvSource = {}): Promise<NoxRuntime> {
 
 describe('bootstrap', () => {
   test('wires an agent from a provider nothing in the kernel imported', async () => {
-    const runtime = await boot();
+    const application = await boot();
 
-    expect(runtime.application.state).toBe('running');
-    expect(
-      runtime.application.contributions.get(providers, 'openai_completions')?.extensionId,
-    ).toBe('nox.provider.openai');
-    expect(runtime.agent.model).toEqual({ modelId: 'gpt-test', type: 'text' });
-    expect(runtime.agent.systemPrompt).toBe('be exact');
+    expect(application.state).toBe('running');
+    expect(application.contributions.get(providers, 'openai_completions')?.extensionId).toBe(
+      'nox.provider.openai',
+    );
+    expect(application.agentIds).toEqual([DEFAULT_AGENT_ID]);
+    expect(application.getAgent(DEFAULT_AGENT_ID)?.model).toEqual({
+      modelId: 'gpt-test',
+      type: 'text',
+    });
+    expect(application.getAgent(DEFAULT_AGENT_ID)?.systemPrompt).toBe('be exact');
+  });
+
+  test('hands the host services to the application rather than keeping them', async () => {
+    const application = await boot();
+
+    expect(application.services.get(configService).get('app').logLevel).toBeString();
+    expect(application.services.get(databaseService).isOpen).toBe(true);
+    expect(application.services.get(loggerService)).toBe(silentLogger);
   });
 
   test('opens storage under the configured data directory', async () => {
     const dataDir = temporary('nox-data-');
-    const runtime = await boot({ DATA_DIR: dataDir });
+    const application = await boot({ DATA_DIR: dataDir });
 
-    expect(runtime.database.isOpen).toBe(true);
-    expect(runtime.database.path).toBe(join(dataDir, 'nox.db'));
+    expect(application.services.get(databaseService).path).toBe(join(dataDir, 'nox.db'));
   });
 
   test('opens a session that persists and resumes by id', async () => {
-    const runtime = await boot();
+    const application = await boot();
 
-    const session = await runtime.agent.openSession({ sessionId: 'first-run' });
+    const session = await application.openSession(DEFAULT_AGENT_ID, { sessionId: 'first-run' });
     expect(session.sessionId).toBe('first-run');
-    await session.stop();
+    await application.closeSession('first-run');
 
-    const resumed = await runtime.agent.openSession({ sessionId: 'first-run' });
+    const resumed = await application.openSession(DEFAULT_AGENT_ID, { sessionId: 'first-run' });
     expect(resumed.sessionId).toBe('first-run');
-    await resumed.stop();
+    await application.closeSession('first-run');
   });
 
-  test('shutdown releases extensions and storage, and is idempotent', async () => {
-    const runtime = await boot();
+  test('stop releases sessions, extensions and storage, and is idempotent', async () => {
+    const application = await boot();
+    const database = application.services.get(databaseService);
+    await application.openSession(DEFAULT_AGENT_ID);
 
-    await runtime.shutdown();
-    await runtime.shutdown();
+    await application.stop();
+    await application.stop();
 
-    expect(runtime.application.state).toBe('stopped');
-    expect(runtime.database.isOpen).toBe(false);
-    expect(runtime.application.contributions.has(providers, 'openai_completions')).toBe(false);
+    expect(application.state).toBe('stopped');
+    expect(application.sessions).toEqual([]);
+    expect(database.isOpen).toBe(false);
+    expect(application.contributions.has(providers, 'openai_completions')).toBe(false);
   });
 
   test('refuses to boot without an API key, and says which variable', async () => {
