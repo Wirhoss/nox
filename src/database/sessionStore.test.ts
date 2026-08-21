@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { type Message, messageToString } from '../agent/context/message';
-import { testOrigin } from '../testFixtures';
+import { messageAuthority } from '../auth/principal';
+import { TEST_AUTHORITY, testOrigin } from '../testFixtures';
 import { Database } from './database';
 import { messages } from './schema';
 import { SessionStore } from './sessionStore';
@@ -227,6 +228,36 @@ describe('SessionStore', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]?.[1]).toBe('session-1');
     expect(failures[0]?.[0].message).toContain('closed');
+  });
+
+  test('closes unresolved escalations when a session is resumed after restart', async () => {
+    const store = new SessionStore(await openDatabase());
+    await store.create('session-1');
+    store.recordGateDecision({
+      authority: TEST_AUTHORITY,
+      createdAt: CREATED_AT,
+      decidedBy: 'shared-conversation',
+      decisionId: 'decision-1',
+      params: {},
+      reason: 'needs owner approval',
+      runAuthority: messageAuthority(testOrigin(), 'u1'),
+      runId: 'run-1',
+      sessionId: 'session-1',
+      signals: [],
+      title: 'Do work',
+      toolName: 'echo',
+      toolSetId: 'direct',
+      trackId: 'track-1',
+      verdict: 'escalate',
+    });
+    await store.flushed;
+
+    const resolvedAt = new Date('2025-01-02T00:00:00.000Z');
+    await store.abortUnresolvedGateDecisions('session-1', resolvedAt);
+
+    expect(await store.loadDecisions('session-1')).toMatchObject([
+      { resolution: 'aborted', resolvedAt },
+    ]);
   });
 
   test('flushed waits for queued writes and stays resolved when the queue is empty', async () => {

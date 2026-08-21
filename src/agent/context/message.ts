@@ -1,3 +1,5 @@
+import { type MessageOrigin, principalToString } from '../../auth/principal';
+
 interface MessageBase {
   readonly createdAt: Date;
   readonly messageId: string;
@@ -40,9 +42,18 @@ interface ReasoningMessage extends MessageBase {
   readonly content: readonly MessageContent[];
 }
 
+/**
+ * Something a principal said. `origin` is not optional: in a shared conversation
+ * an unattributed message is one nobody can be held to, and the model is shown
+ * who spoke so it can tell one participant from another.
+ *
+ * This is provenance only. Authority for an execution is fixed when its run
+ * starts and is never recomputed from messages sitting in the transcript.
+ */
 interface UserMessage extends MessageBase {
   readonly role: 'user';
   readonly content: readonly MessageContent[];
+  readonly origin: MessageOrigin;
 }
 
 interface ToolCallMessage extends MessageBase {
@@ -52,7 +63,12 @@ interface ToolCallMessage extends MessageBase {
   readonly arguments: Readonly<Record<string, unknown>>;
 }
 
-const TOOL_RESPONSE_EXECUTIONS = ['deferredAck', 'deferredResult', 'immediate'] as const;
+const TOOL_RESPONSE_EXECUTIONS = [
+  'deferredAck',
+  'deferredResult',
+  'immediate',
+  'permissionPending',
+] as const;
 
 type ToolResponseExecution = (typeof TOOL_RESPONSE_EXECUTIONS)[number];
 
@@ -156,12 +172,43 @@ function toolResponseMessageToString(message: ToolResponseMessage): string {
   );
 }
 
+/**
+ * What a provider should send for a user message.
+ *
+ * A shared conversation is not one voice, and a model handed every participant
+ * under the same `user` role cannot tell who asked for what — which is exactly
+ * the distinction the rest of this design depends on. Every provider maps the
+ * wire format its own way; who spoke is not a wire detail, so it is decided
+ * here and once.
+ *
+ * The author rides in the content rather than in a provider-specific author
+ * field: those exist, but they restrict the characters allowed and are ignored
+ * by several OpenAI-compatible gateways, which would silently drop the
+ * attribution on exactly the deployments most likely to be multiuser.
+ */
+function userContentForModel(message: UserMessage): readonly MessageContent[] {
+  return [
+    { text: `[from ${principalToString(message.origin.principal)}]\n`, type: 'text' },
+    ...message.content,
+  ];
+}
+
+/** The author is shown to the model; a shared channel is not one voice. */
+function userMessageToString(message: UserMessage): string {
+  return (
+    `Role: user\nFrom: ${principalToString(message.origin.principal)}` +
+    `\nContent:\n${contentToString(message.content)}` +
+    `\n${messageIdentityToString(message)}`
+  );
+}
+
 function messageToString(message: Message): string {
   switch (message.role) {
     case 'assistant':
     case 'reasoning':
-    case 'user':
       return contentMessageToString(message);
+    case 'user':
+      return userMessageToString(message);
     case 'compacted':
       return compactedMessageToString(message);
     case 'folded':
@@ -193,6 +240,7 @@ export {
   messageToString,
   TOOL_RESPONSE_EXECUTIONS,
   trackedHeaderToString,
+  userContentForModel,
 };
 
 export type {

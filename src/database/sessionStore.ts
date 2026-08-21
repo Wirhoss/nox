@@ -1,10 +1,10 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 
 import { type Logger, silentLogger } from '../logger/logger';
 import {
-  type GateDecisionRow,
-  type GateDecisionRowInsert,
-  gateDecisions,
+  type DecisionRow,
+  type DecisionRowInsert,
+  decisions,
   type MessageRow,
   type MessageRowInsert,
   messages,
@@ -13,6 +13,8 @@ import {
 } from './schema';
 
 import type { Message } from '../agent/context/message';
+import type { AuthorizationAuditRecord, StoredDecision } from '../auth/audit';
+import type { PrincipalRef } from '../auth/principal';
 import type { GateAuditRecord, PermissionResolution } from '../tool/gate';
 import type { Database, NoxDrizzle } from './database';
 
@@ -34,20 +36,48 @@ interface StoredSession {
   session: SessionRow;
 }
 
-function gateDecisionToRow(record: GateAuditRecord): GateDecisionRowInsert {
+function authorizationToRow(record: AuthorizationAuditRecord): DecisionRowInsert {
   return {
+    authority: record.authority,
+    createdAt: record.createdAt.getTime(),
+    decidedBy: record.decidedBy,
+    decisionId: record.decisionId,
+    matchedGrant: record.matchedGrant,
+    params: record.params,
+    principalIssuer: record.principal.issuer,
+    principalSubject: record.principal.subject,
+    reason: record.reason,
+    runId: record.runId,
+    sessionId: record.sessionId,
+    stage: 'authorization',
+    toolName: record.toolName,
+    toolSetId: record.toolSetId,
+    trackId: record.trackId,
+    verdict: record.verdict,
+  };
+}
+
+function gateDecisionToRow(record: GateAuditRecord): DecisionRowInsert {
+  return {
+    authority: record.authority,
     createdAt: record.createdAt.getTime(),
     decidedBy: record.decidedBy,
     decisionId: record.decisionId,
     params: record.params,
     preview: record.preview,
+    principalIssuer: record.runAuthority.principal.issuer,
+    principalSubject: record.runAuthority.principal.subject,
     reason: record.reason,
     resolution: record.resolution,
     resolvedAt: record.resolvedAt?.getTime(),
+    resolvedByIssuer: record.resolvedBy?.issuer,
+    resolvedBySubject: record.resolvedBy?.subject,
     risk: record.risk,
+    runId: record.runId,
     scope: record.scope,
     sessionId: record.sessionId,
     signals: record.signals,
+    stage: 'gate',
     title: record.title,
     toolName: record.toolName,
     toolSetId: record.toolSetId,
@@ -56,21 +86,32 @@ function gateDecisionToRow(record: GateAuditRecord): GateDecisionRowInsert {
   };
 }
 
-function gateDecisionToRecord(row: GateDecisionRow): GateAuditRecord {
+function decisionToRecord(row: DecisionRow): StoredDecision {
+  const resolvedBy =
+    row.resolvedByIssuer === null || row.resolvedBySubject === null
+      ? undefined
+      : { issuer: row.resolvedByIssuer, subject: row.resolvedBySubject };
+
   return {
+    authority: row.authority,
     createdAt: new Date(row.createdAt),
     decidedBy: row.decidedBy,
     decisionId: row.decisionId,
+    matchedGrant: row.matchedGrant ?? undefined,
     params: row.params,
     preview: row.preview ?? undefined,
+    principal: { issuer: row.principalIssuer, subject: row.principalSubject },
     reason: row.reason,
     resolution: row.resolution ?? undefined,
     resolvedAt: row.resolvedAt === null ? undefined : new Date(row.resolvedAt),
+    resolvedBy,
     risk: row.risk ?? undefined,
+    runId: row.runId,
     scope: row.scope ?? undefined,
     sessionId: row.sessionId,
-    signals: row.signals,
-    title: row.title,
+    signals: row.signals ?? undefined,
+    stage: row.stage,
+    title: row.title ?? undefined,
     toolName: row.toolName,
     toolSetId: row.toolSetId,
     trackId: row.trackId,
@@ -96,8 +137,16 @@ function toRow(sessionId: string, seq: number, message: Message): MessageRowInse
   switch (message.role) {
     case 'assistant':
     case 'reasoning':
-    case 'user':
       return { ...base, content: message.content, role: message.role };
+    case 'user':
+      return {
+        ...base,
+        content: message.content,
+        principalIssuer: message.origin.principal.issuer,
+        principalSubject: message.origin.principal.subject,
+        role: 'user',
+        transportMessageId: message.origin.transportMessageId,
+      };
     case 'compacted':
       return {
         ...base,
@@ -149,7 +198,19 @@ function toMessage(row: MessageRow): Message {
     case 'reasoning':
       return { content: row.content ?? fail(row, 'content'), createdAt, messageId, role: row.role };
     case 'user':
-      return { content: row.content ?? fail(row, 'content'), createdAt, messageId, role: row.role };
+      return {
+        content: row.content ?? fail(row, 'content'),
+        createdAt,
+        messageId,
+        origin: {
+          principal: {
+            issuer: row.principalIssuer ?? fail(row, 'principalIssuer'),
+            subject: row.principalSubject ?? fail(row, 'principalSubject'),
+          },
+          transportMessageId: row.transportMessageId ?? fail(row, 'transportMessageId'),
+        },
+        role: row.role,
+      };
     case 'compacted':
       return {
         compactedMessageIds: row.refMessageIds ?? fail(row, 'refMessageIds'),
@@ -235,10 +296,21 @@ class SessionStore {
     });
   }
 
+  /**
+   * An authorization decision, allow or deny alike. A deny never reaches the
+   * Gate, so without this the attempt would leave no trace anywhere.
+   */
+  public recordAuthorizationDecision(record: AuthorizationAuditRecord): void {
+    const row = authorizationToRow(record);
+    this.#enqueue(record.sessionId, (database) => {
+      database.insert(decisions).values(row).run();
+    });
+  }
+
   public recordGateDecision(record: GateAuditRecord): void {
     const row = gateDecisionToRow(record);
     this.#enqueue(record.sessionId, (database) => {
-      database.insert(gateDecisions).values(row).run();
+      database.insert(decisions).values(row).run();
     });
   }
 
@@ -247,30 +319,60 @@ class SessionStore {
     decisionId: string,
     resolution: PermissionResolution,
     resolvedAt: Date,
+    resolvedBy?: PrincipalRef,
   ): void {
     this.#enqueue(sessionId, (database) => {
       database
-        .update(gateDecisions)
+        .update(decisions)
         .set({
           resolution: resolution.resolution,
           resolvedAt: resolvedAt.getTime(),
+          resolvedByIssuer: resolvedBy?.issuer ?? null,
+          resolvedBySubject: resolvedBy?.subject ?? null,
           scope: resolution.resolution === 'approved' ? resolution.scope : null,
         })
-        .where(eq(gateDecisions.decisionId, decisionId))
+        .where(eq(decisions.decisionId, decisionId))
         .run();
     });
   }
 
-  public async loadGateDecisions(sessionId: string): Promise<GateAuditRecord[]> {
+  /**
+   * Closures behind pending approvals cannot survive a process restart. Resuming
+   * their session therefore closes every unresolved escalation before any stale
+   * transport answer can make it look live again.
+   */
+  public async abortUnresolvedGateDecisions(
+    sessionId: string,
+    resolvedAt = new Date(),
+  ): Promise<void> {
+    await this.#writes;
+    await this.#database.exclusive((database) => {
+      database
+        .update(decisions)
+        .set({ resolution: 'aborted', resolvedAt: resolvedAt.getTime() })
+        .where(
+          and(
+            eq(decisions.sessionId, sessionId),
+            eq(decisions.stage, 'gate'),
+            eq(decisions.verdict, 'escalate'),
+            isNull(decisions.resolution),
+          ),
+        )
+        .run();
+    });
+  }
+
+  /** Both halves of the pipeline, oldest first: one timeline for one session. */
+  public async loadDecisions(sessionId: string): Promise<StoredDecision[]> {
     await this.#writes;
     return this.#database.exclusive((database) =>
       database
         .select()
-        .from(gateDecisions)
-        .where(eq(gateDecisions.sessionId, sessionId))
-        .orderBy(asc(gateDecisions.createdAt))
+        .from(decisions)
+        .where(eq(decisions.sessionId, sessionId))
+        .orderBy(asc(decisions.createdAt))
         .all()
-        .map(gateDecisionToRecord),
+        .map(decisionToRecord),
     );
   }
 
@@ -334,6 +436,7 @@ class SessionStore {
   }
 }
 
-export { gateDecisionToRecord, gateDecisionToRow, SessionStore, toMessage, toRow };
+export { authorizationToRow, decisionToRecord, gateDecisionToRow, SessionStore, toMessage, toRow };
 
 export type { CreateSessionOptions, SessionStoreOptions, StoredSession };
+export type { StoredDecision as DecisionRecord } from '../auth/audit';

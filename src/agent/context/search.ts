@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { type Tool, ToolSet } from '../../tool/tool';
+import { HISTORY_READ_AUTHORITY, HISTORY_SEARCH_AUTHORITY } from '../../auth/coreAuthorities';
+import { bindTool, type Tool, ToolSet } from '../../tool/tool';
 
 import type { Transcript } from './transcript';
 
@@ -25,6 +26,13 @@ const readToolResultSchema = z.object({
         'of the tool call or of its folded/compacted placeholder.',
     ),
 });
+
+/**
+ * These two are handed to the model by the context itself rather than granted
+ * from a blueprint, so nothing else would ever bind them to a set. They bind
+ * themselves — without a subject they could not be authorized at all.
+ */
+const HISTORY_TOOL_SET_ID = 'nox.history';
 
 const searchHistorySchema = z.object({
   limit: z
@@ -58,6 +66,7 @@ class HistorySearchToolSet extends ToolSet {
 
   protected addTools(): void {
     const readToolResult: Tool<typeof readToolResultSchema> = {
+      authority: HISTORY_READ_AUTHORITY,
       description:
         'Read an earlier tool result by track ID. Results are bounded; if the response ' +
         'reports a next offset, call the tool again from that offset.',
@@ -69,9 +78,10 @@ class HistorySearchToolSet extends ToolSet {
         type: 'immediate',
       }),
     };
-    this.registerTool(readToolResult);
+    this.registerTool(bindTool(readToolResult, HISTORY_TOOL_SET_ID));
 
     const searchHistory: Tool<typeof searchHistorySchema> = {
+      authority: HISTORY_SEARCH_AUTHORITY,
       description:
         'Keyword-search the complete session transcript, including messages removed ' +
         'from the active context by folding or compaction, and get back the best-matching ' +
@@ -85,7 +95,7 @@ class HistorySearchToolSet extends ToolSet {
         type: 'immediate',
       }),
     };
-    this.registerTool(searchHistory);
+    this.registerTool(bindTool(searchHistory, HISTORY_TOOL_SET_ID));
   }
 }
 

@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid';
 
+import { SYSTEM_INTERNAL } from '../../auth/principal';
+import { bindTool, type Tool } from '../../tool/tool';
 import { Mutex } from '../../utils/mutex';
 import { applyCompaction, seekSafeCut } from './compact';
 import { applyFold, foldHistory, type FoldOptions } from './fold';
@@ -13,20 +15,37 @@ import { Transcript } from './transcript';
 import type { Logger } from '../../logger/logger';
 import type { ModelConfig } from '../../provider/config';
 import type { ChatProvider } from '../../provider/provider';
-import type { Tool } from '../../tool/tool';
 import type { AssistantMessage, CompactedMessage, Message, UserMessage } from './message';
 
 const HANDOFF_REQUEST_PREFIX = 'compaction-request';
+
+/**
+ * What a tool handed straight to a context is attributed to. An agent binds its
+ * tools to the sets they were granted from; a surface that composes a context
+ * itself has no set to name, and the tool would otherwise arrive with no subject
+ * and be refused at call time.
+ *
+ * This supplies the attribution only. The authority is always the tool's own —
+ * nothing here invents one, and a tool that declares none cannot be composed.
+ */
+const SESSION_TOOL_SET_ID = 'nox.session';
 
 interface CompactResult {
   readonly compacted: boolean;
 }
 
+/**
+ * Nox asking itself for a summary. It never enters the transcript and never
+ * starts a run, but it is still a message from somebody: the internal system
+ * principal, which holds nothing and is granted nothing by default.
+ */
 function createHandoffRequest(): UserMessage {
+  const messageId = `${HANDOFF_REQUEST_PREFIX}-${nanoid()}`;
   return freezeMessage<UserMessage>({
     content: [{ text: 'Produce the handoff now.', type: 'text' }],
     createdAt: new Date(),
-    messageId: `${HANDOFF_REQUEST_PREFIX}-${nanoid()}`,
+    messageId,
+    origin: { principal: SYSTEM_INTERNAL, transportMessageId: messageId },
     role: 'user',
   });
 }
@@ -91,9 +110,12 @@ class Context {
     }
     this.#tools = Object.freeze(
       Object.fromEntries(
-        [...Object.entries(options.tools), ...Object.entries(this.#historyTools.tools)].sort(
-          ([a], [b]) => a.localeCompare(b),
-        ),
+        [
+          ...Object.entries(options.tools).map(
+            ([name, tool]) => [name, bindTool(tool, SESSION_TOOL_SET_ID)] as const,
+          ),
+          ...Object.entries(this.#historyTools.tools),
+        ].sort(([a], [b]) => a.localeCompare(b)),
       ),
     );
 

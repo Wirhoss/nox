@@ -18,6 +18,14 @@ const messages = sqliteTable(
     isError: integer('is_error', { mode: 'boolean' }),
     messageId: text('message_id').primaryKey(),
     name: text('name'),
+    /**
+     * Who said it, for user messages. Nullable because most roles have no
+     * author at all — an assistant reply and a tool response are not anyone's
+     * message. A `user` row missing it is refused on read rather than loaded as
+     * an unattributed one.
+     */
+    principalIssuer: text('principal_issuer'),
+    principalSubject: text('principal_subject'),
     refMessageIds: text('ref_message_ids', { mode: 'json' }).$type<readonly string[]>(),
     role: text('role', { enum: MESSAGE_ROLES }).notNull(),
     seq: integer('seq').notNull(),
@@ -25,6 +33,8 @@ const messages = sqliteTable(
       .notNull()
       .references(() => sessions.sessionId, { onDelete: 'cascade' }),
     trackId: text('track_id'),
+    /** The transport's own ID for the message the principal sent. */
+    transportMessageId: text('transport_message_id'),
   },
   (table) => [
     uniqueIndex('messages_session_seq_idx').on(table.sessionId, table.seq),

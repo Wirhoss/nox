@@ -86,7 +86,8 @@ async function run(
 }
 
 function message(partial: Partial<Message> & Pick<Message, 'role'>): Message {
-  return { createdAt: new Date(0), messageId: partial.role, ...partial } as Message;
+  const provenance = partial.role === 'user' ? { origin: testOrigin() } : {};
+  return { createdAt: new Date(0), messageId: partial.role, ...provenance, ...partial } as Message;
 }
 
 const echoTool: Tool = {
@@ -133,7 +134,7 @@ describe('OpenAICompletions request body', () => {
     expect(body.stream_options).toEqual({ include_usage: true });
     expect(body.messages).toEqual([
       { content: 'be brief', role: 'system' },
-      { content: 'hello', role: 'user' },
+      { content: '[from test-broker:alice]\nhello', role: 'user' },
     ]);
   });
 
@@ -195,6 +196,7 @@ describe('OpenAICompletions message mapping', () => {
 
     expect((requests[0]?.body.messages as unknown[])[1]).toEqual({
       content: [
+        { text: '[from test-broker:alice]\n', type: 'text' },
         { text: 'look', type: 'text' },
         { image_url: { url: 'https://img.test/a.png' }, type: 'image_url' },
       ],
@@ -298,7 +300,7 @@ describe('OpenAICompletions message mapping', () => {
 
     expect(requests[0]?.body.messages).toEqual([
       { content: 'be brief', role: 'system' },
-      { content: 'do it', role: 'user' },
+      { content: '[from test-broker:alice]\ndo it', role: 'user' },
       { content: '[folded 2 calls]', role: 'assistant' },
     ]);
   });
@@ -424,7 +426,10 @@ describe('OpenAICompletions session regression', () => {
       ).toBeTrue();
       expect(JSON.stringify(replayedWire)).not.toContain('thinking before the call');
       expect(JSON.stringify(replayedWire)).not.toContain('checking the result');
-      expect(replayedWire.at(-1)).toEqual({ content: 'what happened?', role: 'user' });
+      expect(replayedWire.at(-1)).toEqual({
+        content: '[from test-broker:alice]\nwhat happened?',
+        role: 'user',
+      });
     } finally {
       await database.close();
       try {

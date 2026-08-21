@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  type Message,
+  type MessageContent,
+  type ToolCallMessage,
+  userContentForModel,
+} from '../../../../agent/context/message';
 import { type Logger, silentLogger } from '../../../../logger/logger';
 import {
   type ModelConfig,
@@ -9,7 +15,6 @@ import {
 import { ProviderError, type ProviderErrorCode } from '../../../../provider/error';
 import { ChatProvider } from '../../../../provider/provider';
 
-import type { Message, MessageContent, ToolCallMessage } from '../../../../agent/context/message';
 import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
 import type { Tool } from '../../../../tool/tool';
 
@@ -419,7 +424,10 @@ class OpenAICompletions extends ChatProvider {
     for (const message of history) {
       switch (message.role) {
         case 'user': {
-          messages.push({ content: this.toOpenAIUserContent(message.content), role: 'user' });
+          messages.push({
+            content: this.toOpenAIUserContent(userContentForModel(message)),
+            role: 'user',
+          });
           break;
         }
         case 'assistant': {
