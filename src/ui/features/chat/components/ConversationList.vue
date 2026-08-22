@@ -52,8 +52,14 @@ function relativeTime(value: string): string {
           @click="session.openConversation(conversation.conversationId)"
         >
           <span class="conversations__identity">
-            <strong>{{ conversation.agentId }}</strong>
-            <small>{{ shortId(conversation.conversationId) }}</small>
+            <strong>{{ conversation.title ?? conversation.agentId }}</strong>
+            <small>
+              {{
+                conversation.title === undefined
+                  ? shortId(conversation.conversationId)
+                  : `${conversation.agentId} // ${shortId(conversation.conversationId)}`
+              }}
+            </small>
           </span>
           <span class="conversations__meta">
             <i :class="`conversations__signal--${conversation.state}`"></i>
@@ -150,6 +156,12 @@ function relativeTime(value: string): string {
 .conversations__state {
   color: var(--nox-text-muted);
   font-size: 0.62rem;
+}
+
+.conversations__identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversations__meta {

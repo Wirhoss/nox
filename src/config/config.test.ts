@@ -119,6 +119,7 @@ describe('blueprint config', () => {
       generation: {},
       maxIterations: 90,
       model: 'main-model',
+      models: {},
       provider: 'main',
       systemPrompt: 'be exact',
       toolSets: { direct: [], routed: [] },
@@ -126,27 +127,36 @@ describe('blueprint config', () => {
 
     expect(
       blueprintSchema.parse({
-        compaction: { model: 'small-model', provider: 'compact-provider' },
         context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
         generation: { maxTokens: 1000, temperature: 0.2 },
         maxIterations: 'unlimited',
         model: 'main-model',
+        models: {
+          compaction: { model: 'small-model', provider: 'compact-provider' },
+          // A task may name only a model; it stays on the agent's provider.
+          title: { model: 'tiny-model' },
+        },
         provider: 'main',
         systemPrompt: 'be exact',
         toolSets: { direct: ['clock'], routed: ['internet'] },
       }),
     ).toMatchObject({
-      compaction: { model: 'small-model', provider: 'compact-provider' },
       context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
       generation: { maxTokens: 1000, temperature: 0.2 },
       maxIterations: 'unlimited',
+      models: {
+        compaction: { model: 'small-model', provider: 'compact-provider' },
+        title: { model: 'tiny-model' },
+      },
       toolSets: { direct: ['clock'], routed: ['internet'] },
     });
 
+    // A provider without a model names nothing: which model to run the task on
+    // is the whole question the entry exists to answer.
     expect(
       blueprintSchema.safeParse({
-        compaction: { model: 'small-model' },
         model: 'main-model',
+        models: { title: { provider: 'other' } },
         provider: 'main',
         systemPrompt: 'be exact',
       }).success,

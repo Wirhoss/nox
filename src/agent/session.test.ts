@@ -8,7 +8,13 @@ import { z } from 'zod';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
 import { ChatProvider } from '../provider/provider';
-import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
+import {
+  isInternalRequest,
+  permissiveAuthorization,
+  TEST_AUTHORITY,
+  testCatalog,
+  testOrigin,
+} from '../testFixtures';
 import { Session } from './session';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
@@ -46,6 +52,8 @@ async function openDatabase(): Promise<Database> {
 }
 
 class ScriptedProvider extends ChatProvider {
+  /** The system prompt of every internal request, so titling is observable. */
+  public readonly internalRequests: string[] = [];
   public readonly requests: Message[][] = [];
 
   readonly #scripts: Script[];
@@ -60,12 +68,22 @@ class ScriptedProvider extends ChatProvider {
   }
 
   protected override async *attempt(
-    _systemPrompt: string,
+    systemPrompt: string,
     messageHistory: Message[],
     _tools: Tool[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
+    // Naming the session and compacting the context are Nox talking to itself.
+    // They are answered from here, but they are not turns, so they consume no
+    // script and are not recorded as requests the conversation made.
+    if (isInternalRequest(systemPrompt)) {
+      this.internalRequests.push(systemPrompt);
+      yield { text: 'una sesión de prueba', type: 'textFragment' };
+      yield { type: 'end' };
+      return;
+    }
+
     this.requests.push([...messageHistory]);
     const script = this.#scripts.shift();
     if (script === undefined) throw new Error('Provider ran out of scripted responses.');
@@ -354,5 +372,69 @@ describe('Session', () => {
 
     expect(await drained).toBeGreaterThan(0);
     expect(session.state).toBe('stopped');
+  });
+});
+
+describe('naming a session', () => {
+  test('names itself after the first completed run, and keeps that name', async () => {
+    const database = await openDatabase();
+    const provider = new ScriptedProvider([says('hello')]);
+    const session = await Session.open(database, provider, MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
+      systemPrompt: 'system',
+    });
+
+    const events = collectUntil(session.events, 'titled');
+    session.send('hi', testOrigin());
+    await session.idle;
+
+    // The name arrives out of turn: the reply was delivered before the titling
+    // request went out, which is why this waits for the event rather than for
+    // the run.
+    expect(await events).toContainEqual({ title: 'una sesión de prueba', type: 'titled' });
+    expect(session.title).toBe('una sesión de prueba');
+    await session.stop();
+
+    const store = new SessionStore(database);
+    expect((await store.load(session.sessionId))?.session.title).toBe('una sesión de prueba');
+
+    const resumedProvider = new ScriptedProvider([says('again')]);
+    const resumed = await Session.open(database, resumedProvider, MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
+      sessionId: session.sessionId,
+      systemPrompt: 'system',
+    });
+    resumed.send('and again', testOrigin());
+    await resumed.idle;
+    await resumed.stop();
+
+    // A session that has been named is never renamed, however much longer it
+    // goes on: a title changing under whoever is reading the list is worse than
+    // one that stayed as it was.
+    expect(resumed.title).toBe('una sesión de prueba');
+    expect(resumedProvider.internalRequests).toBeEmpty();
+  });
+
+  test('never renames a session that was given a name', async () => {
+    const database = await openDatabase();
+    const provider = new ScriptedProvider([says('hello')]);
+    const session = await Session.open(database, provider, MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      authorization: permissiveAuthorization,
+      systemPrompt: 'system',
+      title: 'lo que dijo el operador',
+    });
+
+    session.send('hi', testOrigin());
+    await session.idle;
+    await session.stop();
+
+    expect(session.title).toBe('lo que dijo el operador');
+    expect(provider.internalRequests).toBeEmpty();
   });
 });

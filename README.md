@@ -76,6 +76,32 @@ The corresponding field inside `blueprints/nox.json`:
 }
 ```
 
+### Models for internal tasks
+
+An agent answers people on the `provider`/`model` its blueprint names. Nox also
+talks to itself: it compacts the working set when the context comes under
+pressure, and it names a session after its first exchange so a list of
+conversations reads as something other than ids. Neither is the agent answering
+anybody, so neither has to run on the agent's model:
+
+```json
+{
+  "taskModels": {
+    "compaction": { "model": "qwen38-27b", "provider": "big" },
+    "title": { "model": "qwen38-4b" }
+  }
+}
+```
+
+Every entry is optional and every absent one falls back to the agent's own
+provider and model. An entry that names only a `model` stays on the agent's
+provider — the usual case is a cheaper model on the endpoint already configured.
+
+A session is named once, after its first completed run, out of turn: the reply
+is already delivered when the request goes out, and a titling call that is slow
+or fails leaves the session with the id it already had. A session opened with a
+title given to it is never renamed.
+
 ## The web broker
 
 A **broker** is a transport into the message gateway — it delivers what arrived
@@ -131,6 +157,7 @@ every broker, and each one declares what it renders through `BrokerCapabilities`
 | `runs` | When a run started, how it ended, and whether it was truncated |
 | `retries` | Provider failures being retried rather than reported |
 | `contextChanges` | Fold and compaction rewriting the context |
+| `titles` | The name a session gave itself after its first exchange |
 | `usage` | Token accounting, per model call and as a run total |
 
 A broker that declares nothing gets the settled reply and nothing else, which is

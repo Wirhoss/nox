@@ -29,7 +29,7 @@ import { configService, databaseService, loggerService, secretStoreService } fro
 
 import type { AuthConfig } from './api/auth/config';
 import type { ApiConfig } from './api/config';
-import type { Blueprint } from './config/blueprint';
+import type { Blueprint, TaskModelConfig } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
 
@@ -271,20 +271,12 @@ async function composeAgents(
       secretStore,
     );
     const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
-    const compactionProvider =
-      blueprint.compaction === undefined
-        ? provider
-        : await openProvider(
-            application,
-            configuredProviders,
-            openedProviders,
-            blueprint.compaction.provider,
-            secretStore,
-          );
-    const compactionModel =
-      blueprint.compaction === undefined
-        ? model
-        : modelConfigFor(compactionProvider, blueprint.compaction.model);
+    const openTask = (task: TaskModelConfig | undefined): Promise<TaskModel> =>
+      openTaskModel(task, { model, provider }, (providerId) =>
+        openProvider(application, configuredProviders, openedProviders, providerId, secretStore),
+      );
+    const compactionModel = await openTask(blueprint.taskModels.compaction);
+    const titleModel = await openTask(blueprint.taskModels.title);
     const directToolSets = await toolSetCatalog.grant(blueprint.toolSets.direct);
     const routedToolSets = await toolSetCatalog.grant(blueprint.toolSets.routed);
 
@@ -292,8 +284,8 @@ async function composeAgents(
       new Agent(database, provider, model, {
         agentId,
         authorities: catalog,
-        compactionModel,
-        compactionProvider,
+        compactionModel: compactionModel.model,
+        compactionProvider: compactionModel.provider,
         context: blueprint.context,
         directToolSets,
         gate: blueprint.gate,
@@ -301,6 +293,8 @@ async function composeAgents(
         maxIterations: blueprint.maxIterations,
         routedToolSets,
         systemPrompt: blueprint.systemPrompt,
+        titleModel: titleModel.model,
+        titleProvider: titleModel.provider,
       }),
     );
   }
@@ -476,6 +470,33 @@ async function openProvider(
  * fold before it compacts — so a model the configuration never described runs
  * without one rather than with a guess.
  */
+/** One internal task's provider and model, resolved against the agent's own. */
+interface TaskModel {
+  readonly model: ModelConfig;
+  readonly provider: ChatProvider;
+}
+
+/**
+ * What an internal task runs on. A blueprint that named nothing for it runs on
+ * the agent's own provider and model; one that named only a model stays on the
+ * agent's provider, which is the usual case — a cheaper model on the endpoint
+ * already configured, rather than a second endpoint nobody asked for.
+ *
+ * The agent's `generation` settings are deliberately not carried over: they are
+ * tuned for how the agent should answer people, and compaction and titling are
+ * not the agent answering anybody.
+ */
+async function openTaskModel(
+  task: TaskModelConfig | undefined,
+  agent: TaskModel,
+  open: (providerId: string) => Promise<ChatProvider>,
+): Promise<TaskModel> {
+  if (task === undefined) return agent;
+
+  const provider = task.provider === undefined ? agent.provider : await open(task.provider);
+  return { model: modelConfigFor(provider, task.model), provider };
+}
+
 function modelConfigFor(
   provider: ChatProvider,
   modelId: string,

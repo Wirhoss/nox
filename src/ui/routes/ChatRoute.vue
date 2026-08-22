@@ -38,11 +38,13 @@ const connectionStatus = computed<ConnectionStatus>(() => {
   }
   return { label: 'Unknown stream state', tone: 'danger' }
 })
-const conversationTitle = computed(() =>
-  session.activeConversation === undefined
-    ? 'New conversation'
-    : `Conversation with ${session.activeConversation.agentId}`,
-)
+// The session's own name once it has one; a conversation that has not been
+// named yet is still described by who is holding it.
+const conversationTitle = computed(() => {
+  const conversation = session.activeConversation
+  if (conversation === undefined) return 'New conversation'
+  return conversation.title ?? `Conversation with ${conversation.agentId}`
+})
 const shortConversationId = computed(() => session.conversationId.slice(-8).toUpperCase())
 const logoutError = ref<string>()
 const loggingOut = ref(false)

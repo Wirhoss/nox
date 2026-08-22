@@ -11,7 +11,7 @@ import { type MessageOrigin, SYSTEM_CRON } from '../auth/principal';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
 import { ChatProvider } from '../provider/provider';
-import { TEST_AUTHORITY, testCatalog, testPrincipal } from '../testFixtures';
+import { isInternalRequest, TEST_AUTHORITY, testCatalog, testPrincipal } from '../testFixtures';
 import { ToolRouter } from '../tool/router';
 import { type Tool, type ToolEffect, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
@@ -63,12 +63,20 @@ class EchoingProvider extends ChatProvider {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   protected override async *attempt(
-    _systemPrompt: string,
+    systemPrompt: string,
     messageHistory: Message[],
     tools: Tool[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
+    // Naming the session is not a turn in it, and recording it here would put
+    // Nox's own words among the ones a principal is answerable for.
+    if (isInternalRequest(systemPrompt)) {
+      yield { text: 'una sesión de prueba', type: 'textFragment' };
+      yield { type: 'end' };
+      return;
+    }
+
     this.toolNames.push(tools.map((tool) => tool.name).sort((a, b) => a.localeCompare(b)));
     this.userTurns.push(
       messageHistory

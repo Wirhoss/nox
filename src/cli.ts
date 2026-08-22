@@ -50,9 +50,11 @@ async function printReplies(session: Session, logger: Logger): Promise<void> {
       case 'permissionResolved':
       case 'runCompleted':
       case 'runStarted':
+      case 'titled':
       case 'usage': {
-        // The transcript, the run boundaries and the token counts already reach
-        // storage and the log. Stdout carries the conversation and nothing else.
+        // The transcript, the run boundaries, the session's name and the token
+        // counts already reach storage and the log. Stdout carries the
+        // conversation and nothing else.
         break;
       }
     }

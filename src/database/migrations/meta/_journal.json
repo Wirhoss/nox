@@ -22,6 +22,13 @@
       "when": 1787347916107,
       "tag": "0002_great_jack_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787409018715,
+      "tag": "0003_clear_placeholder_titles",
+      "breakpoints": true
     }
   ]
 }

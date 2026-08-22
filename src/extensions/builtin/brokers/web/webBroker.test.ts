@@ -107,6 +107,7 @@ describe('the web broker', () => {
       retries: true,
       runs: true,
       streaming: true,
+      titles: true,
       toolActivity: true,
       usage: true,
     });

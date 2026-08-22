@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
 import {
+  isInternalRequest,
   permissiveAuthorization,
   TEST_AUTHORITY,
   testCatalog,
@@ -58,6 +59,16 @@ async function openDatabase(): Promise<Database> {
 
 class RecordingProvider extends ChatProvider {
   public readonly requests: Request[] = [];
+
+  /**
+   * What the agent itself was asked. Compaction and titling go through the same
+   * provider and are not turns in the conversation, so an assertion about what
+   * a session sent reads this rather than counting Nox's own requests — which
+   * also keeps it from depending on when an out-of-turn one happens to land.
+   */
+  public get agentRequests(): Request[] {
+    return this.requests.filter((request) => !isInternalRequest(request.systemPrompt));
+  }
 
   constructor() {
     super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
@@ -406,13 +417,14 @@ describe('Agent', () => {
     second.send('hi', testOrigin());
     await second.idle;
 
-    expect(provider.requests).toHaveLength(2);
-    expect(provider.requests[0]?.systemPrompt).toBe('you are nox');
-    expect(provider.requests[1]?.systemPrompt).toBe('you are nox');
-    expect(provider.requests[0]?.toolNames).toEqual(provider.requests[1]?.toolNames ?? []);
-    expect(provider.requests[0]?.toolNames).toContain('echo');
-    expect(provider.requests[0]?.toolNames).not.toContain('call_tool');
-    expect(provider.requests[0]?.toolNames).not.toContain('search_tool');
+    const sent = provider.agentRequests;
+    expect(sent).toHaveLength(2);
+    expect(sent[0]?.systemPrompt).toBe('you are nox');
+    expect(sent[1]?.systemPrompt).toBe('you are nox');
+    expect(sent[0]?.toolNames).toEqual(sent[1]?.toolNames ?? []);
+    expect(sent[0]?.toolNames).toContain('echo');
+    expect(sent[0]?.toolNames).not.toContain('call_tool');
+    expect(sent[0]?.toolNames).not.toContain('search_tool');
 
     await first.stop();
     await second.stop();
@@ -555,8 +567,8 @@ describe('Agent', () => {
 
     expect(compactionProvider.requests).toHaveLength(1);
     expect(compactionProvider.requests[0]?.modelId).toBe('compact-model');
-    expect(mainProvider.requests).toHaveLength(1);
-    expect(mainProvider.requests[0]?.modelId).toBe('test-model');
+    expect(mainProvider.agentRequests).toHaveLength(1);
+    expect(mainProvider.agentRequests[0]?.modelId).toBe('test-model');
     await session.stop();
   });
 
