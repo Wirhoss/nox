@@ -68,8 +68,18 @@ function paramDocs(schema: JsonSchema, prefix = ''): string[] {
   return lines;
 }
 
+/**
+ * A tool's parameters as the model receives them. The `$schema` draft URL that
+ * `z.toJSONSchema` emits is dropped on the way out: no provider reads it, and
+ * repeating one constant URL per tool spends request-head tokens on nothing.
+ */
+function toolParametersSchema(tool: Tool): JsonSchema {
+  const { $schema, ...schema } = z.toJSONSchema(tool.parameters, { io: 'input' });
+  return schema as JsonSchema;
+}
+
 function renderTool(tool: Tool): string {
-  const schema = z.toJSONSchema(tool.parameters, { io: 'input' }) as JsonSchema;
+  const schema = toolParametersSchema(tool);
 
   const lines = [
     `Tool: ${tool.name}`,
@@ -85,6 +95,6 @@ function renderTool(tool: Tool): string {
   return lines.join('\n');
 }
 
-export { renderTool };
+export { renderTool, toolParametersSchema };
 
 export type { JsonSchema };

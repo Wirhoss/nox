@@ -139,7 +139,7 @@ describe('OpenAICompletions request body', () => {
     ]);
   });
 
-  test('renders tools as JSON schema functions', async () => {
+  test('renders tools as JSON schema functions without the $schema draft URL', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
     await run(provider(), [], [echoTool]);
@@ -150,7 +150,6 @@ describe('OpenAICompletions request body', () => {
           description: 'Echoes a value back.',
           name: 'echo',
           parameters: {
-            $schema: 'https://json-schema.org/draft/2020-12/schema',
             properties: { value: { description: 'What to echo.', type: 'string' } },
             required: ['value'],
             type: 'object',

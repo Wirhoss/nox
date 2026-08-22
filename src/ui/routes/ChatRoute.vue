@@ -6,6 +6,7 @@ import { useAuthStore } from '@/app/stores/auth.store'
 import { authErrorMessage } from '@/features/auth/model/errorMessage'
 import ChatComposer from '@/features/chat/components/ChatComposer.vue'
 import ChatTimeline from '@/features/chat/components/ChatTimeline.vue'
+import ConversationList from '@/features/chat/components/ConversationList.vue'
 import { useActiveSessionStore } from '@/features/chat/stores/activeSession.store'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxMark } from '@/shared/ui/NoxMark'
@@ -37,12 +38,17 @@ const connectionStatus = computed<ConnectionStatus>(() => {
   }
   return { label: 'Unknown stream state', tone: 'danger' }
 })
+const conversationTitle = computed(() =>
+  session.activeConversation === undefined
+    ? 'New conversation'
+    : `Conversation with ${session.activeConversation.agentId}`,
+)
 const shortConversationId = computed(() => session.conversationId.slice(-8).toUpperCase())
 const logoutError = ref<string>()
 const loggingOut = ref(false)
 
 onMounted(() => {
-  session.connect()
+  void session.initialize()
 })
 
 onBeforeUnmount(() => {
@@ -93,9 +99,11 @@ async function logout(): Promise<void> {
       <header class="surface__header">
         <div>
           <p>WEB CONVERSATION // {{ shortConversationId }}</p>
-          <h1 id="conversation-title">New conversation</h1>
+          <h1 id="conversation-title">{{ conversationTitle }}</h1>
         </div>
-        <NoxStatus :label="connectionStatus.label" :tone="connectionStatus.tone" />
+        <div class="surface__telemetry">
+          <NoxStatus :label="connectionStatus.label" :tone="connectionStatus.tone" />
+        </div>
       </header>
 
       <div class="surface__body">
@@ -131,6 +139,10 @@ async function logout(): Promise<void> {
       </div>
     </section>
 
+    <aside class="conversation-rail" aria-label="Conversation browser">
+      <ConversationList />
+    </aside>
+
     <NoxNotice v-if="logoutError !== undefined" class="chat__logout-error" title="Logout failed">
       <p>{{ logoutError }}</p>
     </NoxNotice>
@@ -141,7 +153,7 @@ async function logout(): Promise<void> {
 .chat {
   display: grid;
   height: 100vh;
-  grid-template-columns: 15rem minmax(0, 1fr);
+  grid-template-columns: 13.5rem minmax(0, 1fr) 18rem;
   background: var(--nox-canvas);
   overflow: hidden;
 }
@@ -242,6 +254,12 @@ async function logout(): Promise<void> {
   line-height: var(--nox-leading-tight);
 }
 
+.surface__telemetry {
+  display: flex;
+  align-items: center;
+  gap: var(--nox-space-5);
+}
+
 .surface__body {
   display: grid;
   min-height: 0;
@@ -275,6 +293,15 @@ async function logout(): Promise<void> {
   text-align: center;
 }
 
+.conversation-rail {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--nox-space-5) var(--nox-space-4);
+  border-left: 1px solid var(--nox-border-subtle);
+  background: var(--nox-canvas-raised);
+  overflow: hidden;
+}
+
 .chat__logout-error {
   position: fixed;
   z-index: var(--nox-layer-toast);
@@ -283,9 +310,9 @@ async function logout(): Promise<void> {
   width: min(24rem, calc(100% - var(--nox-space-8)));
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 75rem) {
   .chat {
-    grid-template-columns: 4.25rem minmax(0, 1fr);
+    grid-template-columns: 4.25rem minmax(0, 1fr) 16rem;
   }
 
   .sidebar {
@@ -302,6 +329,16 @@ async function logout(): Promise<void> {
 
   .sidebar__item--active span {
     font-size: var(--nox-text-xs);
+  }
+}
+
+@media (max-width: 60rem) {
+  .chat {
+    grid-template-columns: 4.25rem minmax(0, 1fr);
+  }
+
+  .conversation-rail {
+    display: none;
   }
 
   .surface__header {

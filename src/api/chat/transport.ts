@@ -94,6 +94,18 @@ interface ChatContextChangeEvent extends ChatEventBase {
   readonly type: 'contextChange';
 }
 
+/** Runtime-owned accounting for the bounded context sent to the model. */
+interface ChatContextUsage {
+  readonly compactAtTokens?: number;
+  readonly contextWindow?: number;
+  readonly usedTokens: number;
+}
+
+interface ChatContextUsageEvent extends ChatEventBase {
+  readonly type: 'contextUsage';
+  readonly usage: ChatContextUsage;
+}
+
 /** What the model thought, settled. */
 interface ChatReasoningEvent extends ChatEventBase {
   readonly text: string;
@@ -167,6 +179,7 @@ interface ChatUsageEvent extends ChatEventBase {
 
 type ChatEvent =
   | ChatContextChangeEvent
+  | ChatContextUsageEvent
   | ChatErrorEvent
   | ChatFragmentEvent
   | ChatMessageEvent
@@ -219,6 +232,7 @@ type ChatHistoryEntry = (
 /** A conversation read back, filtered to what this surface is allowed to show. */
 interface ChatHistory {
   readonly agentId: string;
+  readonly contextUsage?: ChatContextUsage;
   readonly conversationId: string;
   readonly entries: readonly ChatHistoryEntry[];
   readonly sessionId: string;
@@ -231,6 +245,7 @@ interface ChatHistory {
  */
 interface ChatConversation {
   readonly agentId: string;
+  readonly contextUsage?: ChatContextUsage;
   readonly conversationId: string;
   readonly sessionId: string;
   readonly startedAt: string;
@@ -363,6 +378,8 @@ export type {
   ChatCommandInput,
   ChatCommandRejection,
   ChatContextChangeEvent,
+  ChatContextUsage,
+  ChatContextUsageEvent,
   ChatConversation,
   ChatDecisionInput,
   ChatErrorEvent,

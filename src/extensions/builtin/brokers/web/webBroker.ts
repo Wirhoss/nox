@@ -51,6 +51,7 @@ class WebBroker implements Broker, ChatTransport {
    */
   public readonly capabilities: BrokerCapabilities = Object.freeze({
     contextChanges: true,
+    contextUsage: true,
     permissions: true,
     reasoning: true,
     retries: true,
@@ -242,6 +243,8 @@ function toChatEvent(event: OutboundEvent): ChatEvent {
         text: event.text,
         type: 'contextChange',
       };
+    case 'contextUsage':
+      return { ...base, type: 'contextUsage', usage: event.usage };
     case 'permission':
       return { ...base, request: toPermissionRequest(event.request), type: 'permission' };
     case 'permissionResolved':
@@ -302,6 +305,7 @@ function toChatEvent(event: OutboundEvent): ChatEvent {
 function toChatHistory(history: BrokerHistory): ChatHistory {
   return {
     agentId: history.agentId,
+    contextUsage: history.contextUsage,
     conversationId: history.conversationId,
     entries: history.entries.map(toChatHistoryEntry),
     sessionId: history.sessionId,
@@ -355,6 +359,7 @@ function toChatHistoryEntry(entry: BrokerHistoryEntry): ChatHistoryEntry {
 function toChatConversation(session: BrokerSession): ChatConversation {
   return {
     agentId: session.agentId,
+    contextUsage: session.contextUsage,
     conversationId: session.conversationId,
     sessionId: session.sessionId,
     startedAt: session.startedAt.toISOString(),

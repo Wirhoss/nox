@@ -5,12 +5,14 @@ import type { ChatUsage } from '../api/chat.schemas'
 import type { RunActivityItem } from '../stores/activeSession.store'
 
 interface Props {
+  embedded?: boolean
   item: DeepReadonly<RunActivityItem>
 }
 
 const props = defineProps<Props>()
 
 const label = computed(() => {
+  if (props.item.historical === true) return 'Recorded activity'
   switch (props.item.status) {
     case 'aborted':
       return 'Run aborted'
@@ -27,6 +29,7 @@ const label = computed(() => {
 })
 
 const tone = computed(() => {
+  if (props.item.historical === true) return 'complete'
   switch (props.item.status) {
     case 'aborted':
     case 'failed':
@@ -73,8 +76,12 @@ function formatTime(value: string): string {
 </script>
 
 <template>
-  <details class="activity" :class="`activity--${tone}`">
-    <summary class="activity__summary">
+  <component
+    :is="props.embedded === true ? 'section' : 'details'"
+    class="activity"
+    :class="[`activity--${tone}`, { 'activity--embedded': props.embedded === true }]"
+  >
+    <component :is="props.embedded === true ? 'header' : 'summary'" class="activity__summary">
       <span class="activity__signal" aria-hidden="true"></span>
       <strong>{{ label }}</strong>
       <span v-if="props.item.modelId !== undefined">{{ props.item.modelId }}</span>
@@ -84,8 +91,8 @@ function formatTime(value: string): string {
       <span v-if="displayedUsage !== undefined">
         {{ formatNumber(displayedUsage.inputTokens + displayedUsage.outputTokens) }} tokens
       </span>
-      <span class="activity__disclosure">DETAILS</span>
-    </summary>
+      <span v-if="props.embedded !== true" class="activity__disclosure">DETAILS</span>
+    </component>
 
     <div class="activity__body">
       <dl
@@ -163,7 +170,7 @@ function formatTime(value: string): string {
         </dl>
       </section>
     </div>
-  </details>
+  </component>
 </template>
 
 <style scoped lang="scss">
@@ -181,6 +188,13 @@ function formatTime(value: string): string {
   border-color: var(--nox-border-strong);
 }
 
+.activity--embedded {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .activity__summary {
   display: flex;
   min-height: 2.75rem;
@@ -189,6 +203,12 @@ function formatTime(value: string): string {
   padding: var(--nox-space-3) var(--nox-space-4);
   cursor: pointer;
   list-style: none;
+}
+
+.activity--embedded .activity__summary {
+  min-height: auto;
+  padding: 0 0 var(--nox-space-3);
+  cursor: default;
 }
 
 .activity__summary::-webkit-details-marker {
@@ -244,6 +264,10 @@ function formatTime(value: string): string {
   border-top: 1px solid var(--nox-border-subtle);
 }
 
+.activity--embedded .activity__body {
+  padding: var(--nox-space-4) 0 0;
+}
+
 .activity__facts {
   display: grid;
   margin: 0;
@@ -263,8 +287,6 @@ function formatTime(value: string): string {
 
 .activity__facts dt,
 .activity__section h3,
-.activity__reasoning header,
-.activity__responses span,
 .activity__events span {
   color: var(--nox-text-muted);
   font-size: 0.65rem;
@@ -287,8 +309,6 @@ function formatTime(value: string): string {
   font-weight: 700;
 }
 
-.activity__reasoning,
-.activity__tool,
 .activity__events li,
 .activity__context {
   padding: var(--nox-space-3);
@@ -296,15 +316,6 @@ function formatTime(value: string): string {
   background: var(--nox-surface-input);
 }
 
-.activity__reasoning header,
-.activity__tool > header {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--nox-space-3);
-}
-
-.activity__reasoning p,
-.activity__responses p,
 .activity__events p,
 .activity__context > p {
   margin: var(--nox-space-2) 0 0;
@@ -312,21 +323,6 @@ function formatTime(value: string): string {
   line-height: var(--nox-leading-body);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-}
-
-.activity__tool {
-  display: grid;
-  gap: var(--nox-space-3);
-}
-
-.activity__tool > header strong {
-  color: var(--nox-status-info);
-  font-size: var(--nox-text-xs);
-}
-
-.activity__tool > header span {
-  color: var(--nox-text-muted);
-  text-transform: uppercase;
 }
 
 .activity__nested summary {
@@ -344,23 +340,12 @@ function formatTime(value: string): string {
   white-space: pre-wrap;
 }
 
-.activity__responses,
 .activity__events {
   display: grid;
   margin: 0;
   gap: var(--nox-space-2);
   padding: 0;
   list-style: none;
-}
-
-.activity__responses li {
-  padding-top: var(--nox-space-2);
-  border-top: 1px solid var(--nox-border-subtle);
-}
-
-.activity__response--error span,
-.activity__response--error p {
-  color: var(--nox-status-danger);
 }
 
 .activity__events li {
@@ -371,25 +356,9 @@ function formatTime(value: string): string {
   margin-top: 0;
 }
 
-.activity__cursor {
-  display: inline-block;
-  width: 0.45rem;
-  height: 0.9em;
-  margin-left: var(--nox-space-1);
-  background: var(--nox-status-info);
-  vertical-align: -0.1em;
-  animation: activity-blink 1s steps(2, jump-none) infinite;
-}
-
 @keyframes activity-pulse {
   50% {
     opacity: 0.35;
-  }
-}
-
-@keyframes activity-blink {
-  50% {
-    opacity: 0;
   }
 }
 
@@ -400,8 +369,7 @@ function formatTime(value: string): string {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .activity--active .activity__signal,
-  .activity__cursor {
+  .activity--active .activity__signal {
     animation: none;
   }
 }

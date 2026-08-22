@@ -771,6 +771,7 @@ describe('Gateway', () => {
     test('sends a transport everything it declared', async () => {
       const broker = new TestBroker({
         contextChanges: true,
+        contextUsage: true,
         reasoning: true,
         retries: true,
         runs: true,
@@ -789,6 +790,7 @@ describe('Gateway', () => {
       );
 
       expect(types(broker)).toContainAllValues([
+        'contextUsage',
         'fragment',
         'message',
         'reasoning',
@@ -799,6 +801,10 @@ describe('Gateway', () => {
         'toolResponse',
         'usage',
       ]);
+
+      const context = broker.delivered.findLast((event) => event.type === 'contextUsage');
+      if (context?.type !== 'contextUsage') throw new Error('Expected context accounting.');
+      expect(context.usage.usedTokens).toBeGreaterThan(0);
 
       const call = broker.delivered.find((event) => event.type === 'toolCall');
       expect(call).toMatchObject({ arguments: { value: 'x' }, name: 'echo', trackId: 'echo-1' });

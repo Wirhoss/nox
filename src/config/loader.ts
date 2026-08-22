@@ -231,6 +231,76 @@ async function loadDirectorySection<T>(
   return result;
 }
 
+/**
+ * An entry ID is a file name, so a caller-supplied one reaches the filesystem
+ * here and is checked rather than trusted. The alphabet is the one instance IDs
+ * use — a blueprint's ID is the agent's name, and there is no reason for two
+ * dialects of the same idea — with a length a file name can actually carry.
+ */
+const entryIdSchema = instanceIdSchema.max(64);
+
+function entryPath(section: DirectorySection, context: LoaderContext, entryId: string): string {
+  const directory = join(context.configDir, section.name);
+  if (!entryIdSchema.safeParse(entryId).success) {
+    throw new ConfigError(
+      'unwritable',
+      directory,
+      `cannot hold an entry named "${entryId}": use up to 64 letters, digits, dots, dashes or ` +
+        'underscores, starting with a letter or digit.',
+    );
+  }
+  return join(directory, `${entryId}.json`);
+}
+
+/**
+ * Writes one entry of a directory section, validated against the same schema
+ * that loads it — a file written here and a file edited by hand are the same
+ * file, and one accepted through a path the other rejects is a second answer.
+ *
+ * `validate` runs between parsing and writing, for a check the entry's own
+ * schema cannot make because it is about something outside the entry: whether
+ * the instances it names are configured. Placing it here rather than in the
+ * caller is what keeps an entry that fails it from ever reaching disk.
+ */
+async function updateEntry<T>(
+  section: DirectorySection<T>,
+  context: LoaderContext,
+  entryId: string,
+  next: unknown,
+  validate?: (value: T) => Promise<void> | void,
+): Promise<T> {
+  const filePath = entryPath(section, context, entryId);
+  const document = parseDocument(section.entrySchema, next, filePath);
+
+  await validate?.(document.value);
+  await writeJson(filePath, document.value);
+  context.logger.info({ path: filePath }, 'Configuration entry written.');
+
+  return document.value;
+}
+
+/**
+ * Removes one entry. `false` when there was no file to remove, which is an
+ * answer rather than a failure: the caller asked for it to be gone, and it is.
+ */
+async function removeEntry(
+  section: DirectorySection,
+  context: LoaderContext,
+  entryId: string,
+): Promise<boolean> {
+  const filePath = entryPath(section, context, entryId);
+  if (!(await Bun.file(filePath).exists())) return false;
+
+  try {
+    await rm(filePath, { force: true });
+  } catch (error) {
+    throw new ConfigError('unwritable', filePath, 'could not be removed.', error);
+  }
+  context.logger.info({ path: filePath }, 'Configuration entry removed.');
+
+  return true;
+}
+
 function loadSection<T>(
   section: ConfigSection<T>,
   context: LoaderContext,
@@ -298,6 +368,7 @@ async function updateSection<T>(
 
 export {
   contributionSchema,
+  entryIdSchema,
   instanceIdSchema,
   loadDirectorySection,
   loadFileSection,
@@ -305,6 +376,8 @@ export {
   materialize,
   parseDocument,
   readJson,
+  removeEntry,
+  updateEntry,
   updateSection,
   writeJson,
 };

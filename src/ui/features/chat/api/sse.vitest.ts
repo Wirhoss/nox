@@ -61,6 +61,11 @@ describe('chat SSE parser', () => {
         text: 'summary',
         type: 'contextChange',
       },
+      {
+        ...base,
+        type: 'contextUsage',
+        usage: { compactAtTokens: 6_400, contextWindow: 10_000, usedTokens: 3_200 },
+      },
       { ...base, type: 'usage', usage: { inputTokens: 10, outputTokens: 2 } },
       {
         ...base,

@@ -28,6 +28,7 @@ export type {
   OutboundBase,
   OutboundBody,
   OutboundContextChange,
+  OutboundContextUsage,
   OutboundError,
   OutboundEvent,
   OutboundFragment,

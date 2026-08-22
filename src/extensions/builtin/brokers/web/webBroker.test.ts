@@ -101,6 +101,7 @@ describe('the web broker', () => {
     // what to show is the client's, and nothing is decided for it upstream.
     expect(broker.capabilities).toEqual({
       contextChanges: true,
+      contextUsage: true,
       permissions: true,
       reasoning: true,
       retries: true,
@@ -365,6 +366,24 @@ describe('the web broker', () => {
     });
   });
 
+  test('renders the runtime context accounting without recomputing it', async () => {
+    const { broker, rendered } = await startedBroker();
+
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      turnId: 'run-1',
+      type: 'contextUsage',
+      usage: { compactAtTokens: 6_400, contextWindow: 10_000, usedTokens: 3_200 },
+    });
+
+    expect(rendered[0]).toEqual({
+      conversationId: CONVERSATION,
+      turnId: 'run-1',
+      type: 'contextUsage',
+      usage: { compactAtTokens: 6_400, contextWindow: 10_000, usedTokens: 3_200 },
+    });
+  });
+
   test('passes a retry through as something that has not failed yet', async () => {
     const { broker, rendered } = await startedBroker();
 
@@ -529,6 +548,7 @@ describe('the web broker', () => {
         asked,
         history: {
           agentId: 'assistant',
+          contextUsage: { compactAtTokens: 6_400, contextWindow: 10_000, usedTokens: 3_200 },
           conversationId: CONVERSATION,
           entries: [
             {
@@ -561,6 +581,11 @@ describe('the web broker', () => {
     const history = await broker.readHistory({ conversationId: CONVERSATION, limit: 3 });
 
     expect(asked).toEqual([{ conversationId: CONVERSATION, limit: 3 }]);
+    expect(history?.contextUsage).toEqual({
+      compactAtTokens: 6_400,
+      contextWindow: 10_000,
+      usedTokens: 3_200,
+    });
     // A `Date` does not survive the wire, and a client redrawing a conversation
     // reads the same shapes it reads off the stream.
     expect(history?.entries).toEqual([
@@ -596,6 +621,7 @@ describe('the web broker', () => {
         sessions: [
           {
             agentId: 'assistant',
+            contextUsage: { contextWindow: 10_000, usedTokens: 3_200 },
             conversationId: CONVERSATION,
             sessionId: 'session-1',
             startedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -609,6 +635,7 @@ describe('the web broker', () => {
     expect(await broker.listConversations()).toEqual([
       {
         agentId: 'assistant',
+        contextUsage: { contextWindow: 10_000, usedTokens: 3_200 },
         conversationId: CONVERSATION,
         sessionId: 'session-1',
         startedAt: '2026-01-01T00:00:00.000Z',

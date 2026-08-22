@@ -60,6 +60,12 @@ const usageSchema = z.object({
   outputTokens: z.number().nonnegative(),
 })
 
+const contextUsageSchema = z.object({
+  compactAtTokens: z.number().nonnegative().optional(),
+  contextWindow: z.number().positive().optional(),
+  usedTokens: z.number().nonnegative(),
+})
+
 const chatEventSchema = z.discriminatedUnion('type', [
   eventBase.extend({
     change: z.enum(['compacted', 'folded']),
@@ -67,6 +73,7 @@ const chatEventSchema = z.discriminatedUnion('type', [
     text: z.string(),
     type: z.literal('contextChange'),
   }),
+  eventBase.extend({ type: z.literal('contextUsage'), usage: contextUsageSchema }),
   eventBase.extend({ text: z.string(), type: z.literal('error') }),
   eventBase.extend({ text: z.string(), type: z.literal('fragment') }),
   eventBase.extend({ text: z.string(), type: z.literal('message') }),
@@ -116,27 +123,106 @@ const chatEventSchema = z.discriminatedUnion('type', [
   eventBase.extend({ type: z.literal('usage'), usage: usageSchema }),
 ])
 
+const historyEntryBase = z.object({
+  at: z.string().datetime(),
+  messageId: z.string().min(1),
+})
+
+const historyEntrySchema = z.discriminatedUnion('type', [
+  historyEntryBase.extend({
+    change: z.enum(['compacted', 'folded']),
+    replacedMessageIds: z.array(z.string()),
+    text: z.string(),
+    type: z.literal('contextChange'),
+  }),
+  historyEntryBase.extend({ text: z.string(), type: z.literal('message') }),
+  historyEntryBase.extend({ text: z.string(), type: z.literal('reasoning') }),
+  historyEntryBase.extend({
+    arguments: z.record(z.unknown()),
+    name: z.string(),
+    trackId: z.string(),
+    type: z.literal('toolCall'),
+  }),
+  historyEntryBase.extend({
+    execution: z.enum(['deferredAck', 'deferredResult', 'immediate', 'permissionPending']),
+    isError: z.boolean(),
+    name: z.string(),
+    text: z.string(),
+    trackId: z.string(),
+    type: z.literal('toolResponse'),
+  }),
+  historyEntryBase.extend({
+    principal: z.object({ issuer: z.string(), subject: z.string() }),
+    text: z.string(),
+    type: z.literal('userMessage'),
+  }),
+])
+
+const chatHistorySchema = z.object({
+  agentId: z.string(),
+  contextUsage: contextUsageSchema.optional(),
+  conversationId: z.string(),
+  entries: z.array(historyEntrySchema),
+  sessionId: z.string(),
+})
+
+const conversationSchema = z.object({
+  agentId: z.string(),
+  contextUsage: contextUsageSchema.optional(),
+  conversationId: z.string(),
+  sessionId: z.string(),
+  startedAt: z.string().datetime(),
+  state: z.enum(['closed', 'idle', 'running']),
+  updatedAt: z.string().datetime(),
+})
+const conversationsSchema = z.object({ conversations: z.array(conversationSchema) })
+
+const commandSchema = z.object({
+  description: z.string(),
+  name: z.string(),
+  parameters: z.record(z.unknown()),
+})
+const commandsSchema = z.object({ commands: z.array(commandSchema) })
+
+const acceptedCommandSchema = z.object({ command: z.string().min(1) })
 const acceptedMessageSchema = z.object({ messageId: z.string().min(1) })
 const acceptedDecisionSchema = z.object({ requestId: z.string().min(1) })
 
+type AcceptedCommand = z.infer<typeof acceptedCommandSchema>
 type AcceptedDecision = z.infer<typeof acceptedDecisionSchema>
 type AcceptedMessage = z.infer<typeof acceptedMessageSchema>
+type ChatCommand = z.infer<typeof commandSchema>
+type ChatContextUsage = z.infer<typeof contextUsageSchema>
+type ChatConversation = z.infer<typeof conversationSchema>
 type ChatEvent = z.infer<typeof chatEventSchema>
+type ChatHistory = z.infer<typeof chatHistorySchema>
+type ChatHistoryEntry = z.infer<typeof historyEntrySchema>
 type ChatPermissionRequest = z.infer<typeof permissionRequestSchema>
 type ChatUsage = z.infer<typeof usageSchema>
 type PermissionOutcome = Extract<ChatEvent, { type: 'permissionResolved' }>['outcome']
 
 export {
+  acceptedCommandSchema,
   acceptedDecisionSchema,
   acceptedMessageSchema,
   chatEventSchema,
+  chatHistorySchema,
+  commandsSchema,
+  contextUsageSchema,
+  conversationsSchema,
   permissionRequestSchema,
 }
 
 export type {
+  AcceptedCommand,
   AcceptedDecision,
   AcceptedMessage,
+  ChatCommand,
+  ChatContextUsage,
+  ChatConversation,
   ChatEvent,
+  ChatHistory,
+  ChatHistoryEntry,
   ChatPermissionRequest,
   ChatUsage,
   PermissionOutcome,

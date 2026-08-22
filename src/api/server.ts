@@ -3,6 +3,7 @@ import { type AnyElysia, Elysia } from 'elysia';
 import { type Logger, silentLogger } from '../logger/logger';
 import { parseOrThrow } from '../utils/validate';
 import { authRoutes } from './auth/routes';
+import { blueprintRoutes } from './blueprints/routes';
 import { chatRoutes } from './chat/routes';
 import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './config';
 import { health, type ReadinessChecks } from './health';
@@ -12,6 +13,7 @@ import { ui } from './ui';
 import type { Disposable } from '../extensions/disposable';
 import type { RegistrationWindow } from './auth/registration';
 import type { AuthStore } from './auth/store';
+import type { BlueprintStore } from './blueprints/store';
 import type { ChatHub } from './chat/transport';
 
 /** The two halves of authentication a composed Nox hands in: who exists, and who may still claim it. */
@@ -27,6 +29,12 @@ interface ApiServerOptions extends ApiConfigInput {
    * and what a real Nox never does.
    */
   auth?: ApiAuth;
+  /**
+   * Mounts `/api/blueprints`, where the agents themselves are administered. It
+   * needs `auth` for the same reason the chat does, and more so: a blueprint is
+   * the whole of what an agent will do.
+   */
+  blueprints?: BlueprintStore;
   /**
    * Mounts `/api/chat`, where the browser talks to whatever broker claims the
    * surface. It needs `auth`: a conversation route that cannot name who is
@@ -83,6 +91,9 @@ class ApiServer implements Disposable {
     );
     if (options.auth !== undefined) {
       api.use(authRoutes(options.auth));
+      if (options.blueprints !== undefined) {
+        api.use(blueprintRoutes({ blueprints: options.blueprints, store: options.auth.store }));
+      }
       if (options.chat !== undefined) {
         api.use(chatRoutes({ hub: options.chat, store: options.auth.store }));
       }

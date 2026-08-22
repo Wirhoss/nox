@@ -1,5 +1,4 @@
-import { z } from 'zod';
-
+import { toolParametersSchema } from '../../tool/render';
 import { type Message, messageToString } from './message';
 
 import type { Tool } from '../../tool/tool';
@@ -91,7 +90,7 @@ class TokenEstimator {
       function: {
         description: tool.description,
         name: tool.name,
-        parameters: z.toJSONSchema(tool.parameters, { io: 'input' }),
+        parameters: toolParametersSchema(tool),
       },
       type: 'function',
     };

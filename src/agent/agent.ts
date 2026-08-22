@@ -1,6 +1,5 @@
-import { ROUTER_TOOL_NAMES, ToolRouter } from '../tool/router';
-import { bindTool, type Tool, type ToolSetGrant } from '../tool/tool';
 import { Session } from './session';
+import { composeSessionTools } from './tools';
 
 import type { AuthorityCatalog } from '../auth/authority';
 import type { AuthorizationProvider } from '../auth/authorization';
@@ -9,6 +8,7 @@ import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
+import type { ToolSetGrant } from '../tool/tool';
 import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
 
@@ -51,64 +51,6 @@ interface OpenSessionOptions {
   /** Omit for a new session; pass one to resume it, or to name a new one. */
   sessionId?: string;
   title?: string;
-}
-
-const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
-
-function snapshotToolSets(
-  grants: readonly ToolSetGrant[],
-  kind: 'direct' | 'routed',
-  authorities: AuthorityCatalog,
-): Readonly<Record<string, Tool>> {
-  const tools = new Map<string, Tool>();
-  const toolSetIds = new Set<string>();
-
-  for (const { toolSet, toolSetId } of [...grants]) {
-    if (toolSetIds.has(toolSetId)) {
-      throw new Error(`${kind} tool set ${toolSetId} is granted more than once.`);
-    }
-    toolSetIds.add(toolSetId);
-
-    for (const [name, source] of Object.entries(toolSet.tools)) {
-      if (source.name !== name) {
-        throw new Error(`${kind} tool key ${name} does not match tool name ${source.name}.`);
-      }
-      if (ROUTER_TOOL_NAME_SET.has(name)) {
-        throw new Error(`${kind} tool ${name} conflicts with a tool router tool.`);
-      }
-      if (tools.has(name)) {
-        throw new Error(`${kind} tool ${name} is granted by more than one tool set.`);
-      }
-      authorities.assertKnown(source.authority, `${kind} tool "${name}" in set "${toolSetId}"`);
-      tools.set(name, bindTool(source, toolSetId));
-    }
-  }
-
-  return Object.freeze(Object.fromEntries([...tools].sort(([a], [b]) => a.localeCompare(b))));
-}
-
-function composeSessionTools(
-  directSource: readonly ToolSetGrant[],
-  routedSource: readonly ToolSetGrant[],
-  authorities: AuthorityCatalog,
-): Readonly<Record<string, Tool>> {
-  const directTools = snapshotToolSets(directSource, 'direct', authorities);
-  const routedTools = snapshotToolSets(routedSource, 'routed', authorities);
-
-  for (const name of Object.keys(routedTools)) {
-    if (directTools[name] !== undefined) {
-      throw new Error(`Tool ${name} cannot be both direct and routed.`);
-    }
-  }
-
-  const routed = Object.values(routedTools);
-  if (routed.length === 0) return directTools;
-
-  const router = new ToolRouter(routed);
-  const routerTools = Object.fromEntries(
-    Object.entries(router.tools).map(([name, tool]) => [name, bindTool(tool, 'nox.router')]),
-  );
-  return Object.freeze({ ...directTools, ...routerTools });
 }
 
 /**

@@ -6,7 +6,7 @@ import { Mutex } from '../../utils/mutex';
 import { applyCompaction, seekSafeCut } from './compact';
 import { applyFold, foldHistory, type FoldOptions } from './fold';
 import { freezeMessage } from './immutable';
-import { type ContextOptions, resolveContextOptions } from './options';
+import { type ContextOptions, type ContextUsage, resolveContextOptions } from './options';
 import { COMPACT_PROMPT } from './prompt';
 import { HistorySearchToolSet } from './search';
 import { TokenEstimator } from './tokens';
@@ -66,6 +66,7 @@ class Context {
   readonly #compactMinTokens: number;
   readonly #compactionModel?: ModelConfig;
   readonly #compactProvider: ChatProvider;
+  readonly #contextWindow?: number;
   readonly #foldMinReductionRatio: number;
   readonly #pressureTokenLimit?: number;
 
@@ -92,6 +93,7 @@ class Context {
     this.#compactGuardBeginningTokens = options.compactGuardBeginningTokens;
     this.#compactGuardEndTokens = options.compactGuardEndTokens;
     this.#compactMinTokens = options.compactMinTokens;
+    this.#contextWindow = options.contextWindow;
     this.#foldMinReductionRatio = options.foldMinReductionRatio;
     this.#logger = options.logger;
     this.#pressureTokenLimit = options.pressureTokenLimit;
@@ -202,6 +204,15 @@ class Context {
     return this.#estimator.estimateHistory(this.#activeHistory);
   }
 
+  /** The runtime's own accounting for the working set sent to the model. */
+  public getUsage(): ContextUsage {
+    return Object.freeze({
+      contextWindow: this.#contextWindow,
+      compactAtTokens: this.#pressureTokenLimit,
+      usedTokens: Math.max(0, this.getTokenEstimate() + (this.#providerTokenOffset ?? 0)),
+    });
+  }
+
   /**
    * Anchors local accounting to the provider's count for the exact request that
    * produced the usage. Later appends and reductions remain an estimated delta
@@ -224,9 +235,7 @@ class Context {
   public isUnderPressure(): boolean {
     if (this.#pressureTokenLimit === undefined) return false;
 
-    const estimate = this.getTokenEstimate();
-    const accountedTokens = Math.max(0, estimate + (this.#providerTokenOffset ?? 0));
-    return accountedTokens > this.#pressureTokenLimit;
+    return this.getUsage().usedTokens > this.#pressureTokenLimit;
   }
 
   #applyFoldResult({
@@ -357,4 +366,4 @@ class Context {
 
 export { Context };
 
-export type { CompactResult };
+export type { CompactResult, ContextUsage };

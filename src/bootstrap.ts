@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path';
 import { Agent } from './agent/agent';
 import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
+import { BlueprintStore } from './api/blueprints/store';
 import { ChatHub } from './api/chat/transport';
 import { type ApiAuth, ApiServer } from './api/server';
 import { NoxApplication } from './application';
@@ -20,8 +21,8 @@ import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { authorities } from './extensions/contribution-points/authorities';
 import { brokers } from './extensions/contribution-points/brokers';
 import { type ProviderConfig, providers } from './extensions/contribution-points/providers';
-import { type ToolSetConfig, toolSets } from './extensions/contribution-points/toolsets';
 import { toDisposable } from './extensions/disposable';
+import { ToolSetCatalog } from './extensions/toolSetCatalog';
 import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService, secretStoreService } from './services';
@@ -31,7 +32,6 @@ import type { ApiConfig } from './api/config';
 import type { Blueprint } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
-import type { ToolSet, ToolSetGrant } from './tool/tool';
 
 const WEB_BROKER_ID = 'web';
 
@@ -99,11 +99,33 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   // the database as a service lets go of it before the file closes.
   application.own(toDisposable(() => database.close()));
 
+  // One catalog for the whole process: the agents are composed from it, and the
+  // surface that validates a blueprint asks it the same question the agents
+  // did. Everything it reads is deferred, because none of it exists yet.
+  const toolSetCatalog = new ToolSetCatalog({
+    configured: () => config.get('toolSets'),
+    contributions: application.contributions,
+    secretStore,
+  });
+
   // Registered after the database and therefore released before it: the socket
   // stops answering while the storage its answers came from is still open.
   const auth = await openAuth(appConfig.auth, database, env.dataDir, logger);
   const api = application.own(
-    openApi(application, appConfig.api, auth, chat, database, env.uiDir, logger),
+    openApi(
+      application,
+      appConfig.api,
+      auth,
+      new BlueprintStore({
+        authorities: () => buildAuthorityCatalog(application),
+        config,
+        toolSets: toolSetCatalog,
+      }),
+      chat,
+      database,
+      env.uiDir,
+      logger,
+    ),
   );
 
   try {
@@ -114,6 +136,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       env.configDir,
       logger,
       secretStore,
+      toolSetCatalog,
     );
     await openGateway(
       application,
@@ -151,6 +174,7 @@ function openApi(
   application: NoxApplication,
   config: ApiConfig,
   auth: ApiAuth,
+  blueprints: BlueprintStore,
   chat: ChatHub,
   database: Database,
   uiDirectory: string,
@@ -159,6 +183,7 @@ function openApi(
   return ApiServer.create({
     ...config,
     auth,
+    blueprints,
     chat,
     checks: {
       database: () => database.isOpen,
@@ -217,6 +242,7 @@ async function composeAgents(
   configDir: string,
   logger: Logger,
   secretStore: SecretStore,
+  toolSetCatalog: ToolSetCatalog,
 ): Promise<AuthorityCatalog> {
   await application.start();
 
@@ -235,9 +261,7 @@ async function composeAgents(
   }
 
   const configuredProviders = config.get('providers');
-  const configuredToolSets = config.get('toolSets');
   const openedProviders = new Map<string, ChatProvider>();
-  const openedToolSets = new Map<string, ToolSet>();
   for (const [agentId, blueprint] of Object.entries(blueprints)) {
     const provider = await openProvider(
       application,
@@ -261,20 +285,8 @@ async function composeAgents(
       blueprint.compaction === undefined
         ? model
         : modelConfigFor(compactionProvider, blueprint.compaction.model);
-    const directToolSets = await grantToolSets(
-      application,
-      configuredToolSets,
-      openedToolSets,
-      blueprint.toolSets.direct,
-      secretStore,
-    );
-    const routedToolSets = await grantToolSets(
-      application,
-      configuredToolSets,
-      openedToolSets,
-      blueprint.toolSets.routed,
-      secretStore,
-    );
+    const directToolSets = await toolSetCatalog.grant(blueprint.toolSets.direct);
+    const routedToolSets = await toolSetCatalog.grant(blueprint.toolSets.routed);
 
     application.addAgent(
       new Agent(database, provider, model, {
@@ -456,58 +468,6 @@ async function openProvider(
   );
   opened.set(providerId, provider);
   return provider;
-}
-
-/** Opens configured tool-set instances once and grants them under their config IDs. */
-async function grantToolSets(
-  application: NoxApplication,
-  configured: Record<string, ToolSetConfig>,
-  opened: Map<string, ToolSet>,
-  toolSetIds: readonly string[],
-  secretStore: SecretStore,
-): Promise<ToolSetGrant[]> {
-  const grants: ToolSetGrant[] = [];
-  const seen = new Set<string>();
-
-  for (const toolSetId of toolSetIds) {
-    if (seen.has(toolSetId)) {
-      throw new Error(`Tool set "${toolSetId}" is granted more than once in one blueprint list.`);
-    }
-    seen.add(toolSetId);
-
-    let toolSet = opened.get(toolSetId);
-    if (toolSet === undefined) {
-      const entry = configured[toolSetId];
-      if (entry === undefined) {
-        const known = Object.keys(configured);
-        throw new Error(
-          `A blueprint names tool set "${toolSetId}", which toolsets.json does not ` +
-            (known.length === 0
-              ? 'configure at all.'
-              : `configure. Configured: ${known.join(', ')}.`),
-        );
-      }
-
-      const contribution = application.contributions.get(toolSets, entry.type);
-      if (contribution === undefined) {
-        throw new Error(
-          `Tool set "${toolSetId}" is of type "${entry.type}", which no extension contributed.`,
-        );
-      }
-
-      toolSet = contribution.value.create(
-        await resolveSecrets(entry, secretStore, {
-          extensionId: contribution.extensionId,
-          location: `toolSets.${toolSetId}`,
-        }),
-      );
-      opened.set(toolSetId, toolSet);
-    }
-
-    grants.push(Object.freeze({ toolSet, toolSetId }));
-  }
-
-  return grants;
 }
 
 /**

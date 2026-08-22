@@ -8,6 +8,8 @@ export type {
   ChatCommandInput,
   ChatCommandRejection,
   ChatContextChangeEvent,
+  ChatContextUsage,
+  ChatContextUsageEvent,
   ChatConversation,
   ChatDecisionInput,
   ChatErrorEvent,

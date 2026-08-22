@@ -22,7 +22,7 @@ import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
 import type { Message, UserMessage } from './context/message';
-import type { ContextOptions } from './context/options';
+import type { ContextOptions, ContextUsage } from './context/options';
 import type { AgentEvent } from './events';
 
 interface SessionOptions extends RunnerOptions {
@@ -248,6 +248,11 @@ class Session {
   /** The bounded working set actually sent to the model. */
   public getHistory(): readonly Message[] {
     return this.#context.getHistory();
+  }
+
+  /** Current context accounting, including the model window when it is declared. */
+  public getContextUsage(): ContextUsage {
+    return this.#context.getUsage();
   }
 
   /** The complete transcript, including everything folding and compaction replaced. */

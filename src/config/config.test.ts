@@ -15,7 +15,14 @@ import { blueprintSchema } from './blueprint';
 import { Config } from './config';
 import { readEnvConfig } from './env';
 import { isConfigError } from './error';
-import { type LoaderContext, loadSection, updateSection, writeJson } from './loader';
+import {
+  type LoaderContext,
+  loadSection,
+  removeEntry,
+  updateEntry,
+  updateSection,
+  writeJson,
+} from './loader';
 import { directorySection, fileSection } from './section';
 
 import type { ChatProvider } from '../provider/provider';
@@ -142,6 +149,39 @@ describe('blueprint config', () => {
         model: 'main-model',
         provider: 'main',
         systemPrompt: 'be exact',
+      }).success,
+    ).toBeFalse();
+  });
+
+  test('grants a whole tool set by name, or an allowlist over one', () => {
+    const parsed = blueprintSchema.parse({
+      model: 'main-model',
+      provider: 'main',
+      systemPrompt: 'be exact',
+      toolSets: {
+        direct: ['clock', { id: 'files', tools: ['read_file', 'list_dir'] }],
+        routed: [{ id: 'internet' }],
+      },
+    });
+
+    // Both forms survive as written. Normalizing the bare string into an object
+    // here would make every blueprint on disk differ from its parsed value, and
+    // the loader rewrites a file when those differ.
+    expect(parsed.toolSets).toEqual({
+      direct: ['clock', { id: 'files', tools: ['read_file', 'list_dir'] }],
+      routed: [{ id: 'internet' }],
+    });
+  });
+
+  test('refuses a grant of a set and none of its tools', () => {
+    // It reads exactly like the grant that means "all of them", so it is a
+    // mistake rather than a policy anyone wrote on purpose.
+    expect(
+      blueprintSchema.safeParse({
+        model: 'main-model',
+        provider: 'main',
+        systemPrompt: 'be exact',
+        toolSets: { direct: [{ id: 'files', tools: [] }] },
       }).success,
     ).toBeFalse();
   });
@@ -306,6 +346,107 @@ describe('config directories', () => {
 
     expect(isConfigError(error) && error.code).toBe('unwritable');
     expect(String(error)).toContain('blueprints');
+  });
+
+  test('writes and removes one entry without touching its neighbours', async () => {
+    const dir = await configDir();
+
+    await updateEntry(blueprintSection, context(dir), 'architect', { name: 'Architect' });
+    await updateEntry(blueprintSection, context(dir), 'watcher', { name: 'Watcher' });
+
+    expect(await loadSection(blueprintSection, context(dir))).toEqual({
+      architect: { name: 'Architect', temperature: 0.7 },
+      watcher: { name: 'Watcher', temperature: 0.7 },
+    });
+
+    expect(await removeEntry(blueprintSection, context(dir), 'watcher')).toBeTrue();
+    expect(await loadSection(blueprintSection, context(dir))).toEqual({
+      architect: { name: 'Architect', temperature: 0.7 },
+    });
+
+    // Removing what is not there is what the caller asked for either way.
+    expect(await removeEntry(blueprintSection, context(dir), 'watcher')).toBeFalse();
+  });
+
+  test('validates an entry against the section schema before writing it', async () => {
+    const dir = await configDir();
+
+    const error = await rejection(
+      updateEntry(blueprintSection, context(dir), 'broken', { temperature: 'warm' }),
+    );
+
+    expect(isConfigError(error) && error.code).toBe('invalid_schema');
+    expect(await loadSection(blueprintSection, context(dir))).toEqual({});
+  });
+
+  test('leaves nothing behind when the caller refuses the parsed entry', async () => {
+    const dir = await configDir();
+
+    // The hook is how a caller checks what the entry's own schema cannot: that
+    // the rest of the configuration agrees with it.
+    const error = await rejection(
+      updateEntry(blueprintSection, context(dir), 'refused', { name: 'Refused' }, () => {
+        throw new Error('the provider it names is not configured');
+      }),
+    );
+
+    expect(String(error)).toContain('not configured');
+    expect(await loadSection(blueprintSection, context(dir))).toEqual({});
+  });
+
+  test('refuses an entry ID that would escape the section directory', async () => {
+    const dir = await configDir();
+
+    // The ID becomes a file name, so it is checked rather than trusted.
+    for (const entryId of ['../escaped', 'nested/child', '.hidden', '']) {
+      const error = await rejection(
+        updateEntry(blueprintSection, context(dir), entryId, { name: 'Nope' }),
+      );
+      expect(isConfigError(error) && error.code).toBe('unwritable');
+    }
+  });
+});
+
+describe('config directory entries through Config', () => {
+  test('reflects a written entry in the value it hands out, and says a restart is due', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+
+    const saved = await config.updateEntry('blueprints', 'watcher', {
+      model: 'main-model',
+      provider: 'main',
+      systemPrompt: 'watch',
+    });
+
+    // Blueprints apply on restart: agents are registered once, while Nox
+    // composes itself, so the value held here is the next start's and not this
+    // one's. A caller that could not tell would show the edit as if it were live.
+    expect(saved.restartRequired).toBeTrue();
+    expect(saved.value.systemPrompt).toBe('watch');
+    expect(Object.keys(config.get('blueprints'))).toEqual(['watcher']);
+
+    expect(await config.removeEntry('blueprints', 'watcher')).toBeTrue();
+    expect(config.get('blueprints')).toEqual({});
+
+    // And the directory is the record: a fresh load agrees with what is held.
+    expect((await loadedConfig(dir)).get('blueprints')).toEqual({});
+  });
+
+  test('holds the previous entry when a write is refused', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+    await config.updateEntry('blueprints', 'nox', {
+      model: 'main-model',
+      provider: 'main',
+      systemPrompt: 'be exact',
+    });
+
+    const error = await rejection(
+      config.updateEntry('blueprints', 'nox', { model: 'main-model', provider: 'main' }),
+    );
+
+    expect(isConfigError(error) && error.code).toBe('invalid_schema');
+    expect(config.get('blueprints').nox?.systemPrompt).toBe('be exact');
   });
 });
 

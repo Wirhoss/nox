@@ -473,6 +473,44 @@ describe('Agent', () => {
     await loaded.stop();
   });
 
+  test('grants only the tools the blueprint named from a shared set', async () => {
+    const provider = new RecordingProvider();
+    const shared = toolSet(echoTool(), { ...echoTool(), name: 'beta' });
+    const agent = new Agent(await openDatabase(), provider, MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      directToolSets: [{ toolSet: shared, toolSetId: 'direct', tools: ['echo'] }],
+      systemPrompt: 'you are nox',
+    });
+
+    const session = await agent.openSession({ authorization: permissiveAuthorization });
+    session.send('hi', testOrigin());
+    await session.idle;
+
+    // The instance still exposes both — one configured tool set is shared by
+    // every agent that names it, so the cut is the grant's and not the set's.
+    expect(Object.keys(shared.tools)).toEqual(['beta', 'echo']);
+    expect(provider.requests[0]?.toolNames).toContain('echo');
+    expect(provider.requests[0]?.toolNames).not.toContain('beta');
+
+    await session.stop();
+  });
+
+  test('refuses a grant naming a tool its set does not expose', async () => {
+    const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      directToolSets: [{ toolSet: toolSet(echoTool()), toolSetId: 'direct', tools: ['ghost'] }],
+      systemPrompt: 'system',
+    });
+
+    // Granting nothing instead of failing would look like a tool the model
+    // simply never chose to call.
+    expect(() => agent.openSession({ authorization: permissiveAuthorization })).toThrow(
+      'direct tool set direct does not expose tool ghost',
+    );
+  });
+
   test('rejects ambiguous direct and routed tool assignments before opening', async () => {
     const shared = toolSet(versionTool('one'));
     const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {

@@ -294,10 +294,18 @@ describe('Context compaction', () => {
     expect(context.isUnderPressure()).toBeTrue();
 
     const sentEstimate = context.getTokenEstimate();
+    expect(context.getUsage()).toEqual({
+      compactAtTokens: 6_400,
+      contextWindow: 10_000,
+      usedTokens: sentEstimate,
+    });
+
     context.recordInputUsage(100, sentEstimate);
+    expect(context.getUsage().usedTokens).toBe(100);
     expect(context.isUnderPressure()).toBeFalse();
 
     context.addMessage(textMessage('assistant', 'later', 'y'.repeat(7_000)));
+    expect(context.getUsage().usedTokens).toBeGreaterThan(6_400);
     expect(context.isUnderPressure()).toBeTrue();
   });
 

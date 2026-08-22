@@ -1,4 +1,5 @@
 import type { ToolResponseExecution } from '../agent/context/message';
+import type { ContextUsage } from '../agent/context/options';
 import type { RunStatus, RunTrigger } from '../agent/events';
 import type { PrincipalRef } from '../auth/principal';
 import type { Logger } from '../logger/logger';
@@ -26,6 +27,8 @@ interface BrokerCapabilities {
    * A surface that shows a transcript can say what replaced what; a chat cannot.
    */
   readonly contextChanges?: boolean;
+  /** The current working-set size and the model window it is filling. */
+  readonly contextUsage?: boolean;
   /**
    * The broker can put a permission request in front of its owner and return the
    * answer. The request itself names that owner; the transport only authenticates
@@ -71,6 +74,12 @@ interface OutboundContextChange extends OutboundBase {
   readonly replacedMessageIds: readonly string[];
   readonly text: string;
   readonly type: 'contextChange';
+}
+
+/** The bounded context as Nox accounts for it after a change. */
+interface OutboundContextUsage extends OutboundBase {
+  readonly type: 'contextUsage';
+  readonly usage: ContextUsage;
 }
 
 /** Something the conversation has to be told about, and no reply is coming. */
@@ -192,6 +201,7 @@ interface OutboundUsage extends OutboundBase {
 
 type OutboundEvent =
   | OutboundContextChange
+  | OutboundContextUsage
   | OutboundError
   | OutboundFragment
   | OutboundMessage
@@ -256,6 +266,7 @@ interface BrokerHistoryOptions {
  */
 interface BrokerHistory {
   readonly agentId: string;
+  readonly contextUsage?: ContextUsage;
   readonly conversationId: string;
   readonly entries: readonly BrokerHistoryEntry[];
   readonly sessionId: string;
@@ -268,6 +279,7 @@ interface BrokerHistory {
  */
 interface BrokerSession {
   readonly agentId: string;
+  readonly contextUsage?: ContextUsage;
   readonly conversationId: string;
   readonly sessionId: string;
   /** When the conversation was bound — the first thing ever said in it. */
@@ -406,6 +418,7 @@ export type {
   OutboundBase,
   OutboundBody,
   OutboundContextChange,
+  OutboundContextUsage,
   OutboundError,
   OutboundEvent,
   OutboundFragment,

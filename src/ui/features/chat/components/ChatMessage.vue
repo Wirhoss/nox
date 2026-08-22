@@ -1,15 +1,31 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type DeepReadonly, ref } from 'vue'
 
 import { renderMarkdown } from '../model/markdown'
+import ReasoningActivityCard from './ReasoningActivityCard.vue'
+import RunActivityCard from './RunActivityCard.vue'
+import ToolActivityCard from './ToolActivityCard.vue'
 
-import type { AssistantItem, UserItem } from '../stores/activeSession.store'
+import type {
+  AssistantItem,
+  ReasoningActivity,
+  RunActivityItem,
+  ToolActivity,
+  UserItem,
+} from '../stores/activeSession.store'
 
+type ProcessItem = ReasoningActivity | ToolActivity
 interface Props {
+  activity?: DeepReadonly<RunActivityItem>
   item: AssistantItem | UserItem
+  processItems?: readonly DeepReadonly<ProcessItem>[]
 }
 
 const props = defineProps<Props>()
+const detailsOpen = ref(false)
+const hasDetails = computed(
+  () => props.item.kind === 'assistant' && props.activity !== undefined,
+)
 const renderedMessage = computed(() => renderMarkdown(props.item.text))
 const streaming = computed(() => props.item.kind === 'assistant' && props.item.streaming)
 const timestamp = computed(() =>
@@ -22,6 +38,29 @@ const timestamp = computed(() =>
 
 <template>
   <article class="message" :class="`message--${props.item.kind}`">
+    <details
+      v-if="props.item.kind === 'assistant' && (props.processItems?.length ?? 0) > 0"
+      class="message__process"
+    >
+      <summary class="message__process-summary">
+        <span class="message__process-chevron" aria-hidden="true"></span>
+        <strong>Response process</strong>
+        <span>
+          {{ props.processItems?.length }} step{{ props.processItems?.length === 1 ? '' : 's' }}
+        </span>
+      </summary>
+
+      <div class="message__process-body" aria-label="Response process">
+        <template v-for="processItem in props.processItems" :key="processItem.id">
+          <ReasoningActivityCard
+            v-if="processItem.kind === 'reasoning'"
+            :item="processItem"
+          />
+          <ToolActivityCard v-else :item="processItem" />
+        </template>
+      </div>
+    </details>
+
     <header class="message__author">{{ props.item.kind === 'user' ? 'YOU' : 'NOX' }}</header>
     <!-- markdown.ts escapes raw HTML and only emits HTML from trusted renderers. -->
     <!-- eslint-disable-next-line vue/no-v-html -->
@@ -31,9 +70,35 @@ const timestamp = computed(() =>
       :aria-busy="streaming"
       v-html="renderedMessage"
     ></div>
-    <time class="message__timestamp" :datetime="props.item.createdAt" :title="props.item.createdAt">
-      {{ timestamp }}
-    </time>
+    <footer class="message__footer">
+      <time class="message__timestamp" :datetime="props.item.createdAt" :title="props.item.createdAt">
+        {{ timestamp }}
+      </time>
+
+      <button
+        v-if="hasDetails"
+        class="message__details-summary"
+        type="button"
+        :aria-controls="`run-details-${props.item.id}`"
+        :aria-expanded="detailsOpen"
+        @click="detailsOpen = !detailsOpen"
+      >
+        <span
+          class="message__details-chevron"
+          :class="{ 'message__details-chevron--open': detailsOpen }"
+          aria-hidden="true"
+        ></span>
+        <span>Details</span>
+      </button>
+
+      <div
+        v-if="hasDetails && detailsOpen"
+        :id="`run-details-${props.item.id}`"
+        class="message__details-body"
+      >
+        <RunActivityCard v-if="props.activity !== undefined" embedded :item="props.activity" />
+      </div>
+    </footer>
   </article>
 </template>
 
@@ -75,7 +140,17 @@ const timestamp = computed(() =>
   color: var(--nox-action-primary);
 }
 
+.message__footer {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
 .message__timestamp {
+  z-index: 1;
+  grid-column: 1;
+  grid-row: 1;
   color: var(--nox-text-muted);
   font-family: var(--nox-font-mono);
   font-size: 0.65rem;
@@ -83,7 +158,118 @@ const timestamp = computed(() =>
 }
 
 .message--user .message__timestamp {
+  grid-column: 1 / -1;
   text-align: right;
+}
+
+.message__details-summary {
+  display: flex;
+  width: max-content;
+  grid-column: 2;
+  grid-row: 1;
+  align-items: center;
+  gap: var(--nox-space-2);
+  padding: 0;
+  border: 0;
+  margin-left: auto;
+  color: var(--nox-text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--nox-font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.message__details-chevron {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-right: 1px solid currentcolor;
+  border-bottom: 1px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.message__details-chevron--open {
+  transform: rotate(45deg) translate(-0.08rem, -0.08rem);
+}
+
+.message__details-body {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  gap: var(--nox-space-5);
+  padding-top: var(--nox-space-4);
+  border-top: 1px solid var(--nox-border-subtle);
+  margin-top: var(--nox-space-4);
+}
+
+.message__process {
+  min-width: 0;
+  border-bottom: 1px solid var(--nox-border-subtle);
+  margin-bottom: var(--nox-space-2);
+  padding-bottom: var(--nox-space-3);
+}
+
+.message__process-summary {
+  display: flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: var(--nox-space-3);
+  color: var(--nox-text-muted);
+  cursor: pointer;
+  font-family: var(--nox-font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.message__process-summary::-webkit-details-marker {
+  display: none;
+}
+
+.message__process-summary strong {
+  color: var(--nox-text-secondary);
+  font-size: var(--nox-text-xs);
+}
+
+.message__process-summary > span:last-child {
+  margin-left: auto;
+}
+
+.message__process-chevron {
+  width: 0.38rem;
+  height: 0.38rem;
+  flex: 0 0 auto;
+  border-right: 1px solid currentcolor;
+  border-bottom: 1px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.message__process[open] > .message__process-summary > .message__process-chevron {
+  transform: rotate(45deg) translate(-0.08rem, -0.08rem);
+}
+
+.message__process-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--nox-space-1);
+  padding-top: var(--nox-space-3);
+}
+
+.message__process-body :deep(.reasoning),
+.message__process-body :deep(.tool) {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message__details-chevron,
+  .message__process-chevron {
+    transition: none;
+  }
 }
 
 .message__text {

@@ -15,6 +15,7 @@ import {
 } from '../../../../provider/config';
 import { ProviderError, type ProviderErrorCode } from '../../../../provider/error';
 import { ChatProvider } from '../../../../provider/provider';
+import { toolParametersSchema } from '../../../../tool/render';
 
 import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
 import type { Tool } from '../../../../tool/tool';
@@ -550,7 +551,7 @@ class OpenAICompletions extends ChatProvider {
       function: {
         description: tool.description,
         name: tool.name,
-        parameters: z.toJSONSchema(tool.parameters, { io: 'input' }),
+        parameters: toolParametersSchema(tool),
       },
       type: 'function',
     }));

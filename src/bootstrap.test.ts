@@ -147,6 +147,40 @@ describe('bootstrap', () => {
     await application.closeSession(session.sessionId);
   });
 
+  test('carries a blueprint allowlist through to the tools a session opens with', async () => {
+    const internet = {
+      extract: { url: 'https://crawl.example.test' },
+      search: { url: 'https://search.example.test' },
+      type: 'web',
+    };
+
+    // Two agents over one configured instance, which is the case the allowlist
+    // exists for: the instance is shared, so the cut cannot live on it.
+    const application = await boot({
+      app: { api: { port: 0 }, chat: { defaultAgent: 'nox' } },
+      blueprints: {
+        nox: { ...NOX, toolSets: { direct: [{ id: 'internet', tools: ['web_search'] }] } },
+        typo: { ...NOX, toolSets: { direct: [{ id: 'internet', tools: ['web_crawl'] }] } },
+      },
+      toolSets: { internet },
+    });
+
+    const session = await application.openSession('nox');
+    await application.closeSession(session.sessionId);
+
+    // A name the instance does not expose fails where the set and the name are
+    // both in hand, rather than granting nothing in silence. It surfaces when
+    // the session snapshots its tools, which is where grants are resolved.
+    let error: unknown;
+    try {
+      await application.openSession('typo');
+    } catch (reason) {
+      error = reason;
+    }
+
+    expect(String(error)).toContain('does not expose tool web_crawl');
+  });
+
   test('registers one agent per file in the blueprints directory', async () => {
     const application = await boot({
       app: { api: { port: 0 }, chat: { defaultAgent: 'nox' } },

@@ -66,8 +66,18 @@ interface ContextOptions extends ContextPolicy {
   tools?: Readonly<Record<string, Tool>>;
 }
 
+interface ContextUsage {
+  /** The model's complete context window. Absent when its provider did not declare one. */
+  readonly contextWindow?: number;
+  /** The point at which Nox starts reducing the working set. */
+  readonly compactAtTokens?: number;
+  /** Current working-set accounting, provider-anchored whenever usage is available. */
+  readonly usedTokens: number;
+}
+
 interface ResolvedContextOptions {
   compactionModel?: ModelConfig;
+  contextWindow?: number;
   compactGuardBeginningTokens: number;
   compactGuardEndTokens: number;
   compactMinTokens: number;
@@ -143,6 +153,7 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
         DEFAULT_MAX_COMPACT_MIN_TOKENS,
         1,
       ),
+    contextWindow: policy.contextWindow,
     foldMinReductionRatio: policy.foldMinReductionRatio ?? DEFAULT_FOLD_MIN_REDUCTION_RATIO,
     fullHistory: options.fullHistory ?? [],
     logger: options.logger,
@@ -155,4 +166,4 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
 
 export { contextPolicySchema, resolveContextOptions };
 
-export type { ContextOptions, ContextPolicy, ResolvedContextOptions };
+export type { ContextOptions, ContextPolicy, ContextUsage, ResolvedContextOptions };

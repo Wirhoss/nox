@@ -3,12 +3,12 @@ import { join } from 'node:path';
 import { type Logger, silentLogger } from '../logger/logger';
 import { Mutex } from '../utils/mutex';
 import { ConfigError } from './error';
-import { type LoaderContext, loadSection, updateSection } from './loader';
-import { type ConfigKey, type ConfigMap, sections } from './sections';
+import { type LoaderContext, loadSection, removeEntry, updateEntry, updateSection } from './loader';
+import { type ConfigKey, type ConfigMap, sections, type Sections } from './sections';
 
 import type { ContributionReader } from '../extensions/contribution';
 import type { EnvConfig } from './env';
-import type { ConfigSection } from './section';
+import type { ConfigSection, DirectorySection } from './section';
 
 interface ConfigOptions {
   logger?: Logger;
@@ -19,8 +19,25 @@ interface ConfigUpdate<T> {
   value: T;
 }
 
+/** The sections whose value is a set of separately addressable entries. */
+type DirectoryKey = {
+  [K in ConfigKey]: Sections[K]['kind'] extends 'directory' ? K : never;
+}[ConfigKey];
+
+type EntryValue<K extends DirectoryKey> = ConfigMap[K][string];
+
 function erase(key: ConfigKey): ConfigSection {
   return sections[key] as ConfigSection;
+}
+
+/** The section behind a key `DirectoryKey` has already proved is a directory. */
+function eraseDirectory(key: DirectoryKey): DirectorySection {
+  return sections[key];
+}
+
+/** The record `key` holds now, without `entryId`. Never mutates the one in place. */
+function without(record: Record<string, unknown>, entryId: string): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => key !== entryId));
 }
 
 function isDeferred(section: ConfigSection): boolean {
@@ -140,6 +157,54 @@ class Config {
     });
   }
 
+  /**
+   * Writes one entry of a directory section. A directory has no whole-document
+   * write — `update` refuses one — because its entries are separate files with
+   * separate lifetimes: rewriting the set to change one of them would make
+   * every reader of the others a party to that change.
+   *
+   * `validate` sees the parsed entry before anything is written, for the checks
+   * an entry's own schema cannot make because they are about the rest of the
+   * configuration. Throwing from it leaves the entry exactly as it was.
+   */
+  public async updateEntry<K extends DirectoryKey>(
+    key: K,
+    entryId: string,
+    next: unknown,
+    validate?: (value: EntryValue<K>) => Promise<void> | void,
+  ): Promise<ConfigUpdate<EntryValue<K>>> {
+    const section = eraseDirectory(key);
+
+    return this.#updates.run(async () => {
+      const value = await updateEntry(section, this.#context, entryId, next, async (parsed) => {
+        await validate?.(parsed as EntryValue<K>);
+      });
+
+      const current = (this.#values.get(key) ?? {}) as Record<string, unknown>;
+      this.#values.set(key, { ...current, [entryId]: value });
+
+      return { restartRequired: section.applies === 'restart', value: value as EntryValue<K> };
+    });
+  }
+
+  /**
+   * Removes one entry. `false` means there was nothing to remove, which is what
+   * the caller asked for either way — the distinction is the surface's to
+   * report, not this module's to treat as a failure.
+   */
+  public async removeEntry(key: DirectoryKey, entryId: string): Promise<boolean> {
+    const section = eraseDirectory(key);
+
+    return this.#updates.run(async () => {
+      if (!(await removeEntry(section, this.#context, entryId))) return false;
+
+      const current = (this.#values.get(key) ?? {}) as Record<string, unknown>;
+      this.#values.set(key, without(current, entryId));
+
+      return true;
+    });
+  }
+
   #reader(key: ConfigKey): ContributionReader {
     if (this.#contributions === undefined) {
       throw new ConfigError(
@@ -154,4 +219,4 @@ class Config {
 
 export { Config };
 
-export type { ConfigOptions, ConfigUpdate };
+export type { ConfigOptions, ConfigUpdate, DirectoryKey, EntryValue };

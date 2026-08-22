@@ -1,17 +1,25 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useAuthStore } from '@/app/stores/auth.store'
+import { authApi } from '@/features/auth/api/auth.api'
+
+import { chatApi } from '../api/chat.api'
 import { useActiveSessionStore } from './activeSession.store'
 
+let auth: ReturnType<typeof useAuthStore>
 let session: ReturnType<typeof useActiveSessionStore>
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  auth = useAuthStore()
   session = useActiveSessionStore()
 })
 
 afterEach(() => {
   session.$dispose()
+  auth.$dispose()
+  vi.restoreAllMocks()
 })
 
 describe('active chat event projection', () => {
@@ -209,6 +217,57 @@ describe('active chat event projection', () => {
     })
   })
 
+  it('places reasoning and tools before their reply and leaves the run summary last', () => {
+    const conversationId = session.conversationId
+
+    session.applyEvent({
+      conversationId,
+      modelId: 'test-model',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      trigger: 'user',
+      turnId: 'turn-ordered',
+      type: 'runStarted',
+    })
+    session.applyEvent({
+      conversationId,
+      text: 'I should inspect the file.',
+      turnId: 'turn-ordered',
+      type: 'reasoning',
+    })
+    session.applyEvent({
+      arguments: { path: '/tmp/report' },
+      conversationId,
+      name: 'read_file',
+      trackId: 'track-ordered',
+      turnId: 'turn-ordered',
+      type: 'toolCall',
+    })
+    session.applyEvent({
+      conversationId,
+      execution: 'immediate',
+      isError: false,
+      name: 'read_file',
+      text: 'Report contents.',
+      trackId: 'track-ordered',
+      turnId: 'turn-ordered',
+      type: 'toolResponse',
+    })
+    session.applyEvent({
+      conversationId,
+      text: 'The report is ready.',
+      turnId: 'turn-ordered',
+      type: 'message',
+    })
+
+    expect(session.items.map((item) => item.kind)).toEqual([
+      'reasoning',
+      'tool',
+      'assistant',
+      'activity',
+    ])
+    expect(session.items[2]).toMatchObject({ createdAt: expect.any(String) })
+  })
+
   it('keeps multiple settled assistant messages produced by one run', () => {
     const conversationId = session.conversationId
 
@@ -310,6 +369,22 @@ describe('active chat event projection', () => {
     expect(session.items[0]).toMatchObject({ kind: 'activity', status: 'maxIterations' })
   })
 
+  it('keeps the latest context accounting published by the runtime', () => {
+    session.applyEvent({
+      conversationId: session.conversationId,
+      turnId: 'turn-context',
+      type: 'contextUsage',
+      usage: { compactAtTokens: 6_400, contextWindow: 10_000, usedTokens: 3_200 },
+    })
+
+    expect(session.contextUsage).toEqual({
+      compactAtTokens: 6_400,
+      contextWindow: 10_000,
+      usedTokens: 3_200,
+    })
+    expect(session.items).toHaveLength(0)
+  })
+
   it('ignores events addressed to another conversation', () => {
     session.applyEvent({
       conversationId: 'someone_else',
@@ -319,5 +394,146 @@ describe('active chat event projection', () => {
     })
 
     expect(session.items).toHaveLength(0)
+  })
+})
+
+describe('active chat surface integration', () => {
+  beforeEach(async () => {
+    vi.spyOn(authApi, 'login').mockResolvedValue({
+      accessToken: 'access-token',
+      account: { accountId: 'account-1', createdAt: 1, username: 'operator' },
+      expiresInSeconds: 3_600,
+    })
+    await auth.login({ password: 'secret', username: 'operator' })
+
+    vi.spyOn(chatApi, 'openStream').mockImplementation(
+      ({ opened, signal }) =>
+        new Promise<void>((resolve) => {
+          opened()
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
+        }),
+    )
+  })
+
+  it('opens the latest conversation and reconstructs its transcript', async () => {
+    vi.spyOn(chatApi, 'listCommands').mockResolvedValue([
+      { description: 'Stops the run.', name: 'stop', parameters: { type: 'object' } },
+    ])
+    vi.spyOn(chatApi, 'listConversations').mockResolvedValue([
+      {
+        agentId: 'assistant',
+        contextUsage: { contextWindow: 10_000, usedTokens: 3_200 },
+        conversationId: 'web_previous',
+        sessionId: 'session-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        state: 'closed',
+        updatedAt: '2026-01-01T00:00:04.000Z',
+      },
+    ])
+    vi.spyOn(chatApi, 'readHistory').mockResolvedValue({
+      agentId: 'assistant',
+      contextUsage: { compactAtTokens: 6_400, contextWindow: 10_000, usedTokens: 3_300 },
+      conversationId: 'web_previous',
+      entries: [
+        {
+          at: '2026-01-01T00:00:00.000Z',
+          messageId: 'message-user',
+          principal: { issuer: 'web', subject: 'account-1' },
+          text: 'Inspect it.',
+          type: 'userMessage',
+        },
+        {
+          at: '2026-01-01T00:00:01.000Z',
+          messageId: 'message-reasoning',
+          text: 'I should read it.',
+          type: 'reasoning',
+        },
+        {
+          arguments: { path: '/tmp/report' },
+          at: '2026-01-01T00:00:02.000Z',
+          messageId: 'message-call',
+          name: 'read_file',
+          trackId: 'track-1',
+          type: 'toolCall',
+        },
+        {
+          at: '2026-01-01T00:00:03.000Z',
+          execution: 'immediate',
+          isError: false,
+          messageId: 'message-response',
+          name: 'read_file',
+          text: 'contents',
+          trackId: 'track-1',
+          type: 'toolResponse',
+        },
+        {
+          at: '2026-01-01T00:00:04.000Z',
+          messageId: 'message-assistant',
+          text: 'Done.',
+          type: 'message',
+        },
+      ],
+      sessionId: 'session-1',
+    })
+
+    await session.initialize()
+
+    expect(session.conversationId).toBe('web_previous')
+    expect(session.contextUsage).toEqual({
+      compactAtTokens: 6_400,
+      contextWindow: 10_000,
+      usedTokens: 3_300,
+    })
+    expect(session.items.map((item) => item.kind)).toEqual([
+      'user',
+      'reasoning',
+      'tool',
+      'assistant',
+      'activity',
+    ])
+    expect(session.items[session.items.length - 1]).toMatchObject({
+      historical: true,
+      kind: 'activity',
+    })
+  })
+
+  it('steers an active run and invokes commands from the published catalog', async () => {
+    vi.spyOn(chatApi, 'listCommands').mockResolvedValue([
+      { description: 'Stops the run.', name: 'stop', parameters: { type: 'object' } },
+    ])
+    vi.spyOn(chatApi, 'listConversations').mockResolvedValue([])
+    const sendSteer = vi
+      .spyOn(chatApi, 'sendSteer')
+      .mockResolvedValue({ messageId: 'steer-1' })
+    const submitCommand = vi
+      .spyOn(chatApi, 'submitCommand')
+      .mockResolvedValue({ command: 'stop' })
+
+    await session.initialize()
+    session.applyEvent({
+      conversationId: session.conversationId,
+      modelId: 'test-model',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      trigger: 'user',
+      turnId: 'turn-1',
+      type: 'runStarted',
+    })
+
+    expect(session.sendMode).toBe('steer')
+    expect(await session.send('Change direction.')).toBe(true)
+    expect(sendSteer).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: session.conversationId, text: 'Change direction.' }),
+    )
+
+    expect(await session.invokeCommand('stop', { scope: 'run' })).toBe(true)
+    expect(submitCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ arguments: { scope: 'run' }, command: 'stop' }),
+    )
   })
 })

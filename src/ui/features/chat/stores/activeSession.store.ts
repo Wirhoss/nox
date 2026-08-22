@@ -7,7 +7,12 @@ import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/htt
 import { chatApi, type PermissionDecision } from '../api/chat.api'
 
 import type {
+  ChatCommand,
+  ChatContextUsage,
+  ChatConversation,
   ChatEvent,
+  ChatHistory,
+  ChatHistoryEntry,
   ChatPermissionRequest,
   ChatUsage,
   PermissionOutcome,
@@ -22,11 +27,16 @@ type ChatConnection =
   | { readonly type: 'unavailable' }
 
 type ChatRunStatus =
-  | { readonly clientMessageId: string; readonly type: 'sending' }
+  | { readonly clientMessageId: string; readonly mode: 'message' | 'steer'; readonly type: 'sending' }
   | { readonly message: string; readonly turnId?: string; readonly type: 'failed' }
   | { readonly requestId: string; readonly turnId: string; readonly type: 'waiting-permission' }
   | { readonly turnId?: string; readonly type: 'running' }
   | { readonly type: 'idle' }
+
+type ChatResourceState =
+  | { readonly message: string; readonly type: 'failed' }
+  | { readonly type: 'loading' }
+  | { readonly type: 'ready' }
 
 type PermissionState =
   | { readonly decision: PermissionDecision; readonly type: 'submitting' }
@@ -104,6 +114,7 @@ interface ToolActivity {
 interface RunActivityItem {
   readonly contextChanges: ContextChangeActivity[]
   durationMs?: number
+  historical?: boolean
   readonly id: string
   readonly kind: 'activity'
   modelId?: string
@@ -136,16 +147,27 @@ type TimelineItem =
 
 const useActiveSessionStore = defineStore('active-session', () => {
   const auth = useAuthStore()
+  const catalog = ref<ChatResourceState>({ type: 'loading' })
+  const commands = ref<readonly ChatCommand[]>([])
   const connection = ref<ChatConnection>({ type: 'disconnected' })
+  const contextUsage = ref<ChatContextUsage>()
   const conversationId = ref(createId('web'))
+  const conversations = ref<readonly ChatConversation[]>([])
+  const history = ref<ChatResourceState>({ type: 'ready' })
   const items = ref<TimelineItem[]>([])
   const run = ref<ChatRunStatus>({ type: 'idle' })
   const sendError = ref<string>()
 
+  const activeConversation = computed(() =>
+    conversations.value.find(
+      (conversation) => conversation.conversationId === conversationId.value,
+    ),
+  )
   const canSend = computed(
-    () =>
-      connection.value.type === 'connected' &&
-      (run.value.type === 'failed' || run.value.type === 'idle'),
+    () => connection.value.type === 'connected' && run.value.type !== 'sending',
+  )
+  const sendMode = computed<'message' | 'steer'>(() =>
+    run.value.type === 'running' || run.value.type === 'waiting-permission' ? 'steer' : 'message',
   )
   const pendingPermissionCount = computed(
     () =>
@@ -154,7 +176,116 @@ const useActiveSessionStore = defineStore('active-session', () => {
       ).length,
   )
 
+  let eventBuffer: ChatEvent[] | undefined
+  let initializePromise: Promise<void> | undefined
+  let selectionVersion = 0
   let streamController: AbortController | undefined
+
+  function initialize(): Promise<void> {
+    initializePromise ??= initializeChat()
+    return initializePromise
+  }
+
+  async function initializeChat(): Promise<void> {
+    eventBuffer = []
+    connect()
+
+    const accessToken = auth.accessToken
+    if (accessToken === undefined) {
+      catalog.value = { message: 'No authenticated session is available.', type: 'failed' }
+      eventBuffer = undefined
+      return
+    }
+
+    catalog.value = { type: 'loading' }
+    try {
+      const [availableCommands, availableConversations] = await Promise.all([
+        chatApi.listCommands(accessToken),
+        chatApi.listConversations(accessToken),
+      ])
+      commands.value = availableCommands
+      conversations.value = availableConversations
+      catalog.value = { type: 'ready' }
+
+      const latest = availableConversations[0]
+      if (latest === undefined) {
+        eventBuffer = undefined
+        return
+      }
+      await openConversation(latest.conversationId)
+    } catch (error) {
+      eventBuffer = undefined
+      catalog.value = { message: resourceMessageFor(error, 'load chat conversations'), type: 'failed' }
+      handleAuthorizationError(error)
+    }
+  }
+
+  async function refreshConversations(): Promise<void> {
+    const accessToken = auth.accessToken
+    if (accessToken === undefined) return
+
+    try {
+      conversations.value = await chatApi.listConversations(accessToken)
+    } catch (error) {
+      catalog.value = { message: resourceMessageFor(error, 'refresh conversations'), type: 'failed' }
+      handleAuthorizationError(error)
+    }
+  }
+
+  function handleAuthorizationError(error: unknown): void {
+    if (error instanceof ApiError && error.status === 401) auth.requireLogin()
+  }
+
+  function newConversation(): void {
+    selectionVersion += 1
+    eventBuffer = undefined
+    conversationId.value = createId('web')
+    contextUsage.value = undefined
+    history.value = { type: 'ready' }
+    items.value = []
+    run.value = { type: 'idle' }
+    sendError.value = undefined
+  }
+
+  async function openConversation(nextConversationId: string): Promise<void> {
+    if (nextConversationId === conversationId.value && items.value.length > 0) return
+
+    const accessToken = auth.accessToken
+    if (accessToken === undefined) return
+
+    const version = ++selectionVersion
+    const buffer = eventBuffer ?? []
+    eventBuffer = buffer
+    conversationId.value = nextConversationId
+    contextUsage.value = conversations.value.find(
+      (conversation) => conversation.conversationId === nextConversationId,
+    )?.contextUsage
+    history.value = { type: 'loading' }
+    items.value = []
+    run.value = { type: 'idle' }
+    sendError.value = undefined
+
+    let loaded: ChatHistory | undefined
+    try {
+      loaded = await chatApi.readHistory({
+        accessToken,
+        conversationId: nextConversationId,
+        limit: 1_000,
+      })
+      if (version !== selectionVersion) return
+      projectHistory(loaded)
+      contextUsage.value = loaded.contextUsage ?? contextUsage.value
+      history.value = { type: 'ready' }
+    } catch (error) {
+      if (version !== selectionVersion) return
+      history.value = { message: resourceMessageFor(error, 'load this conversation'), type: 'failed' }
+      handleAuthorizationError(error)
+    }
+
+    if (eventBuffer === buffer) eventBuffer = undefined
+    if (version !== selectionVersion) return
+    replayBufferedEvents(buffer, loaded)
+  }
 
   function connect(): void {
     if (streamController !== undefined) return
@@ -173,6 +304,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
   function disconnect(): void {
     streamController?.abort()
     streamController = undefined
+    initializePromise = undefined
     connection.value = { type: 'disconnected' }
   }
 
@@ -249,18 +381,22 @@ const useActiveSessionStore = defineStore('active-session', () => {
       kind: 'user',
       text: normalized,
     }
+    const mode = sendMode.value
     items.value.push(item)
-    run.value = { clientMessageId: messageId, type: 'sending' }
+    run.value = { clientMessageId: messageId, mode, type: 'sending' }
     sendError.value = undefined
 
     try {
-      await chatApi.sendMessage({
+      const input = {
         accessToken,
         conversationId: conversationId.value,
         messageId,
         text: normalized,
-      })
+      }
+      if (mode === 'steer') await chatApi.sendSteer(input)
+      else await chatApi.sendMessage(input)
       if (isSending(messageId)) run.value = { type: 'running' }
+      void refreshConversations()
       return true
     } catch (error) {
       items.value = items.value.filter((candidate) => candidate !== item)
@@ -270,6 +406,32 @@ const useActiveSessionStore = defineStore('active-session', () => {
         connection.value = { type: 'unavailable' }
       }
       if (error instanceof ApiError && error.status === 401) auth.requireLogin()
+      return false
+    }
+  }
+
+  async function invokeCommand(
+    command: string,
+    commandArguments?: Readonly<Record<string, unknown>>,
+  ): Promise<boolean> {
+    const accessToken = auth.accessToken
+    if (accessToken === undefined || connection.value.type !== 'connected') return false
+
+    sendError.value = undefined
+    try {
+      await chatApi.submitCommand({
+        accessToken,
+        arguments: commandArguments,
+        command,
+        conversationId: conversationId.value,
+      })
+      return true
+    } catch (error) {
+      sendError.value = resourceMessageFor(error, `run /${command}`)
+      if (error instanceof ApiError && error.code === 'chat_unavailable') {
+        connection.value = { type: 'unavailable' }
+      }
+      handleAuthorizationError(error)
       return false
     }
   }
@@ -294,6 +456,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
   }
 
   function applyEvent(event: ChatEvent): void {
+    if (eventBuffer !== undefined) {
+      eventBuffer.push(event)
+      return
+    }
     if (event.conversationId !== conversationId.value) return
 
     switch (event.type) {
@@ -304,6 +470,9 @@ const useActiveSessionStore = defineStore('active-session', () => {
           replacedMessageIds: event.replacedMessageIds,
           text: event.text,
         })
+        break
+      case 'contextUsage':
+        contextUsage.value = event.usage
         break
       case 'error':
         insertBeforeRunSummary(event.turnId, {
@@ -373,6 +542,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
         break
       case 'runCompleted': {
         const activity = activityItem(event.turnId)
+        activity.historical = false
         activity.durationMs = event.durationMs
         activity.status = event.status
         if (event.usage !== undefined) activity.usageTotal = event.usage
@@ -390,15 +560,18 @@ const useActiveSessionStore = defineStore('active-session', () => {
             run.value = { type: 'idle' }
           }
         }
+        void refreshConversations()
         break
       }
       case 'runStarted': {
         const activity = activityItem(event.turnId)
+        activity.historical = false
         activity.modelId = event.modelId
         activity.startedAt = event.startedAt
         activity.trigger = event.trigger
         run.value = { turnId: event.turnId, type: 'running' }
         sendError.value = undefined
+        void refreshConversations()
         break
       }
       case 'toolCall': {
@@ -422,6 +595,111 @@ const useActiveSessionStore = defineStore('active-session', () => {
       case 'usage':
         activityItem(event.turnId).usageCalls.push(event.usage)
         break
+    }
+  }
+
+  function projectHistory(loaded: ChatHistory): void {
+    items.value = []
+    let turn = 0
+
+    for (const entry of loaded.entries) {
+      if (entry.type === 'userMessage') {
+        turn += 1
+        items.value.push({
+          createdAt: entry.at,
+          id: entry.messageId,
+          kind: 'user',
+          text: entry.text,
+        })
+        continue
+      }
+
+      const turnId = `history_${String(turn)}`
+      switch (entry.type) {
+        case 'contextChange': {
+          const activity = historicalActivity(turnId)
+          activity.contextChanges.push({
+            change: entry.change,
+            id: entry.messageId,
+            replacedMessageIds: entry.replacedMessageIds,
+            text: entry.text,
+          })
+          break
+        }
+        case 'message':
+          insertBeforeRunSummary(turnId, {
+            createdAt: entry.at,
+            id: entry.messageId,
+            kind: 'assistant',
+            streaming: false,
+            text: entry.text,
+            turnId,
+          })
+          break
+        case 'reasoning': {
+          const activity = historicalActivity(turnId)
+          const reasoning: ReasoningActivity = {
+            id: entry.messageId,
+            kind: 'reasoning',
+            streaming: false,
+            text: entry.text,
+            turnId,
+          }
+          activity.reasoning.push(reasoning)
+          insertBeforeRunSummary(turnId, reasoning)
+          break
+        }
+        case 'toolCall': {
+          const tool = toolActivity(historicalActivity(turnId), entry.trackId, entry.name)
+          tool.arguments = entry.arguments
+          break
+        }
+        case 'toolResponse': {
+          const tool = toolActivity(historicalActivity(turnId), entry.trackId, entry.name)
+          tool.responses.push({
+            execution: entry.execution,
+            id: entry.messageId,
+            isError: entry.isError,
+            text: entry.text,
+          })
+          break
+        }
+      }
+    }
+  }
+
+  function historicalActivity(turnId: string): RunActivityItem {
+    const activity = activityItem(turnId)
+    activity.historical = true
+    return activity
+  }
+
+  function replayBufferedEvents(buffer: readonly ChatEvent[], loaded?: ChatHistory): void {
+    const represented = new Map<string, number>()
+    for (const entry of loaded?.entries ?? []) {
+      const signature = historyEntrySignature(entry)
+      if (signature !== undefined) represented.set(signature, (represented.get(signature) ?? 0) + 1)
+    }
+
+    const duplicate = new Set<ChatEvent>()
+    const settledTextTurns = new Set<string>()
+    const settledReasoningTurns = new Set<string>()
+    for (const event of buffer) {
+      if (event.conversationId !== conversationId.value) continue
+      const signature = eventSignature(event)
+      const count = signature === undefined ? 0 : (represented.get(signature) ?? 0)
+      if (signature === undefined || count === 0) continue
+      represented.set(signature, count - 1)
+      duplicate.add(event)
+      if (event.type === 'message') settledTextTurns.add(event.turnId)
+      if (event.type === 'reasoning') settledReasoningTurns.add(event.turnId)
+    }
+
+    for (const event of buffer) {
+      if (event.conversationId !== conversationId.value || duplicate.has(event)) continue
+      if (event.type === 'fragment' && settledTextTurns.has(event.turnId)) continue
+      if (event.type === 'reasoningFragment' && settledReasoningTurns.has(event.turnId)) continue
+      applyEvent(event)
     }
   }
 
@@ -548,7 +826,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (existing !== undefined) return existing
 
     const tool: ToolActivity = {
-      id: `tool_${trackId}`,
+      id: `tool_${activity.turnId}_${trackId}`,
       kind: 'tool',
       name,
       responses: [],
@@ -592,19 +870,31 @@ const useActiveSessionStore = defineStore('active-session', () => {
   onScopeDispose(disconnect)
 
   return {
+    activeConversation,
     applyEvent,
     canSend,
+    catalog: readonly(catalog),
+    commands: readonly(commands),
     connect,
     connection: readonly(connection),
+    contextUsage: readonly(contextUsage),
     conversationId: readonly(conversationId),
+    conversations: readonly(conversations),
     decide,
     disconnect,
+    history: readonly(history),
+    initialize,
+    invokeCommand,
     items: readonly(items),
+    newConversation,
+    openConversation,
     pendingPermissionCount,
     reconnect,
+    refreshConversations,
     run: readonly(run),
     send,
     sendError: readonly(sendError),
+    sendMode,
   }
 })
 
@@ -612,6 +902,71 @@ function createId(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12))
   const value = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
   return `${prefix}_${value}`
+}
+
+function historyEntrySignature(entry: ChatHistoryEntry): string | undefined {
+  switch (entry.type) {
+    case 'contextChange':
+      return JSON.stringify([
+        entry.type,
+        entry.change,
+        entry.replacedMessageIds,
+        entry.text,
+      ])
+    case 'message':
+    case 'reasoning':
+      return JSON.stringify([entry.type, entry.text])
+    case 'toolCall':
+      return JSON.stringify([entry.type, entry.trackId, entry.name, entry.arguments])
+    case 'toolResponse':
+      return JSON.stringify([
+        entry.type,
+        entry.trackId,
+        entry.name,
+        entry.execution,
+        entry.isError,
+        entry.text,
+      ])
+    case 'userMessage':
+      return undefined
+  }
+}
+
+function eventSignature(event: ChatEvent): string | undefined {
+  switch (event.type) {
+    case 'contextChange':
+      return JSON.stringify([
+        event.type,
+        event.change,
+        event.replacedMessageIds,
+        event.text,
+      ])
+    case 'message':
+    case 'reasoning':
+      return JSON.stringify([event.type, event.text])
+    case 'toolCall':
+      return JSON.stringify([event.type, event.trackId, event.name, event.arguments])
+    case 'toolResponse':
+      return JSON.stringify([
+        event.type,
+        event.trackId,
+        event.name,
+        event.execution,
+        event.isError,
+        event.text,
+      ])
+    case 'contextUsage':
+    case 'error':
+    case 'fragment':
+    case 'permission':
+    case 'permissionResolved':
+    case 'reasoningFragment':
+    case 'retry':
+    case 'runCompleted':
+    case 'runStarted':
+    case 'usage':
+      return undefined
+  }
 }
 
 function messageFor(error: unknown): string {
@@ -625,6 +980,27 @@ function messageFor(error: unknown): string {
     return 'The Nox node did not answer.'
   }
   return 'The message could not be handed to Nox.'
+}
+
+function resourceMessageFor(error: unknown, action: string): string {
+  if (error instanceof ApiError && error.code === 'chat_unavailable') {
+    return 'The internal chat transport is temporarily unavailable.'
+  }
+  if (error instanceof ApiError && error.code === 'conversation_not_found') {
+    return 'That conversation no longer exists.'
+  }
+  if (error instanceof ApiError && error.code === 'invalid_arguments') {
+    return `Nox rejected the arguments supplied to ${action}.`
+  }
+  if (error instanceof ApiError && error.code === 'unknown_command') {
+    return 'That command is no longer available.'
+  }
+  if (error instanceof ApiError && error.status === 401) {
+    return 'Your session is no longer authorized.'
+  }
+  if (error instanceof ApiContractError) return `Nox returned invalid data while trying to ${action}.`
+  if (error instanceof ApiConnectionError) return 'The Nox node did not answer.'
+  return `Could not ${action}.`
 }
 
 function isAborted(signal: AbortSignal): boolean {
@@ -650,6 +1026,7 @@ export { useActiveSessionStore }
 export type {
   AssistantItem,
   ChatConnection,
+  ChatResourceState,
   ChatRunStatus,
   ContextChangeActivity,
   ErrorItem,

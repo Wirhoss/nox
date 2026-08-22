@@ -6,9 +6,9 @@
 
 ## Estado
 
-Dirección conceptual inicial. El flujo de acceso y el primer chat en vivo están
-en implementación. Sessions, Audit y las superficies administrativas aún no
-comenzaron.
+Dirección conceptual inicial. El flujo de acceso y el chat web en vivo están
+implementados. El chat recupera conversaciones anteriores dentro de su propia
+superficie; las rutas dedicadas de Sessions, Audit y Settings aún no comenzaron.
 
 ## Visión del producto
 
@@ -208,6 +208,7 @@ La cabecera puede contener:
 - Agente activo.
 - Título e identidad de la sesión.
 - Estado: idle, ejecutando, esperando autorización o detenido.
+- Ocupación del contexto como dona, basada en el conteo canónico del runtime.
 - Acciones de la sesión.
 - Acceso al contexto técnico.
 
@@ -718,21 +719,27 @@ HTTP JSON maneja comandos y un stream SSE autenticado entrega lo que el web
 broker renderiza. El contrato implementado actualmente es:
 
 ```text
+GET  /api/chat/commands
+GET  /api/chat/conversations
+GET  /api/chat/conversations/:conversationId/history
 GET  /api/chat/stream
 POST /api/chat/conversations/:conversationId/messages
+POST /api/chat/conversations/:conversationId/steer
+POST /api/chat/conversations/:conversationId/commands/:command
 POST /api/chat/conversations/:conversationId/permissions/:requestId
 ```
 
 El cliente genera `conversationId`; la conversación se materializa en el
 runtime con su primer mensaje. El stream es único para todas las conversaciones
-y cada evento declara a cuál pertenece. Actualmente transporta fragmentos,
-mensajes asentados, solicitudes y resoluciones de permiso, y errores.
+y cada evento declara a cuál pertenece. Transporta fragmentos, mensajes
+asentados, actividad técnica, ciclo de vida de runs, permisos y el estado del
+contexto. El conteo de contexto se calcula dentro del runtime, se calibra con el
+provider cuando este informa usage y nunca se estima de nuevo en el navegador.
 
-Todavía no existen endpoints de historial, listado de sesiones ni detención de
-runs. La UI conserva únicamente la conversación viva que observó y no inventa
-persistencia que el contrato no ofrece. WebSocket se añadirá únicamente si
-aparece un requisito bidireccional que HTTP + SSE no pueda resolver
-correctamente.
+La UI abre la conversación más reciente, reconstruye el transcript, permite
+cambiar o comenzar una conversación, enviar steering durante un run e invocar
+el catálogo dinámico de comandos. WebSocket se añadirá únicamente si aparece un
+requisito bidireccional que HTTP + SSE no pueda resolver correctamente.
 
 La UI no importa clases internas como `Session`, `Agent` o `SessionGate`:
 

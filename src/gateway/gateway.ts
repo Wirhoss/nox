@@ -536,6 +536,7 @@ class Gateway implements MessageGateway {
     const { limit } = options;
     return {
       agentId: bound.agentId,
+      contextUsage: live?.session.getContextUsage(),
       conversationId,
       entries: limit === undefined ? entries : limit <= 0 ? [] : entries.slice(-limit),
       sessionId: bound.sessionId,
@@ -558,6 +559,7 @@ class Gateway implements MessageGateway {
         const state = live?.session.state;
         return {
           agentId: row.agentId,
+          contextUsage: live?.session.getContextUsage(),
           conversationId: row.conversationId,
           sessionId: row.sessionId,
           startedAt: new Date(row.createdAt),
@@ -664,6 +666,7 @@ class Gateway implements MessageGateway {
           break;
         case 'message':
           this.#deliverMessage(conversation, event.message);
+          this.#deliverContextUsage(conversation);
           break;
         case 'permissionRequested':
           if (!asks) break;
@@ -734,6 +737,7 @@ class Gateway implements MessageGateway {
           if (shows(broker, 'usage')) {
             this.#deliver(conversation, { usage: event.usage, type: 'usage' });
           }
+          this.#deliverContextUsage(conversation);
           break;
       }
     }
@@ -743,6 +747,14 @@ class Gateway implements MessageGateway {
   #deliverMessage(conversation: Conversation, message: Message): void {
     const body = bodyOf(conversation.grant.broker, message);
     if (body !== undefined) this.#deliver(conversation, body);
+  }
+
+  #deliverContextUsage(conversation: Conversation): void {
+    if (!shows(conversation.grant.broker, 'contextUsage')) return;
+    this.#deliver(conversation, {
+      type: 'contextUsage',
+      usage: conversation.session.getContextUsage(),
+    });
   }
 
   /**

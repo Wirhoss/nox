@@ -152,6 +152,12 @@ function bindTool(source: Tool, toolSetId: string): Tool {
 interface ToolSetGrant {
   readonly toolSet: ToolSet;
   readonly toolSetId: string;
+  /**
+   * Which of the set's tools this grant carries. Absent grants all of them,
+   * which is not the same as an empty list: the instance is shared by every
+   * grant that names it, so the cut has to live here rather than on the set.
+   */
+  readonly tools?: readonly string[];
 }
 
 abstract class ToolSet {

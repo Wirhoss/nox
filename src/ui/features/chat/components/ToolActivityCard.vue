@@ -52,43 +52,47 @@ function formatArguments(): string {
 </script>
 
 <template>
-  <article class="tool" :class="`tool--${tone}`">
-    <header class="tool__header">
-      <div>
+  <details class="tool" :class="`tool--${tone}`">
+    <summary class="tool__header">
+      <span class="tool__chevron" aria-hidden="true"></span>
+      <span class="tool__identity">
         <span>Tool call</span>
         <strong>{{ props.item.name }}</strong>
-      </div>
-      <span>{{ state }}</span>
-    </header>
+      </span>
+      <span class="tool__state">{{ state }}</span>
+    </summary>
 
-    <details v-if="props.item.arguments !== undefined" class="tool__nested">
-      <summary>Arguments</summary>
-      <pre>{{ formatArguments() }}</pre>
-    </details>
+    <div class="tool__body">
+      <details v-if="props.item.arguments !== undefined" class="tool__nested">
+        <summary>
+          <span class="tool__chevron" aria-hidden="true"></span>
+          <span>Arguments</span>
+        </summary>
+        <pre>{{ formatArguments() }}</pre>
+      </details>
 
-    <ol v-if="props.item.responses.length > 0" class="tool__responses">
-      <li v-for="response in props.item.responses" :key="response.id">
-        <details
-          class="tool__nested tool__result"
-          :class="{ 'tool__result--error': response.isError }"
-        >
-          <summary>
-            <span>{{ responseLabel(response.execution) }}</span>
-            <span>{{ response.isError ? 'error' : 'ok' }}</span>
-          </summary>
-          <pre>{{ response.text }}</pre>
-        </details>
-      </li>
-    </ol>
-  </article>
+      <ol v-if="props.item.responses.length > 0" class="tool__responses">
+        <li v-for="response in props.item.responses" :key="response.id">
+          <details
+            class="tool__nested tool__result"
+            :class="{ 'tool__result--error': response.isError }"
+          >
+            <summary>
+              <span class="tool__chevron" aria-hidden="true"></span>
+              <span>{{ responseLabel(response.execution) }}</span>
+              <span>{{ response.isError ? 'error' : 'ok' }}</span>
+            </summary>
+            <pre>{{ response.text }}</pre>
+          </details>
+        </li>
+      </ol>
+    </div>
+  </details>
 </template>
 
 <style scoped lang="scss">
 .tool {
-  display: grid;
   width: min(100%, 46rem);
-  gap: var(--nox-space-3);
-  padding: var(--nox-space-3) var(--nox-space-4);
   border: 1px solid var(--nox-border-subtle);
   border-left: 2px solid var(--nox-status-info);
   border-radius: var(--nox-radius-control);
@@ -96,6 +100,7 @@ function formatArguments(): string {
   background: color-mix(in srgb, var(--nox-surface-1) 76%, transparent);
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-xs);
+  overflow: hidden;
 }
 
 .tool--complete {
@@ -106,40 +111,88 @@ function formatArguments(): string {
   border-left-color: var(--nox-status-danger);
 }
 
-.tool__header,
-.tool__header > div {
+.tool__header {
   display: flex;
+  min-height: 2.65rem;
+  align-items: center;
+  gap: var(--nox-space-3);
+  padding: var(--nox-space-3) var(--nox-space-4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool__header::-webkit-details-marker,
+.tool__nested summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool__identity {
+  display: flex;
+  min-width: 0;
+  flex: 1;
   align-items: center;
   gap: var(--nox-space-3);
 }
 
-.tool__header {
-  justify-content: space-between;
-}
-
-.tool__header span {
+.tool__identity > span,
+.tool__state {
   color: var(--nox-text-muted);
   font-size: 0.65rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.tool__header strong {
+.tool__identity strong {
+  min-width: 0;
   color: var(--nox-status-info);
   font-size: var(--nox-text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tool--complete .tool__header > span {
+.tool__state {
+  flex: 0 0 auto;
+}
+
+.tool--complete .tool__state {
   color: var(--nox-status-success);
 }
 
-.tool--error .tool__header > span {
+.tool--error .tool__state {
   color: var(--nox-status-danger);
 }
 
+.tool__body {
+  display: grid;
+  gap: var(--nox-space-3);
+  padding: var(--nox-space-3) var(--nox-space-4) var(--nox-space-4);
+  border-top: 1px solid var(--nox-border-subtle);
+}
+
+.tool__chevron {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  color: var(--nox-text-muted);
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.tool[open] > .tool__header > .tool__chevron,
+.tool__nested[open] > summary > .tool__chevron {
+  transform: rotate(45deg) translate(-0.08rem, -0.08rem);
+}
+
 .tool__nested summary {
+  display: flex;
+  align-items: center;
+  gap: var(--nox-space-2);
   color: var(--nox-text-muted);
   cursor: pointer;
+  list-style: none;
 }
 
 .tool__nested pre {
@@ -166,10 +219,9 @@ function formatArguments(): string {
   border-top: 1px solid var(--nox-border-subtle);
 }
 
-.tool__result summary {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--nox-space-3);
+.tool__result summary > span:nth-child(2) {
+  min-width: 0;
+  flex: 1;
 }
 
 .tool__result summary > span:last-child {
@@ -183,5 +235,11 @@ function formatArguments(): string {
 .tool__result--error summary > span:last-child,
 .tool__result--error pre {
   color: var(--nox-status-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool__chevron {
+    transition: none;
+  }
 }
 </style>
