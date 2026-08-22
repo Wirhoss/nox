@@ -3,18 +3,20 @@ import { type AnyElysia, Elysia } from 'elysia';
 import { type Logger, silentLogger } from '../logger/logger';
 import { parseOrThrow } from '../utils/validate';
 import { authRoutes } from './auth/routes';
-import { blueprintRoutes } from './blueprints/routes';
 import { chatRoutes } from './chat/routes';
-import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './config';
+import { configRoutes } from './config/routes';
 import { health, type ReadinessChecks } from './health';
 import { API_PREFIX } from './prefix';
+import { secretRoutes } from './secrets/routes';
+import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './serverConfig';
 import { ui } from './ui';
 
+import type { SecretStore } from '../config/secrets';
 import type { Disposable } from '../extensions/disposable';
 import type { RegistrationWindow } from './auth/registration';
 import type { AuthStore } from './auth/store';
-import type { BlueprintStore } from './blueprints/store';
 import type { ChatHub } from './chat/transport';
+import type { ConfigStore } from './config/store';
 
 /** The two halves of authentication a composed Nox hands in: who exists, and who may still claim it. */
 interface ApiAuth {
@@ -30,12 +32,6 @@ interface ApiServerOptions extends ApiConfigInput {
    */
   auth?: ApiAuth;
   /**
-   * Mounts `/api/blueprints`, where the agents themselves are administered. It
-   * needs `auth` for the same reason the chat does, and more so: a blueprint is
-   * the whole of what an agent will do.
-   */
-  blueprints?: BlueprintStore;
-  /**
    * Mounts `/api/chat`, where the browser talks to whatever broker claims the
    * surface. It needs `auth`: a conversation route that cannot name who is
    * speaking has no sender to vouch for, and an unauthenticated one would be
@@ -44,7 +40,21 @@ interface ApiServerOptions extends ApiConfigInput {
   chat?: ChatHub;
   /** The dependencies `/api/health/ready` reports on. Empty means always ready. */
   checks?: ReadinessChecks;
+  /**
+   * Mounts `/api/config`, where configuration is administered: the blueprints
+   * that are the whole of what each agent will do, the providers Nox talks
+   * through, the tool sets that exist at all, and the `app.json` holding the
+   * token lifetimes protecting this surface. It needs `auth` for every one of
+   * those reasons.
+   */
+  config?: ConfigStore;
   logger?: Logger;
+  /**
+   * Mounts `/api/secrets`, where the credentials behind every outbound call are
+   * written. Values only ever go in; the routes have no way to read one back,
+   * and `auth` is what stands between the write and anybody at all.
+   */
+  secrets?: SecretStore;
   /** Vite build directory to expose at `/`; omitted when no web UI is available. */
   uiDirectory?: string;
   version?: string;
@@ -91,8 +101,11 @@ class ApiServer implements Disposable {
     );
     if (options.auth !== undefined) {
       api.use(authRoutes(options.auth));
-      if (options.blueprints !== undefined) {
-        api.use(blueprintRoutes({ blueprints: options.blueprints, store: options.auth.store }));
+      if (options.config !== undefined) {
+        api.use(configRoutes({ config: options.config, store: options.auth.store }));
+      }
+      if (options.secrets !== undefined) {
+        api.use(secretRoutes({ secrets: options.secrets, store: options.auth.store }));
       }
       if (options.chat !== undefined) {
         api.use(chatRoutes({ hub: options.chat, store: options.auth.store }));

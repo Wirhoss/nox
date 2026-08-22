@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { authConfigSchema } from '../api/auth/config';
-import { apiConfigSchema } from '../api/config';
+import { apiConfigSchema } from '../api/serverConfig';
 import { databaseConfigSchema } from '../database/config';
 import { LOG_LEVELS } from '../logger/logger';
 

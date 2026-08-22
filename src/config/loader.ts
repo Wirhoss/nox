@@ -328,6 +328,12 @@ function loadSection<T>(
  * Writes a section, validating the whole document against the same schema that
  * loads it. A file section may fold the previous value in through its `merge`,
  * which is how a stored secret survives an update that did not mention it.
+ *
+ * `validate` sees the parsed document before anything is written, for the checks
+ * a schema cannot make because they are about the rest of the configuration.
+ * Throwing from it leaves the file exactly as it was — the same guarantee
+ * `updateEntry` gives, so a caller writing one entry gets it whichever way the
+ * section happens to store entries.
  */
 async function updateSection<T>(
   section: ConfigSection<T>,
@@ -335,6 +341,7 @@ async function updateSection<T>(
   next: unknown,
   previous: unknown,
   contributions?: ContributionReader,
+  validate?: (value: Record<string, T> | T) => Promise<void> | void,
 ): Promise<Record<string, T> | T> {
   const filePath = join(context.configDir, section.name);
 
@@ -362,6 +369,7 @@ async function updateSection<T>(
       ? section.merge(previous as T | undefined, document.value as T)
       : document.value;
 
+  await validate?.(value as Record<string, T> | T);
   await writeJson(filePath, value);
   return value as Record<string, T> | T;
 }

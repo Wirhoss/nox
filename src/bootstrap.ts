@@ -4,8 +4,8 @@ import { isAbsolute, join } from 'node:path';
 import { Agent } from './agent/agent';
 import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
-import { BlueprintStore } from './api/blueprints/store';
 import { ChatHub } from './api/chat/transport';
+import { ConfigStore } from './api/config/store';
 import { type ApiAuth, ApiServer } from './api/server';
 import { NoxApplication } from './application';
 import { AuthorityCatalog, type AuthorityDefinition } from './auth/authority';
@@ -28,7 +28,7 @@ import { createLogger, type Logger } from './logger/logger';
 import { configService, databaseService, loggerService, secretStoreService } from './services';
 
 import type { AuthConfig } from './api/auth/config';
-import type { ApiConfig } from './api/config';
+import type { ApiConfig } from './api/serverConfig';
 import type { Blueprint, TaskModelConfig } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
@@ -116,13 +116,14 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       application,
       appConfig.api,
       auth,
-      new BlueprintStore({
+      chat,
+      new ConfigStore({
         authorities: () => buildAuthorityCatalog(application),
         config,
         toolSets: toolSetCatalog,
       }),
-      chat,
       database,
+      secretStore,
       env.uiDir,
       logger,
     ),
@@ -174,22 +175,24 @@ function openApi(
   application: NoxApplication,
   config: ApiConfig,
   auth: ApiAuth,
-  blueprints: BlueprintStore,
   chat: ChatHub,
+  configuration: ConfigStore,
   database: Database,
+  secrets: SecretStore,
   uiDirectory: string,
   logger: Logger,
 ): ApiServer {
   return ApiServer.create({
     ...config,
     auth,
-    blueprints,
     chat,
     checks: {
       database: () => database.isOpen,
       nox: () => application.state === 'running',
     },
+    config: configuration,
     logger: logger.child('api'),
+    secrets,
     uiDirectory,
     version: application.noxVersion,
   });

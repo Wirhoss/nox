@@ -8,7 +8,7 @@ import { type ConfigKey, type ConfigMap, sections, type Sections } from './secti
 
 import type { ContributionReader } from '../extensions/contribution';
 import type { EnvConfig } from './env';
-import type { ConfigSection, DirectorySection } from './section';
+import type { ConfigSection, ContributionSection, DirectorySection } from './section';
 
 interface ConfigOptions {
   logger?: Logger;
@@ -24,7 +24,19 @@ type DirectoryKey = {
   [K in ConfigKey]: Sections[K]['kind'] extends 'directory' ? K : never;
 }[ConfigKey];
 
+/**
+ * The sections whose value is a record of named instances kept in one file.
+ * They are addressable per instance like a directory is, but they share a
+ * document — which is why writing one is a read-modify-write that has to happen
+ * under the same lock as any other write, rather than in the caller.
+ */
+type ContributionKey = {
+  [K in ConfigKey]: Sections[K]['kind'] extends 'contribution' ? K : never;
+}[ConfigKey];
+
 type EntryValue<K extends DirectoryKey> = ConfigMap[K][string];
+
+type InstanceValue<K extends ContributionKey> = ConfigMap[K][string];
 
 function erase(key: ConfigKey): ConfigSection {
   return sections[key] as ConfigSection;
@@ -32,6 +44,11 @@ function erase(key: ConfigKey): ConfigSection {
 
 /** The section behind a key `DirectoryKey` has already proved is a directory. */
 function eraseDirectory(key: DirectoryKey): DirectorySection {
+  return sections[key];
+}
+
+/** The section behind a key `ContributionKey` has already proved is contributed. */
+function eraseContribution(key: ContributionKey): ContributionSection {
   return sections[key];
 }
 
@@ -205,6 +222,95 @@ class Config {
     });
   }
 
+  /**
+   * Writes one instance of a contributed section. Unlike a directory entry this
+   * is a read-modify-write of a shared document, so it happens here rather than
+   * in a caller: reading the record, replacing one key and writing it back is
+   * only safe while nothing else may write between the read and the write, and
+   * this is the lock that guarantees it.
+   *
+   * The whole document is re-validated, which is the point — an instance is
+   * validated against the union assembled from what extensions contributed, and
+   * one that names a `type` nobody registered is refused with the rest of the
+   * file unchanged.
+   *
+   * `validate` sees the parsed instance before anything is written, exactly as
+   * `updateEntry` shows it a parsed entry. The two are the same promise made
+   * about the two ways a section stores entries, so a caller can insist on
+   * something without first asking which kind of section it is writing to.
+   */
+  public async updateInstance<K extends ContributionKey>(
+    key: K,
+    instanceId: string,
+    next: unknown,
+    validate?: (value: InstanceValue<K>) => Promise<void> | void,
+  ): Promise<ConfigUpdate<InstanceValue<K>>> {
+    const section = eraseContribution(key);
+
+    return this.#updates.run(async () => {
+      const current = this.#requireRecord(key);
+      const written = (await updateSection(
+        section,
+        this.#context,
+        { ...current, [instanceId]: next },
+        current,
+        this.#reader(key),
+        async (document) => {
+          await validate?.((document as Record<string, unknown>)[instanceId] as InstanceValue<K>);
+        },
+      )) as Record<string, unknown>;
+
+      this.#values.set(key, written);
+      return {
+        restartRequired: section.applies === 'restart',
+        value: written[instanceId] as InstanceValue<K>,
+      };
+    });
+  }
+
+  /**
+   * Removes one instance. `false` means the section never named it — the same
+   * answer `removeEntry` gives, and for the same reason: gone is what the caller
+   * asked for. Nothing is written in that case, so a section whose other
+   * instances no longer validate is not disturbed by a no-op removal.
+   */
+  public async removeInstance(key: ContributionKey, instanceId: string): Promise<boolean> {
+    const section = eraseContribution(key);
+
+    return this.#updates.run(async () => {
+      const current = this.#requireRecord(key);
+      if (!Object.hasOwn(current, instanceId)) return false;
+
+      const written = await updateSection(
+        section,
+        this.#context,
+        without(current, instanceId),
+        current,
+        this.#reader(key),
+      );
+
+      this.#values.set(key, written);
+      return true;
+    });
+  }
+
+  /**
+   * The record a contributed section holds now. A section that has not been
+   * resolved has no record to modify, and treating it as empty would write a
+   * file containing only the instance being added — silently dropping every
+   * instance already configured on disk.
+   */
+  #requireRecord(key: ContributionKey): Record<string, unknown> {
+    if (!this.#values.has(key)) {
+      throw new ConfigError(
+        'unresolved',
+        join(this.#context.configDir, erase(key).name),
+        'cannot have an instance written before Config.resolve() has read it.',
+      );
+    }
+    return this.#values.get(key) as Record<string, unknown>;
+  }
+
   #reader(key: ConfigKey): ContributionReader {
     if (this.#contributions === undefined) {
       throw new ConfigError(
@@ -219,4 +325,11 @@ class Config {
 
 export { Config };
 
-export type { ConfigOptions, ConfigUpdate, DirectoryKey, EntryValue };
+export type {
+  ConfigOptions,
+  ConfigUpdate,
+  ContributionKey,
+  DirectoryKey,
+  EntryValue,
+  InstanceValue,
+};

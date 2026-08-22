@@ -1,0 +1,66 @@
+import {
+  assertBlueprintReferences,
+  type BlueprintContext,
+  blueprintRemovalReasons,
+  instanceRemovalReasons,
+} from './blueprints';
+
+import type { Blueprint } from '../../config/blueprint';
+import type { EntryKey } from './store';
+
+/**
+ * What a section insists on beyond its schema. Both halves are about the rest of
+ * the installation rather than about the document, which is exactly why no
+ * schema can express them: whether the things this entry names exist, and
+ * whether anything else would break if it stopped existing.
+ */
+interface SectionPolicy {
+  /**
+   * Why this entry must stay. Empty means it may go. Each reason is a whole
+   * sentence, because it is read by whoever is being told no.
+   */
+  readonly reasonsToKeep?: (entryId: string) => readonly string[];
+  /**
+   * Judged after parsing and before anything is written, inside the lock that
+   * serializes configuration writes. Throwing leaves the entry as it was.
+   */
+  readonly validate?: (entryId: string, value: unknown) => Promise<void> | void;
+}
+
+type SectionPolicies = Partial<Record<EntryKey, SectionPolicy>>;
+
+/**
+ * Every judgement the configuration surface makes, in one table.
+ *
+ * A table rather than branches in the store, because these are not exceptions to
+ * how configuration is administered — they are what each section happens to
+ * require, and the store's job is to apply whatever that is. A section with
+ * nothing to say has no row, and gains one the day it does without the store
+ * learning its name.
+ *
+ * Note that the rows are two halves of one fact read from opposite ends: a
+ * blueprint may not name a provider that does not exist, and a provider may not
+ * stop existing while a blueprint names it. Keeping them side by side is what
+ * makes it obvious they have to agree.
+ */
+function configPolicies(context: BlueprintContext): SectionPolicies {
+  const { config } = context;
+
+  return {
+    blueprints: {
+      reasonsToKeep: (agentId) => blueprintRemovalReasons(config, agentId),
+      validate: async (agentId, value) =>
+        assertBlueprintReferences(agentId, value as Blueprint, context),
+    },
+    providers: {
+      reasonsToKeep: (instanceId) => instanceRemovalReasons(config, 'providers', instanceId),
+    },
+    toolSets: {
+      reasonsToKeep: (instanceId) => instanceRemovalReasons(config, 'toolSets', instanceId),
+    },
+  };
+}
+
+export { configPolicies };
+
+export type { SectionPolicies, SectionPolicy };

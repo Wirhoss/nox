@@ -27,7 +27,7 @@ import { type Tool, ToolSet } from '../../tool/tool';
 import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
-import { BlueprintStore } from './store';
+import { ConfigStore } from './store';
 
 import type { ChatProvider } from '../../provider/provider';
 
@@ -177,7 +177,7 @@ async function blueprintNox(options: NoxOptions = {}): Promise<BlueprintNox> {
 
   const server = ApiServer.create({
     auth: { registration: RegistrationWindow.closed(), store },
-    blueprints: new BlueprintStore({
+    config: new ConfigStore({
       authorities: () => authorityCatalog(contributions),
       config,
       toolSets: new ToolSetCatalog({
@@ -228,26 +228,28 @@ describe('reading blueprints', () => {
       blueprints: { nox: NOX, watcher: { ...NOX, systemPrompt: 'watch' }, archivist: NOX },
     });
 
-    const response = await fetch(`${nox.url}/blueprints`, { headers: nox.headers });
-    const body = (await response.json()) as {
-      blueprints: { agentId: string }[];
-      defaultAgent?: string;
-    };
+    const response = await fetch(`${nox.url}/config/blueprints`, { headers: nox.headers });
+    const body = (await response.json()) as { value: Record<string, unknown> };
 
     expect(response.status).toBe(200);
-    expect(body.blueprints.map((entry) => entry.agentId)).toEqual(['archivist', 'nox', 'watcher']);
-    expect(body.defaultAgent).toBe('nox');
+    expect(Object.keys(body.value)).toEqual(['archivist', 'nox', 'watcher']);
+
+    // Which agent web chat defaults to is `app.json`'s answer, not the
+    // blueprints section's; the surface repeats it once, where a client reads
+    // everything else it needs before rendering.
+    const index = await fetch(`${nox.url}/config`, { headers: nox.headers });
+    expect(((await index.json()) as { defaultAgent?: string }).defaultAgent).toBe('nox');
   });
 
   test('reads one back with the defaults the schema resolved', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/nox`, { headers: nox.headers });
-    const body = (await response.json()) as { agentId: string; blueprint: Record<string, unknown> };
+    const response = await fetch(`${nox.url}/config/blueprints/nox`, { headers: nox.headers });
+    const body = (await response.json()) as { entryId: string; value: Record<string, unknown> };
 
     expect(response.status).toBe(200);
-    expect(body.agentId).toBe('nox');
-    expect(body.blueprint).toMatchObject({
+    expect(body.entryId).toBe('nox');
+    expect(body.value).toMatchObject({
       maxIterations: 90,
       systemPrompt: 'be exact',
       toolSets: { direct: [], routed: [] },
@@ -257,16 +259,16 @@ describe('reading blueprints', () => {
   test('answers 404 for an agent nothing defines', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/ghost`, { headers: nox.headers });
+    const response = await fetch(`${nox.url}/config/blueprints/ghost`, { headers: nox.headers });
 
     expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: 'blueprint_not_found' });
+    expect(await response.json()).toEqual({ error: 'entry_not_found' });
   });
 
   test('says nothing at all without a token', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints`);
+    const response = await fetch(`${nox.url}/config/blueprints`);
 
     // A blueprint is the whole of what an agent will do; unauthenticated is the
     // one way it must never be readable.
@@ -278,19 +280,19 @@ describe('writing blueprints', () => {
   test('creates one, writes the file, and says the change waits for a restart', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/watcher`, {
+    const response = await fetch(`${nox.url}/config/blueprints/watcher`, {
       body: JSON.stringify({ ...NOX, systemPrompt: 'watch', toolSets: { direct: ['internet'] } }),
       headers: nox.headers,
       method: 'POST',
     });
     const body = (await response.json()) as {
-      blueprint: { systemPrompt: string };
       restartRequired: boolean;
+      value: { systemPrompt: string };
     };
 
     expect(response.status).toBe(201);
     expect(body.restartRequired).toBeTrue();
-    expect(body.blueprint.systemPrompt).toBe('watch');
+    expect(body.value.systemPrompt).toBe('watch');
 
     // Written through the loader, so the file holds the resolved document a
     // hand-edited one would have been rewritten into.
@@ -305,21 +307,21 @@ describe('writing blueprints', () => {
   test('refuses to create over an agent that already exists', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/nox`, {
+    const response = await fetch(`${nox.url}/config/blueprints/nox`, {
       body: JSON.stringify({ ...NOX, systemPrompt: 'overwritten' }),
       headers: nox.headers,
       method: 'POST',
     });
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: 'blueprint_exists' });
+    expect(await response.json()).toEqual({ error: 'entry_exists' });
     expect(nox.config.get('blueprints').nox?.systemPrompt).toBe('be exact');
   });
 
   test('replaces one whole through PUT, and refuses to invent one', async () => {
     const nox = await blueprintNox();
 
-    const replaced = await fetch(`${nox.url}/blueprints/nox`, {
+    const replaced = await fetch(`${nox.url}/config/blueprints/nox`, {
       body: JSON.stringify({ ...NOX, maxIterations: 5, systemPrompt: 'be brief' }),
       headers: nox.headers,
       method: 'PUT',
@@ -331,7 +333,7 @@ describe('writing blueprints', () => {
       systemPrompt: 'be brief',
     });
 
-    const missing = await fetch(`${nox.url}/blueprints/ghost`, {
+    const missing = await fetch(`${nox.url}/config/blueprints/ghost`, {
       body: JSON.stringify(NOX),
       headers: nox.headers,
       method: 'PUT',
@@ -345,7 +347,7 @@ describe('writing blueprints', () => {
   test('refuses a blueprint naming a provider nothing configures', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/broken`, {
+    const response = await fetch(`${nox.url}/config/blueprints/broken`, {
       body: JSON.stringify({ ...NOX, provider: 'absent' }),
       headers: nox.headers,
       method: 'POST',
@@ -359,14 +361,14 @@ describe('writing blueprints', () => {
     expect(body.problems).toEqual(['providers.json configures no provider "absent"']);
 
     // Rejected between parsing and writing, so no file was left behind.
-    const reread = await fetch(`${nox.url}/blueprints/broken`, { headers: nox.headers });
+    const reread = await fetch(`${nox.url}/config/blueprints/broken`, { headers: nox.headers });
     expect(reread.status).toBe(404);
   });
 
   test('refuses a blueprint naming a tool set nothing configures', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/broken`, {
+    const response = await fetch(`${nox.url}/config/blueprints/broken`, {
       body: JSON.stringify({ ...NOX, toolSets: { direct: ['nowhere'] } }),
       headers: nox.headers,
       method: 'POST',
@@ -381,7 +383,7 @@ describe('writing blueprints', () => {
   test('refuses a tool set granted twice in one list', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/greedy`, {
+    const response = await fetch(`${nox.url}/config/blueprints/greedy`, {
       body: JSON.stringify({
         ...NOX,
         toolSets: { direct: ['internet', { id: 'internet', tools: ['fetch'] }] },
@@ -400,7 +402,7 @@ describe('writing blueprints', () => {
   test('refuses an allowlist naming a tool the set does not expose', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/typo`, {
+    const response = await fetch(`${nox.url}/config/blueprints/typo`, {
       body: JSON.stringify({
         ...NOX,
         toolSets: { direct: [{ id: 'internet', tools: ['fetc'] }] },
@@ -419,7 +421,7 @@ describe('writing blueprints', () => {
   test('judges the allowlist against what the instance exposes, not what it could', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/narrowed`, {
+    const response = await fetch(`${nox.url}/config/blueprints/narrowed`, {
       body: JSON.stringify({
         ...NOX,
         toolSets: { direct: [{ id: 'narrow', tools: ['summarize'] }] },
@@ -434,7 +436,7 @@ describe('writing blueprints', () => {
     expect(response.status).toBe(422);
     expect(body.problems[0]).toContain('does not expose tool summarize');
 
-    const allowed = await fetch(`${nox.url}/blueprints/narrowed`, {
+    const allowed = await fetch(`${nox.url}/config/blueprints/narrowed`, {
       body: JSON.stringify({ ...NOX, toolSets: { direct: [{ id: 'narrow', tools: ['fetch'] }] } }),
       headers: nox.headers,
       method: 'POST',
@@ -446,7 +448,7 @@ describe('writing blueprints', () => {
   test('refuses two tool sets that answer to the same tool name', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/ambiguous`, {
+    const response = await fetch(`${nox.url}/config/blueprints/ambiguous`, {
       body: JSON.stringify({ ...NOX, toolSets: { direct: ['internet', 'mirror'] } }),
       headers: nox.headers,
       method: 'POST',
@@ -462,7 +464,7 @@ describe('writing blueprints', () => {
   test('refuses the same tools as both direct and routed', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/confused`, {
+    const response = await fetch(`${nox.url}/config/blueprints/confused`, {
       body: JSON.stringify({
         ...NOX,
         toolSets: { direct: ['internet'], routed: ['mirror'] },
@@ -479,7 +481,7 @@ describe('writing blueprints', () => {
   test('accepts a blueprint that grants part of a set', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/reader`, {
+    const response = await fetch(`${nox.url}/config/blueprints/reader`, {
       body: JSON.stringify({
         ...NOX,
         toolSets: { direct: [{ id: 'internet', tools: ['fetch', 'index'] }] },
@@ -497,7 +499,7 @@ describe('writing blueprints', () => {
   test('judges a posted blueprint by the same schema a hand-edited file gets', async () => {
     const nox = await blueprintNox();
 
-    const invalid = await fetch(`${nox.url}/blueprints/broken`, {
+    const invalid = await fetch(`${nox.url}/config/blueprints/broken`, {
       body: JSON.stringify({ provider: 'main' }),
       headers: nox.headers,
       method: 'POST',
@@ -505,10 +507,10 @@ describe('writing blueprints', () => {
 
     expect(invalid.status).toBe(422);
     expect((await invalid.json()) as { error: string }).toMatchObject({
-      error: 'invalid_blueprint',
+      error: 'invalid_config',
     });
 
-    const unknownKey = await fetch(`${nox.url}/blueprints/broken`, {
+    const unknownKey = await fetch(`${nox.url}/config/blueprints/broken`, {
       body: JSON.stringify({ ...NOX, temperture: 0.7 }),
       headers: nox.headers,
       method: 'POST',
@@ -518,7 +520,7 @@ describe('writing blueprints', () => {
     // believes they configured. The loader rejects it in a file; so does this.
     expect(unknownKey.status).toBe(422);
     expect((await unknownKey.json()) as { detail: string }).toMatchObject({
-      error: 'invalid_blueprint',
+      error: 'invalid_config',
     });
   });
 });
@@ -529,13 +531,17 @@ describe('removing blueprints', () => {
       blueprints: { nox: NOX, watcher: { ...NOX, systemPrompt: 'watch' } },
     });
 
-    const response = await fetch(`${nox.url}/blueprints/watcher`, {
+    const response = await fetch(`${nox.url}/config/blueprints/watcher`, {
       headers: nox.headers,
       method: 'DELETE',
     });
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ agentId: 'watcher', restartRequired: true });
+    expect(await response.json()).toEqual({
+      entryId: 'watcher',
+      restartRequired: true,
+      section: 'blueprints',
+    });
     expect(Object.keys(nox.config.get('blueprints'))).toEqual(['nox']);
     expect(await onDisk(nox.directory, 'watcher').catch(() => 'gone')).toBe('gone');
   });
@@ -543,15 +549,19 @@ describe('removing blueprints', () => {
   test('refuses to remove the only agent there is', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/nox`, {
+    const response = await fetch(`${nox.url}/config/blueprints/nox`, {
       headers: nox.headers,
       method: 'DELETE',
     });
 
+    const body = (await response.json()) as { error: string; reasons: string[] };
+
     // Bootstrap will not compose a Nox from an empty blueprints directory, and
-    // a 409 here is a refusal the operator can still read.
+    // a 409 here is a refusal the operator can still read. It is the same answer
+    // a provider still named by a blueprint gets, because it is the same event.
     expect(response.status).toBe(409);
-    expect((await response.json()) as { error: string }).toMatchObject({ error: 'last_blueprint' });
+    expect(body.error).toBe('entry_in_use');
+    expect(body.reasons).toEqual(['Nox composes no agent from an empty blueprints directory.']);
     expect(Object.keys(nox.config.get('blueprints'))).toEqual(['nox']);
   });
 
@@ -561,19 +571,22 @@ describe('removing blueprints', () => {
       blueprints: { nox: NOX, watcher: { ...NOX, systemPrompt: 'watch' } },
     });
 
-    const response = await fetch(`${nox.url}/blueprints/nox`, {
+    const response = await fetch(`${nox.url}/config/blueprints/nox`, {
       headers: nox.headers,
       method: 'DELETE',
     });
 
+    const body = (await response.json()) as { error: string; reasons: string[] };
+
     expect(response.status).toBe(409);
-    expect((await response.json()) as { error: string }).toMatchObject({ error: 'default_agent' });
+    expect(body.error).toBe('entry_in_use');
+    expect(body.reasons[0]).toContain('names "nox" as its default agent');
   });
 
   test('answers 404 for an agent nothing defines', async () => {
     const nox = await blueprintNox();
 
-    const response = await fetch(`${nox.url}/blueprints/ghost`, {
+    const response = await fetch(`${nox.url}/config/blueprints/ghost`, {
       headers: nox.headers,
       method: 'DELETE',
     });
