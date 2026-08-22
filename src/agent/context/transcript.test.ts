@@ -87,6 +87,29 @@ describe('Transcript', () => {
     expect(hits[0]?.text).not.toContain('summary');
   });
 
+  test('reasoning is recorded but never indexed, so it cannot crowd out the record', () => {
+    const reasoning: Message = {
+      content: [{ text: 'UNIQUE_NEEDLE weighing whether to grep first', type: 'text' }],
+      createdAt: CREATED_AT,
+      messageId: 'think',
+      role: 'reasoning',
+    };
+    const assistant: Message = {
+      content: [{ text: 'UNIQUE_NEEDLE grepping now', type: 'text' }],
+      createdAt: CREATED_AT,
+      messageId: 'say',
+      role: 'assistant',
+    };
+    const transcript = new Transcript([reasoning, assistant]);
+
+    const hits = transcript.search('UNIQUE_NEEDLE', 10);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.text).toContain('grepping now');
+    expect(hits[0]?.text).not.toContain('weighing whether');
+    expect(transcript.messages).toHaveLength(2);
+    expect(transcript.messages[0]?.messageId).toBe('think');
+  });
+
   test('search responses obey the global character budget', () => {
     const transcript = new Transcript(
       [user('u1', 'needle ' + 'x'.repeat(500)), user('u2', 'needle ' + 'y'.repeat(500))],

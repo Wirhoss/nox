@@ -394,6 +394,22 @@ class SessionStore {
     return row;
   }
 
+  /**
+   * Names a session after it was created. Queued behind the messages that
+   * prompted the name rather than written straight through: the title is read
+   * off the transcript, and a row that leads it would describe a conversation
+   * storage does not have yet.
+   */
+  public setTitle(sessionId: string, title: string): void {
+    this.#enqueue(sessionId, (database) => {
+      database
+        .update(sessions)
+        .set({ title, updatedAt: Date.now() })
+        .where(eq(sessions.sessionId, sessionId))
+        .run();
+    });
+  }
+
   /** The session and its full transcript, in append order. */
   public async load(sessionId: string): Promise<StoredSession | undefined> {
     const stored = await this.#database.exclusive((database) => {

@@ -119,7 +119,7 @@ describe('blueprint config', () => {
       generation: {},
       maxIterations: 90,
       model: 'main-model',
-      models: {},
+      taskModels: {},
       provider: 'main',
       systemPrompt: 'be exact',
       toolSets: { direct: [], routed: [] },
@@ -131,7 +131,7 @@ describe('blueprint config', () => {
         generation: { maxTokens: 1000, temperature: 0.2 },
         maxIterations: 'unlimited',
         model: 'main-model',
-        models: {
+        taskModels: {
           compaction: { model: 'small-model', provider: 'compact-provider' },
           // A task may name only a model; it stays on the agent's provider.
           title: { model: 'tiny-model' },
@@ -144,7 +144,7 @@ describe('blueprint config', () => {
       context: { compactAtRatio: 0.7, reserveForOutput: 1000, contextWindow: 8000 },
       generation: { maxTokens: 1000, temperature: 0.2 },
       maxIterations: 'unlimited',
-      models: {
+      taskModels: {
         compaction: { model: 'small-model', provider: 'compact-provider' },
         title: { model: 'tiny-model' },
       },
@@ -156,7 +156,7 @@ describe('blueprint config', () => {
     expect(
       blueprintSchema.safeParse({
         model: 'main-model',
-        models: { title: { provider: 'other' } },
+        taskModels: { title: { provider: 'other' } },
         provider: 'main',
         systemPrompt: 'be exact',
       }).success,

@@ -1,8 +1,18 @@
 import { and, desc, eq } from 'drizzle-orm';
 
-import { type ConversationRow, conversations } from './schema';
+import { type ConversationRow, conversations, sessions } from './schema';
 
 import type { Database } from './database';
+
+/**
+ * A binding as a transport asks for it, with the name of the session behind it.
+ * The title lives on the session because that is what was named, and a list of
+ * conversations is the one place it is read — so it is joined in here rather
+ * than fetched one session at a time by whoever draws the list.
+ */
+interface ListedConversation extends ConversationRow {
+  readonly title: null | string;
+}
 
 /** The pair a transport can name: which broker, and which chat on it. */
 interface ConversationKey {
@@ -46,11 +56,20 @@ class ConversationStore {
    * Scoped to a broker because that is the only scope a broker may ask about:
    * what another transport is carrying is not its to enumerate.
    */
-  public async list(brokerId: string): Promise<ConversationRow[]> {
+  public async list(brokerId: string): Promise<ListedConversation[]> {
     return this.#database.exclusive((database) =>
       database
-        .select()
+        .select({
+          agentId: conversations.agentId,
+          brokerId: conversations.brokerId,
+          conversationId: conversations.conversationId,
+          createdAt: conversations.createdAt,
+          sessionId: conversations.sessionId,
+          title: sessions.title,
+          updatedAt: conversations.updatedAt,
+        })
         .from(conversations)
+        .leftJoin(sessions, eq(sessions.sessionId, conversations.sessionId))
         .where(eq(conversations.brokerId, brokerId))
         .orderBy(desc(conversations.updatedAt))
         .all(),
@@ -87,4 +106,4 @@ class ConversationStore {
 
 export { ConversationStore };
 
-export type { ConversationKey };
+export type { ConversationKey, ListedConversation };

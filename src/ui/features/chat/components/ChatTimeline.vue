@@ -36,26 +36,44 @@ type TimelineEntry =
   | { readonly id: string; readonly item: SessionItem; readonly kind: 'item' }
 
 const timelineEntries = computed<TimelineEntry[]>(() => {
-  const detailTargetByTurn = new Map<string, string>()
-  const processItemsByTurn = new Map<string, ProcessItem[]>()
+  const activityTargetByTurn = new Map<string, string>()
   const activityByTurn = new Map<string, RunItem>()
+  const processTargetByItem = new Map<string, string>()
+  const processItemsByAssistant = new Map<string, ProcessItem[]>()
+  const nextAssistantByTurn = new Map<string, string>()
 
   for (const item of session.items) {
-    if (item.kind === 'assistant') detailTargetByTurn.set(item.turnId, item.id)
+    if (item.kind === 'assistant') activityTargetByTurn.set(item.turnId, item.id)
     if (item.kind === 'activity') activityByTurn.set(item.turnId, item)
-    if (item.kind === 'reasoning' || item.kind === 'tool') {
-      const items = processItemsByTurn.get(item.turnId) ?? []
-      items.push(item)
-      processItemsByTurn.set(item.turnId, items)
+  }
+
+  // One run can contain several provider replies. Walking backwards associates
+  // each process step with its nearest following reply instead of collapsing the
+  // whole run into the last assistant message.
+  for (let index = session.items.length - 1; index >= 0; index -= 1) {
+    const item = session.items[index]
+    if (item === undefined) continue
+    if (item.kind === 'assistant') {
+      nextAssistantByTurn.set(item.turnId, item.id)
+      continue
     }
+    if (item.kind !== 'reasoning' && item.kind !== 'tool') continue
+
+    const target = nextAssistantByTurn.get(item.turnId)
+    if (target === undefined) continue
+    processTargetByItem.set(item.id, target)
+    const items = processItemsByAssistant.get(target) ?? []
+    items.unshift(item)
+    processItemsByAssistant.set(target, items)
   }
 
   const entries: TimelineEntry[] = []
   for (const item of session.items) {
-    const detailTarget = 'turnId' in item ? detailTargetByTurn.get(item.turnId) : undefined
+    const activityTarget =
+      'turnId' in item ? activityTargetByTurn.get(item.turnId) : undefined
 
     if (item.kind === 'reasoning' || item.kind === 'tool') {
-      if (detailTarget !== undefined) continue
+      if (processTargetByItem.has(item.id)) continue
       const previous = entries[entries.length - 1]
       if (previous?.kind === 'process' && previous.turnId === item.turnId) {
         previous.items.push(item)
@@ -70,15 +88,15 @@ const timelineEntries = computed<TimelineEntry[]>(() => {
       continue
     }
 
-    if (item.kind === 'activity' && detailTarget !== undefined) continue
+    if (item.kind === 'activity' && activityTarget !== undefined) continue
     if (item.kind === 'assistant') {
-      const ownsDetails = detailTarget === item.id
+      const ownsActivity = activityTarget === item.id
       entries.push({
-        activity: ownsDetails ? activityByTurn.get(item.turnId) : undefined,
+        activity: ownsActivity ? activityByTurn.get(item.turnId) : undefined,
         id: item.id,
         item,
         kind: 'assistant',
-        processItems: ownsDetails ? (processItemsByTurn.get(item.turnId) ?? []) : [],
+        processItems: processItemsByAssistant.get(item.id) ?? [],
       })
       continue
     }

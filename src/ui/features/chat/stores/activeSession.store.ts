@@ -176,6 +176,13 @@ const useActiveSessionStore = defineStore('active-session', () => {
       ).length,
   )
 
+  /**
+   * Names that arrived on the stream. Kept so a list fetched around the same
+   * moment cannot drop one: the request that answers with the conversations may
+   * well have left before the session was named.
+   */
+  const liveTitles = new Map<string, string>()
+
   let eventBuffer: ChatEvent[] | undefined
   let initializePromise: Promise<void> | undefined
   let selectionVersion = 0
@@ -204,7 +211,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
         chatApi.listConversations(accessToken),
       ])
       commands.value = availableCommands
-      conversations.value = availableConversations
+      conversations.value = withLiveTitles(availableConversations)
       catalog.value = { type: 'ready' }
 
       const latest = availableConversations[0]
@@ -220,12 +227,25 @@ const useActiveSessionStore = defineStore('active-session', () => {
     }
   }
 
+  function withLiveTitles(listed: readonly ChatConversation[]): readonly ChatConversation[] {
+    if (liveTitles.size === 0) return listed
+    return listed.map((conversation) => {
+      const title = liveTitles.get(conversation.conversationId)
+      return title === undefined ? conversation : { ...conversation, title }
+    })
+  }
+
+  function renameConversation(namedConversationId: string, title: string): void {
+    liveTitles.set(namedConversationId, title)
+    conversations.value = withLiveTitles(conversations.value)
+  }
+
   async function refreshConversations(): Promise<void> {
     const accessToken = auth.accessToken
     if (accessToken === undefined) return
 
     try {
-      conversations.value = await chatApi.listConversations(accessToken)
+      conversations.value = withLiveTitles(await chatApi.listConversations(accessToken))
     } catch (error) {
       catalog.value = { message: resourceMessageFor(error, 'refresh conversations'), type: 'failed' }
       handleAuthorizationError(error)
@@ -458,6 +478,12 @@ const useActiveSessionStore = defineStore('active-session', () => {
   function applyEvent(event: ChatEvent): void {
     if (eventBuffer !== undefined) {
       eventBuffer.push(event)
+      return
+    }
+    // A name belongs to the list of conversations rather than to the transcript
+    // on screen, so it is applied whichever conversation it names.
+    if (event.type === 'title') {
+      renameConversation(event.conversationId, event.title)
       return
     }
     if (event.conversationId !== conversationId.value) return
@@ -964,6 +990,7 @@ function eventSignature(event: ChatEvent): string | undefined {
     case 'retry':
     case 'runCompleted':
     case 'runStarted':
+    case 'title':
     case 'usage':
       return undefined
   }

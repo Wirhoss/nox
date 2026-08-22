@@ -25,6 +25,10 @@ type RunTrigger = 'deferredResult' | 'steer' | 'user';
  * Foreground fragments remain bracketed by `runStarted`/`runCompleted`. Events
  * from a detached permission can arrive during a later run, so those carry the
  * originating run ID explicitly instead of borrowing the current bracket.
+ *
+ * `titled` is the session naming itself once it has something to be named
+ * after. It says nothing about the conversation, which is why it is an event
+ * and not a message: nothing in the transcript changed.
  */
 type AgentEvent =
   | { type: 'assistantReasoningFragment'; text: string }
@@ -58,6 +62,7 @@ type AgentEvent =
       startedAt: Date;
       trigger: RunTrigger;
     }
+  | { type: 'titled'; title: string }
   | { type: 'usage'; usage: Usage };
 
 export type { AgentEvent, RunStatus, RunTrigger };

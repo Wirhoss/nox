@@ -51,6 +51,12 @@ interface BrokerCapabilities {
    * only ever sees the settled reply.
    */
   readonly streaming?: boolean;
+  /**
+   * The session naming itself, once it has been. A surface with a list of
+   * conversations has somewhere to put a title; a bot in a channel does not,
+   * and the channel is already the name of the conversation there.
+   */
+  readonly titles?: boolean;
   /** The calls the agent made and what came back from them. */
   readonly toolActivity?: boolean;
   /** Token accounting, per model call and as a run total. */
@@ -171,6 +177,16 @@ interface OutboundRunStarted extends OutboundBase {
   readonly type: 'runStarted';
 }
 
+/**
+ * The session has a name. It says nothing about the conversation and belongs to
+ * no turn in particular — a surface that lists conversations relabels the one
+ * this arrived for, and everything already drawn stays as it is.
+ */
+interface OutboundTitle extends OutboundBase {
+  readonly title: string;
+  readonly type: 'title';
+}
+
 /** A call the agent made. The arguments are the ones it actually sent. */
 interface OutboundToolCall extends OutboundBase {
   readonly arguments: Readonly<Record<string, unknown>>;
@@ -212,6 +228,7 @@ type OutboundEvent =
   | OutboundRetry
   | OutboundRunCompleted
   | OutboundRunStarted
+  | OutboundTitle
   | OutboundToolCall
   | OutboundToolResponse
   | OutboundUsage;
@@ -285,6 +302,8 @@ interface BrokerSession {
   /** When the conversation was bound — the first thing ever said in it. */
   readonly startedAt: Date;
   readonly state: 'closed' | 'idle' | 'running';
+  /** What the session was named, absent while it has not been. */
+  readonly title?: string;
   /** When it was last spoken in. */
   readonly updatedAt: Date;
 }
@@ -430,6 +449,7 @@ export type {
   OutboundRetry,
   OutboundRunCompleted,
   OutboundRunStarted,
+  OutboundTitle,
   OutboundToolCall,
   OutboundToolResponse,
   OutboundUsage,

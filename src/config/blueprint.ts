@@ -4,23 +4,29 @@ import { contextPolicySchema } from '../agent/context/options';
 import { samplingParametersConfigSchema } from '../provider/config';
 import { gatePolicySchema } from '../tool/gate/config';
 
-/**
- * A declarative agent definition: one file, one agent. The file name is the
- * agent's ID, so the name a transcript is stored under is the name on disk and
- * the two cannot drift — an `id` field inside would be a second answer to the
- * same question.
- *
- * `provider` names a key in `providers.json`, not a kind: which configured
- * instance this agent talks through. Two agents may share one instance, and one
- * kind may have several instances, so the reference has to be to the instance.
- *
- * Tool-set IDs name configured instances in `toolsets.json`. Direct sets expose
- * every granted tool to the model; routed sets are discovered through the
- * built-in search/call router instead.
- */
-const compactionConfigSchema = z.object({
+const taskModelConfigSchema = z.object({
   model: z.string().min(1),
-  provider: z.string().min(1),
+  /**
+   * Omit to stay on the agent's own provider. The usual reason to name a model
+   * for an internal task is that it is cheaper or faster, not that it lives
+   * somewhere else, and a second endpoint should have to be asked for.
+   */
+  provider: z.string().min(1).optional(),
+});
+
+/**
+ * The model each internal task runs on. Every entry is optional and every
+ * absent one falls back to the agent's own `provider`/`model` — a blueprint
+ * that says nothing here is an agent that does all of its own work, which is
+ * the sane default and the only thing most deployments need.
+ *
+ * These are Nox talking to itself, never the conversation: compaction rewrites
+ * the working set, titling names the session. Neither is the agent answering
+ * anybody, which is exactly why neither has to be the agent's model.
+ */
+const taskModelsConfigSchema = z.object({
+  compaction: taskModelConfigSchema.optional(),
+  title: taskModelConfigSchema.optional(),
 });
 
 const maxIterationsSchema = z.union([z.number().int().positive(), z.literal('unlimited')]);
@@ -56,9 +62,21 @@ const toolSetsConfigSchema = z.object({
   routed: z.array(toolSetGrantConfigSchema).default([]),
 });
 
+/**
+ * A declarative agent definition: one file, one agent. The file name is the
+ * agent's ID, so the name a transcript is stored under is the name on disk and
+ * the two cannot drift — an `id` field inside would be a second answer to the
+ * same question.
+ *
+ * `provider` names a key in `providers.json`, not a kind: which configured
+ * instance this agent talks through. Two agents may share one instance, and one
+ * kind may have several instances, so the reference has to be to the instance.
+ *
+ * Tool-set IDs name configured instances in `toolsets.json`. Direct sets expose
+ * every granted tool to the model; routed sets are discovered through the
+ * built-in search/call router instead.
+ */
 const blueprintSchema = z.object({
-  /** Omit the whole block to inherit the agent's provider and model. */
-  compaction: compactionConfigSchema.optional(),
   context: contextPolicySchema.prefault({}),
   description: z.string().default(''),
   gate: gatePolicySchema.optional(),
@@ -67,13 +85,17 @@ const blueprintSchema = z.object({
   model: z.string().min(1),
   provider: z.string().min(1),
   systemPrompt: z.string().min(1),
+  /** Per-task overrides; anything absent runs on the agent's own model. */
+  taskModels: taskModelsConfigSchema.prefault({}),
   toolSets: toolSetsConfigSchema.prefault({}),
 });
 
 type Blueprint = z.infer<typeof blueprintSchema>;
 
+type TaskModelConfig = z.infer<typeof taskModelConfigSchema>;
+
 type ToolSetGrantConfig = z.infer<typeof toolSetGrantConfigSchema>;
 
-export { blueprintSchema, toolSetGrantConfigSchema };
+export { blueprintSchema, taskModelConfigSchema, toolSetGrantConfigSchema };
 
-export type { Blueprint, ToolSetGrantConfig };
+export type { Blueprint, TaskModelConfig, ToolSetGrantConfig };

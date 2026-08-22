@@ -92,7 +92,12 @@ class BlueprintStore {
     const configured = this.#config.get('providers');
     const problems: string[] = [];
 
-    for (const provider of [blueprint.provider, blueprint.compaction?.provider]) {
+    const referenced = [
+      blueprint.provider,
+      blueprint.taskModels.compaction?.provider,
+      blueprint.taskModels.title?.provider,
+    ];
+    for (const provider of referenced) {
       if (provider !== undefined && !Object.hasOwn(configured, provider)) {
         problems.push(`providers.json configures no provider "${provider}"`);
       }

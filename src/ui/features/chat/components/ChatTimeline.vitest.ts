@@ -92,4 +92,70 @@ describe('ChatTimeline', () => {
     expect(runDetails?.querySelector('.message__process')).toBeNull()
     expect(runDetails?.textContent).toContain('Run completed')
   })
+
+  it('associates each response process with its assistant inside one tool loop', () => {
+    const conversationId = session.conversationId
+    const responses = [
+      {
+        assistant: 'First result.',
+        reasoning: 'Inspect the first source.',
+        tool: 'read_first',
+        trackId: 'track-first',
+      },
+      {
+        assistant: 'Second result.',
+        reasoning: 'Inspect the second source.',
+        tool: 'read_second',
+        trackId: 'track-second',
+      },
+    ]
+
+    for (const response of responses) {
+      session.applyEvent({
+        conversationId,
+        text: response.reasoning,
+        turnId: 'turn-loop',
+        type: 'reasoning',
+      })
+      session.applyEvent({
+        arguments: {},
+        conversationId,
+        name: response.tool,
+        trackId: response.trackId,
+        turnId: 'turn-loop',
+        type: 'toolCall',
+      })
+      session.applyEvent({
+        conversationId,
+        text: response.assistant,
+        turnId: 'turn-loop',
+        type: 'message',
+      })
+    }
+    session.applyEvent({
+      conversationId,
+      durationMs: 1_250,
+      status: 'completed',
+      turnId: 'turn-loop',
+      type: 'runCompleted',
+    })
+
+    const { container } = render(ChatTimeline)
+    const messages = [...container.querySelectorAll('.message--assistant')]
+    expect(messages).toHaveLength(2)
+    expect(container.querySelector('.timeline__process')).toBeNull()
+
+    for (const [index, response] of responses.entries()) {
+      const message = messages[index]
+      const process = message?.querySelector(':scope > .message__process')
+      expect(message?.querySelector('.message__text')?.textContent).toContain(response.assistant)
+      expect(process?.querySelectorAll('.message__process-body > details')).toHaveLength(2)
+      expect(process?.textContent).toContain(response.reasoning)
+      expect(process?.textContent).toContain(response.tool)
+      expect(process?.textContent).not.toContain(responses[1 - index]?.tool)
+    }
+
+    expect(messages[0]?.querySelector('.message__details-summary')).toBeNull()
+    expect(messages[1]?.querySelector('.message__details-summary')).not.toBeNull()
+  })
 })

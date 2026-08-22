@@ -106,6 +106,7 @@ const chatEventSchema = z.discriminatedUnion('type', [
     trigger: z.enum(['deferredResult', 'steer', 'user']),
     type: z.literal('runStarted'),
   }),
+  eventBase.extend({ title: z.string(), type: z.literal('title') }),
   eventBase.extend({
     arguments: z.record(z.unknown()),
     name: z.string(),
@@ -173,6 +174,8 @@ const conversationSchema = z.object({
   sessionId: z.string(),
   startedAt: z.string().datetime(),
   state: z.enum(['closed', 'idle', 'running']),
+  /** Absent while the session has not been named. */
+  title: z.string().optional(),
   updatedAt: z.string().datetime(),
 })
 const conversationsSchema = z.object({ conversations: z.array(conversationSchema) })

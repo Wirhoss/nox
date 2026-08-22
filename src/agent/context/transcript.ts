@@ -37,11 +37,11 @@ function isIndexable(message: Message): boolean {
   switch (message.role) {
     case 'compacted':
     case 'folded':
+    case 'reasoning':
       return false;
     case 'toolResponse':
       return message.execution !== 'deferredAck' && message.execution !== 'permissionPending';
     case 'assistant':
-    case 'reasoning':
     case 'user':
       return message.content.some((part) => part.type === 'image' || part.text.length > 0);
     case 'toolCall':

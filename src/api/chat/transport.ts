@@ -149,6 +149,15 @@ interface ChatRunStartedEvent extends ChatEventBase {
   readonly type: 'runStarted';
 }
 
+/**
+ * The session has a name. It belongs to no turn in particular: a client
+ * relabels the conversation it names and leaves everything already drawn alone.
+ */
+interface ChatTitleEvent extends ChatEventBase {
+  readonly title: string;
+  readonly type: 'title';
+}
+
 /** A call the agent made, with the arguments it actually sent. */
 interface ChatToolCallEvent extends ChatEventBase {
   readonly arguments: Readonly<Record<string, unknown>>;
@@ -190,6 +199,7 @@ type ChatEvent =
   | ChatRetryEvent
   | ChatRunCompletedEvent
   | ChatRunStartedEvent
+  | ChatTitleEvent
   | ChatToolCallEvent
   | ChatToolResponseEvent
   | ChatUsageEvent;
@@ -250,6 +260,8 @@ interface ChatConversation {
   readonly sessionId: string;
   readonly startedAt: string;
   readonly state: 'closed' | 'idle' | 'running';
+  /** What the session was named, absent while it has not been. */
+  readonly title?: string;
   readonly updatedAt: string;
 }
 
@@ -400,6 +412,7 @@ export type {
   ChatRetryEvent,
   ChatRunCompletedEvent,
   ChatRunStartedEvent,
+  ChatTitleEvent,
   ChatToolCallEvent,
   ChatToolResponseEvent,
   ChatTransport,

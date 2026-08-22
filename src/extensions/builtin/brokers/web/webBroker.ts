@@ -57,6 +57,7 @@ class WebBroker implements Broker, ChatTransport {
     retries: true,
     runs: true,
     streaming: true,
+    titles: true,
     toolActivity: true,
     usage: true,
   });
@@ -278,6 +279,8 @@ function toChatEvent(event: OutboundEvent): ChatEvent {
         trigger: event.trigger,
         type: 'runStarted',
       };
+    case 'title':
+      return { ...base, title: event.title, type: 'title' };
     case 'toolCall':
       return {
         ...base,
@@ -364,6 +367,7 @@ function toChatConversation(session: BrokerSession): ChatConversation {
     sessionId: session.sessionId,
     startedAt: session.startedAt.toISOString(),
     state: session.state,
+    title: session.title,
     updatedAt: session.updatedAt.toISOString(),
   };
 }

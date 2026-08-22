@@ -12,6 +12,7 @@ import {
 import { EventLog } from '../utils/eventLog';
 import { Context } from './context/context';
 import { Runner, type RunnerOptions, type RunnerState } from './runner';
+import { generateTitle } from './title';
 
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
@@ -43,7 +44,16 @@ interface SessionOptions extends RunnerOptions {
   /** Omit to start a new session; pass one to resume it. */
   sessionId?: string;
   systemPrompt: string;
+  /**
+   * A name given rather than generated. A session that arrives with one is
+   * never titled by the model: naming it twice would rename it under whoever
+   * chose the first one.
+   */
   title?: string;
+  /** Model used for the internal titling request; defaults to the main model. */
+  titleModel?: ModelConfig;
+  /** Provider used for internal titling requests; defaults to the main provider. */
+  titleProvider?: ChatProvider;
 }
 
 function toUserMessage(text: string, origin: MessageOrigin): UserMessage {
@@ -70,9 +80,17 @@ class Session {
   readonly #context: Context;
   readonly #events = new EventLog<AgentEvent>();
   readonly #gate: SessionGate;
+  readonly #logger?: Logger;
   readonly #runner: Runner;
   readonly #sessionId: string;
   readonly #store: SessionStore;
+  readonly #titleModel?: ModelConfig;
+  readonly #titleProvider: ChatProvider;
+  /** Aborts the titling request when the session ends before it has answered. */
+  readonly #titling = new AbortController();
+
+  #title?: string;
+  #titledOnce?: Promise<void>;
 
   private constructor(
     sessionId: string,
@@ -85,6 +103,10 @@ class Session {
     this.#agentId = options.agentId;
     this.#sessionId = sessionId;
     this.#store = store;
+    this.#logger = options.logger;
+    this.#title = options.title;
+    this.#titleModel = options.titleModel;
+    this.#titleProvider = options.titleProvider ?? provider;
 
     const participants = new ConversationParticipants(
       history
@@ -188,8 +210,15 @@ class Session {
     }
 
     if (stored !== undefined) await store.abortUnresolvedGateDecisions(sessionId);
-    owner.session = new Session(sessionId, store, provider, model, stored?.messages ?? [], options);
-    return owner.session;
+    const session = new Session(sessionId, store, provider, model, stored?.messages ?? [], {
+      ...options,
+      // A resumed session keeps the name it already has, whoever gave it. Only
+      // one that has never been named is still open to being named.
+      title: stored?.session.title ?? options.title,
+    });
+    owner.session = session;
+    void session.#watchForTitle();
+    return session;
   }
 
   /** The agent this conversation is being held with. */
@@ -214,6 +243,11 @@ class Session {
 
   public get sessionId(): string {
     return this.#sessionId;
+  }
+
+  /** What this conversation is called, once it has been named. */
+  public get title(): string | undefined {
+    return this.#title;
   }
 
   public get state(): RunnerState {
@@ -275,8 +309,69 @@ class Session {
     // terminal detached results; those results are persisted but start no run.
     const stopping = this.#runner.stop();
     this.#gate.stop();
+    // A name is worth having but not worth waiting for: the request is dropped
+    // and the session keeps its id. Awaited all the same, so a title that did
+    // arrive is queued before the flush below rather than after it.
+    this.#titling.abort();
     await stopping;
+    await this.#titledOnce;
     await this.#store.flushed;
+  }
+
+  /**
+   * Names the session once there is something to name it after.
+   *
+   * The first completed run is that point: the transcript then holds what was
+   * asked and what came back, which is the whole of what a title is about.
+   * Watching the event log rather than hooking the runner keeps this out of the
+   * turn — the reply is already delivered when the request goes out, and a slow
+   * or failing titling call cannot hold up a conversation it is not part of.
+   *
+   * One attempt per session, not one per run. A title that keeps changing under
+   * whoever is reading the list is worse than one that never arrived, and the
+   * session already has an id to be found by.
+   */
+  async #watchForTitle(): Promise<void> {
+    if (this.#title !== undefined) return;
+
+    for await (const event of this.#events.subscribe()) {
+      // A run that completed as the session was ending is not worth a request
+      // whose answer has nowhere to be written.
+      if (this.#titling.signal.aborted) return;
+      if (event.type !== 'runCompleted' || event.status !== 'completed') continue;
+      // Held before it is awaited, so a `stop()` arriving mid-request has
+      // something to wait on rather than flushing storage ahead of the write.
+      this.#titledOnce = this.#nameSession();
+      await this.#titledOnce;
+      return;
+    }
+  }
+
+  /**
+   * One titling request. Everything it can go wrong with — a provider that is
+   * down, a model that answers with prose, a session that ended first — leaves
+   * the session unnamed, which is the state it was already in.
+   */
+  async #nameSession(): Promise<void> {
+    try {
+      const title = await generateTitle({
+        history: this.#context.getFullHistory(),
+        logger: this.#logger,
+        model: this.#titleModel,
+        provider: this.#titleProvider,
+        signal: this.#titling.signal,
+      });
+      if (title === undefined || this.#titling.signal.aborted) return;
+
+      this.#title = title;
+      this.#store.setTitle(this.#sessionId, title);
+      this.#emit({ title, type: 'titled' });
+    } catch (error) {
+      this.#logger?.warn(
+        { err: error, sessionId: this.#sessionId },
+        'Could not name the session; it keeps its id.',
+      );
+    }
   }
 
   /**

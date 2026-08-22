@@ -38,6 +38,9 @@ interface AgentOptions extends RunnerOptions {
   logger?: Logger;
   routedToolSets?: readonly ToolSetGrant[];
   systemPrompt: string;
+  /** Provider and model used to name sessions; each defaults to the agent's main one. */
+  titleModel?: ModelConfig;
+  titleProvider?: ChatProvider;
 }
 
 interface OpenSessionOptions {
@@ -77,6 +80,8 @@ class Agent {
   readonly #provider: ChatProvider;
   readonly #routedToolSets: readonly ToolSetGrant[];
   readonly #systemPrompt: string;
+  readonly #titleModel: ModelConfig;
+  readonly #titleProvider: ChatProvider;
 
   constructor(
     database: Database,
@@ -99,6 +104,8 @@ class Agent {
     this.#maxIterations = options.maxIterations;
     this.#routedToolSets = options.routedToolSets ?? [];
     this.#systemPrompt = options.systemPrompt;
+    this.#titleModel = options.titleModel ?? model;
+    this.#titleProvider = options.titleProvider ?? provider;
   }
 
   public get agentId(): string {
@@ -140,6 +147,8 @@ class Agent {
       logger: this.#logger,
       maxIterations: this.#maxIterations,
       systemPrompt: this.#systemPrompt,
+      titleModel: this.#titleModel,
+      titleProvider: this.#titleProvider,
     });
   }
 }

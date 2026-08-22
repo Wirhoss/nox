@@ -1,3 +1,5 @@
+import { COMPACT_PROMPT } from './agent/context/prompt';
+import { TITLE_PROMPT } from './agent/title';
 import { AuthorityCatalog } from './auth/authority';
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { type MessageOrigin, principal, type PrincipalRef } from './auth/principal';
@@ -59,4 +61,23 @@ const permissiveAuthorization: AuthorizationProvider = Object.freeze({
   id: 'test-permissive',
 });
 
-export { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin, testPrincipal };
+/**
+ * Whether a provider request is Nox talking to itself rather than the
+ * conversation: compacting the working set, or naming the session. A test
+ * provider that records what the agent was sent uses this to leave them out —
+ * they carry their own system prompt and no tools, and counting them as turns
+ * would make every assertion about a conversation depend on internal machinery
+ * that is not part of it.
+ */
+function isInternalRequest(systemPrompt: string): boolean {
+  return systemPrompt === COMPACT_PROMPT || systemPrompt === TITLE_PROMPT;
+}
+
+export {
+  isInternalRequest,
+  permissiveAuthorization,
+  TEST_AUTHORITY,
+  testCatalog,
+  testOrigin,
+  testPrincipal,
+};

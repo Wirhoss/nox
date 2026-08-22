@@ -564,6 +564,9 @@ class Gateway implements MessageGateway {
           sessionId: row.sessionId,
           startedAt: new Date(row.createdAt),
           state: state === undefined || state === 'stopped' ? 'closed' : state,
+          // Read from the row rather than from the live session: a closed
+          // conversation has nothing to ask, and it is just as named.
+          title: row.title ?? undefined,
           updatedAt: new Date(row.updatedAt),
         };
       }),
@@ -600,7 +603,6 @@ class Gateway implements MessageGateway {
       authorization: binding.authorization,
       metadata: { brokerId: grant.brokerId, conversationId },
       sessionId: bound?.sessionId,
-      title: `${grant.brokerId}:${conversationId}`,
     });
 
     if (bound === undefined) await this.#store.bind(key, binding.agentId, session.sessionId);
@@ -731,6 +733,11 @@ class Gateway implements MessageGateway {
               trigger: event.trigger,
               type: 'runStarted',
             });
+          }
+          break;
+        case 'titled':
+          if (shows(broker, 'titles')) {
+            this.#deliver(conversation, { title: event.title, type: 'title' });
           }
           break;
         case 'usage':
