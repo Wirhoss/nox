@@ -156,6 +156,7 @@ describe('config files', () => {
     expect(value).toEqual({
       api: apiDefaults,
       auth: authDefaults,
+      chat: {},
       database: databaseDefaults,
       logLevel: 'info',
     });
@@ -172,6 +173,7 @@ describe('config files', () => {
     expect(await read(dir, 'app.json')).toEqual({
       api: apiDefaults,
       auth: authDefaults,
+      chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
     });
@@ -182,6 +184,7 @@ describe('config files', () => {
     await write(dir, 'app.json', {
       api: apiDefaults,
       auth: authDefaults,
+      chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
     });
@@ -334,6 +337,7 @@ describe('Config', () => {
     expect(config.get('app')).toEqual({
       api: apiDefaults,
       auth: authDefaults,
+      chat: {},
       database: databaseDefaults,
       logLevel: 'info',
     });
@@ -347,6 +351,7 @@ describe('Config', () => {
     const result = await config.update('app', {
       api: apiDefaults,
       auth: authDefaults,
+      chat: {},
       database: databaseDefaults,
       logLevel: 'debug',
     });
@@ -367,6 +372,7 @@ describe('Config', () => {
         config.update('app', {
           api: apiDefaults,
           auth: authDefaults,
+          chat: {},
           database: databaseDefaults,
           logLevel,
         }),
@@ -389,6 +395,7 @@ describe('Config', () => {
     await first.update('app', {
       api: apiDefaults,
       auth: authDefaults,
+      chat: {},
       database: databaseDefaults,
       logLevel: 'error',
     });

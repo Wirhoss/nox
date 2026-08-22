@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
 import { type ConversationRow, conversations } from './schema';
 
@@ -38,6 +38,22 @@ class ConversationStore {
           ),
         )
         .get(),
+    );
+  }
+
+  /**
+   * Every conversation one transport carries, most recently spoken in first.
+   * Scoped to a broker because that is the only scope a broker may ask about:
+   * what another transport is carrying is not its to enumerate.
+   */
+  public async list(brokerId: string): Promise<ConversationRow[]> {
+    return this.#database.exclusive((database) =>
+      database
+        .select()
+        .from(conversations)
+        .where(eq(conversations.brokerId, brokerId))
+        .orderBy(desc(conversations.updatedAt))
+        .all(),
     );
   }
 

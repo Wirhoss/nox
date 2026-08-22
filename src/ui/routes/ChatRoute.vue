@@ -102,10 +102,10 @@ async function logout(): Promise<void> {
         <NoxNotice
           v-if="session.connection.type === 'unavailable'"
           class="surface__notice"
-          title="Web broker unavailable"
+          title="Chat temporarily unavailable"
           tone="danger"
         >
-          <p>No configured web broker currently holds the chat surface.</p>
+          <p>The internal chat transport is not running.</p>
           <NoxButton variant="secondary" @click="session.reconnect()">Retry connection</NoxButton>
         </NoxNotice>
 

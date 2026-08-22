@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+const API_PREFIX = '/api'
 const errorResponseSchema = z.object({ error: z.string() })
 
 class ApiError extends Error {
@@ -79,7 +80,7 @@ async function request(path: string, init: RequestInit): Promise<Response> {
   }
 
   try {
-    return await fetch(new URL(path, window.location.origin), {
+    return await fetch(new URL(`${API_PREFIX}${path}`, window.location.origin), {
       ...init,
       credentials: 'include',
       headers,

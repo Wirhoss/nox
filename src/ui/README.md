@@ -29,7 +29,7 @@ bun run check:ui
 
 Or run the corresponding scripts directly from `src/ui`.
 
-During development, Vite proxies `/auth` and the live `/chat` endpoints to `http://localhost:8080`. Point them at another Nox HTTP surface when needed:
+During development, Vite proxies the `/api` namespace to `http://localhost:8080`. Point it at another Nox HTTP surface when needed:
 
 ```sh
 NOX_API_TARGET=http://localhost:9090 bun run dev:ui

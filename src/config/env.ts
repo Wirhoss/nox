@@ -4,11 +4,13 @@ import { parseOrThrow } from '../utils/validate';
 
 const DEFAULT_CONFIG_DIR = '/etc/nox/config';
 const DEFAULT_DATA_DIR = '/var/lib/nox';
+const DEFAULT_UI_DIR = '/app/ui';
 
 const envConfigSchema = z.object({
   configDir: z.string().min(1),
   dataDir: z.string().min(1),
   environment: z.enum(['development', 'production', 'test']),
+  uiDir: z.string().min(1),
 });
 
 type EnvConfig = z.infer<typeof envConfigSchema>;
@@ -20,6 +22,7 @@ function readEnvConfig(env: EnvSource = process.env): EnvConfig {
     configDir: env.CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
     dataDir: env.DATA_DIR ?? DEFAULT_DATA_DIR,
     environment: env.NODE_ENV ?? 'development',
+    uiDir: env.UI_DIR ?? DEFAULT_UI_DIR,
   });
 }
 

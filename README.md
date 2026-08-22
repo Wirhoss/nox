@@ -84,34 +84,32 @@ transcript. The builtin `web` broker is Nox's own HTTP surface acting as one: it
 does not dial out, it is handed connections by the browser, and its ingress rule
 is the access token the API already checks.
 
-`brokers.json`:
+The web broker is not an entry in `brokers.json`. It is internal infrastructure:
+bootstrap creates exactly one, reserves the broker ID `web`, and attaches it
+before the API starts listening. `brokers.json` is only for transports that reach
+external services.
+
+With one blueprint, web conversations use that agent automatically. With more
+than one, choose the temporary default in `app.json` until the web surface offers
+an agent picker:
 
 ```json
-{
-  "web": {
-    "type": "web",
-    "agent": "nox",
-    "grants": { "<accountId>": ["nox.*"] }
-  }
-}
+{ "chat": { "defaultAgent": "nox" } }
 ```
 
-The sender a broker vouches for is the **account id**, not the username: a name
-is a label a person may change, and a grant written against it would quietly
-stop matching. `GET /auth/me` returns the id of whoever is logged in.
-
-Exactly one broker of type `web` may be configured. There is one HTTP surface,
-and two brokers claiming it would make which conversation reached whom a matter
-of load order; a second one refuses to start.
+The authenticated installation owner receives every registered authority on
+this broker. The Gate still evaluates concrete risk and asks for approval where
+required; copying an account ID into configuration is neither necessary nor
+supported.
 
 Its routes are mounted only when authentication is configured, and every one of
 them requires a token:
 
 | Route | What it does |
 |---|---|
-| `GET /chat/stream` | Server-sent events for every conversation, named by event type |
-| `POST /chat/conversations/:conversationId/messages` | Says something; answers `202`, the reply arrives on the stream |
-| `POST /chat/conversations/:conversationId/permissions/:requestId` | Answers a pending gate request with `{ "decision": "approve", "scope": "session" }` or `{ "decision": "deny" }` |
+| `GET /api/chat/stream` | Server-sent events for every conversation, named by event type |
+| `POST /api/chat/conversations/:conversationId/messages` | Says something; answers `202`, the reply arrives on the stream |
+| `POST /api/chat/conversations/:conversationId/permissions/:requestId` | Answers a pending gate request with `{ "decision": "approve", "scope": "session" }` or `{ "decision": "deny" }` |
 
 A conversation is named by the client and bound to a session by the runtime on
 the first message it carries: there is no endpoint that creates one, because a

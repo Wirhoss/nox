@@ -1,19 +1,7 @@
 import { z } from 'zod';
 
+import type { JsonSchema } from '../utils/jsonSchema';
 import type { Tool } from './tool';
-
-interface JsonSchema {
-  anyOf?: JsonSchema[];
-  const?: unknown;
-  default?: unknown;
-  description?: string;
-  enum?: unknown[];
-  items?: JsonSchema;
-  oneOf?: JsonSchema[];
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-  type?: string | string[];
-}
 
 const MAX_DEPTH = 3;
 

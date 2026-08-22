@@ -16,8 +16,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/auth': { target: apiTarget },
-      '^/chat/(stream|conversations)': { target: apiTarget },
+      '/api': { target: apiTarget },
     },
   },
 })

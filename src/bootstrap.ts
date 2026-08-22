@@ -4,15 +4,17 @@ import { isAbsolute, join } from 'node:path';
 import { Agent } from './agent/agent';
 import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
+import { ChatHub } from './api/chat/transport';
 import { type ApiAuth, ApiServer } from './api/server';
 import { NoxApplication } from './application';
 import { AuthorityCatalog, type AuthorityDefinition } from './auth/authority';
-import { GrantAuthorizationProvider } from './auth/authorization';
+import { GrantAuthorizationProvider, OwnerAuthorizationProvider } from './auth/authorization';
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { resolveSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
+import { WebBroker } from './extensions/builtin/brokers/web/webBroker';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { authorities } from './extensions/contribution-points/authorities';
@@ -30,6 +32,8 @@ import type { Blueprint } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
 import type { ToolSet, ToolSetGrant } from './tool/tool';
+
+const WEB_BROKER_ID = 'web';
 
 interface BootstrapOptions {
   env?: EnvSource;
@@ -77,6 +81,11 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     throw error;
   }
 
+  // The HTTP chat surface owns one internal transport. Unlike transports that
+  // dial external services, its existence is part of Nox rather than deployment
+  // configuration; bootstrap puts both halves together exactly once.
+  const chat = new ChatHub();
+
   const application = new NoxApplication({
     extensions: [openAIExtension, webToolsExtension],
     logger,
@@ -93,7 +102,9 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   // Registered after the database and therefore released before it: the socket
   // stops answering while the storage its answers came from is still open.
   const auth = await openAuth(appConfig.auth, database, env.dataDir, logger);
-  application.own(await openApi(application, appConfig.api, auth, database, logger));
+  const api = application.own(
+    openApi(application, appConfig.api, auth, chat, database, env.uiDir, logger),
+  );
 
   try {
     const catalog = await composeAgents(
@@ -104,7 +115,21 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       logger,
       secretStore,
     );
-    await openGateway(application, config, catalog, database, logger, secretStore);
+    await openGateway(
+      application,
+      config,
+      catalog,
+      chat,
+      appConfig.chat.defaultAgent,
+      database,
+      logger,
+      secretStore,
+    );
+
+    // Last, and inside the same guard as everything above: a port that is
+    // answering means the runtime behind it is composed, and a Nox that failed
+    // to compose never opened one.
+    await api.listen();
   } catch (error) {
     // Everything above is already open. A bootstrap that throws leaves nothing
     // running — a half-composed Nox holding a port and a database file is worse
@@ -117,25 +142,30 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 }
 
 /**
- * The HTTP surface, listening before the application does. Liveness answers
- * while Nox is still starting, which is the point of the probe; readiness says
- * no until everything below is up, which is the point of that one.
+ * The HTTP surface, assembled here and opened last. Readiness still reports on
+ * what it depends on rather than assuming it: everything below was up when the
+ * port opened, and a database that goes away afterwards is exactly what the
+ * probe is for.
  */
-async function openApi(
+function openApi(
   application: NoxApplication,
   config: ApiConfig,
   auth: ApiAuth,
+  chat: ChatHub,
   database: Database,
+  uiDirectory: string,
   logger: Logger,
-): Promise<ApiServer> {
-  return ApiServer.start({
+): ApiServer {
+  return ApiServer.create({
     ...config,
     auth,
+    chat,
     checks: {
       database: () => database.isOpen,
       nox: () => application.state === 'running',
     },
     logger: logger.child('api'),
+    uiDirectory,
     version: application.noxVersion,
   });
 }
@@ -266,25 +296,58 @@ async function composeAgents(
   return catalog;
 }
 
+/** The agent a new browser conversation uses until the UI offers a picker. */
+function webAgentFor(application: NoxApplication, configured: string | undefined): string {
+  if (configured !== undefined) {
+    if (application.getAgent(configured) === undefined) {
+      throw new Error(
+        `Web chat names default agent "${configured}", which no blueprint defines. ` +
+          `Defined: ${application.agentIds.join(', ')}.`,
+      );
+    }
+    return configured;
+  }
+
+  const [only] = application.agentIds;
+  if (application.agentIds.length === 1 && only !== undefined) return only;
+
+  throw new Error(
+    'Web chat needs a default agent because more than one blueprint is configured. ' +
+      'Set app.chat.defaultAgent.',
+  );
+}
+
 /**
- * Opens the message gateway over whatever brokers are configured, and hands it
- * to the application so shutdown silences the transports before it closes the
- * conversations they feed. A Nox with no configured broker gets no gateway at
- * all — there is nothing for it to listen to.
+ * Opens the message gateway over Nox's own web surface and any externally
+ * configured brokers. The web transport is infrastructure: it is always first,
+ * always named `web`, and never appears in brokers.json.
  */
 async function openGateway(
   application: NoxApplication,
   config: Config,
   catalog: AuthorityCatalog,
+  chat: ChatHub,
+  defaultWebAgent: string | undefined,
   database: Database,
   logger: Logger,
   secretStore: SecretStore,
 ): Promise<void> {
   const configured = config.get('brokers');
-  const grants: BrokerGrant[] = [];
+  const grants: BrokerGrant[] = [
+    Object.freeze({
+      agentId: webAgentFor(application, defaultWebAgent),
+      authorization: new OwnerAuthorizationProvider(WEB_BROKER_ID),
+      broker: new WebBroker(chat),
+      brokerId: WEB_BROKER_ID,
+      conversations: Object.freeze({}),
+    }),
+  ];
 
   for (const [brokerId, entry] of Object.entries(configured)) {
     if (entry.enabled === false) continue;
+    if (brokerId === WEB_BROKER_ID) {
+      throw new Error('Broker ID "web" is reserved for Nox\'s built-in HTTP chat surface.');
+    }
 
     const contribution = application.contributions.get(brokers, entry.type);
     if (contribution === undefined) {
@@ -344,8 +407,6 @@ async function openGateway(
       }),
     );
   }
-
-  if (grants.length === 0) return;
 
   const gateway = new Gateway(application, {
     brokers: grants,

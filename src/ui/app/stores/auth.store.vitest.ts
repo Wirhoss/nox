@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe('auth store bootstrap', () => {
   it('requires registration when the node has no account', async () => {
-    server.use(http.get('*/auth/status', () => HttpResponse.json({ registered: false })))
+    server.use(http.get('*/api/auth/status', () => HttpResponse.json({ registered: false })))
 
     await store.initialize()
 
@@ -35,8 +35,8 @@ describe('auth store bootstrap', () => {
 
   it('offers login when a registered node has no refresh session', async () => {
     server.use(
-      http.get('*/auth/status', () => HttpResponse.json({ registered: true })),
-      http.post('*/auth/refresh', () =>
+      http.get('*/api/auth/status', () => HttpResponse.json({ registered: true })),
+      http.post('*/api/auth/refresh', () =>
         HttpResponse.json({ error: 'unauthorized' }, { status: 401 }),
       ),
     )
@@ -48,11 +48,11 @@ describe('auth store bootstrap', () => {
 
   it('restores an existing session through the HttpOnly refresh cookie', async () => {
     server.use(
-      http.get('*/auth/status', () => HttpResponse.json({ registered: true })),
-      http.post('*/auth/refresh', () =>
+      http.get('*/api/auth/status', () => HttpResponse.json({ registered: true })),
+      http.post('*/api/auth/refresh', () =>
         HttpResponse.json({ accessToken: 'restored-access', expiresInSeconds: 900 }),
       ),
-      http.get('*/auth/me', ({ request }) => {
+      http.get('*/api/auth/me', ({ request }) => {
         expect(request.headers.get('authorization')).toBe('Bearer restored-access')
         return HttpResponse.json({ account })
       }),
@@ -68,7 +68,7 @@ describe('auth store bootstrap', () => {
 describe('auth store registration', () => {
   it('keeps the access token in memory and exposes the account after claiming Nox', async () => {
     server.use(
-      http.post('*/auth/register', async ({ request }) => {
+      http.post('*/api/auth/register', async ({ request }) => {
         expect(await request.json()).toEqual({
           code: 'NOX-ABCD-EFGH-JKLM',
           password: 'night-machine',

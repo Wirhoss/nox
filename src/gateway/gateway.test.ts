@@ -12,6 +12,7 @@ import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
 import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
 import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
+import { brokerCommand, type BrokerCommandSpec, type CommandRejection } from './command';
 import { type BrokerConversationGrant, Gateway } from './gateway';
 
 import type { Message, MessageContent } from '../agent/context/message';
@@ -298,8 +299,23 @@ class TestBroker implements Broker {
     });
   }
 
-  public halt(conversationId: string, scope?: 'run' | 'session', senderId = 'someone'): void {
-    this.#host?.receive({ conversationId, scope, senderId, type: 'stop' });
+  /** Invokes a command, and reports back whether it was even accepted. */
+  public invoke(
+    conversationId: string,
+    command: string,
+    args?: Readonly<Record<string, unknown>>,
+    senderId = 'someone',
+  ): CommandRejection | undefined {
+    return this.#requireHost().command({ arguments: args, command, conversationId, senderId });
+  }
+
+  /** Stops the run in flight, which is what a bare stop means. */
+  public halt(conversationId: string, scope?: 'run' | 'session'): CommandRejection | undefined {
+    return this.invoke(conversationId, 'stop', scope === undefined ? undefined : { scope });
+  }
+
+  public commands(): readonly BrokerCommandSpec[] {
+    return this.#requireHost().commands;
   }
 
   public history(conversationId: string, limit?: number): Promise<BrokerHistory | undefined> {
@@ -917,16 +933,6 @@ describe('Gateway', () => {
         2,
       );
     });
-
-    test('has nothing to stop in a conversation that is not open', async () => {
-      const broker = new TestBroker();
-      const harnessed = await harness(await openDatabase(), broker);
-
-      broker.halt('never-spoken-in');
-      await harnessed.gateway.drain();
-
-      expect(harnessed.application.sessions).toHaveLength(0);
-    });
   });
 
   describe('reading a conversation back', () => {
@@ -1111,6 +1117,193 @@ describe('Gateway', () => {
       ]);
       // A conversation on another transport is not this one's to read either.
       expect(await mine.history('chat-2')).toBeUndefined();
+    });
+  });
+
+  describe('commands', () => {
+    test('publishes a catalog a transport can render from', async () => {
+      const broker = new TestBroker();
+      await harness(await openDatabase(), broker);
+
+      const [stop, ...rest] = broker.commands();
+      expect(rest).toBeEmpty();
+      expect(stop?.name).toBe('stop');
+      // JSON Schema, because a zod schema does not cross a boundary — and this
+      // is the same declaration an invocation is checked against.
+      expect(stop?.parameters).toMatchObject({
+        properties: { scope: { enum: ['run', 'session'] } },
+        type: 'object',
+      });
+    });
+
+    test('refuses a command nobody declared', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.say('chat-1', 'hola');
+      await settle(harnessed);
+
+      expect(broker.invoke('chat-1', 'selfDestruct')).toEqual({ reason: 'unknownCommand' });
+    });
+
+    test('refuses arguments that do not fit, and says why', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.say('chat-1', 'hola');
+      await settle(harnessed);
+
+      const rejection = broker.invoke('chat-1', 'stop', { scope: 'everything' });
+
+      // The two things a client can act on come back straight away, checked
+      // against the very schema it rendered from.
+      expect(rejection?.reason).toBe('invalidArguments');
+      expect(rejection).toHaveProperty('detail');
+      expect(harnessed.application.sessions[0]?.session.state).toBe('idle');
+    });
+
+    test('applies a command schema default rather than guessing at the surface', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await harness(await openDatabase(), broker, {
+        provider: new SlowProvider(),
+      });
+
+      broker.say('chat-1', 'contame algo largo');
+      await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runStarted'),
+        'A started run',
+      );
+
+      // No scope named at all: the schema says `run`, so the conversation
+      // survives a bare stop rather than being ended by an omission.
+      expect(broker.invoke('chat-1', 'stop')).toBeUndefined();
+      await settle(harnessed);
+
+      expect(finished(broker).map((run) => run.status)).toEqual(['aborted']);
+      expect(harnessed.application.sessions).toHaveLength(1);
+    });
+
+    test('runs a contributed command with everything it needs and nothing more', async () => {
+      const database = await openDatabase();
+      const broker = new TestBroker();
+      const seen: { conversationId: string; sender: string; tags: string[] }[] = [];
+
+      const application = new NoxApplication();
+      applications.push(application);
+      await application.start();
+      application.addAgent(
+        new Agent(database, new SayingProvider('ok'), MODEL, {
+          agentId: 'assistant',
+          authorities: catalog,
+          systemPrompt: 'system',
+        }),
+      );
+      const gateway = new Gateway(application, {
+        brokers: [{ agentId: 'assistant', broker, brokerId: 'test' }],
+        // A list parameter costs nothing extra: the schema is the whole
+        // declaration, and every surface derives what it draws from it.
+        commands: [
+          brokerCommand({
+            description: 'Tags a conversation.',
+            name: 'tag',
+            parameters: z.object({ tags: z.array(z.enum(['urgent', 'later', 'done'])).min(1) }),
+            run: (context, { tags }): Promise<void> => {
+              seen.push({
+                conversationId: context.conversationId,
+                sender: context.sender.subject,
+                tags: [...tags],
+              });
+              return Promise.resolve();
+            },
+          }),
+        ],
+        database,
+      });
+      application.setGateway(gateway);
+      await gateway.start();
+      const harnessed = { application, broker, gateway };
+
+      broker.say('chat-1', 'hola');
+      await settle(harnessed);
+
+      expect(broker.commands().map((command) => command.name)).toEqual(['stop', 'tag']);
+      expect(broker.invoke('chat-1', 'tag', { tags: ['urgent', 'done'] }, 'alice')).toBeUndefined();
+      await harnessed.gateway.drain();
+
+      expect(seen).toEqual([
+        { conversationId: 'chat-1', sender: 'alice', tags: ['urgent', 'done'] },
+      ]);
+      // A multiple choice is checked like anything else.
+      expect(broker.invoke('chat-1', 'tag', { tags: [] })?.reason).toBe('invalidArguments');
+      expect(broker.invoke('chat-1', 'tag', { tags: ['nope'] })?.reason).toBe('invalidArguments');
+    });
+
+    test('refuses to register two commands under one name', async () => {
+      const database = await openDatabase();
+      const application = new NoxApplication();
+      applications.push(application);
+      await application.start();
+
+      const shadow = brokerCommand({
+        description: 'Not the stop anyone rendered.',
+        name: 'stop',
+        parameters: z.object({}),
+        run: (): Promise<void> => Promise.resolve(),
+      });
+
+      // A transport drew `stop` from the catalog. A deployment quietly
+      // redefining what it does is what a declared vocabulary exists to prevent.
+      expect(() => new Gateway(application, { brokers: [], commands: [shadow], database })).toThrow(
+        'Command "stop" is registered more than once.',
+      );
+    });
+
+    test('waits its turn behind whatever the conversation is already doing', async () => {
+      const broker = new TestBroker({ runs: true });
+      const harnessed = await harness(await openDatabase(), broker, {
+        provider: new SlowProvider(),
+      });
+
+      broker.say('chat-1', 'contame algo largo');
+      await waitFor(
+        () => broker.delivered.find((event) => event.type === 'runStarted'),
+        'A started run',
+      );
+      broker.halt('chat-1', 'session');
+      broker.say('chat-1', 'segunda');
+      await settle(harnessed);
+
+      // The message queued behind the command, so it reopened the conversation
+      // the command had just ended rather than racing it.
+      expect(harnessed.application.sessions).toHaveLength(1);
+      expect(
+        harnessed.application.sessions[0]?.session
+          .getTranscript()
+          .filter((message) => message.role === 'user'),
+      ).toHaveLength(2);
+    });
+
+    test('has nothing to run in a conversation that is not open', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      // Accepted — the catalog is what a synchronous answer can speak to — and
+      // then quietly dropped, because there is nothing to stop.
+      expect(broker.halt('never-spoken-in')).toBeUndefined();
+      await harnessed.gateway.drain();
+
+      expect(harnessed.application.sessions).toHaveLength(0);
+    });
+
+    test('refuses everything once the gateway is no longer running', async () => {
+      const broker = new TestBroker();
+      const harnessed = await harness(await openDatabase(), broker);
+
+      broker.say('chat-1', 'hola');
+      await settle(harnessed);
+      await harnessed.gateway.stop();
+
+      expect(broker.halt('chat-1')).toEqual({ reason: 'unavailable' });
     });
   });
 });

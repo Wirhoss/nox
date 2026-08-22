@@ -11,7 +11,7 @@ import router from './router'
 describe('App auth entry', () => {
   it('opens first-time registration when the Nox node is unclaimed', async () => {
     server.use(
-      http.get('*/auth/status', () => {
+      http.get('*/api/auth/status', () => {
         return HttpResponse.json({ registered: false })
       }),
     )
@@ -25,8 +25,8 @@ describe('App auth entry', () => {
 
   it('opens login when the node is claimed but no browser session survives', async () => {
     server.use(
-      http.get('*/auth/status', () => HttpResponse.json({ registered: true })),
-      http.post('*/auth/refresh', () =>
+      http.get('*/api/auth/status', () => HttpResponse.json({ registered: true })),
+      http.post('*/api/auth/refresh', () =>
         HttpResponse.json({ error: 'unauthorized' }, { status: 401 }),
       ),
     )

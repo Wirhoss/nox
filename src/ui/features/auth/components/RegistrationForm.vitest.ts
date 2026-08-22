@@ -24,7 +24,7 @@ afterEach(() => {
 describe('RegistrationForm', () => {
   it('validates, normalizes and submits the first operator identity', async () => {
     server.use(
-      http.post('*/auth/register', async ({ request }) => {
+      http.post('*/api/auth/register', async ({ request }) => {
         expect(await request.json()).toEqual({
           code: 'NOX-ACDE-FGHJ-KLMN',
           password: 'night-machine',

@@ -29,6 +29,7 @@ interface FoldAccumulator {
 }
 
 const DEFAULT_MIN_REDUCTION_RATIO = 0.2;
+const FOLDED_ENTRY_SEPARATOR = '\n---\n';
 const MAX_FOLDED_ARGUMENT_CHARS = 200;
 
 function applyFold(history: readonly Message[], fold: FoldedMessage): Message[] {
@@ -135,7 +136,7 @@ function renderFold({ calls, responses }: FoldAccumulator): string {
     }
   }
 
-  return ['-----Folded tool calls-----', ...entries].join('\n');
+  return `-----Folded tool calls-----\n${entries.join(FOLDED_ENTRY_SEPARATOR)}`;
 }
 
 function trackedPush<T>(tracked: Map<string, T[]>, trackId: string, message: T): void {
@@ -197,6 +198,7 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
   let anchor = history
     .slice(0, from)
     .findLast((message): message is AssistantMessage => message.role === 'assistant');
+  let pendingAnchor: AssistantMessage | undefined;
 
   const flush = (): void => {
     if (isEmpty(accumulator)) return;
@@ -220,8 +222,15 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
     accumulator = createAccumulator();
   };
 
+  const commitPendingAnchor = (): void => {
+    if (pendingAnchor === undefined) return;
+    accumulator.messages.push(pendingAnchor);
+    pendingAnchor = undefined;
+  };
+
   for (const message of history.slice(from, to + 1)) {
     if (message.role === 'toolCall') {
+      commitPendingAnchor();
       trackedPush(accumulator.calls, message.trackId, message);
       accumulator.messages.push(message);
       continue;
@@ -229,13 +238,38 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
 
     if (message.role === 'toolResponse') {
       if (message.execution !== 'deferredResult') {
+        commitPendingAnchor();
         trackedPush(accumulator.responses, message.trackId, message);
         accumulator.messages.push(message);
         continue;
       }
     }
 
+    // Reasoning remains active byte-for-byte, but it is transparent to a fold:
+    // scratchpad emitted between tool iterations must not fragment one loop into
+    // a placeholder per call.
+    if (message.role === 'reasoning') continue;
+
+    // Provider streams materialize a textless assistant turn before a tool call.
+    // Hold it until more tool traffic proves that it is structural scaffolding
+    // for the same loop. If the selected range ends here, it remains the anchor
+    // of the still-in-flight loop instead of being reclaimed too early.
+    if (
+      message.role === 'assistant' &&
+      message.content.length === 0 &&
+      anchor !== undefined &&
+      !isEmpty(accumulator) &&
+      pendingAnchor === undefined
+    ) {
+      pendingAnchor = message;
+      continue;
+    }
+
     flush();
+    if (pendingAnchor !== undefined) {
+      anchor = pendingAnchor;
+      pendingAnchor = undefined;
+    }
     if (message.role === 'assistant') anchor = message;
   }
 

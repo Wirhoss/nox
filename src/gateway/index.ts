@@ -1,18 +1,47 @@
+export { brokerCommand, BUILTIN_COMMANDS, CommandCatalog, stopCommand } from './command';
 export { Gateway } from './gateway';
 
 export type {
+  BrokerCommand,
+  BrokerCommandSpec,
+  CommandCheck,
+  CommandContext,
+  CommandInvocation,
+  CommandRejection,
+} from './command';
+export type {
   Broker,
   BrokerCapabilities,
+  BrokerHistory,
+  BrokerHistoryEntry,
+  BrokerHistoryOptions,
   BrokerHost,
+  BrokerSession,
+  HistoryUserMessage,
+  InboundBase,
   InboundEvent,
   InboundMessage,
   InboundPermission,
+  InboundSpeech,
+  InboundSteer,
+  MessageBody,
+  OutboundBase,
+  OutboundBody,
+  OutboundContextChange,
   OutboundError,
   OutboundEvent,
   OutboundFragment,
   OutboundMessage,
   OutboundPermission,
   OutboundPermissionResolved,
+  OutboundReasoning,
+  OutboundReasoningFragment,
+  OutboundRetry,
+  OutboundRunCompleted,
+  OutboundRunStarted,
+  OutboundToolCall,
+  OutboundToolResponse,
+  OutboundUsage,
 } from './broker';
 export type {
   BrokerConversationGrant,

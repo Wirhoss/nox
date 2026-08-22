@@ -7,6 +7,7 @@ import {
   type AuthorizationRequest,
   authorize,
   GrantAuthorizationProvider,
+  OwnerAuthorizationProvider,
 } from './authorization';
 import { CORE_AUTHORITIES } from './coreAuthorities';
 
@@ -24,6 +25,23 @@ function request(overrides: Partial<AuthorizationRequest> = {}): AuthorizationRe
     ...overrides,
   };
 }
+
+describe('OwnerAuthorizationProvider', () => {
+  const provider = new OwnerAuthorizationProvider('web');
+
+  test('gives the authenticated owner every registered authority', () => {
+    expect(
+      provider.authorize(request({ principal: { issuer: 'web', subject: 'account-1' } })),
+    ).toMatchObject({
+      allowed: true,
+      matchedGrant: '*',
+    });
+  });
+
+  test('still rejects a principal vouched for by another transport', () => {
+    expect(provider.authorize(request())).toMatchObject({ allowed: false });
+  });
+});
 
 describe('GrantAuthorizationProvider', () => {
   const provider = new GrantAuthorizationProvider(

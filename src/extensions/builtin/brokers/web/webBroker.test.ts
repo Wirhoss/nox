@@ -5,20 +5,49 @@ import { silentLogger } from '../../../../logger/logger';
 import { testPrincipal } from '../../../../testFixtures';
 import { WebBroker } from './webBroker';
 
-import type { BrokerHost, InboundEvent } from '../../../../gateway/broker';
+import type {
+  BrokerHistory,
+  BrokerHost,
+  BrokerSession,
+  InboundEvent,
+} from '../../../../gateway/broker';
+import type {
+  BrokerCommandSpec,
+  CommandInvocation,
+  CommandRejection,
+} from '../../../../gateway/command';
 import type { PermissionRequest } from '../../../../tool/gate';
 
 const CONVERSATION = 'nJ8xKqLm2p';
 
-/** The gateway's end of a broker, reduced to what it recorded. */
-function testHost(received: InboundEvent[]): BrokerHost {
+/** What a gateway would answer with, for the tests that ask it something. */
+interface HostAnswers {
+  asked?: { conversationId: string; limit?: number }[];
+  /** The catalog the gateway publishes, as opposed to what was invoked from it. */
+  commands?: readonly BrokerCommandSpec[];
+  history?: BrokerHistory;
+  invoked?: CommandInvocation[];
+  rejection?: CommandRejection;
+  sessions?: readonly BrokerSession[];
+}
+
+/** The gateway's end of a broker, reduced to what it recorded and what it answers. */
+function testHost(received: InboundEvent[], answers: HostAnswers = {}): BrokerHost {
   return {
-    history: () => Promise.resolve(undefined),
+    command: (invocation) => {
+      answers.invoked?.push(invocation);
+      return answers.rejection;
+    },
+    commands: answers.commands ?? [],
+    history: (conversationId, options) => {
+      answers.asked?.push({ conversationId, limit: options?.limit });
+      return Promise.resolve(answers.history);
+    },
     logger: silentLogger,
     receive: (event: InboundEvent): void => {
       received.push(event);
     },
-    sessions: () => Promise.resolve([]),
+    sessions: () => Promise.resolve(answers.sessions ?? []),
     signal: new AbortController().signal,
   };
 }
@@ -48,18 +77,20 @@ function pendingPermission(): PermissionRequest {
 async function startedBroker(): Promise<{
   broker: WebBroker;
   hub: ChatHub;
+  invoked: CommandInvocation[];
   received: InboundEvent[];
   rendered: ChatEvent[];
 }> {
   const hub = new ChatHub();
   const broker = new WebBroker(hub);
+  const invoked: CommandInvocation[] = [];
   const received: InboundEvent[] = [];
   const rendered: ChatEvent[] = [];
 
-  await broker.start(testHost(received));
+  await broker.start(testHost(received, { invoked }));
   broker.subscribe((event) => rendered.push(event));
 
-  return { broker, hub, received, rendered };
+  return { broker, hub, invoked, received, rendered };
 }
 
 describe('the web broker', () => {
@@ -416,5 +447,192 @@ describe('the web broker', () => {
     });
 
     expect(received).toBeEmpty();
+  });
+
+  test('hands a steer over as a steer, not as a message', async () => {
+    const { broker, received } = await startedBroker();
+
+    broker.submitSteer({
+      conversationId: CONVERSATION,
+      messageId: 'm-1',
+      senderId: 'account-1',
+      text: 'mejor no',
+    });
+
+    // Interrupting and talking reach the gateway the same way and mean different
+    // things; which one it was is on the event, never inferred from the words.
+    expect(received[0]).toMatchObject({
+      conversationId: CONVERSATION,
+      messageId: 'm-1',
+      senderId: 'account-1',
+      text: 'mejor no',
+      type: 'steer',
+    });
+  });
+
+  test('passes the command catalog through rather than curating it', async () => {
+    const commands: readonly BrokerCommandSpec[] = [
+      { description: 'Stops the agent.', name: 'stop', parameters: { type: 'object' } },
+      { description: 'Tags it.', name: 'tag', parameters: { type: 'object' } },
+    ];
+    const broker = new WebBroker(new ChatHub());
+    await broker.start(testHost([], { commands }));
+
+    // What a client draws from them is the client's decision; deciding upstream
+    // which commands a browser deserves would be product design for it.
+    expect(broker.listCommands()).toEqual(commands);
+  });
+
+  test('hands an invocation over untouched and returns what came back', async () => {
+    const { broker, invoked } = await startedBroker();
+
+    const accepted = broker.submitCommand({
+      arguments: { tags: ['urgent', 'done'] },
+      command: 'tag',
+      conversationId: CONVERSATION,
+      senderId: 'account-1',
+    });
+
+    expect(accepted).toBeUndefined();
+    // Arguments cross as they arrived: whether they fit is the catalog's
+    // question, and a transport that pre-judged it would be a second definition
+    // of the same command.
+    expect(invoked).toEqual([
+      {
+        arguments: { tags: ['urgent', 'done'] },
+        command: 'tag',
+        conversationId: CONVERSATION,
+        senderId: 'account-1',
+      },
+    ]);
+  });
+
+  test('reports a refusal back to whoever asked', async () => {
+    const broker = new WebBroker(new ChatHub());
+    await broker.start(testHost([], { rejection: { reason: 'unknownCommand' } }));
+
+    expect(
+      broker.submitCommand({
+        command: 'selfDestruct',
+        conversationId: CONVERSATION,
+        senderId: 'account-1',
+      }),
+    ).toEqual({ reason: 'unknownCommand' });
+  });
+
+  test('reads a conversation back in the vocabulary the stream speaks', async () => {
+    const asked: { conversationId: string; limit?: number }[] = [];
+    const hub = new ChatHub();
+    const broker = new WebBroker(hub);
+    await broker.start(
+      testHost([], {
+        asked,
+        history: {
+          agentId: 'assistant',
+          conversationId: CONVERSATION,
+          entries: [
+            {
+              at: new Date('2026-01-01T00:00:00.000Z'),
+              messageId: 'm-1',
+              principal: { issuer: 'web', subject: 'account-1' },
+              text: 'hola',
+              type: 'userMessage',
+            },
+            {
+              at: new Date('2026-01-01T00:00:01.000Z'),
+              messageId: 'm-2',
+              text: 'hola mundo',
+              type: 'message',
+            },
+            {
+              arguments: { value: 'x' },
+              at: new Date('2026-01-01T00:00:02.000Z'),
+              messageId: 'm-3',
+              name: 'echo',
+              trackId: 'echo-1',
+              type: 'toolCall',
+            },
+          ],
+          sessionId: 'session-1',
+        },
+      }),
+    );
+
+    const history = await broker.readHistory({ conversationId: CONVERSATION, limit: 3 });
+
+    expect(asked).toEqual([{ conversationId: CONVERSATION, limit: 3 }]);
+    // A `Date` does not survive the wire, and a client redrawing a conversation
+    // reads the same shapes it reads off the stream.
+    expect(history?.entries).toEqual([
+      {
+        at: '2026-01-01T00:00:00.000Z',
+        messageId: 'm-1',
+        principal: { issuer: 'web', subject: 'account-1' },
+        text: 'hola',
+        type: 'userMessage',
+      },
+      {
+        at: '2026-01-01T00:00:01.000Z',
+        messageId: 'm-2',
+        text: 'hola mundo',
+        type: 'message',
+      },
+      {
+        arguments: { value: 'x' },
+        at: '2026-01-01T00:00:02.000Z',
+        messageId: 'm-3',
+        name: 'echo',
+        trackId: 'echo-1',
+        type: 'toolCall',
+      },
+    ]);
+  });
+
+  test('lists what the gateway says it carries, dates and all', async () => {
+    const hub = new ChatHub();
+    const broker = new WebBroker(hub);
+    await broker.start(
+      testHost([], {
+        sessions: [
+          {
+            agentId: 'assistant',
+            conversationId: CONVERSATION,
+            sessionId: 'session-1',
+            startedAt: new Date('2026-01-01T00:00:00.000Z'),
+            state: 'closed',
+            updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+          },
+        ],
+      }),
+    );
+
+    expect(await broker.listConversations()).toEqual([
+      {
+        agentId: 'assistant',
+        conversationId: CONVERSATION,
+        sessionId: 'session-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        state: 'closed',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  test('has nothing to answer once it no longer has a gateway', async () => {
+    const { broker } = await startedBroker();
+    await broker.stop();
+
+    expect(await broker.readHistory({ conversationId: CONVERSATION })).toBeUndefined();
+    expect(await broker.listConversations()).toEqual([]);
+    expect(broker.listCommands()).toEqual([]);
+    // Not silently dropped: a command is the one thing a transport gets an
+    // answer to, so "there is no gateway" is an answer it has to give.
+    expect(
+      broker.submitCommand({
+        command: 'stop',
+        conversationId: CONVERSATION,
+        senderId: 'account-1',
+      }),
+    ).toEqual({ reason: 'unavailable' });
   });
 });

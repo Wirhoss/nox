@@ -43,7 +43,7 @@ async function freshNox(): Promise<{ code: string; url: string }> {
   await server.listen();
   servers.push(server);
 
-  return { code, url: server.url };
+  return { code, url: `${server.url}/api` };
 }
 
 /** A Nox already claimed by `esteban`, and a live access token for them. */
@@ -170,7 +170,7 @@ describe('tokens on the wire', () => {
     const cookie = response.headers.get('set-cookie') ?? '';
     expect(cookie).toContain('nox_refresh=');
     expect(cookie).toContain('HttpOnly');
-    expect(cookie).toContain('Path=/auth');
+    expect(cookie).toContain('Path=/api/auth');
     expect(Object.keys((await response.json()) as object).sort()).toEqual([
       'accessToken',
       'account',

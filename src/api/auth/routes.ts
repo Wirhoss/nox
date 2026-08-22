@@ -1,18 +1,19 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
+import { API_PREFIX } from '../prefix';
 import { authGuard } from './guard';
 import { type Account, AccountExistsError, type AuthStore, type TokenPair } from './store';
 
 import type { RegistrationWindow } from './registration';
 
 /**
- * Scoped to `/auth`, so the browser attaches it only to the routes that trade it
+ * Scoped to `/api/auth`, so the browser attaches it only to the routes that trade it
  * for an access token. Every other request carries the access token instead, and
  * a cookie the browser never sends is a cookie that cannot be used against it.
  */
 const REFRESH_COOKIE = 'nox_refresh';
-const REFRESH_COOKIE_PATH = '/auth';
+const REFRESH_COOKIE_PATH = `${API_PREFIX}/auth`;
 
 const credentialsSchema = z.object({
   password: z.string().min(8).max(200),

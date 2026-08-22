@@ -10,8 +10,14 @@ import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
 import {
+  type ChatCommand,
+  type ChatCommandInput,
+  type ChatCommandRejection,
+  type ChatConversation,
   type ChatDecisionInput,
   type ChatEvent,
+  type ChatHistory,
+  type ChatHistoryInput,
   ChatHub,
   type ChatListener,
   type ChatMessageInput,
@@ -30,9 +36,38 @@ class RecordingTransport implements ChatTransport {
   public readonly decisions: ChatDecisionInput[] = [];
   public readonly listeners = new Set<ChatListener>();
   public readonly messages: ChatMessageInput[] = [];
+  public readonly invocations: ChatCommandInput[] = [];
+  public readonly reads: ChatHistoryInput[] = [];
+  public readonly steers: ChatMessageInput[] = [];
+
+  /** What the gateway would refuse with, set by whichever test cares. */
+  public rejection: ChatCommandRejection | undefined;
+
+  /** What the gateway would answer with, set by whichever test cares. */
+  public commands: readonly ChatCommand[] = [];
+  public conversations: readonly ChatConversation[] = [];
+  public history: ChatHistory | undefined;
 
   public emit(event: ChatEvent): void {
     for (const listener of this.listeners) listener(event);
+  }
+
+  public listCommands(): readonly ChatCommand[] {
+    return this.commands;
+  }
+
+  public listConversations(): Promise<readonly ChatConversation[]> {
+    return Promise.resolve(this.conversations);
+  }
+
+  public readHistory(input: ChatHistoryInput): Promise<ChatHistory | undefined> {
+    this.reads.push(input);
+    return Promise.resolve(this.history);
+  }
+
+  public submitCommand(input: ChatCommandInput): ChatCommandRejection | undefined {
+    this.invocations.push(input);
+    return this.rejection;
   }
 
   public submitDecision(input: ChatDecisionInput): void {
@@ -41,6 +76,10 @@ class RecordingTransport implements ChatTransport {
 
   public submitMessage(input: ChatMessageInput): void {
     this.messages.push(input);
+  }
+
+  public submitSteer(input: ChatMessageInput): void {
+    this.steers.push(input);
   }
 
   public subscribe(listener: ChatListener): () => void {
@@ -88,7 +127,7 @@ async function chatNox(): Promise<ChatNox> {
       'content-type': 'application/json',
     },
     hub,
-    url: server.url,
+    url: `${server.url}/api`,
   };
 }
 
@@ -315,7 +354,9 @@ describe('the chat hub', () => {
     const detach = hub.attach(first);
 
     expect(hub.transport).toBe(first);
-    expect(() => hub.attach(new RecordingTransport())).toThrow(/exactly one broker/);
+    expect(() => hub.attach(new RecordingTransport())).toThrow(
+      /already has its internal transport/,
+    );
 
     detach();
     expect(hub.transport).toBeUndefined();
@@ -332,5 +373,230 @@ describe('the chat hub', () => {
     detachFirst();
 
     expect(hub.transport).toBe(second);
+  });
+
+  describe('steering, stopping and reading back', () => {
+    test('hands over a steer as its own thing, not as a message', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      nox.hub.attach(transport);
+
+      const response = await fetch(`${nox.url}/chat/conversations/${CONVERSATION}/steer`, {
+        body: JSON.stringify({ text: 'mejor no' }),
+        headers: nox.headers,
+        method: 'POST',
+      });
+
+      expect(response.status).toBe(202);
+      expect(transport.steers).toHaveLength(1);
+      expect(transport.steers[0]).toMatchObject({
+        conversationId: CONVERSATION,
+        senderId: nox.accountId,
+        text: 'mejor no',
+      });
+      // Interrupting is not talking, and the transport is told which one it was.
+      expect(transport.messages).toHaveLength(0);
+    });
+
+    test('publishes the command catalog so a client never hardcodes one', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      transport.commands = [
+        {
+          description: 'Stops the agent.',
+          name: 'stop',
+          parameters: {
+            properties: { scope: { enum: ['run', 'session'], type: 'string' } },
+            type: 'object',
+          },
+        },
+      ];
+      nox.hub.attach(transport);
+
+      const response = await fetch(`${nox.url}/chat/commands`, { headers: nox.headers });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ commands: transport.commands });
+    });
+
+    test('hands a command over with the arguments it was posted', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      nox.hub.attach(transport);
+
+      const response = await fetch(`${nox.url}/chat/conversations/${CONVERSATION}/commands/stop`, {
+        body: JSON.stringify({ scope: 'session' }),
+        headers: nox.headers,
+        method: 'POST',
+      });
+
+      // 202: accepted and queued, never finished. Holding the request open
+      // across a run would make stopping one depend on it having stopped.
+      expect(response.status).toBe(202);
+      expect(transport.invocations[0]).toEqual({
+        arguments: { scope: 'session' },
+        command: 'stop',
+        conversationId: CONVERSATION,
+        senderId: nox.accountId,
+      });
+    });
+
+    test('accepts a command with no arguments at all', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      nox.hub.attach(transport);
+
+      const response = await fetch(`${nox.url}/chat/conversations/${CONVERSATION}/commands/stop`, {
+        headers: nox.headers,
+        method: 'POST',
+      });
+
+      // What an omitted argument means is the command's schema to say, not this
+      // surface's to guess.
+      expect(response.status).toBe(202);
+      expect(transport.invocations[0]?.command).toBe('stop');
+    });
+
+    test('reports the two refusals a client can act on', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      nox.hub.attach(transport);
+
+      transport.rejection = { reason: 'unknownCommand' };
+      const unknown = await fetch(
+        `${nox.url}/chat/conversations/${CONVERSATION}/commands/selfdestruct`,
+        { headers: nox.headers, method: 'POST' },
+      );
+
+      transport.rejection = { detail: 'scope: invalid option', reason: 'invalidArguments' };
+      const invalid = await fetch(`${nox.url}/chat/conversations/${CONVERSATION}/commands/stop`, {
+        body: JSON.stringify({ scope: 'everything' }),
+        headers: nox.headers,
+        method: 'POST',
+      });
+
+      expect(unknown.status).toBe(404);
+      expect(await unknown.json()).toEqual({ error: 'unknown_command' });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({
+        detail: 'scope: invalid option',
+        error: 'invalid_arguments',
+      });
+    });
+
+    test('reads a conversation back without speaking in it', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      transport.history = {
+        agentId: 'assistant',
+        conversationId: CONVERSATION,
+        entries: [
+          {
+            at: '2026-01-01T00:00:00.000Z',
+            messageId: 'm-1',
+            principal: { issuer: 'web', subject: 'esteban' },
+            text: 'hola',
+            type: 'userMessage',
+          },
+          {
+            at: '2026-01-01T00:00:01.000Z',
+            messageId: 'm-2',
+            text: 'hola mundo',
+            type: 'message',
+          },
+        ],
+        sessionId: 'session-1',
+      };
+      nox.hub.attach(transport);
+
+      const response = await fetch(
+        `${nox.url}/chat/conversations/${CONVERSATION}/history?limit=50`,
+        { headers: nox.headers },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        entries: [{ type: 'userMessage' }, { type: 'message' }],
+        sessionId: 'session-1',
+      });
+      expect(transport.reads[0]).toEqual({ conversationId: CONVERSATION, limit: 50 });
+      // Reading is a GET because it is one: nothing was said in the chat.
+      expect(transport.messages).toHaveLength(0);
+    });
+
+    test('answers that a chat nobody ever spoke in is not there', async () => {
+      const nox = await chatNox();
+      nox.hub.attach(new RecordingTransport());
+
+      const response = await fetch(`${nox.url}/chat/conversations/${CONVERSATION}/history`, {
+        headers: nox.headers,
+      });
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'conversation_not_found' });
+    });
+
+    test('lists the conversations this surface carries', async () => {
+      const nox = await chatNox();
+      const transport = new RecordingTransport();
+      transport.conversations = [
+        {
+          agentId: 'assistant',
+          conversationId: CONVERSATION,
+          sessionId: 'session-1',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          state: 'closed',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+        },
+      ];
+      nox.hub.attach(transport);
+
+      const response = await fetch(`${nox.url}/chat/conversations`, { headers: nox.headers });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ conversations: transport.conversations });
+    });
+
+    test('refuses all four to whoever did not authenticate', async () => {
+      const nox = await chatNox();
+      nox.hub.attach(new RecordingTransport());
+      const json = { 'content-type': 'application/json' };
+
+      const responses = await Promise.all([
+        fetch(`${nox.url}/chat/conversations`),
+        fetch(`${nox.url}/chat/conversations/${CONVERSATION}/history`),
+        fetch(`${nox.url}/chat/conversations/${CONVERSATION}/steer`, {
+          body: JSON.stringify({ text: 'mejor no' }),
+          headers: json,
+          method: 'POST',
+        }),
+        fetch(`${nox.url}/chat/conversations/${CONVERSATION}/commands/stop`, {
+          headers: json,
+          method: 'POST',
+        }),
+      ]);
+
+      expect(responses.map((response) => response.status)).toEqual([401, 401, 401, 401]);
+    });
+
+    test('says the chat is unavailable when no broker claimed the surface', async () => {
+      const nox = await chatNox();
+
+      const responses = await Promise.all([
+        fetch(`${nox.url}/chat/conversations`, { headers: nox.headers }),
+        fetch(`${nox.url}/chat/conversations/${CONVERSATION}/history`, { headers: nox.headers }),
+        fetch(`${nox.url}/chat/conversations/${CONVERSATION}/steer`, {
+          body: JSON.stringify({ text: 'mejor no' }),
+          headers: nox.headers,
+          method: 'POST',
+        }),
+        fetch(`${nox.url}/chat/conversations/${CONVERSATION}/commands/stop`, {
+          headers: nox.headers,
+          method: 'POST',
+        }),
+      ]);
+
+      expect(responses.map((response) => response.status)).toEqual([503, 503, 503, 503]);
+    });
   });
 });

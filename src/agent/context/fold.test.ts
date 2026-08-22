@@ -21,6 +21,24 @@ function assistant(messageId: string, text = 'assistant'): Message {
   });
 }
 
+function emptyAssistant(messageId: string): Message {
+  return freezeMessage({
+    content: [],
+    createdAt: CREATED_AT,
+    messageId,
+    role: 'assistant',
+  });
+}
+
+function reasoning(messageId: string, text = 'reasoning'): Message {
+  return freezeMessage({
+    content: [{ text, type: 'text' }],
+    createdAt: CREATED_AT,
+    messageId,
+    role: 'reasoning',
+  });
+}
+
 function user(messageId: string, text = 'user'): Message {
   return freezeMessage({
     content: [{ text, type: 'text' }],
@@ -104,6 +122,73 @@ describe('foldHistory', () => {
       ...result.history.slice(2).map(messageToString),
     ]).toEqual(unaffectedBytes);
     expect(result.events[0]?.foldedMessageIds).toEqual(['call', 'response']);
+  });
+
+  test('keeps one fold across reasoning and synthetic anchors between tool calls', () => {
+    const history = [
+      emptyAssistant('anchor'),
+      call('call-1', 'track-1'),
+      response('response-1', 'track-1'),
+      reasoning('reasoning-between', 'inspect the first result'),
+      emptyAssistant('synthetic-anchor'),
+      call('call-2', 'track-2'),
+      response('response-2', 'track-2'),
+      reasoning('final-reasoning', 'compose the answer'),
+      assistant('answer'),
+    ];
+
+    const result = foldHistory(history, {
+      estimateTokens: estimateByRenderedLength,
+      minReductionRatio: 0.01,
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.anchorMessageId).toBe('anchor');
+    expect(result.events[0]?.foldedMessageIds).toEqual([
+      'call-1',
+      'response-1',
+      'synthetic-anchor',
+      'call-2',
+      'response-2',
+    ]);
+    const foldedContent = result.events[0]?.content[0];
+    expect(foldedContent?.type).toBe('text');
+    if (foldedContent?.type !== 'text') throw new Error('Expected folded text content.');
+    expect([...foldedContent.text.matchAll(/\n---\n/g)]).toHaveLength(1);
+    expect(foldedContent.text).toContain('Outcome: ok\n---\nTool Name: tool');
+    expect(foldedContent.text.includes('-----Folded tool calls-----\n---\n')).toBeFalse();
+    expect(foldedContent.text.endsWith('\n---')).toBeFalse();
+    expect(result.history.map((message) => message.messageId)).toEqual([
+      'anchor',
+      requireValue(result.events[0]).messageId,
+      'reasoning-between',
+      'final-reasoning',
+      'answer',
+    ]);
+    expect(result.history[2]).toBe(history[3]);
+    expect(result.history[3]).toBe(history[7]);
+  });
+
+  test("does not consume the next loop's anchor when the range ends before its call", () => {
+    const history = [
+      emptyAssistant('anchor'),
+      call('call-1', 'track-1'),
+      response('response-1', 'track-1'),
+      reasoning('reasoning-between'),
+      emptyAssistant('next-anchor'),
+      call('in-flight-call', 'track-2'),
+    ];
+
+    const result = foldHistory(history, {
+      estimateTokens: estimateByRenderedLength,
+      minReductionRatio: 0.01,
+      toMessageId: 'next-anchor',
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.foldedMessageIds).toEqual(['call-1', 'response-1']);
+    expect(result.history.at(-2)).toBe(history[4]);
+    expect(result.history.at(-1)).toBe(history[5]);
   });
 
   test('does not spend the prefix cache when the placeholder is not smaller enough', () => {

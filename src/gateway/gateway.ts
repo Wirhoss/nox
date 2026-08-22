@@ -1,20 +1,37 @@
 import { nanoid } from 'nanoid';
 
 import { type ConversationKey, ConversationStore } from '../database/conversationStore';
+import { SessionStore } from '../database/sessionStore';
 import { type Logger, silentLogger } from '../logger/logger';
+import {
+  type BrokerCommand,
+  type BrokerCommandSpec,
+  BUILTIN_COMMANDS,
+  CommandCatalog,
+  type CommandContext,
+  type CommandInvocation,
+  type CommandRejection,
+} from './command';
 
-import type { MessageContent } from '../agent/context/message';
+import type { Message, MessageContent } from '../agent/context/message';
 import type { Session } from '../agent/session';
 import type { NoxApplication } from '../application';
 import type { AuthorizationProvider } from '../auth/authorization';
 import type { MessageOrigin } from '../auth/principal';
 import type { Database } from '../database/database';
-import type { PermissionRequest, PermissionResolution } from '../tool/gate';
 import type {
   Broker,
+  BrokerCapabilities,
+  BrokerHistory,
+  BrokerHistoryEntry,
+  BrokerHistoryOptions,
+  BrokerSession,
   InboundEvent,
   InboundMessage,
   InboundPermission,
+  InboundSteer,
+  MessageBody,
+  OutboundBody,
   OutboundEvent,
 } from './broker';
 
@@ -37,6 +54,13 @@ interface BrokerGrant extends BrokerConversationGrant {
 
 interface GatewayOptions {
   brokers: readonly BrokerGrant[];
+  /**
+   * Commands on top of the built-in ones. A name that already exists is a
+   * configuration error rather than an override: a transport rendered `stop`
+   * from the catalog, and a deployment quietly redefining what it does is the
+   * one thing a declared vocabulary is supposed to prevent.
+   */
+  commands?: readonly BrokerCommand[];
   database: Database;
   logger?: Logger;
 }
@@ -57,20 +81,16 @@ interface Conversation {
   turnId: string;
 }
 
-/** An outbound event minus the addressing the gateway is the one to fill in. */
+/** A permission prompt in flight, and the turn its retraction must carry. */
 interface PendingDelivery {
   readonly conversation: Conversation;
   readonly turnId: string;
 }
 
-type OutboundBody =
-  | { readonly request: PermissionRequest; readonly type: 'permission' }
-  | {
-      readonly requestId: string;
-      readonly resolution: PermissionResolution;
-      readonly type: 'permissionResolved';
-    }
-  | { readonly text: string; readonly type: 'error' | 'fragment' | 'message' };
+/** Whether a transport asked for this kind of event. Absent is never permissive. */
+function shows(broker: Broker, capability: keyof BrokerCapabilities): boolean {
+  return broker.capabilities[capability] === true;
+}
 
 function keyOf(brokerId: string, conversationId: string): string {
   return `${brokerId} ${conversationId}`;
@@ -82,6 +102,91 @@ function textOf(content: readonly MessageContent[]): string {
     .map((part) => part.text)
     .join('')
     .trim();
+}
+
+/**
+ * One stored message in the vocabulary a transport speaks, or nothing when it
+ * never asked for that kind of thing. The live stream and a transcript read back
+ * both come through here, so scrolling up shows the same conversation watching
+ * it would have — one place decides what a surface sees, not two.
+ */
+function bodyOf(broker: Broker, message: Message): MessageBody | undefined {
+  switch (message.role) {
+    case 'assistant': {
+      const text = textOf(message.content);
+      return text.length === 0 ? undefined : { text, type: 'message' };
+    }
+    case 'compacted':
+      return shows(broker, 'contextChanges')
+        ? {
+            change: 'compacted',
+            replacedMessageIds: message.compactedMessageIds,
+            text: textOf(message.content),
+            type: 'contextChange',
+          }
+        : undefined;
+    case 'folded':
+      return shows(broker, 'contextChanges')
+        ? {
+            change: 'folded',
+            replacedMessageIds: message.foldedMessageIds,
+            text: textOf(message.content),
+            type: 'contextChange',
+          }
+        : undefined;
+    case 'reasoning':
+      return shows(broker, 'reasoning')
+        ? { text: textOf(message.content), type: 'reasoning' }
+        : undefined;
+    case 'toolCall':
+      return shows(broker, 'toolActivity')
+        ? {
+            arguments: message.arguments,
+            name: message.name,
+            trackId: message.trackId,
+            type: 'toolCall',
+          }
+        : undefined;
+    case 'toolResponse':
+      return shows(broker, 'toolActivity')
+        ? {
+            execution: message.execution,
+            isError: message.isError === true,
+            name: message.name,
+            text: textOf(message.response),
+            trackId: message.trackId,
+            type: 'toolResponse',
+          }
+        : undefined;
+    case 'user':
+      // Whether a transport sees what another participant said is about who may
+      // see it, not about what can be drawn — so nothing about it is decided by
+      // a capability, and the live stream does not carry it at all.
+      return undefined;
+  }
+}
+
+/**
+ * One stored message as a transcript entry. This is the one place a user message
+ * crosses: a conversation read back by the transport that owns it is not a
+ * broadcast, and half a transcript is not a transcript.
+ */
+function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | undefined {
+  const at = message.createdAt;
+  const { messageId } = message;
+
+  if (message.role === 'user') {
+    return {
+      at,
+      messageId,
+      principal: message.origin.principal,
+      text: textOf(message.content),
+      type: 'userMessage',
+    };
+  }
+
+  const body = bodyOf(broker, message);
+  return body === undefined ? undefined : { ...body, at, messageId };
 }
 
 /**
@@ -99,21 +204,30 @@ function textOf(content: readonly MessageContent[]): string {
  */
 class Gateway implements MessageGateway {
   readonly #application: NoxApplication;
+  readonly #commands: CommandCatalog;
   readonly #conversations = new Map<string, Conversation>();
   readonly #grants: readonly BrokerGrant[];
   readonly #logger: Logger;
   /** Permission prompts in flight, with the originating turn they must retain. */
   readonly #pending = new Map<string, PendingDelivery>();
   readonly #store: ConversationStore;
+  /**
+   * Transcripts of conversations that are not open. Read-only by construction:
+   * a session owns exactly one store, and a second one that appended would
+   * restart the sequence and collide with every row already written.
+   */
+  readonly #transcripts: SessionStore;
   readonly #work = new Map<string, Promise<void>>();
 
   #state: 'created' | 'running' | 'stopped' = 'created';
 
   constructor(application: NoxApplication, options: GatewayOptions) {
     this.#application = application;
+    this.#commands = new CommandCatalog([...BUILTIN_COMMANDS, ...(options.commands ?? [])]);
     this.#grants = Object.freeze([...options.brokers]);
     this.#logger = options.logger ?? silentLogger;
     this.#store = new ConversationStore(options.database);
+    this.#transcripts = new SessionStore(options.database, { logger: this.#logger });
 
     const ids = new Set<string>();
     for (const grant of this.#grants) {
@@ -128,6 +242,11 @@ class Gateway implements MessageGateway {
     return Object.freeze(
       this.#grants.map((grant) => grant.brokerId).sort((a, b) => a.localeCompare(b)),
     );
+  }
+
+  /** Every command this Nox offers, in the shape a transport renders. */
+  public get commands(): readonly BrokerCommandSpec[] {
+    return this.#commands.specs;
   }
 
   public get state(): 'created' | 'running' | 'stopped' {
@@ -147,10 +266,18 @@ class Gateway implements MessageGateway {
 
     for (const grant of this.#grants) {
       await grant.broker.start({
+        command: (invocation: CommandInvocation): CommandRejection | undefined =>
+          this.#command(grant, invocation),
+        commands: this.#commands.specs,
+        history: (
+          conversationId: string,
+          options?: BrokerHistoryOptions,
+        ): Promise<BrokerHistory | undefined> => this.#history(grant, conversationId, options),
         logger: this.#logger.child(grant.brokerId),
         receive: (event: InboundEvent): void => {
           this.#receive(grant, event);
         },
+        sessions: (): Promise<readonly BrokerSession[]> => this.#sessions(grant),
         signal: this.#application.signal,
       });
     }
@@ -194,7 +321,8 @@ class Gateway implements MessageGateway {
     this.#queue(keyOf(grant.brokerId, event.conversationId), async () => {
       switch (event.type) {
         case 'message':
-          await this.#handleMessage(grant, event);
+        case 'steer':
+          await this.#handleSpeech(grant, event);
           break;
         case 'permission':
           this.#handlePermission(grant, event);
@@ -219,7 +347,13 @@ class Gateway implements MessageGateway {
     this.#work.set(key, next);
   }
 
-  async #handleMessage(grant: BrokerGrant, message: InboundMessage): Promise<void> {
+  /**
+   * Something said into a conversation, and the two ways of saying it. A message
+   * waits for the run in flight; a steer cuts it short and speaks over it. Every
+   * step before that last one is the same, because interrupting is still someone
+   * talking: it is attributed, deduplicated and serialized like anything else.
+   */
+  async #handleSpeech(grant: BrokerGrant, message: InboundMessage | InboundSteer): Promise<void> {
     const text = message.text.trim();
     if (text.length === 0) return;
 
@@ -253,8 +387,79 @@ class Gateway implements MessageGateway {
       transportMessageId: message.messageId,
     };
 
-    conversation.session.send(text, origin);
+    if (message.type === 'steer') {
+      await conversation.session.steer(text, origin);
+    } else {
+      conversation.session.send(text, origin);
+    }
     await this.#store.touch(conversation.key);
+  }
+
+  /**
+   * Invokes a command.
+   *
+   * Two halves, and the split is the whole point. Checking is synchronous and
+   * answers the only things a client can act on — a command that does not exist,
+   * arguments that do not fit — against the same declaration it rendered from.
+   * Running is queued behind whatever else that conversation has going, like a
+   * message, because a command that waited its turn is a command that cannot
+   * race the run it is about.
+   */
+  #command(grant: BrokerGrant, invocation: CommandInvocation): CommandRejection | undefined {
+    if (this.#state !== 'running') return { reason: 'unavailable' };
+
+    const checked = this.#commands.check(invocation);
+    if ('rejection' in checked) return checked.rejection;
+
+    this.#queue(keyOf(grant.brokerId, invocation.conversationId), () =>
+      this.#runCommand(grant, invocation, checked.command, checked.args),
+    );
+    return undefined;
+  }
+
+  /**
+   * One command, in the conversation it names. Commands act on an open chat:
+   * there is nothing to stop in one nobody is having, and a bound-but-closed one
+   * is already as stopped as stopping would make it.
+   */
+  async #runCommand(
+    grant: BrokerGrant,
+    invocation: CommandInvocation,
+    command: BrokerCommand,
+    args: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    const mapKey = keyOf(grant.brokerId, invocation.conversationId);
+    const conversation = this.#conversations.get(mapKey);
+    if (conversation === undefined) {
+      this.#logger.warn(
+        {
+          brokerId: grant.brokerId,
+          command: command.name,
+          conversationId: invocation.conversationId,
+        },
+        'A command arrived for a conversation that is not open.',
+      );
+      return;
+    }
+
+    const context: CommandContext = {
+      close: async (): Promise<void> => {
+        this.#conversations.delete(mapKey);
+        // Closing resolves whatever the gate was still holding, and those
+        // outcomes are delivered on the way down; only then is there nothing
+        // left to retract.
+        await this.#application.closeSession(conversation.session.sessionId);
+        for (const [requestId, pending] of this.#pending) {
+          if (pending.conversation === conversation) this.#pending.delete(requestId);
+        }
+      },
+      conversationId: invocation.conversationId,
+      logger: this.#logger.child(`${grant.brokerId}:${command.name}`),
+      sender: { issuer: grant.brokerId, subject: invocation.senderId },
+      session: conversation.session,
+    };
+
+    await command.run(context, args);
   }
 
   /**
@@ -298,6 +503,69 @@ class Gateway implements MessageGateway {
         'Refused a permission answer: only the principal that started the run may answer it.',
       );
     }
+  }
+
+  /**
+   * A conversation read back, as much of it as this transport can show.
+   *
+   * It answers from the live session when there is one and from storage when
+   * there is not, and reading never opens one: a surface asking what was said in
+   * a chat is not the same as someone speaking in it, and answering a question
+   * by waking an agent would make scrolling a transcript start runs.
+   */
+  async #history(
+    grant: BrokerGrant,
+    conversationId: string,
+    options: BrokerHistoryOptions = {},
+  ): Promise<BrokerHistory | undefined> {
+    const bound = await this.#store.find({ brokerId: grant.brokerId, conversationId });
+    if (bound === undefined) return undefined;
+
+    const live = this.#conversations.get(keyOf(grant.brokerId, conversationId));
+    const messages =
+      live?.session.getTranscript() ??
+      (await this.#transcripts.load(bound.sessionId))?.messages ??
+      [];
+
+    const entries: BrokerHistoryEntry[] = [];
+    for (const message of messages) {
+      const entry = historyEntry(grant.broker, message);
+      if (entry !== undefined) entries.push(entry);
+    }
+
+    const { limit } = options;
+    return {
+      agentId: bound.agentId,
+      conversationId,
+      entries: limit === undefined ? entries : limit <= 0 ? [] : entries.slice(-limit),
+      sessionId: bound.sessionId,
+    };
+  }
+
+  /**
+   * What this transport is carrying. The list is the bindings rather than the
+   * live sessions: a chat nobody has spoken in since the last restart is still a
+   * conversation, and one missing from the list would look deleted.
+   */
+  async #sessions(grant: BrokerGrant): Promise<readonly BrokerSession[]> {
+    const rows = await this.#store.list(grant.brokerId);
+
+    return Object.freeze(
+      rows.map((row): BrokerSession => {
+        const live = this.#conversations.get(keyOf(grant.brokerId, row.conversationId));
+        // A session held here but stopped is closed as far as anyone asking is
+        // concerned; the next message reopens it like any other binding.
+        const state = live?.session.state;
+        return {
+          agentId: row.agentId,
+          conversationId: row.conversationId,
+          sessionId: row.sessionId,
+          startedAt: new Date(row.createdAt),
+          state: state === undefined || state === 'stopped' ? 'closed' : state,
+          updatedAt: new Date(row.updatedAt),
+        };
+      }),
+    );
   }
 
   /**
@@ -353,34 +621,50 @@ class Gateway implements MessageGateway {
   }
 
   /**
-   * Turns one session's events into what its transport can show. A broker
-   * receives what it said it can render: the settled reply always, the reply as
-   * it is being written only if it can edit what it already sent, a permission
-   * request only if it can ask someone who is allowed to answer.
+   * Turns one session's events into what its transport can show.
+   *
+   * Every event a run produces is offered here, and what leaves is what the
+   * broker declared it renders. That split is the point: whether reasoning,
+   * tool activity or token counts belong on a surface is a question about the
+   * surface, and a gateway answering it for everyone would be doing product
+   * design for transports it has never seen.
+   *
+   * Two things stay behind, and neither is about rendering. What another
+   * participant said, and which principal was allowed to use which authority,
+   * are questions about who may see what.
    */
   async #watch(conversation: Conversation): Promise<void> {
     const { broker } = conversation.grant;
-    const streams = broker.capabilities.streaming === true;
     // Whether anyone may answer is no longer a property of the transport: the
     // one person who can is the principal whose run raised the request, and they
     // are by definition in this conversation. All that is left to ask is whether
     // the transport can put the question in front of them at all.
-    const asks = broker.capabilities.permissions === true;
+    const asks = shows(broker, 'permissions');
 
     for await (const event of conversation.session.events) {
       switch (event.type) {
-        case 'runStarted':
-          conversation.turnId = event.runId;
+        case 'assistantReasoningFragment':
+          // A fragment is a thing being written. A transport that cannot show
+          // one being written has no use for it, however much reasoning it wants.
+          if (shows(broker, 'reasoning') && shows(broker, 'streaming')) {
+            this.#deliver(conversation, { text: event.text, type: 'reasoningFragment' });
+          }
           break;
         case 'assistantTextFragment':
-          if (streams) this.#deliver(conversation, { text: event.text, type: 'fragment' });
+          if (shows(broker, 'streaming')) {
+            this.#deliver(conversation, { text: event.text, type: 'fragment' });
+          }
           break;
-        case 'message': {
-          if (event.message.role !== 'assistant') break;
-          const text = textOf(event.message.content);
-          if (text.length > 0) this.#deliver(conversation, { text, type: 'message' });
+        case 'authorizationDecided':
+          // Not a rendering question: it names a principal and the grant that
+          // matched, which is audit rather than conversation.
           break;
-        }
+        case 'error':
+          this.#deliver(conversation, { text: event.error.message, type: 'error' });
+          break;
+        case 'message':
+          this.#deliverMessage(conversation, event.message);
+          break;
         case 'permissionRequested':
           if (!asks) break;
           this.#pending.set(event.request.requestId, {
@@ -409,17 +693,56 @@ class Gateway implements MessageGateway {
           }
           break;
         }
-        case 'error':
-          this.#deliver(conversation, { text: event.error.message, type: 'error' });
-          break;
-        case 'assistantReasoningFragment':
-        case 'authorizationDecided':
         case 'retry':
+          if (shows(broker, 'retries')) {
+            this.#deliver(conversation, {
+              attempt: event.attempt,
+              delayMs: event.delayMs,
+              text: event.error.message,
+              type: 'retry',
+            });
+          }
+          break;
         case 'runCompleted':
+          if (shows(broker, 'runs')) {
+            this.#deliver(
+              conversation,
+              {
+                durationMs: event.durationMs,
+                status: event.status,
+                type: 'runCompleted',
+                // The total belongs to the run, but it is token accounting
+                // either way: a transport that did not ask does not get it.
+                usage: shows(broker, 'usage') ? event.usage : undefined,
+              },
+              event.runId,
+            );
+          }
+          break;
+        case 'runStarted':
+          conversation.turnId = event.runId;
+          if (shows(broker, 'runs')) {
+            this.#deliver(conversation, {
+              modelId: event.modelId,
+              startedAt: event.startedAt,
+              trigger: event.trigger,
+              type: 'runStarted',
+            });
+          }
+          break;
         case 'usage':
+          if (shows(broker, 'usage')) {
+            this.#deliver(conversation, { usage: event.usage, type: 'usage' });
+          }
           break;
       }
     }
+  }
+
+  /** One appended message, as much of it as this transport takes. */
+  #deliverMessage(conversation: Conversation, message: Message): void {
+    const body = bodyOf(conversation.grant.broker, message);
+    if (body !== undefined) this.#deliver(conversation, body);
   }
 
   /**

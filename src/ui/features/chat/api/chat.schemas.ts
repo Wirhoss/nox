@@ -54,7 +54,19 @@ const eventBase = z.object({
   turnId: z.string(),
 })
 
+const usageSchema = z.object({
+  cacheReadTokens: z.number().nonnegative().optional(),
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+})
+
 const chatEventSchema = z.discriminatedUnion('type', [
+  eventBase.extend({
+    change: z.enum(['compacted', 'folded']),
+    replacedMessageIds: z.array(z.string()),
+    text: z.string(),
+    type: z.literal('contextChange'),
+  }),
   eventBase.extend({ text: z.string(), type: z.literal('error') }),
   eventBase.extend({ text: z.string(), type: z.literal('fragment') }),
   eventBase.extend({ text: z.string(), type: z.literal('message') }),
@@ -67,6 +79,41 @@ const chatEventSchema = z.discriminatedUnion('type', [
     requestId: z.string(),
     type: z.literal('permissionResolved'),
   }),
+  eventBase.extend({ text: z.string(), type: z.literal('reasoning') }),
+  eventBase.extend({ text: z.string(), type: z.literal('reasoningFragment') }),
+  eventBase.extend({
+    attempt: z.number().int().nonnegative(),
+    delayMs: z.number().nonnegative(),
+    text: z.string(),
+    type: z.literal('retry'),
+  }),
+  eventBase.extend({
+    durationMs: z.number().nonnegative(),
+    status: z.enum(['aborted', 'completed', 'failed', 'maxIterations']),
+    type: z.literal('runCompleted'),
+    usage: usageSchema.optional(),
+  }),
+  eventBase.extend({
+    modelId: z.string(),
+    startedAt: z.string().datetime(),
+    trigger: z.enum(['deferredResult', 'steer', 'user']),
+    type: z.literal('runStarted'),
+  }),
+  eventBase.extend({
+    arguments: z.record(z.unknown()),
+    name: z.string(),
+    trackId: z.string(),
+    type: z.literal('toolCall'),
+  }),
+  eventBase.extend({
+    execution: z.enum(['deferredAck', 'deferredResult', 'immediate', 'permissionPending']),
+    isError: z.boolean(),
+    name: z.string(),
+    text: z.string(),
+    trackId: z.string(),
+    type: z.literal('toolResponse'),
+  }),
+  eventBase.extend({ type: z.literal('usage'), usage: usageSchema }),
 ])
 
 const acceptedMessageSchema = z.object({ messageId: z.string().min(1) })
@@ -76,6 +123,7 @@ type AcceptedDecision = z.infer<typeof acceptedDecisionSchema>
 type AcceptedMessage = z.infer<typeof acceptedMessageSchema>
 type ChatEvent = z.infer<typeof chatEventSchema>
 type ChatPermissionRequest = z.infer<typeof permissionRequestSchema>
+type ChatUsage = z.infer<typeof usageSchema>
 type PermissionOutcome = Extract<ChatEvent, { type: 'permissionResolved' }>['outcome']
 
 export {
@@ -90,5 +138,6 @@ export type {
   AcceptedMessage,
   ChatEvent,
   ChatPermissionRequest,
+  ChatUsage,
   PermissionOutcome,
 }

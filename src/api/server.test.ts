@@ -23,7 +23,7 @@ async function withServer(
 describe('liveness', () => {
   test('passes while the process answers, whatever its dependencies say', async () => {
     await withServer({ checks: { database: () => false }, version: '0.1.0' }, async (server) => {
-      const response = await fetch(`${server.url}/health/live`);
+      const response = await fetch(`${server.url}/api/health/live`);
 
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ status: 'pass', version: '0.1.0' });
@@ -36,7 +36,7 @@ describe('readiness', () => {
     await withServer(
       { checks: { application: () => true, database: () => Promise.resolve(true) } },
       async (server) => {
-        const response = await fetch(`${server.url}/health/ready`);
+        const response = await fetch(`${server.url}/api/health/ready`);
 
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({
@@ -59,7 +59,7 @@ describe('readiness', () => {
         },
       },
       async (server) => {
-        const response = await fetch(`${server.url}/health/ready`);
+        const response = await fetch(`${server.url}/api/health/ready`);
 
         expect(response.status).toBe(503);
         expect(await response.json()).toMatchObject({
@@ -72,7 +72,7 @@ describe('readiness', () => {
 
   test('passes with nothing to check', async () => {
     await withServer({}, async (server) => {
-      const response = await fetch(`${server.url}/health/ready`);
+      const response = await fetch(`${server.url}/api/health/ready`);
 
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ checks: {}, status: 'pass' });
@@ -105,8 +105,11 @@ describe('web UI', () => {
         expect(await asset.text()).toBe('window.nox = true;');
 
         expect((await fetch(`${server.url}/assets/missing.js`)).status).toBe(404);
-        expect((await fetch(`${server.url}/auth/missing`)).status).toBe(404);
-        expect((await fetch(`${server.url}/chat/missing`)).status).toBe(404);
+        expect((await fetch(`${server.url}/api/missing`)).status).toBe(404);
+
+        const arbitraryClientRoute = await fetch(`${server.url}/anything/not-api`);
+        expect(arbitraryClientRoute.status).toBe(200);
+        expect(await arbitraryClientRoute.text()).toContain('Nox UI');
       });
     } finally {
       await rm(directory, { force: true, recursive: true });

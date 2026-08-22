@@ -75,7 +75,7 @@ function copyFor(state: AuthState): FrameCopy {
   >
     <div v-if="auth.state.type === 'checking'" class="pending" aria-live="polite">
       <span class="pending__cursor" aria-hidden="true"></span>
-      <p>Reading <code>/auth/status</code></p>
+      <p>Reading <code>/api/auth/status</code></p>
     </div>
 
     <RegistrationForm v-else-if="auth.state.type === 'registration-required'" />

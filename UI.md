@@ -718,9 +718,9 @@ HTTP JSON maneja comandos y un stream SSE autenticado entrega lo que el web
 broker renderiza. El contrato implementado actualmente es:
 
 ```text
-GET  /chat/stream
-POST /chat/conversations/:conversationId/messages
-POST /chat/conversations/:conversationId/permissions/:requestId
+GET  /api/chat/stream
+POST /api/chat/conversations/:conversationId/messages
+POST /api/chat/conversations/:conversationId/permissions/:requestId
 ```
 
 El cliente genera `conversationId`; la conversación se materializa en el

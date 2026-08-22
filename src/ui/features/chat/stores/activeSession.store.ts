@@ -9,6 +9,7 @@ import { chatApi, type PermissionDecision } from '../api/chat.api'
 import type {
   ChatEvent,
   ChatPermissionRequest,
+  ChatUsage,
   PermissionOutcome,
 } from '../api/chat.schemas'
 
@@ -22,10 +23,10 @@ type ChatConnection =
 
 type ChatRunStatus =
   | { readonly clientMessageId: string; readonly type: 'sending' }
-  | { readonly message: string; readonly type: 'failed' }
-  | { readonly requestId: string; readonly type: 'waiting-permission' }
+  | { readonly message: string; readonly turnId?: string; readonly type: 'failed' }
+  | { readonly requestId: string; readonly turnId: string; readonly type: 'waiting-permission' }
+  | { readonly turnId?: string; readonly type: 'running' }
   | { readonly type: 'idle' }
-  | { readonly type: 'running' }
 
 type PermissionState =
   | { readonly decision: PermissionDecision; readonly type: 'submitting' }
@@ -33,12 +34,24 @@ type PermissionState =
   | { readonly outcome: PermissionOutcome; readonly type: 'resolved' }
   | { readonly type: 'pending' }
 
+type RunCompletionStatus = Extract<ChatEvent, { type: 'runCompleted' }>['status']
+type RunTrigger = Extract<ChatEvent, { type: 'runStarted' }>['trigger']
+type ToolResponseExecution = Extract<ChatEvent, { type: 'toolResponse' }>['execution']
+
 interface AssistantItem {
+  readonly createdAt: string
   readonly id: string
   readonly kind: 'assistant'
   streaming: boolean
   text: string
   readonly turnId: string
+}
+
+interface ContextChangeActivity {
+  readonly change: 'compacted' | 'folded'
+  readonly id: string
+  readonly replacedMessageIds: string[]
+  readonly text: string
 }
 
 interface ErrorItem {
@@ -56,13 +69,70 @@ interface PermissionItem {
   readonly turnId: string
 }
 
+interface ReasoningActivity {
+  readonly id: string
+  readonly kind: 'reasoning'
+  streaming: boolean
+  text: string
+  readonly turnId: string
+}
+
+interface RetryActivity {
+  readonly attempt: number
+  readonly delayMs: number
+  readonly id: string
+  readonly text: string
+}
+
+interface ToolResponseActivity {
+  readonly execution: ToolResponseExecution
+  readonly id: string
+  readonly isError: boolean
+  readonly text: string
+}
+
+interface ToolActivity {
+  arguments?: Record<string, unknown>
+  readonly id: string
+  readonly kind: 'tool'
+  name: string
+  readonly responses: ToolResponseActivity[]
+  readonly trackId: string
+  readonly turnId: string
+}
+
+interface RunActivityItem {
+  readonly contextChanges: ContextChangeActivity[]
+  durationMs?: number
+  readonly id: string
+  readonly kind: 'activity'
+  modelId?: string
+  readonly reasoning: ReasoningActivity[]
+  readonly retries: RetryActivity[]
+  startedAt?: string
+  status?: RunCompletionStatus
+  readonly tools: ToolActivity[]
+  trigger?: RunTrigger
+  readonly turnId: string
+  readonly usageCalls: ChatUsage[]
+  usageTotal?: ChatUsage
+}
+
 interface UserItem {
+  readonly createdAt: string
   readonly id: string
   readonly kind: 'user'
   readonly text: string
 }
 
-type TimelineItem = AssistantItem | ErrorItem | PermissionItem | UserItem
+type TimelineItem =
+  | AssistantItem
+  | ErrorItem
+  | PermissionItem
+  | ReasoningActivity
+  | RunActivityItem
+  | ToolActivity
+  | UserItem
 
 const useActiveSessionStore = defineStore('active-session', () => {
   const auth = useAuthStore()
@@ -173,7 +243,12 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (normalized.length === 0 || accessToken === undefined || !canSend.value) return false
 
     const messageId = createId('msg')
-    const item: UserItem = { id: messageId, kind: 'user', text: normalized }
+    const item: UserItem = {
+      createdAt: new Date().toISOString(),
+      id: messageId,
+      kind: 'user',
+      text: normalized,
+    }
     items.value.push(item)
     run.value = { clientMessageId: messageId, type: 'sending' }
     sendError.value = undefined
@@ -185,11 +260,11 @@ const useActiveSessionStore = defineStore('active-session', () => {
         messageId,
         text: normalized,
       })
-      run.value = { type: 'running' }
+      if (isSending(messageId)) run.value = { type: 'running' }
       return true
     } catch (error) {
       items.value = items.value.filter((candidate) => candidate !== item)
-      run.value = { type: 'idle' }
+      if (isSending(messageId)) run.value = { type: 'idle' }
       sendError.value = messageFor(error)
       if (error instanceof ApiError && error.code === 'chat_unavailable') {
         connection.value = { type: 'unavailable' }
@@ -222,26 +297,33 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (event.conversationId !== conversationId.value) return
 
     switch (event.type) {
+      case 'contextChange':
+        activityItem(event.turnId).contextChanges.push({
+          change: event.change,
+          id: createId('context'),
+          replacedMessageIds: event.replacedMessageIds,
+          text: event.text,
+        })
+        break
       case 'error':
-        items.value.push({
+        insertBeforeRunSummary(event.turnId, {
           id: createId('error'),
           kind: 'error',
           text: event.text,
           turnId: event.turnId,
         })
-        run.value = { message: event.text, type: 'failed' }
+        run.value = { message: event.text, turnId: event.turnId, type: 'failed' }
         break
       case 'fragment':
         appendFragment(event.turnId, event.text)
-        run.value = { type: 'running' }
+        markRunning(event.turnId)
         break
       case 'message':
         settleMessage(event.turnId, event.text)
-        run.value = { type: 'idle' }
         break
       case 'permission':
         if (permissionItem(event.request.requestId) === undefined) {
-          items.value.push({
+          insertBeforeRunSummary(event.turnId, {
             id: `permission_${event.request.requestId}`,
             kind: 'permission',
             request: event.request,
@@ -249,26 +331,130 @@ const useActiveSessionStore = defineStore('active-session', () => {
             turnId: event.turnId,
           })
         }
-        run.value = { requestId: event.request.requestId, type: 'waiting-permission' }
+        if (
+          run.value.type !== 'running' ||
+          run.value.turnId === undefined ||
+          run.value.turnId === event.turnId
+        ) {
+          run.value = {
+            requestId: event.request.requestId,
+            turnId: event.turnId,
+            type: 'waiting-permission',
+          }
+        }
         break
       case 'permissionResolved': {
         const item = permissionItem(event.requestId)
         if (item !== undefined) item.state = { outcome: event.outcome, type: 'resolved' }
-        run.value = event.outcome.resolution === 'aborted' ? { type: 'idle' } : { type: 'running' }
+        if (run.value.type === 'waiting-permission' && run.value.requestId === event.requestId) {
+          run.value =
+            event.outcome.resolution === 'aborted'
+              ? { type: 'idle' }
+              : { turnId: event.turnId, type: 'running' }
+        }
         break
       }
+      case 'reasoning':
+        settleReasoning(event.turnId, event.text)
+        break
+      case 'reasoningFragment':
+        appendReasoningFragment(event.turnId, event.text)
+        markRunning(event.turnId)
+        break
+      case 'retry':
+        discardStreamingDrafts(event.turnId)
+        activityItem(event.turnId).retries.push({
+          attempt: event.attempt,
+          delayMs: event.delayMs,
+          id: createId('retry'),
+          text: event.text,
+        })
+        markRunning(event.turnId)
+        break
+      case 'runCompleted': {
+        const activity = activityItem(event.turnId)
+        activity.durationMs = event.durationMs
+        activity.status = event.status
+        if (event.usage !== undefined) activity.usageTotal = event.usage
+
+        if (isCurrentRun(event.turnId)) {
+          if (event.status === 'failed') {
+            if (run.value.type !== 'failed') {
+              run.value = {
+                message: 'The run ended before Nox could complete it.',
+                turnId: event.turnId,
+                type: 'failed',
+              }
+            }
+          } else {
+            run.value = { type: 'idle' }
+          }
+        }
+        break
+      }
+      case 'runStarted': {
+        const activity = activityItem(event.turnId)
+        activity.modelId = event.modelId
+        activity.startedAt = event.startedAt
+        activity.trigger = event.trigger
+        run.value = { turnId: event.turnId, type: 'running' }
+        sendError.value = undefined
+        break
+      }
+      case 'toolCall': {
+        const activity = activityItem(event.turnId)
+        const tool = toolActivity(activity, event.trackId, event.name)
+        tool.arguments = event.arguments
+        tool.name = event.name
+        break
+      }
+      case 'toolResponse': {
+        const tool = toolActivity(activityItem(event.turnId), event.trackId, event.name)
+        tool.name = event.name
+        tool.responses.push({
+          execution: event.execution,
+          id: createId('response'),
+          isError: event.isError,
+          text: event.text,
+        })
+        break
+      }
+      case 'usage':
+        activityItem(event.turnId).usageCalls.push(event.usage)
+        break
     }
   }
 
+  function activityItem(turnId: string): RunActivityItem {
+    const existing = items.value.find(
+      (item): item is RunActivityItem => item.kind === 'activity' && item.turnId === turnId,
+    )
+    if (existing !== undefined) return existing
+
+    const activity: RunActivityItem = {
+      contextChanges: [],
+      id: `activity_${turnId}`,
+      kind: 'activity',
+      reasoning: [],
+      retries: [],
+      tools: [],
+      turnId,
+      usageCalls: [],
+    }
+    items.value.push(activity)
+    return activity
+  }
+
   function appendFragment(turnId: string, text: string): void {
-    const existing = assistantItem(turnId)
+    const existing = streamingAssistantItem(turnId)
     if (existing !== undefined) {
       existing.text += text
       return
     }
 
-    items.value.push({
-      id: `assistant_${turnId}`,
+    insertBeforeRunSummary(turnId, {
+      createdAt: new Date().toISOString(),
+      id: createId('assistant'),
       kind: 'assistant',
       streaming: true,
       text,
@@ -277,15 +463,16 @@ const useActiveSessionStore = defineStore('active-session', () => {
   }
 
   function settleMessage(turnId: string, text: string): void {
-    const existing = assistantItem(turnId)
+    const existing = streamingAssistantItem(turnId)
     if (existing !== undefined) {
       existing.text = text
       existing.streaming = false
       return
     }
 
-    items.value.push({
-      id: `assistant_${turnId}`,
+    insertBeforeRunSummary(turnId, {
+      createdAt: new Date().toISOString(),
+      id: createId('assistant'),
       kind: 'assistant',
       streaming: false,
       text,
@@ -293,20 +480,113 @@ const useActiveSessionStore = defineStore('active-session', () => {
     })
   }
 
-  function assistantItem(turnId: string): AssistantItem | undefined {
-    const item = items.value.find(
-      (candidate): candidate is AssistantItem =>
-        candidate.kind === 'assistant' && candidate.turnId === turnId,
+  function appendReasoningFragment(turnId: string, text: string): void {
+    const activity = activityItem(turnId)
+    const current = activity.reasoning[activity.reasoning.length - 1]
+    if (current?.streaming === true) {
+      current.text += text
+      return
+    }
+    const reasoning: ReasoningActivity = {
+      id: createId('reasoning'),
+      kind: 'reasoning',
+      streaming: true,
+      text,
+      turnId,
+    }
+    activity.reasoning.push(reasoning)
+    insertBeforeRunSummary(turnId, reasoning)
+  }
+
+  function settleReasoning(turnId: string, text: string): void {
+    const activity = activityItem(turnId)
+    const current = activity.reasoning[activity.reasoning.length - 1]
+    if (current?.streaming === true) {
+      current.text = text
+      current.streaming = false
+      return
+    }
+    const reasoning: ReasoningActivity = {
+      id: createId('reasoning'),
+      kind: 'reasoning',
+      streaming: false,
+      text,
+      turnId,
+    }
+    activity.reasoning.push(reasoning)
+    insertBeforeRunSummary(turnId, reasoning)
+  }
+
+  function discardStreamingDrafts(turnId: string): void {
+    items.value = items.value.filter(
+      (item) => !(item.kind === 'assistant' && item.turnId === turnId && item.streaming),
     )
-    return item
+    const reasoning = items.value.find(
+      (item): item is RunActivityItem => item.kind === 'activity' && item.turnId === turnId,
+    )?.reasoning
+    const latestReasoning = reasoning?.[reasoning.length - 1]
+    if (latestReasoning?.streaming === true) latestReasoning.text = ''
+  }
+
+  function streamingAssistantItem(turnId: string): AssistantItem | undefined {
+    for (let index = items.value.length - 1; index >= 0; index -= 1) {
+      const item = items.value[index]
+      if (item?.kind === 'assistant' && item.turnId === turnId && item.streaming) return item
+    }
+    return undefined
   }
 
   function permissionItem(requestId: string): PermissionItem | undefined {
-    const item = items.value.find(
-      (candidate): candidate is PermissionItem =>
-        candidate.kind === 'permission' && candidate.request.requestId === requestId,
+    return items.value.find(
+      (item): item is PermissionItem =>
+        item.kind === 'permission' && item.request.requestId === requestId,
     )
-    return item
+  }
+
+  function toolActivity(activity: RunActivityItem, trackId: string, name: string): ToolActivity {
+    const existing = activity.tools.find((tool) => tool.trackId === trackId)
+    if (existing !== undefined) return existing
+
+    const tool: ToolActivity = {
+      id: `tool_${trackId}`,
+      kind: 'tool',
+      name,
+      responses: [],
+      trackId,
+      turnId: activity.turnId,
+    }
+    activity.tools.push(tool)
+    insertBeforeRunSummary(activity.turnId, tool)
+    return tool
+  }
+
+  function insertBeforeRunSummary(turnId: string, item: TimelineItem): void {
+    const summaryIndex = items.value.findIndex(
+      (candidate) => candidate.kind === 'activity' && candidate.turnId === turnId,
+    )
+    if (summaryIndex === -1) {
+      items.value.push(item)
+      return
+    }
+    items.value.splice(summaryIndex, 0, item)
+  }
+
+  function markRunning(turnId: string): void {
+    if (run.value.type !== 'running' || run.value.turnId === undefined) {
+      run.value = { turnId, type: 'running' }
+    }
+  }
+
+  function isSending(messageId: string): boolean {
+    return run.value.type === 'sending' && run.value.clientMessageId === messageId
+  }
+
+  function isCurrentRun(turnId: string): boolean {
+    if (run.value.type === 'running') return run.value.turnId === undefined || run.value.turnId === turnId
+    if (run.value.type === 'waiting-permission' || run.value.type === 'failed') {
+      return run.value.turnId === undefined || run.value.turnId === turnId
+    }
+    return true
   }
 
   onScopeDispose(disconnect)
@@ -336,7 +616,7 @@ function createId(prefix: string): string {
 
 function messageFor(error: unknown): string {
   if (error instanceof ApiError && error.code === 'chat_unavailable') {
-    return 'No web broker is configured for this Nox node.'
+    return 'The internal chat transport is temporarily unavailable.'
   }
   if (error instanceof ApiError && error.status === 401) {
     return 'Your session is no longer authorized.'
@@ -371,9 +651,15 @@ export type {
   AssistantItem,
   ChatConnection,
   ChatRunStatus,
+  ContextChangeActivity,
   ErrorItem,
   PermissionItem,
   PermissionState,
+  ReasoningActivity,
+  RetryActivity,
+  RunActivityItem,
   TimelineItem,
+  ToolActivity,
+  ToolResponseActivity,
   UserItem,
 }

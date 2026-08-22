@@ -149,6 +149,7 @@ describe('bootstrap', () => {
 
   test('registers one agent per file in the blueprints directory', async () => {
     const application = await boot({
+      app: { api: { port: 0 }, chat: { defaultAgent: 'nox' } },
       blueprints: {
         mailroom: { ...NOX, systemPrompt: 'read the mail' },
         nox: NOX,
@@ -267,11 +268,11 @@ describe('bootstrap', () => {
     const application = await boot({ app: { api } });
     const url = `http://${api.host}:${String(api.port)}`;
 
-    const live = await fetch(`${url}/health/live`);
+    const live = await fetch(`${url}/api/health/live`);
     expect(live.status).toBe(200);
     expect(await live.json()).toMatchObject({ status: 'pass' });
 
-    const ready = await fetch(`${url}/health/ready`);
+    const ready = await fetch(`${url}/api/health/ready`);
     expect(ready.status).toBe(200);
     expect(await ready.json()).toMatchObject({
       checks: { database: 'pass', nox: 'pass' },
@@ -286,12 +287,9 @@ describe('bootstrap', () => {
     await rebound.dispose();
   });
 
-  test('gives the web broker the chat surface, once the runtime behind it is whole', async () => {
+  test('always gives the built-in web transport its chat surface', async () => {
     const api = { host: '127.0.0.1', port: 39_519 };
-    const application = await boot({
-      app: { api },
-      brokers: { web: { agent: 'nox', type: 'web' } },
-    });
+    const application = await boot({ app: { api }, brokers: {} });
     const url = `http://${api.host}:${String(api.port)}`;
 
     expect(application.state).toBe('running');
@@ -299,23 +297,21 @@ describe('bootstrap', () => {
     // Mounted rather than missing: an unauthenticated caller is turned away by
     // the guard, which is a route answering. A surface that had never been
     // composed would not know the path at all.
-    const stream = await fetch(`${url}/chat/stream`);
+    const stream = await fetch(`${url}/api/chat/stream`);
     expect(stream.status).toBe(401);
   });
 
-  test('refuses to start with two brokers claiming the same surface', async () => {
+  test('requires a web default only when more than one agent exists', async () => {
     const error = await failure({
       app: { api: { port: 0 } },
-      brokers: {
-        web: { agent: 'nox', type: 'web' },
-        // A second instance of a transport that dials out is impossible anyway;
-        // here it is configurable, so it has to be refused out loud.
-        wall: { agent: 'nox', type: 'web' },
+      blueprints: {
+        mailroom: { ...NOX, systemPrompt: 'read the mail' },
+        watcher: { ...NOX, systemPrompt: 'watch' },
       },
     });
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain('exactly one broker');
+    expect((error as Error).message).toContain('app.chat.defaultAgent');
   });
 
   test('releases the port when composing fails, rather than holding it', async () => {

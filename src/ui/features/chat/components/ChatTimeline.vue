@@ -6,6 +6,7 @@ import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { useActiveSessionStore } from '../stores/activeSession.store'
 import ChatMessage from './ChatMessage.vue'
 import PermissionRequestCard from './PermissionRequestCard.vue'
+import RunActivityCard from './RunActivityCard.vue'
 
 const session = useActiveSessionStore()
 const timeline = ref<HTMLElement>()
@@ -35,8 +36,10 @@ watch(
         <p>{{ item.text }}</p>
       </NoxNotice>
 
+      <RunActivityCard v-else-if="item.kind === 'activity'" :item="item" />
+
       <PermissionRequestCard
-        v-else
+        v-else-if="item.kind === 'permission'"
         :item="item"
         @decide="(requestId, decision) => session.decide(requestId, decision)"
       />

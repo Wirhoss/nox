@@ -1,0 +1,36 @@
+export { chatRoutes } from './routes';
+export { ChatHub } from './transport';
+
+export type { ChatRoutesOptions } from './routes';
+export type {
+  ChatBody,
+  ChatCommand,
+  ChatCommandInput,
+  ChatCommandRejection,
+  ChatContextChangeEvent,
+  ChatConversation,
+  ChatDecisionInput,
+  ChatErrorEvent,
+  ChatEvent,
+  ChatFragmentEvent,
+  ChatHistory,
+  ChatHistoryEntry,
+  ChatHistoryInput,
+  ChatListener,
+  ChatMessageEvent,
+  ChatMessageInput,
+  ChatPermissionEvent,
+  ChatPermissionOutcome,
+  ChatPermissionRequest,
+  ChatPermissionResolvedEvent,
+  ChatReasoningEvent,
+  ChatReasoningFragmentEvent,
+  ChatRetryEvent,
+  ChatRunCompletedEvent,
+  ChatRunStartedEvent,
+  ChatToolCallEvent,
+  ChatToolResponseEvent,
+  ChatTransport,
+  ChatUsageEvent,
+  ChatUserMessage,
+} from './transport';

@@ -124,6 +124,39 @@ async function authorize(
 /** What one issuer's subjects are allowed to use, as written in configuration. */
 type PrincipalGrants = Readonly<Record<string, readonly GrantPattern[]>>;
 
+/** Full authority for the sole owner authenticated by an issuer. */
+class OwnerAuthorizationProvider implements AuthorizationProvider {
+  public readonly id: string;
+
+  readonly #issuer: string;
+
+  /**
+   * Full authority for the owner authenticated by a trusted transport. This is
+   * intentionally issuer-scoped: using it behind a transport that admits more
+   * than the installation owner would turn authentication into authorization.
+   */
+  constructor(issuer: string, id = `owner:${issuer}`) {
+    this.id = id;
+    this.#issuer = issuer;
+  }
+
+  public authorize(request: AuthorizationRequest): AuthorizationDecision {
+    if (request.principal.issuer !== this.#issuer) {
+      return deny(
+        `Principal ${principalToString(request.principal)} was not issued by "${this.#issuer}".`,
+        this.id,
+      );
+    }
+
+    return Object.freeze({
+      allowed: true,
+      decidedBy: this.id,
+      matchedGrant: '*',
+      reason: `Authenticated owner on "${this.#issuer}".`,
+    });
+  }
+}
+
 /**
  * Authorization from configured grants, scoped to a single issuer.
  *
@@ -189,6 +222,6 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
   }
 }
 
-export { authorize, GrantAuthorizationProvider };
+export { authorize, GrantAuthorizationProvider, OwnerAuthorizationProvider };
 
 export type { AuthorizationDecision, AuthorizationProvider, AuthorizationRequest, PrincipalGrants };
