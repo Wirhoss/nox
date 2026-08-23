@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { type ArtifactRef, artifactRefSchema } from '../artifact/types';
 import { httpUrlSchema } from '../config/url';
 
 /**
@@ -15,12 +16,6 @@ const MEDIA_MODALITIES = ['image', 'audio', 'video', 'document'] as const;
 type ContentModality = (typeof CONTENT_MODALITIES)[number];
 type MediaModality = (typeof MEDIA_MODALITIES)[number];
 
-interface ContentSourceBase64 {
-  readonly data: string;
-  readonly mediaType: string;
-  readonly type: 'base64';
-}
-
 interface ContentSourceUrl {
   /** Optional when the remote server is expected to report its own Content-Type. */
   readonly mediaType?: string;
@@ -28,11 +23,17 @@ interface ContentSourceUrl {
   readonly url: string;
 }
 
-type ContentSource = ContentSourceBase64 | ContentSourceUrl;
+type ContentSource = ContentSourceUrl;
 
 interface ContentText {
   readonly text: string;
   readonly type: 'text';
+}
+
+/** A durable file. Bytes stay in the artifact pipeline, never in the transcript. */
+interface ContentArtifact {
+  readonly artifact: ArtifactRef;
+  readonly type: 'artifact';
 }
 
 interface ContentMedia<TType extends MediaModality = MediaModality> {
@@ -44,28 +45,24 @@ type ContentImage = ContentMedia<'image'>;
 type ContentAudio = ContentMedia<'audio'>;
 type ContentVideo = ContentMedia<'video'>;
 type ContentDocument = ContentMedia<'document'>;
-type ContentPart = ContentAudio | ContentDocument | ContentImage | ContentText | ContentVideo;
+type ContentPart =
+  ContentArtifact | ContentAudio | ContentDocument | ContentImage | ContentText | ContentVideo;
 
 const mediaTypeSchema = z
   .string()
   .trim()
   .regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i, 'Use an Internet media type.');
 
-const contentSourceSchema = z.discriminatedUnion('type', [
-  z.object({
-    // 5 MiB of bytes is at most ~7 MiB of base64. The bound belongs at the
-    // ingress schema so a broker cannot turn one chat turn into unbounded JSON.
-    data: z.string().min(1).max(7_000_000),
-    mediaType: mediaTypeSchema,
-    type: z.literal('base64'),
-  }),
-  z.object({
-    mediaType: mediaTypeSchema.optional(),
-    type: z.literal('url'),
-    url: httpUrlSchema('An absolute HTTP(S) URL carrying media content.'),
-  }),
-]);
+const contentSourceSchema = z.object({
+  mediaType: mediaTypeSchema.optional(),
+  type: z.literal('url'),
+  url: httpUrlSchema('An absolute HTTP(S) URL carrying media content.'),
+});
 
+const contentArtifactSchema = z.object({
+  artifact: artifactRefSchema,
+  type: z.literal('artifact'),
+});
 const contentTextSchema = z.object({ text: z.string().max(32_000), type: z.literal('text') });
 const contentImageSchema = z.object({ source: contentSourceSchema, type: z.literal('image') });
 const contentAudioSchema = z.object({ source: contentSourceSchema, type: z.literal('audio') });
@@ -77,13 +74,14 @@ const contentDocumentSchema = z.object({
 const contentPartSchema = z
   .discriminatedUnion('type', [
     contentTextSchema,
+    contentArtifactSchema,
     contentImageSchema,
     contentAudioSchema,
     contentVideoSchema,
     contentDocumentSchema,
   ])
   .superRefine((part, context) => {
-    if (part.type === 'text') return;
+    if (part.type === 'artifact' || part.type === 'text') return;
     const mediaType = part.source.mediaType;
     if (mediaType === undefined) return;
 
@@ -100,9 +98,9 @@ const contentPartSchema = z
     }
   });
 
-/** Content that can start a turn: at least one non-blank text or media part. */
+/** Principals may say text and attach stored artifacts, never inject remote media. */
 const speechContentSchema = z
-  .array(contentPartSchema)
+  .array(z.discriminatedUnion('type', [contentTextSchema, contentArtifactSchema]))
   .min(1)
   .max(16)
   .refine(
@@ -119,10 +117,16 @@ function contentToString(content: readonly ContentPart[]): string {
   return content
     .map((part) => {
       if (part.type === 'text') return part.text;
+      if (part.type === 'artifact') {
+        const name = part.artifact.filename ?? part.artifact.artifactId;
+        return (
+          `[Artifact: ${name}; ID: ${part.artifact.artifactId}; ` +
+          `Type: ${part.artifact.mediaType}; Bytes: ${String(part.artifact.size)}]`
+        );
+      }
 
       const label = part.type.charAt(0).toUpperCase() + part.type.slice(1);
-      if (part.source.type === 'url') return `[${label}: ${part.source.url}]`;
-      return `[${label}: ${part.source.mediaType}]`;
+      return `[${label}: ${part.source.url}]`;
     })
     .join('\n');
 }
@@ -136,7 +140,9 @@ function textFromContent(content: readonly ContentPart[], separator = ''): strin
 }
 
 function modalitiesIn(content: readonly ContentPart[]): ReadonlySet<ContentModality> {
-  return new Set(content.map((part) => part.type));
+  return new Set(
+    content.flatMap((part): ContentModality[] => (part.type === 'artifact' ? [] : [part.type])),
+  );
 }
 
 function hasUsableContent(content: readonly ContentPart[]): boolean {
@@ -145,6 +151,7 @@ function hasUsableContent(content: readonly ContentPart[]): boolean {
 
 export {
   CONTENT_MODALITIES,
+  contentArtifactSchema,
   contentAudioSchema,
   contentDocumentSchema,
   contentImageSchema,
@@ -162,6 +169,7 @@ export {
 };
 
 export type {
+  ContentArtifact,
   ContentAudio,
   ContentDocument,
   ContentImage,
@@ -169,7 +177,6 @@ export type {
   ContentModality,
   ContentPart,
   ContentSource,
-  ContentSourceBase64,
   ContentSourceUrl,
   ContentText,
   ContentVideo,

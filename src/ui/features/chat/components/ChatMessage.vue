@@ -4,11 +4,11 @@ import { computed, type DeepReadonly, ref } from 'vue'
 import { useI18n } from '@/shared/i18n'
 
 import { renderMarkdown } from '../model/markdown'
+import ArtifactMedia from './ArtifactMedia.vue'
 import ReasoningActivityCard from './ReasoningActivityCard.vue'
 import RunActivityCard from './RunActivityCard.vue'
 import ToolActivityCard from './ToolActivityCard.vue'
 
-import type { ChatMediaPart } from '../api/chat.schemas'
 import type {
   AssistantItem,
   ReasoningActivity,
@@ -30,12 +30,6 @@ const detailsOpen = ref(false)
 const hasDetails = computed(() => props.item.kind === 'assistant' && props.activity !== undefined)
 const renderedMessage = computed(() => renderMarkdown(props.item.text))
 const streaming = computed(() => props.item.kind === 'assistant' && props.item.streaming)
-
-function mediaUrl(part: ChatMediaPart): string {
-  return part.source.type === 'url'
-    ? part.source.url
-    : `data:${part.source.mediaType};base64,${part.source.data}`
-}
 
 const timestamp = computed(() =>
   formatDate(props.item.createdAt, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -66,23 +60,11 @@ const timestamp = computed(() =>
       {{ props.item.kind === 'user' ? t('chat.message.you') : 'NOX' }}
     </header>
     <div v-if="props.item.media.length > 0" class="message__media">
-      <template v-for="(part, index) in props.item.media" :key="`${part.type}-${String(index)}`">
-        <img
-          v-if="part.type === 'image'"
-          :src="mediaUrl(part)"
-          :alt="t('chat.message.attachedImage')"
-          loading="lazy"
-        />
-        <audio v-else-if="part.type === 'audio'" :src="mediaUrl(part)" controls preload="metadata">
-          {{ t('chat.message.attachedAudio') }}
-        </audio>
-        <video v-else-if="part.type === 'video'" :src="mediaUrl(part)" controls preload="metadata">
-          {{ t('chat.message.attachedVideo') }}
-        </video>
-        <a v-else :href="mediaUrl(part)" target="_blank" rel="noopener noreferrer">
-          {{ t('chat.message.openDocument') }}
-        </a>
-      </template>
+      <ArtifactMedia
+        v-for="(part, index) in props.item.media"
+        :key="`${part.type}-${String(index)}`"
+        :part="part"
+      />
     </div>
     <!-- markdown.ts escapes raw HTML and only emits HTML from trusted renderers. -->
     <!-- eslint-disable-next-line vue/no-v-html -->
@@ -306,8 +288,8 @@ const timestamp = computed(() =>
   gap: var(--nox-space-3);
 }
 
-.message__media img,
-.message__media video {
+.message__media :deep(.artifact--image),
+.message__media :deep(.artifact--video) {
   display: block;
   width: 100%;
   max-height: 28rem;
@@ -317,11 +299,11 @@ const timestamp = computed(() =>
   background: var(--nox-canvas);
 }
 
-.message__media audio {
+.message__media :deep(.artifact--audio) {
   width: 100%;
 }
 
-.message__media a {
+.message__media :deep(.artifact--document) {
   color: var(--nox-action-primary);
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-sm);

@@ -1,5 +1,5 @@
 import { toolParametersSchema } from '../../tool/render';
-import { type Message, type MessageContent, messageToString } from './message';
+import { type Message, messageToString } from './message';
 
 import type { Tool } from '../../tool/tool';
 
@@ -42,29 +42,11 @@ function stableSerialize(value: unknown, ancestors = new Set<object>()): string 
   return serialized;
 }
 
-function contentForSerialization(content: readonly MessageContent[]): readonly MessageContent[] {
-  return content.map((part) => {
-    if (part.type === 'text' || part.source.type === 'url') return part;
-    // Inline bytes are encoded into the JSON request but they are not prompt
-    // text. Counting their base64 characters would compact a single image as if
-    // it were a book; modality cost is accounted for separately below.
-    return { ...part, source: { ...part.source, data: '[inline media]' } };
-  });
-}
-
-function messageForSerialization(message: Message): Message {
-  switch (message.role) {
-    case 'assistant':
-    case 'compacted':
-    case 'folded':
-    case 'reasoning':
-    case 'user':
-      return { ...message, content: contentForSerialization(message.content) };
-    case 'toolResponse':
-      return { ...message, response: contentForSerialization(message.response) };
-    case 'toolCall':
-      return message;
-  }
+function artifactTokens(mediaType: string): number {
+  if (mediaType.startsWith('audio/')) return MEDIA_TOKEN_ESTIMATE.audio;
+  if (mediaType.startsWith('image/')) return MEDIA_TOKEN_ESTIMATE.image;
+  if (mediaType.startsWith('video/')) return MEDIA_TOKEN_ESTIMATE.video;
+  return MEDIA_TOKEN_ESTIMATE.document;
 }
 
 function mediaTokens(message: Message): number {
@@ -74,10 +56,15 @@ function mediaTokens(message: Message): number {
       : message.role === 'toolCall'
         ? []
         : message.content;
-  return content.reduce(
-    (total, part) => total + (part.type === 'text' ? 0 : MEDIA_TOKEN_ESTIMATE[part.type]),
-    0,
-  );
+  return content.reduce((total, part) => {
+    if (part.type === 'text') return total;
+    return (
+      total +
+      (part.type === 'artifact'
+        ? artifactTokens(part.artifact.mediaType)
+        : MEDIA_TOKEN_ESTIMATE[part.type])
+    );
+  }, 0);
 }
 
 class TokenEstimator {
@@ -114,7 +101,7 @@ class TokenEstimator {
 
     const estimate =
       Math.max(
-        this.#countText(stableSerialize(messageForSerialization(message))),
+        this.#countText(stableSerialize(message)),
         this.#countText(messageToString(message)),
       ) +
       mediaTokens(message) +

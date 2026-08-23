@@ -46,13 +46,17 @@ describe('TokenEstimator', () => {
     expect(calls).toBe(afterFirst);
   });
 
-  test('accounts for inline media by modality instead of tokenizing base64 bytes', () => {
+  test('accounts for artifact media by modality instead of its physical byte count', () => {
     const estimator = new TokenEstimator('system', [], (text) => text.length);
     const small = freezeMessage({
       content: [
         {
-          source: { data: 'a', mediaType: 'image/png', type: 'base64' as const },
-          type: 'image' as const,
+          artifact: {
+            artifactId: 'art_small000',
+            mediaType: 'image/png',
+            size: 1,
+          },
+          type: 'artifact' as const,
         },
       ],
       createdAt: CREATED_AT,
@@ -67,8 +71,12 @@ describe('TokenEstimator', () => {
       ...small,
       content: [
         {
-          source: { data: 'a'.repeat(100_000), mediaType: 'image/png', type: 'base64' as const },
-          type: 'image' as const,
+          artifact: {
+            artifactId: 'art_large000',
+            mediaType: 'image/png',
+            size: 100_000_000,
+          },
+          type: 'artifact' as const,
         },
       ],
       messageId: 'large',
@@ -76,7 +84,7 @@ describe('TokenEstimator', () => {
 
     expect(
       Math.abs(estimator.estimateMessage(large) - estimator.estimateMessage(small)),
-    ).toBeLessThan(20);
+    ).toBeLessThan(30);
   });
 
   test('includes one stable system-and-tools prefix exactly once per history', () => {

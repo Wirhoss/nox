@@ -1,22 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { useAuthStore } from '@/app/stores/auth.store'
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 
+import { uploadArtifact } from '../api/artifact.api'
 import { useActiveSessionStore } from '../stores/activeSession.store'
+import ArtifactMedia from './ArtifactMedia.vue'
 import ContextGauge from './ContextGauge.vue'
 
-import type { ChatContentPart, ChatMediaPart } from '../api/chat.schemas'
+import type { ChatContentPart } from '../api/chat.schemas'
+
+type ChatArtifactPart = Extract<ChatContentPart, { type: 'artifact' }>
 
 const MAX_ATTACHMENTS = 4
-const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
-const SUPPORTED_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp'])
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 
+const auth = useAuthStore()
 const session = useActiveSessionStore()
 const { t } = useI18n()
 const text = ref('')
-const attachments = ref<ChatMediaPart[]>([])
+const attachments = ref<ChatArtifactPart[]>([])
+const uploading = ref(false)
 const attachmentError = ref<string>()
 const fileInput = ref<HTMLInputElement>()
 const commandError = ref<string>()
@@ -34,7 +40,10 @@ const filteredCommands = computed(() => {
   )
 })
 const canSubmit = computed(
-  () => session.canSend && (text.value.trim().length > 0 || attachments.value.length > 0),
+  () =>
+    session.canSend &&
+    !uploading.value &&
+    (text.value.trim().length > 0 || attachments.value.length > 0),
 )
 const buttonLabel = computed(() => {
   if (attachments.value.length === 0 && text.value.trimStart().startsWith('/')) {
@@ -97,57 +106,36 @@ async function chooseFiles(event: Event): Promise<void> {
   const files = [...(input.files ?? [])]
   attachmentError.value = undefined
 
-  for (const file of files) {
-    if (attachments.value.length >= MAX_ATTACHMENTS) {
-      attachmentError.value = t('chat.attachment.tooMany', { count: MAX_ATTACHMENTS })
-      break
-    }
-    if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
-      attachmentError.value = t('chat.attachment.unsupported', { file: file.name })
-      continue
-    }
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      attachmentError.value = t('chat.attachment.tooLarge', { file: file.name })
-      continue
-    }
-
-    try {
-      attachments.value = [
-        ...attachments.value,
-        {
-          source: { data: await fileBase64(file), mediaType: file.type, type: 'base64' },
-          type: 'image',
-        },
-      ]
-    } catch {
-      attachmentError.value = t('chat.attachment.couldNotRead', { file: file.name })
-    }
+  const accessToken = auth.accessToken
+  if (accessToken === undefined) {
+    attachmentError.value = t('chat.error.noAuthenticatedSession')
+    input.value = ''
+    return
   }
-  input.value = ''
-}
 
-function fileBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => {
-      reject(reader.error ?? new Error(t('chat.attachment.readError', { file: file.name })))
-    }
-    reader.onload = () => {
-      const value = reader.result
-      if (typeof value !== 'string') {
-        reject(new Error(t('chat.attachment.encodeError', { file: file.name })))
-        return
+  uploading.value = true
+  try {
+    for (const file of files) {
+      if (attachments.value.length >= MAX_ATTACHMENTS) {
+        attachmentError.value = t('chat.attachment.tooMany', { count: MAX_ATTACHMENTS })
+        break
       }
-      resolve(value.slice(value.indexOf(',') + 1))
-    }
-    reader.readAsDataURL(file)
-  })
-}
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        attachmentError.value = t('chat.attachment.tooLarge', { file: file.name })
+        continue
+      }
 
-function attachmentUrl(part: ChatMediaPart): string {
-  return part.source.type === 'url'
-    ? part.source.url
-    : `data:${part.source.mediaType};base64,${part.source.data}`
+      try {
+        const artifact = await uploadArtifact(file, accessToken)
+        attachments.value = [...attachments.value, { artifact, type: 'artifact' }]
+      } catch {
+        attachmentError.value = t('chat.attachment.couldNotRead', { file: file.name })
+      }
+    }
+  } finally {
+    uploading.value = false
+    input.value = ''
+  }
 }
 
 function removeAttachment(index: number): void {
@@ -243,8 +231,8 @@ function onKeydown(event: KeyboardEvent): void {
       class="composer__attachments"
       :aria-label="t('chat.attachment.attachments')"
     >
-      <li v-for="(part, index) in attachments" :key="index">
-        <img :src="attachmentUrl(part)" :alt="t('chat.attachment.preview')" />
+      <li v-for="(part, index) in attachments" :key="part.artifact.artifactId">
+        <ArtifactMedia :part="part" />
         <button
           type="button"
           :aria-label="t('chat.attachment.removeNumber', { number: index + 1 })"
@@ -314,20 +302,23 @@ function onKeydown(event: KeyboardEvent): void {
           ref="fileInput"
           class="composer__file-input"
           type="file"
-          accept="image/gif,image/jpeg,image/png,image/webp"
           multiple
           @change="chooseFiles"
         />
         <button
           class="composer__attach"
           type="button"
-          :disabled="!session.canSend || attachments.length >= MAX_ATTACHMENTS"
+          :disabled="!session.canSend || uploading || attachments.length >= MAX_ATTACHMENTS"
           @click="fileInput?.click()"
         >
-          {{ t('chat.attachment.attachImage') }}
+          {{ t('chat.attachment.attachFile') }}
         </button>
         <ContextGauge :usage="session.contextUsage" />
-        <NoxButton :busy="session.run.type === 'sending'" :disabled="!canSubmit" @click="submit()">
+        <NoxButton
+          :busy="session.run.type === 'sending' || uploading"
+          :disabled="!canSubmit"
+          @click="submit()"
+        >
           {{ buttonLabel }}
         </NoxButton>
       </div>
@@ -364,12 +355,13 @@ function onKeydown(event: KeyboardEvent): void {
   height: 6rem;
 }
 
-.composer__attachments img {
+.composer__attachments :deep(.artifact) {
   width: 100%;
   height: 100%;
   border: 1px solid var(--nox-border-subtle);
   border-radius: var(--nox-radius-control);
   object-fit: cover;
+  overflow: hidden;
 }
 
 .composer__attachments button {

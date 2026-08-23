@@ -1,3 +1,4 @@
+export { artifactRoutes } from './artifacts';
 export { authConfigSchema, AuthStore, RegistrationWindow } from './auth';
 export { ChatHub, chatRoutes } from './chat';
 export {
@@ -14,6 +15,7 @@ export { secretRoutes } from './secrets';
 export { ApiServer } from './server';
 export { apiConfigSchema } from './serverConfig';
 
+export type { ArtifactRoutesOptions } from './artifacts';
 export type { Account, AuthConfig, AuthConfigInput, Authenticated } from './auth';
 export type {
   ChatContextChangeEvent,

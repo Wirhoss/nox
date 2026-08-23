@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
+import { ArtifactPipeline } from '../../artifact/pipeline';
 import { Database } from '../../database/database';
 import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from '../auth/registration';
@@ -105,12 +106,18 @@ async function chatNox(): Promise<ChatNox> {
   const database = await Database.open({ logger: silentLogger, path: join(directory, 'nox.db') });
   databases.push(database);
 
+  const artifacts = await ArtifactPipeline.open({
+    dataDirectory: directory,
+    database,
+    logger: silentLogger,
+  });
   const store = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
   const account = await store.register('esteban', PASSWORD);
   const tokens = await store.openSession(account.accountId);
 
   const hub = new ChatHub();
   const server = ApiServer.create({
+    artifacts,
     auth: { registration: RegistrationWindow.closed(), store },
     chat: hub,
     host: '127.0.0.1',
@@ -222,27 +229,52 @@ describe('the chat routes', () => {
     });
   });
 
-  test('accepts structured image content without flattening it to text', async () => {
+  test('stores an uploaded file and hands only its canonical artifact reference to chat', async () => {
     const { accountId, headers, hub, url } = await chatNox();
     const transport = new RecordingTransport();
     hub.attach(transport);
-    const content = [
-      { text: 'What is this?', type: 'text' },
-      {
-        source: { type: 'url', url: 'https://images.example.test/object.png' },
-        type: 'image',
+    const uploaded = await fetch(`${url}/artifacts`, {
+      body: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      headers: {
+        ...headers,
+        'content-type': 'image/webp',
+        'x-artifact-filename': encodeURIComponent('object.png'),
       },
+      method: 'POST',
+    });
+    const artifact = (await uploaded.json()) as {
+      artifactId: string;
+      filename: string;
+      mediaType: string;
+      size: number;
+    };
+    const submitted = [
+      { text: 'What is this?', type: 'text' },
+      // Every field except the ID is untrusted at message ingress and replaced.
+      { artifact: { ...artifact, filename: 'forged.exe', size: 1 }, type: 'artifact' },
     ];
 
     const response = await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content: submitted }),
       headers,
       method: 'POST',
     });
 
+    expect(uploaded.status).toBe(201);
     expect(response.status).toBe(202);
     expect(transport.messages[0]).toMatchObject({
-      content,
+      content: [
+        { text: 'What is this?', type: 'text' },
+        {
+          artifact: {
+            artifactId: artifact.artifactId,
+            filename: 'object.png',
+            mediaType: 'image/png',
+            size: 8,
+          },
+          type: 'artifact',
+        },
+      ],
       conversationId: CONVERSATION,
       senderId: accountId,
       text: 'What is this?',

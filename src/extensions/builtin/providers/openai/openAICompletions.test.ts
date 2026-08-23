@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { Session } from '../../../../agent/session';
+import { ArtifactPipeline, artifactRef } from '../../../../artifact/pipeline';
 import { SecretHandle } from '../../../../config/secrets';
 import { Database } from '../../../../database/database';
 import { isProviderError, type ProviderErrorCode } from '../../../../provider/error';
@@ -60,15 +61,21 @@ function textDelta(text: string): unknown {
   return { choices: [{ delta: { content: text } }] };
 }
 
-function provider(overrides: Record<string, unknown> = {}): OpenAICompletions {
-  return new OpenAICompletions({
-    apiKey: new SecretHandle('OPENAI_API_KEY', 'sk-test'),
-    baseUrl: 'https://api.example.test/v1/',
-    defaultModel: 'gpt-test',
-    maxRetries: 0,
-    type: 'openai_completions',
-    ...overrides,
-  });
+function provider(
+  overrides: Record<string, unknown> = {},
+  options: ConstructorParameters<typeof OpenAICompletions>[1] = {},
+): OpenAICompletions {
+  return new OpenAICompletions(
+    {
+      apiKey: new SecretHandle('OPENAI_API_KEY', 'sk-test'),
+      baseUrl: 'https://api.example.test/v1/',
+      defaultModel: 'gpt-test',
+      maxRetries: 0,
+      type: 'openai_completions',
+      ...overrides,
+    },
+    options,
+  );
 }
 
 async function collect(stream: AsyncIterable<ProviderStreamEvent>): Promise<ProviderStreamEvent[]> {
@@ -203,6 +210,60 @@ describe('OpenAICompletions message mapping', () => {
       ],
       role: 'user',
     });
+  });
+
+  test('materializes stored image artifacts only for a model that accepts image input', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-openai-artifact-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    try {
+      const artifacts = await ArtifactPipeline.open({ dataDirectory: directory, database });
+      const stored = await artifacts.ingest({
+        data: new Blob([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])]),
+        filename: 'pixel.png',
+        provenance: { type: 'upload' },
+        scope: { id: 'account-1', type: 'account' },
+      });
+      stubFetch(() => sse(textDelta('hi')));
+      const instance = provider({}, { artifacts });
+      const history = [
+        message({ content: [{ artifact: artifactRef(stored), type: 'artifact' }], role: 'user' }),
+      ];
+
+      await run(instance, history, [], {
+        inputModalities: ['text', 'image'],
+        modelId: 'vision',
+        outputModalities: ['text'],
+      });
+      await run(instance, history, [], {
+        inputModalities: ['text'],
+        modelId: 'text-only',
+        outputModalities: ['text'],
+      });
+
+      const visual = (requests[0]?.body.messages as { content: unknown }[])[1]?.content;
+      expect(visual).toEqual([
+        { text: '[from test-broker:alice]\n', type: 'text' },
+        {
+          text:
+            `[artifact id=${JSON.stringify(stored.artifactId)} name="pixel.png" ` +
+            'media_type="image/png" bytes=8]\n',
+          type: 'text',
+        },
+        { image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' }, type: 'image_url' },
+      ]);
+      expect((requests[1]?.body.messages as { content: unknown }[])[1]?.content).toBe(
+        '[from test-broker:alice]\n' +
+          `[artifact id=${JSON.stringify(stored.artifactId)} name="pixel.png" ` +
+          'media_type="image/png" bytes=8]\n',
+      );
+    } finally {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may briefly retain a SQLite handle.
+      }
+    }
   });
 
   test('marks a compacted turn as reference material rather than an instruction', async () => {
@@ -371,7 +432,11 @@ describe('OpenAICompletions message mapping', () => {
         message({
           content: [
             {
-              source: { data: 'YWJj', mediaType: 'audio/wav', type: 'base64' },
+              source: {
+                mediaType: 'audio/wav',
+                type: 'url',
+                url: 'https://audio.test/a.wav',
+              },
               type: 'audio',
             },
           ],

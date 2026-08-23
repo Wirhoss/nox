@@ -1,5 +1,6 @@
 import { type MessageOrigin, principalToString } from '../../auth/principal';
 import {
+  type ContentArtifact,
   type ContentAudio,
   type ContentDocument,
   type ContentImage,
@@ -15,6 +16,7 @@ interface MessageBase {
 }
 
 type MessageContent = ContentPart;
+type MessageContentArtifact = ContentArtifact;
 type MessageContentText = ContentText;
 type MessageContentImage = ContentImage;
 type MessageContentAudio = ContentAudio;
@@ -237,6 +239,7 @@ export type {
   FoldedMessage,
   Message,
   MessageContent,
+  MessageContentArtifact,
   MessageContentAudio,
   MessageContentDocument,
   MessageContentImage,

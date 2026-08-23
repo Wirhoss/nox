@@ -95,10 +95,15 @@ describe('freezeMessage', () => {
   });
 
   test('copies and freezes every mutable content layer', () => {
-    const source = { data: 'abc', mediaType: 'image/png', type: 'base64' as const };
+    const artifact = {
+      artifactId: 'art_abcdefgh',
+      filename: 'image.png',
+      mediaType: 'image/png',
+      size: 3,
+    };
     const content = [
       { text: 'hello', type: 'text' as const },
-      { source, type: 'image' as const },
+      { artifact, type: 'artifact' as const },
     ];
     const message = freezeMessage({
       content,
@@ -112,13 +117,14 @@ describe('freezeMessage', () => {
     expect(Object.isFrozen(message.content[0])).toBeTrue();
     expect(Object.isFrozen(message.content[1])).toBeTrue();
     expect(
-      Object.isFrozen(message.content[1]?.type === 'image' && message.content[1].source),
+      Object.isFrozen(message.content[1]?.type === 'artifact' && message.content[1].artifact),
     ).toBeTrue();
-    source.data = 'changed';
-    expect(message.content[1]?.type === 'image' && message.content[1].source).toEqual({
-      data: 'abc',
+    artifact.filename = 'changed.png';
+    expect(message.content[1]?.type === 'artifact' && message.content[1].artifact).toEqual({
+      artifactId: 'art_abcdefgh',
+      filename: 'image.png',
       mediaType: 'image/png',
-      type: 'base64',
+      size: 3,
     });
   });
 });

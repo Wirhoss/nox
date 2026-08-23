@@ -99,6 +99,34 @@ adapter must encode every modality it supports and reject the others explicitly.
 Chat Completions adapter encodes text and images; it does not silently discard declared audio, video,
 or document input.
 
+### Files and artifacts
+
+Uploaded files do not live in messages or SQLite. The authenticated artifact API streams raw request
+bytes into `DATA_DIR/artifacts`, hashes them while writing, detects their media type, and returns a
+small `ArtifactRef`. Immutable blobs are addressed by SHA-256, so separate uploads retain their own
+filename, provenance and access scope while identical bytes occupy disk once. SQLite stores only that
+logical metadata.
+
+```http
+POST /api/artifacts
+Authorization: Bearer …
+Content-Type: image/webp
+X-Artifact-Filename: diagram.webp
+
+<raw bytes>
+```
+
+Messages carry `{ "type": "artifact", "artifact": { … } }`. The chat ingress resolves that ID again
+under the authenticated account and replaces every client-supplied metadata field with the canonical
+record before it reaches the transcript. Bytes are read back through the authenticated
+`GET /api/artifacts/:artifactId/content` route. The web client fetches that content as a blob; it never
+turns a file into base64 JSON.
+
+Artifact and model modality are intentionally different concepts. Every model receives an explicit
+textual artifact reference. When an artifact is an image and the selected model declares image input,
+the OpenAI adapter additionally materializes its stored bytes as visual input. A text-only model keeps
+the reference instead of failing before it can choose a future file tool.
+
 ### Models for internal tasks
 
 An agent answers people on the `provider`/`model` its blueprint names. Nox also
@@ -365,6 +393,7 @@ repo or fail without taking the process down.
 | Configurable tool-set contributions and blueprint grants | Ported and tested |
 | SearXNG search and Crawl4AI extraction builtin tool set | Ported and tested |
 | Message gateway, and the `web` broker over the HTTP surface | Built and tested |
+| Artifact pipeline — streamed ingestion, SHA-256 blob deduplication, scoped references and authenticated delivery | Built and tested |
 
 Deferred, each with the trigger that un-defers it, in
 [NOX.md](NOX.md#v1-scope): extension machinery, memory, web UI, message brokers,

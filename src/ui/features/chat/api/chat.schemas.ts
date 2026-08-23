@@ -1,11 +1,19 @@
 import { z } from 'zod'
 
-const contentSourceSchema = z.discriminatedUnion('type', [
-  z.object({ data: z.string(), mediaType: z.string(), type: z.literal('base64') }),
-  z.object({ mediaType: z.string().optional(), type: z.literal('url'), url: z.string().url() }),
-])
+const artifactRefSchema = z.object({
+  artifactId: z.string(),
+  filename: z.string().optional(),
+  mediaType: z.string(),
+  size: z.number().int().nonnegative(),
+})
+const contentSourceSchema = z.object({
+  mediaType: z.string().optional(),
+  type: z.literal('url'),
+  url: z.string().url(),
+})
 const contentPartSchema = z.discriminatedUnion('type', [
   z.object({ text: z.string(), type: z.literal('text') }),
+  z.object({ artifact: artifactRefSchema, type: z.literal('artifact') }),
   z.object({ source: contentSourceSchema, type: z.literal('image') }),
   z.object({ source: contentSourceSchema, type: z.literal('audio') }),
   z.object({ source: contentSourceSchema, type: z.literal('video') }),
@@ -214,6 +222,7 @@ const acceptedCommandSchema = z.object({ command: z.string().min(1) })
 const acceptedMessageSchema = z.object({ messageId: z.string().min(1) })
 const acceptedDecisionSchema = z.object({ requestId: z.string().min(1) })
 
+type ArtifactRef = z.infer<typeof artifactRefSchema>
 type AcceptedCommand = z.infer<typeof acceptedCommandSchema>
 type AcceptedDecision = z.infer<typeof acceptedDecisionSchema>
 type AcceptedMessage = z.infer<typeof acceptedMessageSchema>
@@ -233,6 +242,7 @@ export {
   acceptedCommandSchema,
   acceptedDecisionSchema,
   acceptedMessageSchema,
+  artifactRefSchema,
   chatEventSchema,
   chatHistorySchema,
   commandsSchema,
@@ -245,6 +255,7 @@ export type {
   AcceptedCommand,
   AcceptedDecision,
   AcceptedMessage,
+  ArtifactRef,
   ChatCommand,
   ChatContentPart,
   ChatContextUsage,

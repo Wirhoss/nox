@@ -29,6 +29,13 @@
       "when": 1787409018715,
       "tag": "0003_clear_placeholder_titles",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787496251477,
+      "tag": "0004_safe_dagger",
+      "breakpoints": true
     }
   ]
 }

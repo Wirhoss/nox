@@ -8,6 +8,7 @@ import { ChatHub } from './api/chat/transport';
 import { ConfigStore } from './api/config/store';
 import { type ApiAuth, ApiServer } from './api/server';
 import { NoxApplication } from './application';
+import { ArtifactPipeline } from './artifact/pipeline';
 import { AuthorityCatalog, type AuthorityDefinition } from './auth/authority';
 import { GrantAuthorizationProvider, OwnerAuthorizationProvider } from './auth/authorization';
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
@@ -27,7 +28,13 @@ import { toDisposable } from './extensions/disposable';
 import { ToolSetCatalog } from './extensions/toolSetCatalog';
 import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
-import { configService, databaseService, loggerService, secretStoreService } from './services';
+import {
+  artifactPipelineService,
+  configService,
+  databaseService,
+  loggerService,
+  secretStoreService,
+} from './services';
 
 import type { AuthConfig } from './api/auth/config';
 import type { ApiConfig } from './api/serverConfig';
@@ -71,8 +78,14 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       : join(env.dataDir, appConfig.database.path),
   });
 
+  let artifactPipeline: ArtifactPipeline;
   let secretStore: SecretStore;
   try {
+    artifactPipeline = await ArtifactPipeline.open({
+      dataDirectory: env.dataDir,
+      database,
+      logger: logger.child('artifacts'),
+    });
     secretStore = await SecretStore.open({
       dataDirectory: env.dataDir,
       database,
@@ -98,6 +111,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     ],
     logger,
   })
+    .provide(artifactPipelineService, artifactPipeline)
     .provide(configService, config)
     .provide(databaseService, database)
     .provide(loggerService, logger)
@@ -125,6 +139,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       appConfig.api,
       appConfig.ui.locale,
       auth,
+      artifactPipeline,
       chat,
       new ConfigStore({
         authorities: () => buildAuthorityCatalog(application),
@@ -185,6 +200,7 @@ function openApi(
   config: ApiConfig,
   locale: string,
   auth: ApiAuth,
+  artifacts: ArtifactPipeline,
   chat: ChatHub,
   configuration: ConfigStore,
   database: Database,
@@ -194,6 +210,7 @@ function openApi(
 ): ApiServer {
   return ApiServer.create({
     ...config,
+    artifacts,
     auth,
     chat,
     checks: {

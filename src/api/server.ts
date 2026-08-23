@@ -2,6 +2,7 @@ import { type AnyElysia, Elysia } from 'elysia';
 
 import { type Logger, silentLogger } from '../logger/logger';
 import { parseOrThrow } from '../utils/validate';
+import { artifactRoutes } from './artifacts/routes';
 import { authRoutes } from './auth/routes';
 import { chatRoutes } from './chat/routes';
 import { configRoutes } from './config/routes';
@@ -12,6 +13,7 @@ import { secretRoutes } from './secrets/routes';
 import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './serverConfig';
 import { ui } from './ui';
 
+import type { ArtifactPipeline } from '../artifact/pipeline';
 import type { SecretStore } from '../config/secrets';
 import type { ContributionReader } from '../extensions/contribution';
 import type { Disposable } from '../extensions/disposable';
@@ -27,6 +29,8 @@ interface ApiAuth {
 }
 
 interface ApiServerOptions extends ApiConfigInput {
+  /** Mounts durable artifact upload and content routes; requires `auth`. */
+  artifacts?: ArtifactPipeline;
   /**
    * Mounts `/api/auth` and lets routes demand a token. Left out, nothing is
    * protected and nothing can be — which is what the health-probe tests want
@@ -112,6 +116,9 @@ class ApiServer implements Disposable {
     }
     if (options.auth !== undefined) {
       api.use(authRoutes(options.auth));
+      if (options.artifacts !== undefined) {
+        api.use(artifactRoutes({ artifacts: options.artifacts, store: options.auth.store }));
+      }
       if (options.config !== undefined) {
         api.use(configRoutes({ config: options.config, store: options.auth.store }));
       }
@@ -119,7 +126,13 @@ class ApiServer implements Disposable {
         api.use(secretRoutes({ secrets: options.secrets, store: options.auth.store }));
       }
       if (options.chat !== undefined) {
-        api.use(chatRoutes({ hub: options.chat, store: options.auth.store }));
+        api.use(
+          chatRoutes({
+            artifacts: options.artifacts,
+            hub: options.chat,
+            store: options.auth.store,
+          }),
+        );
       }
     }
 

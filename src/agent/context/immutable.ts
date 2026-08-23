@@ -37,11 +37,13 @@ function freezeDate(value: Date): Date {
 
 function freezeContent(content: readonly MessageContent[]): readonly MessageContent[] {
   return Object.freeze(
-    content.map((part): MessageContent =>
-      part.type === 'text'
-        ? Object.freeze({ ...part })
-        : Object.freeze({ ...part, source: Object.freeze({ ...part.source }) }),
-    ),
+    content.map((part): MessageContent => {
+      if (part.type === 'text') return Object.freeze({ ...part });
+      if (part.type === 'artifact') {
+        return Object.freeze({ ...part, artifact: Object.freeze({ ...part.artifact }) });
+      }
+      return Object.freeze({ ...part, source: Object.freeze({ ...part.source }) });
+    }),
   );
 }
 

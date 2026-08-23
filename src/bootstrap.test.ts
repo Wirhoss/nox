@@ -11,7 +11,13 @@ import { Database } from './database/database';
 import { providers } from './extensions/contribution-points/providers';
 import { toolSets } from './extensions/contribution-points/toolsets';
 import { silentLogger } from './logger/logger';
-import { configService, databaseService, loggerService, secretStoreService } from './services';
+import {
+  artifactPipelineService,
+  configService,
+  databaseService,
+  loggerService,
+  secretStoreService,
+} from './services';
 
 import type { NoxApplication } from './application';
 import type { EnvSource } from './config/env';
@@ -257,6 +263,7 @@ describe('bootstrap', () => {
     const application = await boot();
 
     expect(application.services.get(configService).get('app').logLevel).toBeString();
+    expect(application.services.get(artifactPipelineService).directory).toContain('artifacts');
     expect(application.services.get(configService).get('providers').main?.apiKey).toMatchObject({
       $secret: 'OPENAI_API_KEY',
     });

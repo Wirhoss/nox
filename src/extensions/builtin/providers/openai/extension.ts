@@ -1,3 +1,4 @@
+import { artifactPipelineService } from '../../../../services';
 import {
   defineTranslationFragment,
   translationFragments,
@@ -55,7 +56,11 @@ const openAIExtension = defineExtension({
       'openai_completions',
       providerContribution({
         configSchema: OpenAICompletions.configSchema,
-        create: (config) => new OpenAICompletions(config, { logger: context.logger }),
+        create: (config) =>
+          new OpenAICompletions(config, {
+            artifacts: context.services.tryGet(artifactPipelineService),
+            logger: context.logger,
+          }),
       }),
     );
   },

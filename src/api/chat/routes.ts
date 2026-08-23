@@ -2,9 +2,10 @@ import { Elysia } from 'elysia';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
-import { speechContentSchema, textFromContent } from '../../content/content';
+import { type ContentPart, speechContentSchema, textFromContent } from '../../content/content';
 import { authGuard } from '../auth/guard';
 
+import type { ArtifactPipeline } from '../../artifact/pipeline';
 import type { AuthStore } from '../auth/store';
 import type { ChatEvent, ChatHub, ChatTransport } from './transport';
 
@@ -24,6 +25,9 @@ const NO_CONVERSATION = { error: 'conversation_not_found' } as const;
 
 /** A command name that is not in the catalog. */
 const NO_COMMAND = { error: 'unknown_command' } as const;
+
+/** An artifact ID that is missing or belongs to another account. */
+const INVALID_ARTIFACT = { error: 'invalid_artifact' } as const;
 
 /**
  * A conversation is named by the client and bound by the runtime on the first
@@ -87,6 +91,7 @@ const historyQuerySchema = z.object({
 });
 
 interface ChatRoutesOptions {
+  readonly artifacts?: ArtifactPipeline;
   readonly hub: ChatHub;
   readonly store: AuthStore;
 }
@@ -105,7 +110,27 @@ interface ChatRoutesOptions {
  * each. Which chat an event belongs to is on the event.
  */
 function createChatRoutes(options: ChatRoutesOptions) {
-  const { hub, store } = options;
+  const { artifacts, hub, store } = options;
+
+  const canonicalContent = async (
+    content: readonly ContentPart[],
+    accountId: string,
+  ): Promise<readonly ContentPart[] | undefined> => {
+    const canonical: ContentPart[] = [];
+    for (const part of content) {
+      if (part.type !== 'artifact') {
+        canonical.push(part);
+        continue;
+      }
+      const reference = await artifacts?.ref(part.artifact.artifactId, {
+        id: accountId,
+        type: 'account',
+      });
+      if (reference === undefined) return undefined;
+      canonical.push({ artifact: reference, type: 'artifact' });
+    }
+    return canonical;
+  };
 
   return (
     new Elysia({ name: 'nox.api.chat.routes' })
@@ -181,12 +206,14 @@ function createChatRoutes(options: ChatRoutesOptions) {
        */
       .post(
         '/chat/conversations/:conversationId/messages',
-        ({ account, body, params, status }) => {
+        async ({ account, body, params, status }) => {
           const transport = hub.transport;
           if (transport === undefined) return status(503, UNAVAILABLE);
 
           const messageId = body.messageId ?? nanoid();
-          const content = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
+          const submitted = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
+          const content = await canonicalContent(submitted, account.accountId);
+          if (content === undefined) return status(400, INVALID_ARTIFACT);
           transport.submitMessage({
             content,
             conversationId: params.conversationId,
@@ -211,12 +238,14 @@ function createChatRoutes(options: ChatRoutesOptions) {
        */
       .post(
         '/chat/conversations/:conversationId/steer',
-        ({ account, body, params, status }) => {
+        async ({ account, body, params, status }) => {
           const transport = hub.transport;
           if (transport === undefined) return status(503, UNAVAILABLE);
 
           const messageId = body.messageId ?? nanoid();
-          const content = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
+          const submitted = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
+          const content = await canonicalContent(submitted, account.accountId);
+          if (content === undefined) return status(400, INVALID_ARTIFACT);
           transport.submitSteer({
             content,
             conversationId: params.conversationId,

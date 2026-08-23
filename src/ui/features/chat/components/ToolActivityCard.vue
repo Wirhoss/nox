@@ -3,7 +3,8 @@ import { computed, type DeepReadonly } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 
-import type { ChatMediaPart } from '../api/chat.schemas'
+import ArtifactMedia from './ArtifactMedia.vue'
+
 import type { ToolActivity } from '../stores/activeSession.store'
 
 interface Props {
@@ -56,12 +57,6 @@ function responseLabel(
 function formatArguments(): string {
   return JSON.stringify(props.item.arguments ?? {}, undefined, 2)
 }
-
-function mediaUrl(part: ChatMediaPart): string {
-  return part.source.type === 'url'
-    ? part.source.url
-    : `data:${part.source.mediaType};base64,${part.source.data}`
-}
 </script>
 
 <template>
@@ -97,32 +92,11 @@ function mediaUrl(part: ChatMediaPart): string {
             </summary>
             <pre v-if="response.text.length > 0">{{ response.text }}</pre>
             <div v-if="response.media.length > 0" class="tool__media">
-              <template
+              <ArtifactMedia
                 v-for="(part, index) in response.media"
                 :key="`${part.type}-${String(index)}`"
-              >
-                <img
-                  v-if="part.type === 'image'"
-                  :src="mediaUrl(part)"
-                  :alt="t('chat.tool.returnedImage')"
-                  loading="lazy"
-                />
-                <audio
-                  v-else-if="part.type === 'audio'"
-                  :src="mediaUrl(part)"
-                  controls
-                  preload="metadata"
-                ></audio>
-                <video
-                  v-else-if="part.type === 'video'"
-                  :src="mediaUrl(part)"
-                  controls
-                  preload="metadata"
-                ></video>
-                <a v-else :href="mediaUrl(part)" target="_blank" rel="noopener noreferrer">
-                  {{ t('chat.tool.openReturnedDocument') }}
-                </a>
-              </template>
+                :part="part"
+              />
             </div>
           </details>
         </li>
@@ -253,8 +227,8 @@ function mediaUrl(part: ChatMediaPart): string {
   margin-top: var(--nox-space-2);
 }
 
-.tool__media img,
-.tool__media video {
+.tool__media :deep(.artifact--image),
+.tool__media :deep(.artifact--video) {
   width: 100%;
   max-height: 20rem;
   border: 1px solid var(--nox-border-subtle);
@@ -262,11 +236,11 @@ function mediaUrl(part: ChatMediaPart): string {
   background: var(--nox-canvas);
 }
 
-.tool__media audio {
+.tool__media :deep(.artifact--audio) {
   width: 100%;
 }
 
-.tool__media a {
+.tool__media :deep(.artifact--document) {
   color: var(--nox-action-primary);
 }
 

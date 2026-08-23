@@ -107,6 +107,8 @@ describe('Database.open', () => {
       .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
       .map((row) => row.name);
 
+    expect(tables).toContain('artifact_blobs');
+    expect(tables).toContain('artifacts');
     expect(tables).toContain('decisions');
     expect(tables).toContain('messages');
     expect(tables).toContain('sessions');

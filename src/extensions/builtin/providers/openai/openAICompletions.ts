@@ -19,6 +19,7 @@ import { ProviderError, type ProviderErrorCode } from '../../../../provider/erro
 import { ChatProvider } from '../../../../provider/provider';
 import { toolParametersSchema } from '../../../../tool/render';
 
+import type { ArtifactPipeline, ArtifactRef } from '../../../../artifact';
 import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
 import type { Tool } from '../../../../tool/tool';
 
@@ -37,6 +38,7 @@ type OpenAICompletionsConfigInput = z.input<typeof openAICompletionsConfigSchema
 type OpenAICompletionsRuntimeConfigInput = z.input<typeof openAICompletionsRuntimeConfigSchema>;
 
 interface OpenAICompletionsOptions {
+  artifacts?: ArtifactPipeline;
   logger?: Logger;
 }
 
@@ -245,12 +247,14 @@ function* emitFragments(fragments: StreamFragments): Generator<ProviderSourceEve
 class OpenAICompletions extends ChatProvider {
   static override readonly configSchema = openAICompletionsConfigSchema;
 
+  private readonly artifacts?: ArtifactPipeline;
   private readonly defaultModel?: string;
   private readonly logger: Logger;
 
   constructor(input: OpenAICompletionsRuntimeConfigInput, options: OpenAICompletionsOptions = {}) {
     const config = openAICompletionsRuntimeConfigSchema.parse(input);
     super(config);
+    this.artifacts = options.artifacts;
     this.defaultModel = config.defaultModel;
     this.logger = options.logger ?? silentLogger;
   }
@@ -327,7 +331,7 @@ class OpenAICompletions extends ChatProvider {
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): Promise<Response> {
-    const body = this.buildBody(systemPrompt, messageHistory, tools, opts);
+    const body = await this.buildBody(systemPrompt, messageHistory, tools, opts);
     const modelId = typeof body.model === 'string' ? body.model : 'unknown';
     const startedAt = Date.now();
 
@@ -402,18 +406,18 @@ class OpenAICompletions extends ChatProvider {
     return { model, modelId };
   }
 
-  private buildBody(
+  private async buildBody(
     systemPrompt: string,
     messageHistory: Message[],
     tools: Tool[],
     opts: TextGenerateOptions | undefined,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const { model, modelId } = this.resolveModel(opts);
     if (model !== undefined) this.assertInputModalities(model, messageHistory);
 
     const sampling = { ...model, ...opts };
     const body: Record<string, unknown> = {
-      messages: this.toOpenAIMessages(systemPrompt, messageHistory),
+      messages: await this.toOpenAIMessages(systemPrompt, messageHistory, model),
       model: modelId,
       stream: true,
       stream_options: { include_usage: true },
@@ -430,16 +434,20 @@ class OpenAICompletions extends ChatProvider {
 
     return body;
   }
-  private toOpenAIMessages(systemPrompt: string, history: Message[]): OpenAIMessage[] {
+  private async toOpenAIMessages(
+    systemPrompt: string,
+    history: Message[],
+    model: ModelConfig | undefined,
+  ): Promise<OpenAIMessage[]> {
     const messages: OpenAIMessage[] = [{ content: systemPrompt, role: 'system' }];
     const pendingToolMedia: { readonly content: MessageContent[]; readonly label: string }[] = [];
-    const flushToolMedia = (): void => {
+    const flushToolMedia = async (): Promise<void> => {
       for (const result of pendingToolMedia.splice(0)) {
         messages.push({
-          content: this.toOpenAIUserContent([
-            { text: `${result.label}\n`, type: 'text' },
-            ...result.content,
-          ]),
+          content: await this.toOpenAIUserContent(
+            [{ text: `${result.label}\n`, type: 'text' }, ...result.content],
+            model,
+          ),
           role: 'user',
         });
       }
@@ -449,12 +457,12 @@ class OpenAICompletions extends ChatProvider {
       // Every tool call in an assistant turn must receive its `tool` response
       // contiguously. Media therefore follows the whole response group as
       // synthetic user content instead of splitting that protocol sequence.
-      if (message.role !== 'toolResponse') flushToolMedia();
+      if (message.role !== 'toolResponse') await flushToolMedia();
 
       switch (message.role) {
         case 'user': {
           messages.push({
-            content: this.toOpenAIUserContent(userContentForModel(message)),
+            content: await this.toOpenAIUserContent(userContentForModel(message), model),
             role: 'user',
           });
           break;
@@ -465,10 +473,10 @@ class OpenAICompletions extends ChatProvider {
         }
         case 'compacted': {
           messages.push({
-            content: this.toOpenAIUserContent([
-              { text: COMPACTION_HEADER, type: 'text' },
-              ...message.content,
-            ]),
+            content: await this.toOpenAIUserContent(
+              [{ text: COMPACTION_HEADER, type: 'text' }, ...message.content],
+              model,
+            ),
             role: 'user',
           });
           break;
@@ -517,16 +525,19 @@ class OpenAICompletions extends ChatProvider {
             // A late deferred result cannot be a `tool` message: those must sit
             // right after their tool_calls turn. Surface it as user content
             // correlated by track ID instead.
-            flushToolMedia();
+            await flushToolMedia();
             const header = `[deferred result for ${message.name} (${message.trackId})]`;
             messages.push({
-              content: this.toOpenAIUserContent([
-                {
-                  text: `${header}${responseText.length === 0 ? '' : `\n${responseText}`}`,
-                  type: 'text',
-                },
-                ...media,
-              ]),
+              content: await this.toOpenAIUserContent(
+                [
+                  {
+                    text: `${header}${responseText.length === 0 ? '' : `\n${responseText}`}`,
+                    type: 'text',
+                  },
+                  ...media,
+                ],
+                model,
+              ),
               role: 'user',
             });
             break;
@@ -548,13 +559,33 @@ class OpenAICompletions extends ChatProvider {
       }
     }
 
-    flushToolMedia();
+    await flushToolMedia();
     return messages;
   }
 
-  private toOpenAIUserContent(content: readonly MessageContent[]): OpenAIContentPart[] | string {
-    const parts = content.map((part): OpenAIContentPart => {
-      if (part.type === 'text') return part;
+  private async toOpenAIUserContent(
+    content: readonly MessageContent[],
+    model: ModelConfig | undefined,
+  ): Promise<OpenAIContentPart[] | string> {
+    const parts: OpenAIContentPart[] = [];
+    for (const part of content) {
+      if (part.type === 'text') {
+        parts.push(part);
+        continue;
+      }
+      if (part.type === 'artifact') {
+        parts.push({ text: this.artifactDescriptor(part.artifact), type: 'text' });
+        if (
+          part.artifact.mediaType.startsWith('image/') &&
+          (model === undefined || modelAcceptsInput(model, 'image'))
+        ) {
+          parts.push({
+            image_url: { url: await this.artifactDataUrl(part.artifact) },
+            type: 'image_url',
+          });
+        }
+        continue;
+      }
       if (part.type !== 'image') {
         throw new ProviderError(
           'invalid_request',
@@ -562,19 +593,36 @@ class OpenAICompletions extends ChatProvider {
           { provider: OPENAI_PROVIDER },
         );
       }
-
-      const url =
-        part.source.type === 'url'
-          ? part.source.url
-          : `data:${part.source.mediaType};base64,${part.source.data}`;
-      return { image_url: { url }, type: 'image_url' };
-    });
+      parts.push({ image_url: { url: part.source.url }, type: 'image_url' });
+    }
 
     // A plain string is the shape every implementation of this API accepts; the
     // part array is only worth its compatibility risk when an image needs it.
     return parts.every((part) => part.type === 'text')
       ? parts.map((part) => part.text).join('')
       : parts;
+  }
+
+  private artifactDescriptor(artifact: ArtifactRef): string {
+    const name = artifact.filename ?? artifact.artifactId;
+    return (
+      `[artifact id=${JSON.stringify(artifact.artifactId)} name=${JSON.stringify(name)} ` +
+      `media_type=${JSON.stringify(artifact.mediaType)} bytes=${String(artifact.size)}]\n`
+    );
+  }
+
+  private async artifactDataUrl(reference: ArtifactRef): Promise<string> {
+    if (this.artifacts === undefined) {
+      throw new ProviderError(
+        'invalid_request',
+        `Artifact ${reference.artifactId} cannot be materialized: no artifact pipeline is attached.`,
+        { provider: OPENAI_PROVIDER },
+      );
+    }
+
+    const payload = await this.artifacts.open(reference.artifactId);
+    const bytes = Buffer.from(await new Response(payload.stream).arrayBuffer());
+    return `data:${payload.artifact.mediaType};base64,${bytes.toString('base64')}`;
   }
 
   private assertInputModalities(model: ModelConfig, history: readonly Message[]): void {
