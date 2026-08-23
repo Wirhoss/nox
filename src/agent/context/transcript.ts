@@ -43,7 +43,7 @@ function isIndexable(message: Message): boolean {
       return message.execution !== 'deferredAck' && message.execution !== 'permissionPending';
     case 'assistant':
     case 'user':
-      return message.content.some((part) => part.type === 'image' || part.text.length > 0);
+      return message.content.some((part) => part.type !== 'text' || part.text.length > 0);
     case 'toolCall':
       return true;
   }

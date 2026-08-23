@@ -8,11 +8,13 @@ import { chatApi, type PermissionDecision } from '../api/chat.api'
 
 import type {
   ChatCommand,
+  ChatContentPart,
   ChatContextUsage,
   ChatConversation,
   ChatEvent,
   ChatHistory,
   ChatHistoryEntry,
+  ChatMediaPart,
   ChatPermissionRequest,
   ChatUsage,
   PermissionOutcome,
@@ -27,7 +29,11 @@ type ChatConnection =
   | { readonly type: 'unavailable' }
 
 type ChatRunStatus =
-  | { readonly clientMessageId: string; readonly mode: 'message' | 'steer'; readonly type: 'sending' }
+  | {
+      readonly clientMessageId: string
+      readonly mode: 'message' | 'steer'
+      readonly type: 'sending'
+    }
   | { readonly message: string; readonly turnId?: string; readonly type: 'failed' }
   | { readonly requestId: string; readonly turnId: string; readonly type: 'waiting-permission' }
   | { readonly turnId?: string; readonly type: 'running' }
@@ -52,6 +58,7 @@ interface AssistantItem {
   readonly createdAt: string
   readonly id: string
   readonly kind: 'assistant'
+  media: readonly ChatMediaPart[]
   streaming: boolean
   text: string
   readonly turnId: string
@@ -98,6 +105,7 @@ interface ToolResponseActivity {
   readonly execution: ToolResponseExecution
   readonly id: string
   readonly isError: boolean
+  readonly media: readonly ChatMediaPart[]
   readonly text: string
 }
 
@@ -133,6 +141,7 @@ interface UserItem {
   readonly createdAt: string
   readonly id: string
   readonly kind: 'user'
+  readonly media: readonly ChatMediaPart[]
   readonly text: string
 }
 
@@ -171,9 +180,8 @@ const useActiveSessionStore = defineStore('active-session', () => {
   )
   const pendingPermissionCount = computed(
     () =>
-      items.value.filter(
-        (item) => item.kind === 'permission' && item.state.type !== 'resolved',
-      ).length,
+      items.value.filter((item) => item.kind === 'permission' && item.state.type !== 'resolved')
+        .length,
   )
 
   /**
@@ -222,7 +230,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
       await openConversation(latest.conversationId)
     } catch (error) {
       eventBuffer = undefined
-      catalog.value = { message: resourceMessageFor(error, 'load chat conversations'), type: 'failed' }
+      catalog.value = {
+        message: resourceMessageFor(error, 'load chat conversations'),
+        type: 'failed',
+      }
       handleAuthorizationError(error)
     }
   }
@@ -247,7 +258,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
     try {
       conversations.value = withLiveTitles(await chatApi.listConversations(accessToken))
     } catch (error) {
-      catalog.value = { message: resourceMessageFor(error, 'refresh conversations'), type: 'failed' }
+      catalog.value = {
+        message: resourceMessageFor(error, 'refresh conversations'),
+        type: 'failed',
+      }
       handleAuthorizationError(error)
     }
   }
@@ -298,7 +312,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
       history.value = { type: 'ready' }
     } catch (error) {
       if (version !== selectionVersion) return
-      history.value = { message: resourceMessageFor(error, 'load this conversation'), type: 'failed' }
+      history.value = {
+        message: resourceMessageFor(error, 'load this conversation'),
+        type: 'failed',
+      }
       handleAuthorizationError(error)
     }
 
@@ -371,7 +388,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
           break
         }
         if (error instanceof ApiError && error.status === 401) {
-          connection.value = { message: 'The chat session is no longer authorized.', type: 'failed' }
+          connection.value = {
+            message: 'The chat session is no longer authorized.',
+            type: 'failed',
+          }
           auth.requireLogin()
           break
         }
@@ -391,15 +411,37 @@ const useActiveSessionStore = defineStore('active-session', () => {
 
   async function send(text: string): Promise<boolean> {
     const normalized = text.trim()
+    return normalized.length === 0 ? false : sendPrepared(normalized)
+  }
+
+  async function sendContent(content: readonly ChatContentPart[]): Promise<boolean> {
+    const normalized = content.flatMap((part): ChatContentPart[] => {
+      if (part.type !== 'text') return [part]
+      const text = part.text.trim()
+      return text.length === 0 ? [] : [{ text, type: 'text' }]
+    })
+    if (normalized.length === 0) return false
+    const text = normalized
+      .filter((part): part is Extract<ChatContentPart, { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text)
+      .join('')
+    return sendPrepared(text, normalized)
+  }
+
+  async function sendPrepared(
+    text: string,
+    content?: readonly ChatContentPart[],
+  ): Promise<boolean> {
     const accessToken = auth.accessToken
-    if (normalized.length === 0 || accessToken === undefined || !canSend.value) return false
+    if (accessToken === undefined || !canSend.value) return false
 
     const messageId = createId('msg')
     const item: UserItem = {
       createdAt: new Date().toISOString(),
       id: messageId,
       kind: 'user',
-      text: normalized,
+      media: mediaFrom(content),
+      text,
     }
     const mode = sendMode.value
     items.value.push(item)
@@ -409,9 +451,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
     try {
       const input = {
         accessToken,
+        content,
         conversationId: conversationId.value,
         messageId,
-        text: normalized,
+        text,
       }
       if (mode === 'steer') await chatApi.sendSteer(input)
       else await chatApi.sendMessage(input)
@@ -514,7 +557,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
         markRunning(event.turnId)
         break
       case 'message':
-        settleMessage(event.turnId, event.text)
+        settleMessage(event.turnId, event.text, mediaFrom(event.content))
         break
       case 'permission':
         if (permissionItem(event.request.requestId) === undefined) {
@@ -614,6 +657,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
           execution: event.execution,
           id: createId('response'),
           isError: event.isError,
+          media: mediaFrom(event.content),
           text: event.text,
         })
         break
@@ -635,6 +679,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
           createdAt: entry.at,
           id: entry.messageId,
           kind: 'user',
+          media: mediaFrom(entry.content),
           text: entry.text,
         })
         continue
@@ -657,6 +702,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
             createdAt: entry.at,
             id: entry.messageId,
             kind: 'assistant',
+            media: mediaFrom(entry.content),
             streaming: false,
             text: entry.text,
             turnId,
@@ -686,6 +732,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
             execution: entry.execution,
             id: entry.messageId,
             isError: entry.isError,
+            media: mediaFrom(entry.content),
             text: entry.text,
           })
           break
@@ -760,16 +807,18 @@ const useActiveSessionStore = defineStore('active-session', () => {
       createdAt: new Date().toISOString(),
       id: createId('assistant'),
       kind: 'assistant',
+      media: [],
       streaming: true,
       text,
       turnId,
     })
   }
 
-  function settleMessage(turnId: string, text: string): void {
+  function settleMessage(turnId: string, text: string, media: readonly ChatMediaPart[] = []): void {
     const existing = streamingAssistantItem(turnId)
     if (existing !== undefined) {
       existing.text = text
+      existing.media = media
       existing.streaming = false
       return
     }
@@ -778,6 +827,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
       createdAt: new Date().toISOString(),
       id: createId('assistant'),
       kind: 'assistant',
+      media,
       streaming: false,
       text,
       turnId,
@@ -886,7 +936,8 @@ const useActiveSessionStore = defineStore('active-session', () => {
   }
 
   function isCurrentRun(turnId: string): boolean {
-    if (run.value.type === 'running') return run.value.turnId === undefined || run.value.turnId === turnId
+    if (run.value.type === 'running')
+      return run.value.turnId === undefined || run.value.turnId === turnId
     if (run.value.type === 'waiting-permission' || run.value.type === 'failed') {
       return run.value.turnId === undefined || run.value.turnId === turnId
     }
@@ -919,6 +970,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     refreshConversations,
     run: readonly(run),
     send,
+    sendContent,
     sendError: readonly(sendError),
     sendMode,
   }
@@ -930,16 +982,16 @@ function createId(prefix: string): string {
   return `${prefix}_${value}`
 }
 
+function mediaFrom(content: readonly ChatContentPart[] | undefined): readonly ChatMediaPart[] {
+  return content?.filter((part): part is ChatMediaPart => part.type !== 'text') ?? []
+}
+
 function historyEntrySignature(entry: ChatHistoryEntry): string | undefined {
   switch (entry.type) {
     case 'contextChange':
-      return JSON.stringify([
-        entry.type,
-        entry.change,
-        entry.replacedMessageIds,
-        entry.text,
-      ])
+      return JSON.stringify([entry.type, entry.change, entry.replacedMessageIds, entry.text])
     case 'message':
+      return JSON.stringify([entry.type, entry.text, entry.content])
     case 'reasoning':
       return JSON.stringify([entry.type, entry.text])
     case 'toolCall':
@@ -952,6 +1004,7 @@ function historyEntrySignature(entry: ChatHistoryEntry): string | undefined {
         entry.execution,
         entry.isError,
         entry.text,
+        entry.content,
       ])
     case 'userMessage':
       return undefined
@@ -961,13 +1014,9 @@ function historyEntrySignature(entry: ChatHistoryEntry): string | undefined {
 function eventSignature(event: ChatEvent): string | undefined {
   switch (event.type) {
     case 'contextChange':
-      return JSON.stringify([
-        event.type,
-        event.change,
-        event.replacedMessageIds,
-        event.text,
-      ])
+      return JSON.stringify([event.type, event.change, event.replacedMessageIds, event.text])
     case 'message':
+      return JSON.stringify([event.type, event.text, event.content])
     case 'reasoning':
       return JSON.stringify([event.type, event.text])
     case 'toolCall':
@@ -980,6 +1029,7 @@ function eventSignature(event: ChatEvent): string | undefined {
         event.execution,
         event.isError,
         event.text,
+        event.content,
       ])
     case 'contextUsage':
     case 'error':
@@ -1025,7 +1075,8 @@ function resourceMessageFor(error: unknown, action: string): string {
   if (error instanceof ApiError && error.status === 401) {
     return 'Your session is no longer authorized.'
   }
-  if (error instanceof ApiContractError) return `Nox returned invalid data while trying to ${action}.`
+  if (error instanceof ApiContractError)
+    return `Nox returned invalid data while trying to ${action}.`
   if (error instanceof ApiConnectionError) return 'The Nox node did not answer.'
   return `Could not ${action}.`
 }

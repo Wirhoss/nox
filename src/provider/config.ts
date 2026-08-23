@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { SecretHandle, secretRefSchema } from '../config/secrets';
 import { httpUrlSchema } from '../config/url';
+import { CONTENT_MODALITIES, type ContentModality } from '../content/content';
 
 const samplingParametersConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
@@ -14,18 +15,45 @@ const samplingParametersConfigSchema = z.object({
   topP: z.number().min(0).max(1).optional(),
 });
 
+const requiredChatModalities = (direction: 'input' | 'output') =>
+  z
+    .array(z.enum(CONTENT_MODALITIES))
+    .min(1)
+    .refine((modalities) => modalities.includes('text'), {
+      message: `Text ${direction} is required by the chat model interface.`,
+    });
+
+const modelInputModalitiesSchema = requiredChatModalities('input');
+const modelOutputModalitiesSchema = requiredChatModalities('output');
 const modelBaseConfigSchema = samplingParametersConfigSchema.extend({
+  /** Modalities the model accepts in one chat turn; defaults are text-only. */
+  inputModalities: modelInputModalitiesSchema.default((): ContentModality[] => ['text']),
   modelId: z.string(),
+  /** Modalities the model can generate. The current chat contract requires text. */
+  outputModalities: modelOutputModalitiesSchema.default((): ContentModality[] => ['text']),
+  /** @deprecated Accepted while old provider configurations migrate. */
+  type: z.literal('text').optional(),
 });
 
-const textModelConfigSchema = modelBaseConfigSchema.extend({
+const chatModelConfigSchema = modelBaseConfigSchema.extend({
   contextWindow: z.number().int().positive().optional(),
-  type: z.literal('text'),
 });
 
-const modelConfigSchema = z.discriminatedUnion('type', [textModelConfigSchema]);
+const modelConfigSchema = chatModelConfigSchema;
 
 type ModelConfig = z.infer<typeof modelConfigSchema>;
+
+function modelInputModalities(model: ModelConfig): readonly ContentModality[] {
+  return model.inputModalities;
+}
+
+function modelAcceptsInput(model: ModelConfig, modality: ContentModality): boolean {
+  return modelInputModalities(model).includes(modality);
+}
+
+function modelProducesOutput(model: ModelConfig, modality: ContentModality): boolean {
+  return model.outputModalities.includes(modality);
+}
 
 const providerConfigShape = {
   // Validated rather than taken as a string: it is concatenated into every
@@ -73,13 +101,18 @@ const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
 type TextGenerateOptions = z.infer<typeof textGenerateOptionsSchema>;
 
 export {
+  chatModelConfigSchema,
+  modelAcceptsInput,
   modelBaseConfigSchema,
   modelConfigSchema,
+  modelInputModalities,
+  modelInputModalitiesSchema,
+  modelOutputModalitiesSchema,
+  modelProducesOutput,
   providerBaseConfigSchema,
   providerRuntimeConfigSchema,
   samplingParametersConfigSchema,
   textGenerateOptionsSchema,
-  textModelConfigSchema,
 };
 
 export type {

@@ -90,6 +90,12 @@ describe('WebTools', () => {
             results: [
               {
                 markdown: { fit_markdown: '123456789' },
+                media: {
+                  images: [
+                    { alt: 'Diagram', score: 8.5, src: '/diagram.png', type: 'image' },
+                    { src: 'data:image/png;base64,private' },
+                  ],
+                },
                 metadata: { title: 'Article' },
                 success: true,
                 url: 'https://example.test/article',
@@ -121,6 +127,14 @@ describe('WebTools', () => {
           results: [
             {
               content: '12345',
+              images: [
+                {
+                  alt: 'Diagram',
+                  kind: 'image',
+                  score: 8.5,
+                  url: 'https://example.test/diagram.png',
+                },
+              ],
               title: 'Article',
               truncated: true,
               url: 'https://example.test/article',
@@ -128,6 +142,33 @@ describe('WebTools', () => {
           ],
         }),
         type: 'text',
+      },
+    ]);
+  });
+
+  test('returns an image as model-visible content instead of a textual URL', async () => {
+    const tools = new WebTools({
+      search: { url: 'https://search.example.test' },
+      type: 'web',
+    });
+    const execution = tools.prepare('web_view_image', {
+      caption: 'Official product photo',
+      url: 'https://images.example.test/product.webp',
+    });
+
+    const content = await execution.run({ abortSignal: new AbortController().signal });
+
+    expect(content).toEqual([
+      {
+        text: JSON.stringify({
+          caption: 'Official product photo',
+          url: 'https://images.example.test/product.webp',
+        }),
+        type: 'text',
+      },
+      {
+        source: { type: 'url', url: 'https://images.example.test/product.webp' },
+        type: 'image',
       },
     ]);
   });

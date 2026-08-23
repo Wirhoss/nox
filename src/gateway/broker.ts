@@ -1,4 +1,4 @@
-import type { ToolResponseExecution } from '../agent/context/message';
+import type { MessageContent, ToolResponseExecution } from '../agent/context/message';
 import type { ContextUsage } from '../agent/context/options';
 import type { RunStatus, RunTrigger } from '../agent/events';
 import type { PrincipalRef } from '../auth/principal';
@@ -106,6 +106,8 @@ interface OutboundFragment extends OutboundBase {
 
 /** The settled reply. Every broker receives this one. */
 interface OutboundMessage extends OutboundBase {
+  /** The lossless payload. `text` remains its convenience projection for text transports. */
+  readonly content: readonly MessageContent[];
   readonly text: string;
   readonly type: 'message';
 }
@@ -201,6 +203,7 @@ interface OutboundToolCall extends OutboundBase {
  * and the real result arrives later under the same `trackId`.
  */
 interface OutboundToolResponse extends OutboundBase {
+  readonly content: readonly MessageContent[];
   readonly execution: ToolResponseExecution;
   readonly isError: boolean;
   readonly name: string;
@@ -260,6 +263,7 @@ type MessageBody = Extract<
  * a surface redrawing one it already owns needs both sides of it.
  */
 interface HistoryUserMessage {
+  readonly content: readonly MessageContent[];
   readonly principal: PrincipalRef;
   readonly text: string;
   readonly type: 'userMessage';
@@ -324,10 +328,15 @@ interface InboundBase {
  * thing said once, not a second turn.
  */
 interface InboundSpeech extends InboundBase {
+  /**
+   * Structured content is the canonical ingress. `text` is a compatibility path
+   * for text-only brokers and is ignored when `content` is present.
+   */
+  readonly content?: readonly MessageContent[];
   readonly messageId: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly receivedAt?: Date;
-  readonly text: string;
+  readonly text?: string;
 }
 
 /** Someone said something. It waits its turn if the agent is busy. */

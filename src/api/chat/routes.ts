@@ -2,6 +2,7 @@ import { Elysia } from 'elysia';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
+import { speechContentSchema, textFromContent } from '../../content/content';
 import { authGuard } from '../auth/guard';
 
 import type { AuthStore } from '../auth/store';
@@ -43,15 +44,21 @@ const permissionParamsSchema = conversationParamsSchema.extend({
   requestId: z.string().trim().min(1).max(64),
 });
 
-const messageSchema = z.object({
-  /**
-   * The client's own id for what it sent, so a retry after a lost response is
-   * the same message rather than a second turn. Optional: a client that does not
-   * retry has nothing to name.
-   */
-  messageId: z.string().trim().min(1).max(64).optional(),
-  text: z.string().min(1).max(32_000),
-});
+const messageSchema = z
+  .object({
+    /** Structured content is canonical; `text` keeps older text clients compatible. */
+    content: speechContentSchema.optional(),
+    /**
+     * The client's own id for what it sent, so a retry after a lost response is
+     * the same message rather than a second turn. Optional: a client that does not
+     * retry has nothing to name.
+     */
+    messageId: z.string().trim().min(1).max(64).optional(),
+    text: z.string().min(1).max(32_000).optional(),
+  })
+  .refine((body) => body.content !== undefined || body.text !== undefined, {
+    message: 'Provide content or text.',
+  });
 
 const decisionSchema = z.object({
   decision: z.enum(['approve', 'deny']),
@@ -179,11 +186,13 @@ function createChatRoutes(options: ChatRoutesOptions) {
           if (transport === undefined) return status(503, UNAVAILABLE);
 
           const messageId = body.messageId ?? nanoid();
+          const content = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
           transport.submitMessage({
+            content,
             conversationId: params.conversationId,
             messageId,
             senderId: account.accountId,
-            text: body.text,
+            text: textFromContent(content).trim(),
           });
 
           return status(202, { messageId });
@@ -207,11 +216,13 @@ function createChatRoutes(options: ChatRoutesOptions) {
           if (transport === undefined) return status(503, UNAVAILABLE);
 
           const messageId = body.messageId ?? nanoid();
+          const content = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
           transport.submitSteer({
+            content,
             conversationId: params.conversationId,
             messageId,
             senderId: account.accountId,
-            text: body.text,
+            text: textFromContent(content).trim(),
           });
 
           return status(202, { messageId });

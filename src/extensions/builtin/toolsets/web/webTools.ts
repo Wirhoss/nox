@@ -15,6 +15,7 @@ import type { MessageContent } from '../../../../agent/context/message';
  */
 const WEB_SEARCH_AUTHORITY = 'nox.toolset.web.search';
 const WEB_EXTRACT_AUTHORITY = 'nox.toolset.web.extract';
+const WEB_VIEW_IMAGE_AUTHORITY = 'nox.toolset.web.view-image';
 
 /**
  * One shape, built twice over what fills `apiKey`: a reference in the stored
@@ -96,6 +97,14 @@ interface SearxngResult {
   url?: string;
 }
 
+interface CrawlImage {
+  alt?: string;
+  desc?: string;
+  score?: number;
+  src?: string;
+  type?: string;
+}
+
 interface CrawlResult {
   error_message?: string;
   markdown?:
@@ -105,6 +114,7 @@ interface CrawlResult {
         markdown_with_citations?: string;
         raw_markdown?: string;
       };
+  media?: { images?: CrawlImage[] };
   metadata?: { title?: string };
   success?: boolean;
   url?: string;
@@ -164,6 +174,39 @@ function markdownFrom(result: CrawlResult): string {
   );
 }
 
+function resolvedPublicUrl(value: string, pageUrl: string): string | undefined {
+  try {
+    const url = new URL(value, pageUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) return undefined;
+    if (url.username.length > 0 || url.password.length > 0) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function imagesFrom(result: CrawlResult, pageUrl: string, limit: number) {
+  return (result.media?.images ?? [])
+    .flatMap((image) => {
+      const url = typeof image.src === 'string' ? resolvedPublicUrl(image.src, pageUrl) : undefined;
+      if (url === undefined) return [];
+      return [
+        {
+          ...(typeof image.alt === 'string' && image.alt.length > 0 ? { alt: image.alt } : {}),
+          ...(typeof image.desc === 'string' && image.desc.length > 0
+            ? { description: image.desc }
+            : {}),
+          ...(typeof image.score === 'number' && Number.isFinite(image.score)
+            ? { score: image.score }
+            : {}),
+          ...(typeof image.type === 'string' && image.type.length > 0 ? { kind: image.type } : {}),
+          url,
+        },
+      ];
+    })
+    .slice(0, limit);
+}
+
 /** Web search and page extraction backed by configured SearXNG and Crawl4AI services. */
 class WebTools extends ToolSet {
   static readonly configSchema = webToolsConfigSchema;
@@ -186,6 +229,7 @@ class WebTools extends ToolSet {
     if (this.#config.extract !== undefined) {
       this.registerTool(this.#extractTool(this.#config.extract));
     }
+    this.registerTool(this.#viewImageTool());
   }
 
   #searchTool(config: SearchConfig): Tool {
@@ -267,6 +311,13 @@ class WebTools extends ToolSet {
         .max(config.maxCharactersPerPage)
         .default(config.defaultMaxCharactersPerPage)
         .describe('Maximum number of Markdown characters to return for each page.'),
+      maxImagesPerPage: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(50)
+        .default(12)
+        .describe('Maximum discovered image URLs to return for each page.'),
       urls: z
         .array(httpUrlSchema('A public page URL to crawl.'))
         .min(1)
@@ -279,7 +330,7 @@ class WebTools extends ToolSet {
       description: 'Extract web pages and return separate Markdown results for each URL.',
       name: 'web_extract',
       parameters,
-      prepare: ({ maxCharactersPerPage, urls }) => ({
+      prepare: ({ maxCharactersPerPage, maxImagesPerPage, urls }) => ({
         risk: {
           effects: ['network', 'read'],
           resources: urls.map((url) => ({ kind: 'url' as const, value: url })),
@@ -303,14 +354,17 @@ class WebTools extends ToolSet {
           return text({
             results: crawled.map((result, index) => {
               const completeContent = markdownFrom(result);
+              const pageUrl = result.url ?? urls[index] ?? '';
+              const images = imagesFrom(result, pageUrl, maxImagesPerPage);
               return {
                 content: completeContent.slice(0, maxCharactersPerPage),
                 ...(result.success === false
                   ? { error: result.error_message ?? 'Crawl4AI could not crawl this page.' }
                   : {}),
+                ...(images.length === 0 ? {} : { images }),
                 ...(result.metadata?.title === undefined ? {} : { title: result.metadata.title }),
                 truncated: completeContent.length > maxCharactersPerPage,
-                url: result.url ?? urls[index] ?? '',
+                url: pageUrl,
               };
             }),
           });
@@ -322,8 +376,57 @@ class WebTools extends ToolSet {
     };
     return tool;
   }
+
+  #viewImageTool(): Tool {
+    const parameters = z.object({
+      caption: z
+        .string()
+        .trim()
+        .max(500)
+        .optional()
+        .describe('Optional provenance or reason this image was selected.'),
+      url: httpUrlSchema('A public image URL for the multimodal model to inspect.'),
+    });
+
+    const tool: Tool<typeof parameters> = {
+      authority: WEB_VIEW_IMAGE_AUTHORITY,
+      description:
+        'Present one public image URL as visual content to a multimodal model. ' +
+        'Use an image URL discovered by web_extract or web_search.',
+      name: 'web_view_image',
+      parameters,
+      prepare: ({ caption, url }) => ({
+        risk: {
+          effects: ['network', 'read'],
+          resources: [{ kind: 'url', value: url }],
+          reversible: true,
+        },
+        run: () =>
+          Promise.resolve([
+            {
+              text: stableStringify({
+                ...(caption === undefined || caption.length === 0 ? {} : { caption }),
+                url,
+              }),
+              type: 'text' as const,
+            },
+            { source: { type: 'url' as const, url }, type: 'image' as const },
+          ]),
+        title: `View image — ${new URL(url).hostname}`,
+        type: 'immediate',
+      }),
+      risk: { effects: ['network', 'read'], reversible: true },
+    };
+    return tool;
+  }
 }
 
-export { WEB_EXTRACT_AUTHORITY, WEB_SEARCH_AUTHORITY, WebTools, webToolsConfigSchema };
+export {
+  WEB_EXTRACT_AUTHORITY,
+  WEB_SEARCH_AUTHORITY,
+  WEB_VIEW_IMAGE_AUTHORITY,
+  WebTools,
+  webToolsConfigSchema,
+};
 
 export type { WebToolsConfig, WebToolsConfigInput };

@@ -23,7 +23,11 @@ import type { Tool } from '../tool/tool';
 import type { Message, MessageContent } from './context/message';
 import type { AgentEvent } from './events';
 
-const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
+const MODEL: ModelConfig = {
+  inputModalities: ['text'],
+  modelId: 'test-model',
+  outputModalities: ['text'],
+};
 
 type Script = () => AsyncIterable<ProviderSourceEvent>;
 

@@ -29,7 +29,11 @@ import type {
   OutboundRunCompleted,
 } from './broker';
 
-const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
+const MODEL: ModelConfig = {
+  inputModalities: ['text'],
+  modelId: 'test-model',
+  outputModalities: ['text'],
+};
 
 const directories: string[] = [];
 const opened: Database[] = [];
@@ -278,6 +282,21 @@ class TestBroker implements Broker {
     });
   }
 
+  public sayContent(
+    conversationId: string,
+    content: readonly MessageContent[],
+    senderId = 'someone',
+  ): void {
+    this.#messages += 1;
+    this.#host?.receive({
+      content,
+      conversationId,
+      messageId: `m${String(this.#messages)}`,
+      senderId,
+      type: 'message',
+    });
+  }
+
   public answer(
     conversationId: string,
     requestId: string,
@@ -436,6 +455,27 @@ describe('Gateway', () => {
     expect(broker.texts('message')).toEqual(['hola mundo']);
     expect(broker.texts('fragment')).toEqual([]);
     expect(harnessed.application.sessions).toHaveLength(1);
+  });
+
+  test('preserves structured media from broker ingress through transcript and history', async () => {
+    const broker = new TestBroker();
+    const harnessed = await harness(await openDatabase(), broker);
+    const content: MessageContent[] = [
+      { text: 'What is shown here?', type: 'text' },
+      { source: { type: 'url', url: 'https://images.test/object.png' }, type: 'image' },
+    ];
+
+    broker.sayContent('chat-1', content, 'alice');
+    await settle(harnessed);
+
+    const user = harnessed.application.sessions[0]?.session
+      .getTranscript()
+      .find((message) => message.role === 'user');
+    expect(user?.role === 'user' ? user.content : undefined).toEqual(content);
+
+    const history = await broker.history('chat-1');
+    const entry = history?.entries.find((candidate) => candidate.type === 'userMessage');
+    expect(entry?.type === 'userMessage' ? entry.content : undefined).toEqual(content);
   });
 
   test('streams to a broker that says it can show a reply being written', async () => {

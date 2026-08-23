@@ -222,6 +222,33 @@ describe('the chat routes', () => {
     });
   });
 
+  test('accepts structured image content without flattening it to text', async () => {
+    const { accountId, headers, hub, url } = await chatNox();
+    const transport = new RecordingTransport();
+    hub.attach(transport);
+    const content = [
+      { text: 'What is this?', type: 'text' },
+      {
+        source: { type: 'url', url: 'https://images.example.test/object.png' },
+        type: 'image',
+      },
+    ];
+
+    const response = await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
+      body: JSON.stringify({ content }),
+      headers,
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(202);
+    expect(transport.messages[0]).toMatchObject({
+      content,
+      conversationId: CONVERSATION,
+      senderId: accountId,
+      text: 'What is this?',
+    });
+  });
+
   test('keep the message id a client chose, and mint one when it did not', async () => {
     const { headers, hub, url } = await chatNox();
     const transport = new RecordingTransport();
@@ -316,6 +343,7 @@ describe('the chat routes', () => {
 
     await until(() => transport.listeners.size === 1);
     transport.emit({
+      content: [{ text: 'listo', type: 'text' }],
       conversationId: CONVERSATION,
       text: 'listo',
       turnId: 'run-1',
@@ -493,6 +521,7 @@ describe('the chat hub', () => {
         entries: [
           {
             at: '2026-01-01T00:00:00.000Z',
+            content: [{ text: 'hola', type: 'text' }],
             messageId: 'm-1',
             principal: { issuer: 'web', subject: 'esteban' },
             text: 'hola',
@@ -500,6 +529,7 @@ describe('the chat hub', () => {
           },
           {
             at: '2026-01-01T00:00:01.000Z',
+            content: [{ text: 'hola mundo', type: 'text' }],
             messageId: 'm-2',
             text: 'hola mundo',
             type: 'message',

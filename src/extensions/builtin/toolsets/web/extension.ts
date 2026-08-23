@@ -1,7 +1,12 @@
 import { authorities } from '../../../contribution-points/authorities';
 import { toolSetContribution, toolSets } from '../../../contribution-points/toolsets';
 import { defineExtension } from '../../../extension';
-import { WEB_EXTRACT_AUTHORITY, WEB_SEARCH_AUTHORITY, WebTools } from './webTools';
+import {
+  WEB_EXTRACT_AUTHORITY,
+  WEB_SEARCH_AUTHORITY,
+  WEB_VIEW_IMAGE_AUTHORITY,
+  WebTools,
+} from './webTools';
 
 /** Contributes the builtin SearXNG/Crawl4AI web tool set. */
 const webToolsExtension = defineExtension({
@@ -14,6 +19,9 @@ const webToolsExtension = defineExtension({
     });
     context.contributions.register(authorities, WEB_EXTRACT_AUTHORITY, {
       description: 'Fetch and extract the readable content of public web pages.',
+    });
+    context.contributions.register(authorities, WEB_VIEW_IMAGE_AUTHORITY, {
+      description: 'Present a public web image to a multimodal model.',
     });
 
     context.contributions.register(

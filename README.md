@@ -76,6 +76,29 @@ The corresponding field inside `blueprints/nox.json`:
 }
 ```
 
+`web_extract` returns bounded readable Markdown and the image candidates Crawl4AI found.
+`web_view_image` then returns a chosen candidate as image content, so a multimodal model receives
+pixels through its provider adapter rather than an alt string or URL disguised as a tool result.
+
+Model modalities are explicit metadata. A model is text-only until its exact configuration declares
+additional inputs; model IDs are never used as a capability database:
+
+```json
+{
+  "modelId": "vision-model",
+  "contextWindow": 131072,
+  "inputModalities": ["text", "image"],
+  "outputModalities": ["text"]
+}
+```
+
+Input and output capabilities are independent: a vision model can accept `image` while producing
+only `text`. The content envelope itself supports `text`, `image`, `audio`, `video`, and `document`.
+A provider
+adapter must encode every modality it supports and reject the others explicitly. The current OpenAI
+Chat Completions adapter encodes text and images; it does not silently discard declared audio, video,
+or document input.
+
 ### Models for internal tasks
 
 An agent answers people on the `provider`/`model` its blueprint names. Nox also
@@ -134,7 +157,7 @@ them requires a token:
 | Route | What it does |
 |---|---|
 | `GET /api/chat/stream` | Server-sent events for every conversation, named by event type |
-| `POST /api/chat/conversations/:conversationId/messages` | Says something; answers `202`, the reply arrives on the stream |
+| `POST /api/chat/conversations/:conversationId/messages` | Says structured `content` (or legacy `text`); answers `202`, the reply arrives on the stream |
 | `POST /api/chat/conversations/:conversationId/permissions/:requestId` | Answers a pending gate request with `{ "decision": "approve", "scope": "session" }` or `{ "decision": "deny" }` |
 
 A conversation is named by the client and bound to a session by the runtime on

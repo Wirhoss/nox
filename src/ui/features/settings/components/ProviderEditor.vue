@@ -14,9 +14,13 @@ import type { SettingsSectionDefinition } from '../model/sections'
 type EditorMode = 'form' | 'json'
 type RetryInputKey = 'maxRetries' | 'maxRetryDelayMs' | 'retryDelayMs' | 'timeoutMs'
 
+const MODEL_MODALITIES = ['text', 'image', 'audio', 'video', 'document'] as const
+type ModelModality = (typeof MODEL_MODALITIES)[number]
+
 interface ModelDraft extends ConfigValue {
+  inputModalities: string[]
   modelId: string
-  type: string
+  outputModalities: string[]
 }
 
 interface ProviderDraft extends ConfigValue {
@@ -241,13 +245,34 @@ function setRetryNumber(key: RetryInputKey, value: string): void {
   clearFeedback(key)
 }
 
-function setModelField(index: number, field: 'modelId' | 'type', value: string): void {
+function setModelField(index: number, value: string): void {
   const model = draft.value.modelConfigs[index]
   if (model === undefined) return
   const models = draft.value.modelConfigs.map((candidate, candidateIndex) =>
-    candidateIndex === index ? { ...candidate, [field]: value } : candidate,
+    candidateIndex === index ? { ...candidate, modelId: value } : candidate,
   )
   draft.value = { ...draft.value, modelConfigs: models }
+  clearFeedback(`model.${String(index)}.modelId`)
+}
+
+function setModelModality(
+  index: number,
+  field: 'inputModalities' | 'outputModalities',
+  modality: ModelModality,
+  enabled: boolean,
+): void {
+  const model = draft.value.modelConfigs[index]
+  if (model === undefined || modality === 'text') return
+  const current = model[field]
+  const nextModalities = enabled
+    ? [...new Set([...current, modality])]
+    : current.filter((candidate) => candidate !== modality)
+  draft.value = {
+    ...draft.value,
+    modelConfigs: draft.value.modelConfigs.map((candidate, candidateIndex) =>
+      candidateIndex === index ? { ...candidate, [field]: nextModalities } : candidate,
+    ),
+  }
   clearFeedback(`model.${String(index)}.${field}`)
 }
 
@@ -276,7 +301,10 @@ function setModelContext(index: number, value: string): void {
 function addModel(): void {
   draft.value = {
     ...draft.value,
-    modelConfigs: [...draft.value.modelConfigs, { modelId: '', type: 'text' }],
+    modelConfigs: [
+      ...draft.value.modelConfigs,
+      { inputModalities: ['text'], modelId: '', outputModalities: ['text'] },
+    ],
   }
   modelContextInputs.value = [...modelContextInputs.value, '']
   settings.clearMutation()
@@ -399,6 +427,12 @@ function validateForm(): boolean {
     if (context.length > 0 && (!Number.isInteger(Number(context)) || Number(context) <= 0)) {
       errors[`${prefix}.contextWindow`] = 'Use a positive whole number.'
     }
+    if (!model.inputModalities.includes('text')) {
+      errors[`${prefix}.inputModalities`] = 'The chat interface requires text input.'
+    }
+    if (!model.outputModalities.includes('text')) {
+      errors[`${prefix}.outputModalities`] = 'The chat interface requires text output.'
+    }
   })
 
   if (credentialSelection.value === NEW_SECRET) {
@@ -501,15 +535,24 @@ function modelConfigs(value: unknown): ModelDraft[] {
     if (!isConfigValue(candidate)) return []
     return [
       {
-        ...candidate,
+        ...withoutProperty(candidate, 'type'),
+        inputModalities: modalities(candidate.inputModalities),
         modelId: stringValue(candidate.modelId),
-        type: stringValue(candidate.type).length > 0 ? stringValue(candidate.type) : 'text',
+        outputModalities: modalities(candidate.outputModalities),
       },
     ]
   })
 }
 
-/** The ID a reference names, or empty when the field holds no reference. */
+/** Missing capability metadata is deliberately text-only. */
+function modalities(value: unknown): string[] {
+  if (!Array.isArray(value)) return ['text']
+  const declared = [
+    ...new Set(value.filter((candidate): candidate is string => typeof candidate === 'string')),
+  ]
+  return declared.includes('text') ? declared : ['text', ...declared]
+}
+
 function secretReferenceId(value: unknown): string {
   return isConfigValue(value) ? stringValue(value.$secret) : ''
 }
@@ -772,20 +815,8 @@ function withoutProperties(
                     label="Model ID"
                     placeholder="model-id"
                     required
-                    @update:model-value="setModelField(index, 'modelId', $event)"
+                    @update:model-value="setModelField(index, $event)"
                   />
-                  <div class="provider-editor__field">
-                    <label :for="`provider-model-${String(index)}-type`">Model type</label>
-                    <select
-                      :id="`provider-model-${String(index)}-type`"
-                      :value="model.type"
-                      @change="
-                        setModelField(index, 'type', ($event.target as HTMLSelectElement).value)
-                      "
-                    >
-                      <option value="text">Text</option>
-                    </select>
-                  </div>
                   <NoxTextField
                     :id="`provider-model-${String(index)}-context`"
                     :model-value="modelContextInputs[index] ?? ''"
@@ -796,10 +827,74 @@ function withoutProperties(
                     @update:model-value="setModelContext(index, $event)"
                   />
                 </div>
+                <fieldset class="provider-editor__modalities">
+                  <legend>Accepted input modalities</legend>
+                  <label v-for="modality in MODEL_MODALITIES" :key="modality">
+                    <input
+                      type="checkbox"
+                      :checked="model.inputModalities.includes(modality)"
+                      :disabled="modality === 'text'"
+                      @change="
+                        setModelModality(
+                          index,
+                          'inputModalities',
+                          modality,
+                          ($event.target as HTMLInputElement).checked,
+                        )
+                      "
+                    />
+                    <span>{{ modality }}</span>
+                  </label>
+                  <small>
+                    Declare only inputs this exact model accepts. Provider adapters still validate
+                    whether they can encode each modality.
+                  </small>
+                  <p
+                    v-if="fieldErrors[`model.${String(index)}.inputModalities`]"
+                    class="provider-editor__error"
+                  >
+                    {{ fieldErrors[`model.${String(index)}.inputModalities`] }}
+                  </p>
+                </fieldset>
+                <fieldset class="provider-editor__modalities">
+                  <legend>Generated output modalities</legend>
+                  <label v-for="modality in MODEL_MODALITIES" :key="modality">
+                    <input
+                      type="checkbox"
+                      :checked="model.outputModalities.includes(modality)"
+                      :disabled="modality === 'text'"
+                      @change="
+                        setModelModality(
+                          index,
+                          'outputModalities',
+                          modality,
+                          ($event.target as HTMLInputElement).checked,
+                        )
+                      "
+                    />
+                    <span>{{ modality }}</span>
+                  </label>
+                  <small>
+                    Outputs are independent from accepted inputs. The current chat stream always
+                    requires text output.
+                  </small>
+                  <p
+                    v-if="fieldErrors[`model.${String(index)}.outputModalities`]"
+                    class="provider-editor__error"
+                  >
+                    {{ fieldErrors[`model.${String(index)}.outputModalities`] }}
+                  </p>
+                </fieldset>
                 <p
                   v-if="
                     Object.keys(model).some(
-                      (key) => !['contextWindow', 'modelId', 'type'].includes(key),
+                      (key) =>
+                        ![
+                          'contextWindow',
+                          'inputModalities',
+                          'modelId',
+                          'outputModalities',
+                        ].includes(key),
                     )
                   "
                 >
@@ -1186,6 +1281,42 @@ function withoutProperties(
 
 .provider-editor__model > p {
   margin: 0;
+}
+
+.provider-editor__modalities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nox-space-2) var(--nox-space-4);
+  padding: var(--nox-space-3) 0 0;
+  border: 0;
+  border-top: 1px solid var(--nox-border-subtle);
+  margin: 0;
+}
+
+.provider-editor__modalities legend,
+.provider-editor__modalities label,
+.provider-editor__modalities small {
+  color: var(--nox-text-muted);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+}
+
+.provider-editor__modalities legend {
+  width: 100%;
+  padding: 0 0 var(--nox-space-2);
+  color: var(--nox-text-secondary);
+}
+
+.provider-editor__modalities label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nox-space-2);
+  text-transform: capitalize;
+}
+
+.provider-editor__modalities small,
+.provider-editor__modalities .provider-editor__error {
+  width: 100%;
 }
 
 .provider-editor__add-model {

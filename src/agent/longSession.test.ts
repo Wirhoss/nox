@@ -17,7 +17,11 @@ import type { ProviderSourceEvent } from '../provider/stream';
 import type { Tool } from '../tool/tool';
 import type { Message } from './context/message';
 
-const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
+const MODEL: ModelConfig = {
+  inputModalities: ['text'],
+  modelId: 'test-model',
+  outputModalities: ['text'],
+};
 
 /** Small enough that a few turns of tool traffic force both reductions. */
 const CONTEXT_WINDOW = 2400;

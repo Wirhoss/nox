@@ -22,7 +22,11 @@ import type { ProviderSourceEvent } from '../provider/stream';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
 import type { Session } from './session';
 
-const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
+const MODEL: ModelConfig = {
+  inputModalities: ['text'],
+  modelId: 'test-model',
+  outputModalities: ['text'],
+};
 const OTHER_AUTHORITY = 'nox.test.other';
 
 const directories: string[] = [];

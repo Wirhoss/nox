@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type DeepReadonly } from 'vue'
 
+import type { ChatMediaPart } from '../api/chat.schemas'
 import type { ToolActivity } from '../stores/activeSession.store'
 
 interface Props {
@@ -49,6 +50,12 @@ function responseLabel(
 function formatArguments(): string {
   return JSON.stringify(props.item.arguments ?? {}, undefined, 2)
 }
+
+function mediaUrl(part: ChatMediaPart): string {
+  return part.source.type === 'url'
+    ? part.source.url
+    : `data:${part.source.mediaType};base64,${part.source.data}`
+}
 </script>
 
 <template>
@@ -82,7 +89,35 @@ function formatArguments(): string {
               <span>{{ responseLabel(response.execution) }}</span>
               <span>{{ response.isError ? 'error' : 'ok' }}</span>
             </summary>
-            <pre>{{ response.text }}</pre>
+            <pre v-if="response.text.length > 0">{{ response.text }}</pre>
+            <div v-if="response.media.length > 0" class="tool__media">
+              <template
+                v-for="(part, index) in response.media"
+                :key="`${part.type}-${String(index)}`"
+              >
+                <img
+                  v-if="part.type === 'image'"
+                  :src="mediaUrl(part)"
+                  alt="Image returned by this tool"
+                  loading="lazy"
+                />
+                <audio
+                  v-else-if="part.type === 'audio'"
+                  :src="mediaUrl(part)"
+                  controls
+                  preload="metadata"
+                ></audio>
+                <video
+                  v-else-if="part.type === 'video'"
+                  :src="mediaUrl(part)"
+                  controls
+                  preload="metadata"
+                ></video>
+                <a v-else :href="mediaUrl(part)" target="_blank" rel="noopener noreferrer">
+                  Open returned document
+                </a>
+              </template>
+            </div>
           </details>
         </li>
       </ol>
@@ -204,6 +239,29 @@ function formatArguments(): string {
   overflow: auto;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.tool__media {
+  display: grid;
+  gap: var(--nox-space-2);
+  margin-top: var(--nox-space-2);
+}
+
+.tool__media img,
+.tool__media video {
+  width: 100%;
+  max-height: 20rem;
+  border: 1px solid var(--nox-border-subtle);
+  object-fit: contain;
+  background: var(--nox-canvas);
+}
+
+.tool__media audio {
+  width: 100%;
+}
+
+.tool__media a {
+  color: var(--nox-action-primary);
 }
 
 .tool__responses {

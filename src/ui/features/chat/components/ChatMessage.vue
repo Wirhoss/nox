@@ -6,6 +6,7 @@ import ReasoningActivityCard from './ReasoningActivityCard.vue'
 import RunActivityCard from './RunActivityCard.vue'
 import ToolActivityCard from './ToolActivityCard.vue'
 
+import type { ChatMediaPart } from '../api/chat.schemas'
 import type {
   AssistantItem,
   ReasoningActivity,
@@ -23,11 +24,16 @@ interface Props {
 
 const props = defineProps<Props>()
 const detailsOpen = ref(false)
-const hasDetails = computed(
-  () => props.item.kind === 'assistant' && props.activity !== undefined,
-)
+const hasDetails = computed(() => props.item.kind === 'assistant' && props.activity !== undefined)
 const renderedMessage = computed(() => renderMarkdown(props.item.text))
 const streaming = computed(() => props.item.kind === 'assistant' && props.item.streaming)
+
+function mediaUrl(part: ChatMediaPart): string {
+  return part.source.type === 'url'
+    ? part.source.url
+    : `data:${part.source.mediaType};base64,${part.source.data}`
+}
+
 const timestamp = computed(() =>
   new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
@@ -52,16 +58,32 @@ const timestamp = computed(() =>
 
       <div class="message__process-body" aria-label="Response process">
         <template v-for="processItem in props.processItems" :key="processItem.id">
-          <ReasoningActivityCard
-            v-if="processItem.kind === 'reasoning'"
-            :item="processItem"
-          />
+          <ReasoningActivityCard v-if="processItem.kind === 'reasoning'" :item="processItem" />
           <ToolActivityCard v-else :item="processItem" />
         </template>
       </div>
     </details>
 
     <header class="message__author">{{ props.item.kind === 'user' ? 'YOU' : 'NOX' }}</header>
+    <div v-if="props.item.media.length > 0" class="message__media">
+      <template v-for="(part, index) in props.item.media" :key="`${part.type}-${String(index)}`">
+        <img
+          v-if="part.type === 'image'"
+          :src="mediaUrl(part)"
+          alt="Image attached to this message"
+          loading="lazy"
+        />
+        <audio v-else-if="part.type === 'audio'" :src="mediaUrl(part)" controls preload="metadata">
+          Audio attached to this message.
+        </audio>
+        <video v-else-if="part.type === 'video'" :src="mediaUrl(part)" controls preload="metadata">
+          Video attached to this message.
+        </video>
+        <a v-else :href="mediaUrl(part)" target="_blank" rel="noopener noreferrer">
+          Open attached document
+        </a>
+      </template>
+    </div>
     <!-- markdown.ts escapes raw HTML and only emits HTML from trusted renderers. -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <div
@@ -71,7 +93,11 @@ const timestamp = computed(() =>
       v-html="renderedMessage"
     ></div>
     <footer class="message__footer">
-      <time class="message__timestamp" :datetime="props.item.createdAt" :title="props.item.createdAt">
+      <time
+        class="message__timestamp"
+        :datetime="props.item.createdAt"
+        :title="props.item.createdAt"
+      >
         {{ timestamp }}
       </time>
 
@@ -270,6 +296,33 @@ const timestamp = computed(() =>
   .message__process-chevron {
     transition: none;
   }
+}
+
+.message__media {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: var(--nox-space-3);
+}
+
+.message__media img,
+.message__media video {
+  display: block;
+  width: 100%;
+  max-height: 28rem;
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-control);
+  object-fit: contain;
+  background: var(--nox-canvas);
+}
+
+.message__media audio {
+  width: 100%;
+}
+
+.message__media a {
+  color: var(--nox-action-primary);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-sm);
 }
 
 .message__text {

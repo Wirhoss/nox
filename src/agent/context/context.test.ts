@@ -173,7 +173,11 @@ describe('Context compaction', () => {
     const beginningTokens = estimator.estimateMessage(requireValue(messages[0]));
     const endTokens = estimator.estimateMessage(requireValue(messages[3]));
     const provider = new SummaryProvider(['small handoff']);
-    const compactionModel: ModelConfig = { modelId: 'compact-model', type: 'text' };
+    const compactionModel: ModelConfig = {
+      inputModalities: ['text'],
+      modelId: 'compact-model',
+      outputModalities: ['text'],
+    };
     const context = new Context('system', provider, {
       compactGuardBeginningTokens: beginningTokens,
       compactionModel,

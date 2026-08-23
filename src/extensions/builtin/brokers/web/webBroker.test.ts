@@ -136,6 +136,7 @@ describe('the web broker', () => {
       type: 'fragment',
     });
     await broker.deliver({
+      content: [{ text: 'listo', type: 'text' }],
       conversationId: CONVERSATION,
       text: 'listo',
       turnId: 'run-1',
@@ -150,7 +151,13 @@ describe('the web broker', () => {
 
     expect(rendered).toEqual([
       { conversationId: CONVERSATION, text: 'lis', turnId: 'run-1', type: 'fragment' },
-      { conversationId: CONVERSATION, text: 'listo', turnId: 'run-1', type: 'message' },
+      {
+        content: [{ text: 'listo', type: 'text' }],
+        conversationId: CONVERSATION,
+        text: 'listo',
+        turnId: 'run-1',
+        type: 'message',
+      },
       {
         conversationId: CONVERSATION,
         text: 'the provider refused',
@@ -227,6 +234,7 @@ describe('the web broker', () => {
     // The transcript already has the reply; this surface has no memory to keep
     // it in, and a closed tab is an ordinary state.
     await broker.deliver({
+      content: [{ text: 'nobody heard this', type: 'text' }],
       conversationId: CONVERSATION,
       text: 'nobody heard this',
       turnId: 'run-1',
@@ -235,6 +243,7 @@ describe('the web broker', () => {
 
     broker.subscribe((event) => rendered.push(event));
     await broker.deliver({
+      content: [{ text: 'listo', type: 'text' }],
       conversationId: CONVERSATION,
       text: 'listo',
       turnId: 'run-2',
@@ -280,6 +289,7 @@ describe('the web broker', () => {
       type: 'toolCall',
     });
     await broker.deliver({
+      content: [{ text: 'sent', type: 'text' }],
       conversationId: CONVERSATION,
       execution: 'immediate',
       isError: false,
@@ -300,6 +310,7 @@ describe('the web broker', () => {
         type: 'toolCall',
       },
       {
+        content: [{ text: 'sent', type: 'text' }],
         conversationId: CONVERSATION,
         execution: 'immediate',
         isError: false,
@@ -411,6 +422,7 @@ describe('the web broker', () => {
     const { broker, received } = await startedBroker();
 
     broker.submitMessage({
+      content: [{ text: 'hola', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
@@ -419,10 +431,10 @@ describe('the web broker', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({
+      content: [{ text: 'hola', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
-      text: 'hola',
       type: 'message',
     });
   });
@@ -460,6 +472,7 @@ describe('the web broker', () => {
     await broker.stop();
 
     broker.submitMessage({
+      content: [{ text: 'hola', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
@@ -473,6 +486,7 @@ describe('the web broker', () => {
     const { broker, received } = await startedBroker();
 
     broker.submitSteer({
+      content: [{ text: 'mejor no', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
@@ -482,10 +496,10 @@ describe('the web broker', () => {
     // Interrupting and talking reach the gateway the same way and mean different
     // things; which one it was is on the event, never inferred from the words.
     expect(received[0]).toMatchObject({
+      content: [{ text: 'mejor no', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
-      text: 'mejor no',
       type: 'steer',
     });
   });
@@ -554,6 +568,7 @@ describe('the web broker', () => {
           entries: [
             {
               at: new Date('2026-01-01T00:00:00.000Z'),
+              content: [{ text: 'hola', type: 'text' }],
               messageId: 'm-1',
               principal: { issuer: 'web', subject: 'account-1' },
               text: 'hola',
@@ -561,6 +576,7 @@ describe('the web broker', () => {
             },
             {
               at: new Date('2026-01-01T00:00:01.000Z'),
+              content: [{ text: 'hola mundo', type: 'text' }],
               messageId: 'm-2',
               text: 'hola mundo',
               type: 'message',
@@ -592,6 +608,7 @@ describe('the web broker', () => {
     expect(history?.entries).toEqual([
       {
         at: '2026-01-01T00:00:00.000Z',
+        content: [{ text: 'hola', type: 'text' }],
         messageId: 'm-1',
         principal: { issuer: 'web', subject: 'account-1' },
         text: 'hola',
@@ -599,6 +616,7 @@ describe('the web broker', () => {
       },
       {
         at: '2026-01-01T00:00:01.000Z',
+        content: [{ text: 'hola mundo', type: 'text' }],
         messageId: 'm-2',
         text: 'hola mundo',
         type: 'message',

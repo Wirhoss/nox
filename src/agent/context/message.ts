@@ -1,23 +1,25 @@
 import { type MessageOrigin, principalToString } from '../../auth/principal';
+import {
+  type ContentAudio,
+  type ContentDocument,
+  type ContentImage,
+  type ContentPart,
+  type ContentText,
+  contentToString,
+  type ContentVideo,
+} from '../../content/content';
 
 interface MessageBase {
   readonly createdAt: Date;
   readonly messageId: string;
 }
 
-interface MessageContentText {
-  readonly type: 'text';
-  readonly text: string;
-}
-
-interface MessageContentImage {
-  readonly type: 'image';
-  readonly source:
-    | { readonly type: 'base64'; readonly mediaType: string; readonly data: string }
-    | { readonly type: 'url'; readonly url: string };
-}
-
-type MessageContent = MessageContentImage | MessageContentText;
+type MessageContent = ContentPart;
+type MessageContentText = ContentText;
+type MessageContentImage = ContentImage;
+type MessageContentAudio = ContentAudio;
+type MessageContentVideo = ContentVideo;
+type MessageContentDocument = ContentDocument;
 
 interface AssistantMessage extends MessageBase {
   readonly role: 'assistant';
@@ -105,21 +107,6 @@ type AssertNever<T extends never> = T;
  * all of them.
  */
 type _EveryRoleIsListed = AssertNever<Exclude<Message['role'], MessageRole>>;
-
-function contentToString(content: readonly MessageContent[]): string {
-  return content
-    .map((item) => {
-      switch (item.type) {
-        case 'text':
-          return item.text;
-        case 'image':
-          return item.source.type === 'base64'
-            ? `[Image: ${item.source.mediaType}]`
-            : `[Image: ${item.source.url}]`;
-      }
-    })
-    .join('\n');
-}
 
 /** The trailing fields every rendered message ends with. */
 function messageIdentityToString(message: Message): string {
@@ -250,8 +237,11 @@ export type {
   FoldedMessage,
   Message,
   MessageContent,
+  MessageContentAudio,
+  MessageContentDocument,
   MessageContentImage,
   MessageContentText,
+  MessageContentVideo,
   MessageRole,
   ReasoningMessage,
   ToolCallMessage,

@@ -1,5 +1,17 @@
 import { z } from 'zod'
 
+const contentSourceSchema = z.discriminatedUnion('type', [
+  z.object({ data: z.string(), mediaType: z.string(), type: z.literal('base64') }),
+  z.object({ mediaType: z.string().optional(), type: z.literal('url'), url: z.string().url() }),
+])
+const contentPartSchema = z.discriminatedUnion('type', [
+  z.object({ text: z.string(), type: z.literal('text') }),
+  z.object({ source: contentSourceSchema, type: z.literal('image') }),
+  z.object({ source: contentSourceSchema, type: z.literal('audio') }),
+  z.object({ source: contentSourceSchema, type: z.literal('video') }),
+  z.object({ source: contentSourceSchema, type: z.literal('document') }),
+])
+
 const toolEffectSchema = z.enum([
   'authentication',
   'credential',
@@ -76,7 +88,11 @@ const chatEventSchema = z.discriminatedUnion('type', [
   eventBase.extend({ type: z.literal('contextUsage'), usage: contextUsageSchema }),
   eventBase.extend({ text: z.string(), type: z.literal('error') }),
   eventBase.extend({ text: z.string(), type: z.literal('fragment') }),
-  eventBase.extend({ text: z.string(), type: z.literal('message') }),
+  eventBase.extend({
+    content: z.array(contentPartSchema).optional(),
+    text: z.string(),
+    type: z.literal('message'),
+  }),
   eventBase.extend({ request: permissionRequestSchema, type: z.literal('permission') }),
   eventBase.extend({
     outcome: z.object({
@@ -114,6 +130,7 @@ const chatEventSchema = z.discriminatedUnion('type', [
     type: z.literal('toolCall'),
   }),
   eventBase.extend({
+    content: z.array(contentPartSchema).optional(),
     execution: z.enum(['deferredAck', 'deferredResult', 'immediate', 'permissionPending']),
     isError: z.boolean(),
     name: z.string(),
@@ -136,7 +153,11 @@ const historyEntrySchema = z.discriminatedUnion('type', [
     text: z.string(),
     type: z.literal('contextChange'),
   }),
-  historyEntryBase.extend({ text: z.string(), type: z.literal('message') }),
+  historyEntryBase.extend({
+    content: z.array(contentPartSchema).optional(),
+    text: z.string(),
+    type: z.literal('message'),
+  }),
   historyEntryBase.extend({ text: z.string(), type: z.literal('reasoning') }),
   historyEntryBase.extend({
     arguments: z.record(z.unknown()),
@@ -145,6 +166,7 @@ const historyEntrySchema = z.discriminatedUnion('type', [
     type: z.literal('toolCall'),
   }),
   historyEntryBase.extend({
+    content: z.array(contentPartSchema).optional(),
     execution: z.enum(['deferredAck', 'deferredResult', 'immediate', 'permissionPending']),
     isError: z.boolean(),
     name: z.string(),
@@ -153,6 +175,7 @@ const historyEntrySchema = z.discriminatedUnion('type', [
     type: z.literal('toolResponse'),
   }),
   historyEntryBase.extend({
+    content: z.array(contentPartSchema).optional(),
     principal: z.object({ issuer: z.string(), subject: z.string() }),
     text: z.string(),
     type: z.literal('userMessage'),
@@ -194,6 +217,8 @@ const acceptedDecisionSchema = z.object({ requestId: z.string().min(1) })
 type AcceptedCommand = z.infer<typeof acceptedCommandSchema>
 type AcceptedDecision = z.infer<typeof acceptedDecisionSchema>
 type AcceptedMessage = z.infer<typeof acceptedMessageSchema>
+type ChatContentPart = z.infer<typeof contentPartSchema>
+type ChatMediaPart = Exclude<ChatContentPart, { type: 'text' }>
 type ChatCommand = z.infer<typeof commandSchema>
 type ChatContextUsage = z.infer<typeof contextUsageSchema>
 type ChatConversation = z.infer<typeof conversationSchema>
@@ -221,11 +246,13 @@ export type {
   AcceptedDecision,
   AcceptedMessage,
   ChatCommand,
+  ChatContentPart,
   ChatContextUsage,
   ChatConversation,
   ChatEvent,
   ChatHistory,
   ChatHistoryEntry,
+  ChatMediaPart,
   ChatPermissionRequest,
   ChatUsage,
   PermissionOutcome,

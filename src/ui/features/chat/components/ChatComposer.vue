@@ -6,8 +6,17 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { useActiveSessionStore } from '../stores/activeSession.store'
 import ContextGauge from './ContextGauge.vue'
 
+import type { ChatContentPart, ChatMediaPart } from '../api/chat.schemas'
+
+const MAX_ATTACHMENTS = 4
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+const SUPPORTED_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp'])
+
 const session = useActiveSessionStore()
 const text = ref('')
+const attachments = ref<ChatMediaPart[]>([])
+const attachmentError = ref<string>()
+const fileInput = ref<HTMLInputElement>()
 const commandError = ref<string>()
 const commandPicker = ref<HTMLElement>()
 const commandSearch = ref<HTMLInputElement>()
@@ -22,9 +31,11 @@ const filteredCommands = computed(() => {
       command.description.toLocaleLowerCase().includes(query),
   )
 })
-const canSubmit = computed(() => session.canSend && text.value.trim().length > 0)
+const canSubmit = computed(
+  () => session.canSend && (text.value.trim().length > 0 || attachments.value.length > 0),
+)
 const buttonLabel = computed(() => {
-  if (text.value.trimStart().startsWith('/')) return 'Run command'
+  if (attachments.value.length === 0 && text.value.trimStart().startsWith('/')) return 'Run command'
   return session.sendMode === 'steer' ? 'Steer' : 'Execute'
 })
 const placeholder = computed(() =>
@@ -53,7 +64,7 @@ async function submit(): Promise<void> {
   commandError.value = undefined
 
   const value = text.value.trim()
-  if (value.startsWith('/')) {
+  if (attachments.value.length === 0 && value.startsWith('/')) {
     const parsed = parseCommand(value)
     if (typeof parsed === 'string') {
       commandError.value = parsed
@@ -63,7 +74,79 @@ async function submit(): Promise<void> {
     return
   }
 
-  if (await session.send(value)) text.value = ''
+  const content: ChatContentPart[] = [
+    ...(value.length === 0 ? [] : [{ text: value, type: 'text' as const }]),
+    ...attachments.value,
+  ]
+  if (await session.sendContent(content)) {
+    text.value = ''
+    attachments.value = []
+    attachmentError.value = undefined
+    if (fileInput.value !== undefined) fileInput.value.value = ''
+  }
+}
+
+async function chooseFiles(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const files = [...(input.files ?? [])]
+  attachmentError.value = undefined
+
+  for (const file of files) {
+    if (attachments.value.length >= MAX_ATTACHMENTS) {
+      attachmentError.value = `Attach at most ${String(MAX_ATTACHMENTS)} images per message.`
+      break
+    }
+    if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
+      attachmentError.value = `${file.name} is not a supported image format.`
+      continue
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      attachmentError.value = `${file.name} is larger than 5 MiB.`
+      continue
+    }
+
+    try {
+      attachments.value = [
+        ...attachments.value,
+        {
+          source: { data: await fileBase64(file), mediaType: file.type, type: 'base64' },
+          type: 'image',
+        },
+      ]
+    } catch {
+      attachmentError.value = `${file.name} could not be read.`
+    }
+  }
+  input.value = ''
+}
+
+function fileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => {
+      reject(reader.error ?? new Error(`Could not read ${file.name}.`))
+    }
+    reader.onload = () => {
+      const value = reader.result
+      if (typeof value !== 'string') {
+        reject(new Error(`Could not encode ${file.name}.`))
+        return
+      }
+      resolve(value.slice(value.indexOf(',') + 1))
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function attachmentUrl(part: ChatMediaPart): string {
+  return part.source.type === 'url'
+    ? part.source.url
+    : `data:${part.source.mediaType};base64,${part.source.data}`
+}
+
+function removeAttachment(index: number): void {
+  attachments.value = attachments.value.filter((_, candidate) => candidate !== index)
+  attachmentError.value = undefined
 }
 
 function chooseCommand(command: string): void {
@@ -133,6 +216,9 @@ function onKeydown(event: KeyboardEvent): void {
     <p v-if="commandError !== undefined" class="composer__error" role="alert">
       {{ commandError }}
     </p>
+    <p v-if="attachmentError !== undefined" class="composer__error" role="alert">
+      {{ attachmentError }}
+    </p>
 
     <label class="composer__label" for="chat-message">Tell Nox what needs to be done</label>
     <textarea
@@ -145,6 +231,19 @@ function onKeydown(event: KeyboardEvent): void {
       :placeholder="placeholder"
       @keydown="onKeydown"
     ></textarea>
+
+    <ul v-if="attachments.length > 0" class="composer__attachments" aria-label="Attachments">
+      <li v-for="(part, index) in attachments" :key="index">
+        <img :src="attachmentUrl(part)" alt="Selected image preview" />
+        <button
+          type="button"
+          :aria-label="`Remove image ${String(index + 1)}`"
+          @click="removeAttachment(index)"
+        >
+          Remove
+        </button>
+      </li>
+    </ul>
 
     <footer class="composer__footer">
       <div class="composer__meta">
@@ -200,12 +299,24 @@ function onKeydown(event: KeyboardEvent): void {
         <span>{{ status }}</span>
       </div>
       <div class="composer__actions">
-        <ContextGauge :usage="session.contextUsage" />
-        <NoxButton
-          :busy="session.run.type === 'sending'"
-          :disabled="!canSubmit"
-          @click="submit()"
+        <input
+          ref="fileInput"
+          class="composer__file-input"
+          type="file"
+          accept="image/gif,image/jpeg,image/png,image/webp"
+          multiple
+          @change="chooseFiles"
+        />
+        <button
+          class="composer__attach"
+          type="button"
+          :disabled="!session.canSend || attachments.length >= MAX_ATTACHMENTS"
+          @click="fileInput?.click()"
         >
+          Attach image
+        </button>
+        <ContextGauge :usage="session.contextUsage" />
+        <NoxButton :busy="session.run.type === 'sending'" :disabled="!canSubmit" @click="submit()">
           {{ buttonLabel }}
         </NoxButton>
       </div>
@@ -225,6 +336,71 @@ function onKeydown(event: KeyboardEvent): void {
   &:focus-within {
     border-color: var(--nox-action-primary);
   }
+}
+
+.composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nox-space-3);
+  margin: 0;
+  padding: 0 var(--nox-space-4) var(--nox-space-3);
+  list-style: none;
+}
+
+.composer__attachments li {
+  position: relative;
+  width: 6rem;
+  height: 6rem;
+}
+
+.composer__attachments img {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-control);
+  object-fit: cover;
+}
+
+.composer__attachments button {
+  position: absolute;
+  top: var(--nox-space-1);
+  right: var(--nox-space-1);
+  padding: 0.15rem 0.3rem;
+  border: 1px solid var(--nox-border-strong);
+  color: var(--nox-text-primary);
+  background: color-mix(in srgb, var(--nox-canvas) 88%, transparent);
+  font-family: var(--nox-font-mono);
+  font-size: 0.55rem;
+  cursor: pointer;
+}
+
+.composer__file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.composer__attach {
+  padding: var(--nox-space-2) var(--nox-space-3);
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-control);
+  color: var(--nox-text-secondary);
+  background: transparent;
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  cursor: pointer;
+}
+
+.composer__attach:hover:not(:disabled) {
+  border-color: var(--nox-action-primary);
+  color: var(--nox-action-primary);
+}
+
+.composer__attach:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .composer__command-picker {

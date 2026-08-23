@@ -22,7 +22,7 @@ import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
-import type { Message, UserMessage } from './context/message';
+import type { Message, MessageContent, UserMessage } from './context/message';
 import type { ContextOptions, ContextUsage } from './context/options';
 import type { AgentEvent } from './events';
 
@@ -56,9 +56,11 @@ interface SessionOptions extends RunnerOptions {
   titleProvider?: ChatProvider;
 }
 
-function toUserMessage(text: string, origin: MessageOrigin): UserMessage {
+type UserMessageInput = readonly MessageContent[] | string;
+
+function toUserMessage(input: UserMessageInput, origin: MessageOrigin): UserMessage {
   return {
-    content: [{ text, type: 'text' }],
+    content: typeof input === 'string' ? [{ text: input, type: 'text' }] : [...input],
     createdAt: new Date(),
     messageId: nanoid(),
     origin,
@@ -294,13 +296,13 @@ class Session {
     return this.#context.getFullHistory();
   }
 
-  /** Says something as a principal. There is no unattributed way in. */
-  public send(text: string, origin: MessageOrigin): void {
-    this.#runner.send(toUserMessage(text, origin));
+  /** Says structured content as a principal. There is no unattributed way in. */
+  public send(content: UserMessageInput, origin: MessageOrigin): void {
+    this.#runner.send(toUserMessage(content, origin));
   }
 
-  public steer(text: string, origin: MessageOrigin): Promise<void> {
-    return this.#runner.steer(toUserMessage(text, origin));
+  public steer(content: UserMessageInput, origin: MessageOrigin): Promise<void> {
+    return this.#runner.steer(toUserMessage(content, origin));
   }
 
   /** Ends the session and waits for what it wrote to reach storage. */

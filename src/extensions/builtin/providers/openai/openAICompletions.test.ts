@@ -82,8 +82,9 @@ async function run(
   instance: OpenAICompletions,
   history: Message[] = [],
   tools: Tool[] = [],
+  model?: ModelConfig,
 ): Promise<ProviderStreamEvent[]> {
-  return collect(instance.getMessageStream('be brief', history, tools));
+  return collect(instance.getMessageStream('be brief', history, tools, { model }));
 }
 
 function message(partial: Partial<Message> & Pick<Message, 'role'>): Message {
@@ -281,6 +282,114 @@ describe('OpenAICompletions message mapping', () => {
     ]);
   });
 
+  test('keeps tool responses contiguous and then presents returned images visually', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(
+      provider(),
+      [
+        message({ content: [], role: 'assistant' }),
+        message({ arguments: {}, name: 'first', role: 'toolCall', trackId: 'call_1' }),
+        message({ arguments: {}, name: 'second', role: 'toolCall', trackId: 'call_2' }),
+        message({
+          execution: 'immediate',
+          name: 'first',
+          response: [
+            { text: 'candidate selected', type: 'text' },
+            { source: { type: 'url', url: 'https://img.test/a.png' }, type: 'image' },
+          ],
+          role: 'toolResponse',
+          trackId: 'call_1',
+        }),
+        message({
+          execution: 'immediate',
+          name: 'second',
+          response: [{ text: 'metadata ready', type: 'text' }],
+          role: 'toolResponse',
+          trackId: 'call_2',
+        }),
+      ],
+      [],
+      {
+        inputModalities: ['text', 'image'],
+        modelId: 'gpt-vision',
+        outputModalities: ['text'],
+      },
+    );
+
+    expect(requests[0]?.body.messages).toEqual([
+      { content: 'be brief', role: 'system' },
+      {
+        content: null,
+        role: 'assistant',
+        tool_calls: [
+          { function: { arguments: '{}', name: 'first' }, id: 'call_1', type: 'function' },
+          { function: { arguments: '{}', name: 'second' }, id: 'call_2', type: 'function' },
+        ],
+      },
+      { content: 'candidate selected', role: 'tool', tool_call_id: 'call_1' },
+      { content: 'metadata ready', role: 'tool', tool_call_id: 'call_2' },
+      {
+        content: [
+          { text: '[media returned by first (call_1)]\n', type: 'text' },
+          { image_url: { url: 'https://img.test/a.png' }, type: 'image_url' },
+        ],
+        role: 'user',
+      },
+    ]);
+  });
+
+  test('refuses undeclared model input instead of silently discarding it', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    const events = await run(
+      provider(),
+      [
+        message({
+          content: [{ source: { type: 'url', url: 'https://img.test/a.png' }, type: 'image' }],
+          role: 'user',
+        }),
+      ],
+      [],
+      {
+        inputModalities: ['text'],
+        modelId: 'text-only',
+        outputModalities: ['text'],
+      },
+    );
+
+    expect(events.at(-1)).toMatchObject({ error: { code: 'invalid_request' }, type: 'error' });
+    expect(requests).toHaveLength(0);
+  });
+
+  test('reports modalities this adapter cannot encode even when the model accepts them', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    const events = await run(
+      provider(),
+      [
+        message({
+          content: [
+            {
+              source: { data: 'YWJj', mediaType: 'audio/wav', type: 'base64' },
+              type: 'audio',
+            },
+          ],
+          role: 'user',
+        }),
+      ],
+      [],
+      {
+        inputModalities: ['text', 'audio'],
+        modelId: 'audio-model',
+        outputModalities: ['text'],
+      },
+    );
+
+    expect(events.at(-1)).toMatchObject({ error: { code: 'invalid_request' }, type: 'error' });
+    expect(requests).toHaveLength(0);
+  });
+
   test('rides a fold onto a textless assistant anchor after reasoning', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
@@ -329,7 +438,11 @@ describe('OpenAICompletions session regression', () => {
   test('persists and replays a folded tool-only reasoning turn into the next request', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nox-openai-fold-'));
     const database = await Database.open({ path: join(directory, 'nox.db') });
-    const model: ModelConfig = { modelId: 'gpt-test', type: 'text' };
+    const model: ModelConfig = {
+      inputModalities: ['text'],
+      modelId: 'gpt-test',
+      outputModalities: ['text'],
+    };
     const bulkyEcho: Tool = {
       ...echoTool,
       prepare: () => ({

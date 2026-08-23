@@ -506,7 +506,11 @@ function modelConfigFor(
   modelId: string,
   generation: Blueprint['generation'] = {},
 ): ModelConfig {
-  const configured = provider.getModelConfig(modelId) ?? { modelId, type: 'text' };
+  const configured = provider.getModelConfig(modelId) ?? {
+    inputModalities: ['text'] as const,
+    modelId,
+    outputModalities: ['text'] as const,
+  };
   return { ...configured, ...generation };
 }
 

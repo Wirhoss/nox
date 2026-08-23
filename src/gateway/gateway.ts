@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 
+import { hasUsableContent, textFromContent } from '../content/content';
 import { type ConversationKey, ConversationStore } from '../database/conversationStore';
 import { SessionStore } from '../database/sessionStore';
 import { type Logger, silentLogger } from '../logger/logger';
@@ -97,11 +98,7 @@ function keyOf(brokerId: string, conversationId: string): string {
 }
 
 function textOf(content: readonly MessageContent[]): string {
-  return content
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('')
-    .trim();
+  return textFromContent(content).trim();
 }
 
 /**
@@ -114,7 +111,9 @@ function bodyOf(broker: Broker, message: Message): MessageBody | undefined {
   switch (message.role) {
     case 'assistant': {
       const text = textOf(message.content);
-      return text.length === 0 ? undefined : { text, type: 'message' };
+      return hasUsableContent(message.content)
+        ? { content: message.content, text, type: 'message' }
+        : undefined;
     }
     case 'compacted':
       return shows(broker, 'contextChanges')
@@ -151,6 +150,7 @@ function bodyOf(broker: Broker, message: Message): MessageBody | undefined {
       return shows(broker, 'toolActivity')
         ? {
             execution: message.execution,
+            content: message.response,
             isError: message.isError === true,
             name: message.name,
             text: textOf(message.response),
@@ -179,6 +179,7 @@ function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | un
     return {
       at,
       messageId,
+      content: message.content,
       principal: message.origin.principal,
       text: textOf(message.content),
       type: 'userMessage',
@@ -354,8 +355,10 @@ class Gateway implements MessageGateway {
    * talking: it is attributed, deduplicated and serialized like anything else.
    */
   async #handleSpeech(grant: BrokerGrant, message: InboundMessage | InboundSteer): Promise<void> {
-    const text = message.text.trim();
-    if (text.length === 0) return;
+    const content = message.content ?? [
+      { text: message.text?.trim() ?? '', type: 'text' as const },
+    ];
+    if (!hasUsableContent(content)) return;
 
     const binding = this.#bindingFor(grant, message.conversationId);
     const conversation = await this.#attach(grant, binding, message.conversationId);
@@ -388,9 +391,9 @@ class Gateway implements MessageGateway {
     };
 
     if (message.type === 'steer') {
-      await conversation.session.steer(text, origin);
+      await conversation.session.steer(content, origin);
     } else {
-      conversation.session.send(text, origin);
+      conversation.session.send(content, origin);
     }
     await this.#store.touch(conversation.key);
   }

@@ -312,9 +312,7 @@ describe('active chat event projection', () => {
         risk: { effects: ['network'], reversible: false },
         runId: 'run-1',
         sessionId: 'session-1',
-        signals: [
-          { code: 'external', reason: 'Leaves the machine.', severity: 'approval' },
-        ],
+        signals: [{ code: 'external', reason: 'Leaves the machine.', severity: 'approval' }],
         title: 'Send email',
         toolName: 'send_email',
         toolSetId: 'mail',
@@ -503,17 +501,39 @@ describe('active chat surface integration', () => {
     })
   })
 
+  it('sends image content without flattening it into the text field', async () => {
+    vi.spyOn(chatApi, 'listCommands').mockResolvedValue([])
+    vi.spyOn(chatApi, 'listConversations').mockResolvedValue([])
+    const sendMessage = vi
+      .spyOn(chatApi, 'sendMessage')
+      .mockResolvedValue({ messageId: 'message-image' })
+    await session.initialize()
+
+    const content = [
+      { text: 'Inspect this.', type: 'text' as const },
+      {
+        source: { type: 'url' as const, url: 'https://images.example.test/object.png' },
+        type: 'image' as const,
+      },
+    ]
+    expect(await session.sendContent(content)).toBe(true)
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content, text: 'Inspect this.' }),
+    )
+    expect(session.items.find((item) => item.kind === 'user')).toMatchObject({
+      media: [{ type: 'image' }],
+      text: 'Inspect this.',
+    })
+  })
+
   it('steers an active run and invokes commands from the published catalog', async () => {
     vi.spyOn(chatApi, 'listCommands').mockResolvedValue([
       { description: 'Stops the run.', name: 'stop', parameters: { type: 'object' } },
     ])
     vi.spyOn(chatApi, 'listConversations').mockResolvedValue([])
-    const sendSteer = vi
-      .spyOn(chatApi, 'sendSteer')
-      .mockResolvedValue({ messageId: 'steer-1' })
-    const submitCommand = vi
-      .spyOn(chatApi, 'submitCommand')
-      .mockResolvedValue({ command: 'stop' })
+    const sendSteer = vi.spyOn(chatApi, 'sendSteer').mockResolvedValue({ messageId: 'steer-1' })
+    const submitCommand = vi.spyOn(chatApi, 'submitCommand').mockResolvedValue({ command: 'stop' })
 
     await session.initialize()
     session.applyEvent({
@@ -528,7 +548,10 @@ describe('active chat surface integration', () => {
     expect(session.sendMode).toBe('steer')
     expect(await session.send('Change direction.')).toBe(true)
     expect(sendSteer).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: session.conversationId, text: 'Change direction.' }),
+      expect.objectContaining({
+        conversationId: session.conversationId,
+        text: 'Change direction.',
+      }),
     )
 
     expect(await session.invokeCommand('stop', { scope: 'run' })).toBe(true)

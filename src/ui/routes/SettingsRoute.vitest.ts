@@ -192,7 +192,13 @@ describe('Settings route', () => {
             main: {
               baseUrl: 'https://models.example/v1',
               defaultModel: 'qwen38-27b',
-              modelConfigs: [{ contextWindow: 131_072, modelId: 'qwen38-27b', type: 'text' }],
+              modelConfigs: [
+                {
+                  contextWindow: 131_072,
+                  modelId: 'qwen38-27b',
+                  outputModalities: ['text'],
+                },
+              ],
               type: 'openai_completions',
             },
           },
@@ -291,7 +297,13 @@ describe('Settings route', () => {
       defaultModel: 'qwen38-27b',
       maxRetries: 2,
       maxRetryDelayMs: 30_000,
-      modelConfigs: [{ contextWindow: 131_072, modelId: 'qwen38-27b', type: 'text' }],
+      modelConfigs: [
+        {
+          contextWindow: 131_072,
+          modelId: 'qwen38-27b',
+          outputModalities: ['text'],
+        },
+      ],
       retryDelayMs: 500,
       type: 'openai_completions',
     }
@@ -378,8 +390,16 @@ describe('Settings route', () => {
     expect(providerBody).toMatchObject({
       apiKey: { $secret: 'LLAMA_API_KEY' },
       baseUrl: 'https://new-models.example/v1',
+      modelConfigs: [
+        {
+          inputModalities: ['text'],
+          modelId: 'qwen38-27b',
+          outputModalities: ['text'],
+        },
+      ],
     })
     expect(JSON.stringify(providerBody)).not.toContain('replacement-key')
+    expect(JSON.stringify(providerBody)).not.toContain('"type":"text"')
   })
 
   it('creates a provider and its new managed secret as one settings operation', async () => {

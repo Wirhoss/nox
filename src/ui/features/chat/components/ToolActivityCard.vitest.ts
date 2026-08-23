@@ -17,6 +17,7 @@ describe('ToolActivityCard', () => {
               execution: 'immediate',
               id: 'response-1',
               isError: true,
+              media: [],
               text: 'File not found.',
             },
           ],

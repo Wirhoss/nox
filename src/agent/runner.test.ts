@@ -13,7 +13,11 @@ import type { Tool, ToolContext } from '../tool/tool';
 import type { Message, MessageContent, UserMessage } from './context/message';
 import type { AgentEvent } from './events';
 
-const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
+const MODEL: ModelConfig = {
+  inputModalities: ['text'],
+  modelId: 'test-model',
+  outputModalities: ['text'],
+};
 
 type Script = (signal: AbortSignal) => AsyncIterable<ProviderSourceEvent>;
 

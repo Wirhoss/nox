@@ -6,8 +6,10 @@ import {
   type ToolCallMessage,
   userContentForModel,
 } from '../../../../agent/context/message';
+import { modalitiesIn } from '../../../../content/content';
 import { type Logger, silentLogger } from '../../../../logger/logger';
 import {
+  modelAcceptsInput,
   type ModelConfig,
   providerBaseConfigSchema,
   providerRuntimeConfigSchema,
@@ -407,6 +409,7 @@ class OpenAICompletions extends ChatProvider {
     opts: TextGenerateOptions | undefined,
   ): Record<string, unknown> {
     const { model, modelId } = this.resolveModel(opts);
+    if (model !== undefined) this.assertInputModalities(model, messageHistory);
 
     const sampling = { ...model, ...opts };
     const body: Record<string, unknown> = {
@@ -429,8 +432,25 @@ class OpenAICompletions extends ChatProvider {
   }
   private toOpenAIMessages(systemPrompt: string, history: Message[]): OpenAIMessage[] {
     const messages: OpenAIMessage[] = [{ content: systemPrompt, role: 'system' }];
+    const pendingToolMedia: { readonly content: MessageContent[]; readonly label: string }[] = [];
+    const flushToolMedia = (): void => {
+      for (const result of pendingToolMedia.splice(0)) {
+        messages.push({
+          content: this.toOpenAIUserContent([
+            { text: `${result.label}\n`, type: 'text' },
+            ...result.content,
+          ]),
+          role: 'user',
+        });
+      }
+    };
 
     for (const message of history) {
+      // Every tool call in an assistant turn must receive its `tool` response
+      // contiguously. Media therefore follows the whole response group as
+      // synthetic user content instead of splitting that protocol sequence.
+      if (message.role !== 'toolResponse') flushToolMedia();
+
       switch (message.role) {
         case 'user': {
           messages.push({
@@ -491,30 +511,57 @@ class OpenAICompletions extends ChatProvider {
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
+          const media = message.response.filter((part) => part.type !== 'text');
 
           if (message.execution === 'deferredResult') {
             // A late deferred result cannot be a `tool` message: those must sit
             // right after their tool_calls turn. Surface it as user content
             // correlated by track ID instead.
+            flushToolMedia();
+            const header = `[deferred result for ${message.name} (${message.trackId})]`;
             messages.push({
-              content: `[deferred result for ${message.name} (${message.trackId})]\n${responseText}`,
+              content: this.toOpenAIUserContent([
+                {
+                  text: `${header}${responseText.length === 0 ? '' : `\n${responseText}`}`,
+                  type: 'text',
+                },
+                ...media,
+              ]),
               role: 'user',
             });
             break;
           }
 
-          messages.push({ content: responseText, role: 'tool', tool_call_id: message.trackId });
+          messages.push({
+            content: responseText.length === 0 ? '[media content follows]' : responseText,
+            role: 'tool',
+            tool_call_id: message.trackId,
+          });
+          if (media.length > 0) {
+            pendingToolMedia.push({
+              content: media,
+              label: `[media returned by ${message.name} (${message.trackId})]`,
+            });
+          }
           break;
         }
       }
     }
 
+    flushToolMedia();
     return messages;
   }
 
   private toOpenAIUserContent(content: readonly MessageContent[]): OpenAIContentPart[] | string {
     const parts = content.map((part): OpenAIContentPart => {
       if (part.type === 'text') return part;
+      if (part.type !== 'image') {
+        throw new ProviderError(
+          'invalid_request',
+          `OpenAI Chat Completions cannot encode ${part.type} input with this adapter.`,
+          { provider: OPENAI_PROVIDER },
+        );
+      }
 
       const url =
         part.source.type === 'url'
@@ -528,6 +575,27 @@ class OpenAICompletions extends ChatProvider {
     return parts.every((part) => part.type === 'text')
       ? parts.map((part) => part.text).join('')
       : parts;
+  }
+
+  private assertInputModalities(model: ModelConfig, history: readonly Message[]): void {
+    for (const message of history) {
+      const content =
+        message.role === 'user' || message.role === 'compacted'
+          ? message.content
+          : message.role === 'toolResponse'
+            ? message.response
+            : undefined;
+      if (content === undefined) continue;
+
+      for (const modality of modalitiesIn(content)) {
+        if (modelAcceptsInput(model, modality)) continue;
+        throw new ProviderError(
+          'invalid_request',
+          `Model ${model.modelId} is not configured to accept ${modality} input.`,
+          { provider: OPENAI_PROVIDER },
+        );
+      }
+    }
   }
 
   private toAssistantText(content: readonly MessageContent[]): null | string {

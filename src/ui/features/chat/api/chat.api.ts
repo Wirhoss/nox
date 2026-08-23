@@ -7,6 +7,7 @@ import {
   type AcceptedMessage,
   acceptedMessageSchema,
   type ChatCommand,
+  type ChatContentPart,
   type ChatConversation,
   type ChatEvent,
   type ChatHistory,
@@ -37,6 +38,7 @@ interface ReadHistoryInput extends ConversationInput {
 }
 
 interface SendMessageInput extends ConversationInput {
+  readonly content?: readonly ChatContentPart[]
   readonly messageId: string
   readonly text: string
 }
@@ -109,23 +111,27 @@ const chatApi: ChatApi = {
     return requestJson(path, chatHistorySchema, { headers: authorization(accessToken) })
   },
 
-  sendMessage({ accessToken, conversationId, messageId, text }) {
+  sendMessage({ accessToken, content, conversationId, messageId, text }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/messages`
-    return requestJson(path, acceptedMessageSchema, postJson(accessToken, { messageId, text }))
+    return requestJson(
+      path,
+      acceptedMessageSchema,
+      postJson(accessToken, content === undefined ? { messageId, text } : { content, messageId }),
+    )
   },
 
-  sendSteer({ accessToken, conversationId, messageId, text }) {
+  sendSteer({ accessToken, content, conversationId, messageId, text }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/steer`
-    return requestJson(path, acceptedMessageSchema, postJson(accessToken, { messageId, text }))
+    return requestJson(
+      path,
+      acceptedMessageSchema,
+      postJson(accessToken, content === undefined ? { messageId, text } : { content, messageId }),
+    )
   },
 
   submitCommand({ accessToken, arguments: commandArguments, command, conversationId }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/commands/${encodeURIComponent(command)}`
-    return requestJson(
-      path,
-      acceptedCommandSchema,
-      postJson(accessToken, commandArguments),
-    )
+    return requestJson(path, acceptedCommandSchema, postJson(accessToken, commandArguments))
   },
 
   async submitDecision({ accessToken, conversationId, decision, requestId }) {

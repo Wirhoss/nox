@@ -116,7 +116,11 @@ describe('bootstrap', () => {
       'nox.provider.openai',
     );
     expect(application.agentIds).toEqual(['nox']);
-    expect(application.getAgent('nox')?.model).toEqual({ modelId: 'gpt-test', type: 'text' });
+    expect(application.getAgent('nox')?.model).toEqual({
+      inputModalities: ['text'],
+      modelId: 'gpt-test',
+      outputModalities: ['text'],
+    });
     expect(application.getAgent('nox')?.systemPrompt).toBe('be exact');
   });
 

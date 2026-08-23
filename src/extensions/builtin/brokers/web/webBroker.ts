@@ -191,11 +191,11 @@ class WebBroker implements Broker, ChatTransport {
 
   public submitMessage(input: ChatMessageInput): void {
     this.#host?.receive({
+      content: input.content,
       conversationId: input.conversationId,
       messageId: input.messageId,
       receivedAt: new Date(),
       senderId: input.senderId,
-      text: input.text,
       type: 'message',
     });
   }
@@ -207,11 +207,11 @@ class WebBroker implements Broker, ChatTransport {
    */
   public submitSteer(input: ChatMessageInput): void {
     this.#host?.receive({
+      content: input.content,
       conversationId: input.conversationId,
       messageId: input.messageId,
       receivedAt: new Date(),
       senderId: input.senderId,
-      text: input.text,
       type: 'steer',
     });
   }
@@ -232,10 +232,11 @@ function toChatEvent(event: OutboundEvent): ChatEvent {
   switch (event.type) {
     case 'error':
     case 'fragment':
-    case 'message':
     case 'reasoning':
     case 'reasoningFragment':
       return { ...base, text: event.text, type: event.type };
+    case 'message':
+      return { ...base, content: event.content, text: event.text, type: 'message' };
     case 'contextChange':
       return {
         ...base,
@@ -292,6 +293,7 @@ function toChatEvent(event: OutboundEvent): ChatEvent {
     case 'toolResponse':
       return {
         ...base,
+        content: event.content,
         execution: event.execution,
         isError: event.isError,
         name: event.name,
@@ -333,9 +335,10 @@ function toChatHistoryEntry(entry: BrokerHistoryEntry): ChatHistoryEntry {
         text: entry.text,
         type: 'contextChange',
       };
-    case 'message':
     case 'reasoning':
       return { ...base, text: entry.text, type: entry.type };
+    case 'message':
+      return { ...base, content: entry.content, text: entry.text, type: 'message' };
     case 'toolCall':
       return {
         ...base,
@@ -347,6 +350,7 @@ function toChatHistoryEntry(entry: BrokerHistoryEntry): ChatHistoryEntry {
     case 'toolResponse':
       return {
         ...base,
+        content: entry.content,
         execution: entry.execution,
         isError: entry.isError,
         name: entry.name,
@@ -355,7 +359,13 @@ function toChatHistoryEntry(entry: BrokerHistoryEntry): ChatHistoryEntry {
         type: 'toolResponse',
       };
     case 'userMessage':
-      return { ...base, principal: entry.principal, text: entry.text, type: 'userMessage' };
+      return {
+        ...base,
+        content: entry.content,
+        principal: entry.principal,
+        text: entry.text,
+        type: 'userMessage',
+      };
   }
 }
 

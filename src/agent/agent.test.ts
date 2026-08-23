@@ -24,7 +24,11 @@ import type { PermissionRequest } from '../tool/gate';
 import type { Message, MessageContent } from './context/message';
 import type { Session } from './session';
 
-const MODEL: ModelConfig = { modelId: 'test-model', type: 'text' };
+const MODEL: ModelConfig = {
+  inputModalities: ['text'],
+  modelId: 'test-model',
+  outputModalities: ['text'],
+};
 
 interface Request {
   history: Message[];
@@ -544,7 +548,11 @@ describe('Agent', () => {
     const agent = new Agent(await openDatabase(), mainProvider, MODEL, {
       agentId: 'test',
       authorities: testCatalog(),
-      compactionModel: { modelId: 'compact-model', type: 'text' },
+      compactionModel: {
+        inputModalities: ['text'],
+        modelId: 'compact-model',
+        outputModalities: ['text'],
+      },
       compactionProvider,
       context: {
         compactAtRatio: 0.5,

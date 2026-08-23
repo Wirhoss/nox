@@ -1,5 +1,5 @@
 import { toolParametersSchema } from '../../tool/render';
-import { type Message, messageToString } from './message';
+import { type Message, type MessageContent, messageToString } from './message';
 
 import type { Tool } from '../../tool/tool';
 
@@ -7,6 +7,13 @@ const DEFAULT_CHARACTERS_PER_TOKEN = 3;
 const MESSAGE_TOKEN_OVERHEAD = 6;
 const SYSTEM_TOKEN_OVERHEAD = 4;
 const TOOL_TOKEN_OVERHEAD = 8;
+
+const MEDIA_TOKEN_ESTIMATE = {
+  audio: 2048,
+  document: 2048,
+  image: 1024,
+  video: 4096,
+} as const;
 
 function estimateTokensByCharacters(text: string): number {
   return Math.ceil(text.length / DEFAULT_CHARACTERS_PER_TOKEN);
@@ -33,6 +40,44 @@ function stableSerialize(value: unknown, ancestors = new Set<object>()): string 
         .join(',')}}`;
   ancestors.delete(value);
   return serialized;
+}
+
+function contentForSerialization(content: readonly MessageContent[]): readonly MessageContent[] {
+  return content.map((part) => {
+    if (part.type === 'text' || part.source.type === 'url') return part;
+    // Inline bytes are encoded into the JSON request but they are not prompt
+    // text. Counting their base64 characters would compact a single image as if
+    // it were a book; modality cost is accounted for separately below.
+    return { ...part, source: { ...part.source, data: '[inline media]' } };
+  });
+}
+
+function messageForSerialization(message: Message): Message {
+  switch (message.role) {
+    case 'assistant':
+    case 'compacted':
+    case 'folded':
+    case 'reasoning':
+    case 'user':
+      return { ...message, content: contentForSerialization(message.content) };
+    case 'toolResponse':
+      return { ...message, response: contentForSerialization(message.response) };
+    case 'toolCall':
+      return message;
+  }
+}
+
+function mediaTokens(message: Message): number {
+  const content =
+    message.role === 'toolResponse'
+      ? message.response
+      : message.role === 'toolCall'
+        ? []
+        : message.content;
+  return content.reduce(
+    (total, part) => total + (part.type === 'text' ? 0 : MEDIA_TOKEN_ESTIMATE[part.type]),
+    0,
+  );
 }
 
 class TokenEstimator {
@@ -69,9 +114,11 @@ class TokenEstimator {
 
     const estimate =
       Math.max(
-        this.#countText(stableSerialize(message)),
+        this.#countText(stableSerialize(messageForSerialization(message))),
         this.#countText(messageToString(message)),
-      ) + MESSAGE_TOKEN_OVERHEAD;
+      ) +
+      mediaTokens(message) +
+      MESSAGE_TOKEN_OVERHEAD;
 
     if (Object.isFrozen(message)) this.#cache.set(message, estimate);
     return estimate;

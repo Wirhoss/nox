@@ -46,6 +46,39 @@ describe('TokenEstimator', () => {
     expect(calls).toBe(afterFirst);
   });
 
+  test('accounts for inline media by modality instead of tokenizing base64 bytes', () => {
+    const estimator = new TokenEstimator('system', [], (text) => text.length);
+    const small = freezeMessage({
+      content: [
+        {
+          source: { data: 'a', mediaType: 'image/png', type: 'base64' as const },
+          type: 'image' as const,
+        },
+      ],
+      createdAt: CREATED_AT,
+      messageId: 'small',
+      origin: {
+        principal: { issuer: 'test', subject: 'alice' },
+        transportMessageId: 'small',
+      },
+      role: 'user' as const,
+    });
+    const large = freezeMessage({
+      ...small,
+      content: [
+        {
+          source: { data: 'a'.repeat(100_000), mediaType: 'image/png', type: 'base64' as const },
+          type: 'image' as const,
+        },
+      ],
+      messageId: 'large',
+    });
+
+    expect(
+      Math.abs(estimator.estimateMessage(large) - estimator.estimateMessage(small)),
+    ).toBeLessThan(20);
+  });
+
   test('includes one stable system-and-tools prefix exactly once per history', () => {
     const schema = z.object({ value: z.string() });
     const tool = {

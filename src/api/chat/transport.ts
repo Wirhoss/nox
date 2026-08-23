@@ -1,4 +1,4 @@
-import type { ToolResponseExecution } from '../../agent/context/message';
+import type { MessageContent, ToolResponseExecution } from '../../agent/context/message';
 import type { RunStatus, RunTrigger } from '../../agent/events';
 import type { PrincipalRef } from '../../auth/principal';
 import type { Usage } from '../../provider/stream';
@@ -26,6 +26,7 @@ interface ChatFragmentEvent extends ChatEventBase {
 
 /** The settled reply, which is what a client should end up showing. */
 interface ChatMessageEvent extends ChatEventBase {
+  readonly content: readonly MessageContent[];
   readonly text: string;
   readonly type: 'message';
 }
@@ -172,6 +173,7 @@ interface ChatToolCallEvent extends ChatEventBase {
  * result arrives later under the same `trackId`.
  */
 interface ChatToolResponseEvent extends ChatEventBase {
+  readonly content: readonly MessageContent[];
   readonly execution: ToolResponseExecution;
   readonly isError: boolean;
   readonly name: string;
@@ -217,6 +219,7 @@ type ChatBody<T extends ChatEvent> = Omit<T, keyof ChatEventBase>;
  * conversation redrawn without it would be the agent talking to itself.
  */
 interface ChatUserMessage {
+  readonly content: readonly MessageContent[];
   readonly principal: PrincipalRef;
   readonly text: string;
   readonly type: 'userMessage';
@@ -280,9 +283,11 @@ interface ChatDecisionInput {
 
 /** Something a person said. `messageId` is this surface's own, used to deduplicate. */
 interface ChatMessageInput {
+  readonly content: readonly MessageContent[];
   readonly conversationId: string;
   readonly messageId: string;
   readonly senderId: string;
+  /** Convenience projection for clients and text-only transports. */
   readonly text: string;
 }
 
