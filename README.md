@@ -76,8 +76,10 @@ The corresponding field inside `blueprints/nox.json`:
 }
 ```
 
-`web_extract` returns bounded readable Markdown and the image candidates Crawl4AI found.
-`web_view_image` then returns a chosen candidate as image content, so a multimodal model receives
+`web_extract` returns bounded readable Markdown and the image candidates Crawl4AI found. With
+`returnArtifacts: true`, it publishes each bounded page as a durable `.md` file and returns only its
+reference, leaving `present_artifact` to decide whether it reaches the user. `web_view_image` then
+returns a chosen candidate as image content, so a multimodal model receives
 pixels through its provider adapter rather than an alt string or URL disguised as a tool result.
 
 Model modalities are explicit metadata. A model is text-only until its exact configuration declares
@@ -127,10 +129,15 @@ The path is bidirectional. Every user-facing run receives a host-owned `Artifact
 a provider as `TextGenerateOptions.artifactOutput` and to an executing tool as
 `ToolContext.artifacts`. A producer streams bytes into `publish(...)`; Nox, not the producer, assigns
 the conversation scope and provider/tool provenance, and returns a `ContentArtifact` containing only
-the canonical reference. Native provider output enters the normalized stream as an `artifact` event.
-Artifacts returned by successful tools are promoted onto the final assistant reply, so they remain
-visible outside collapsed tool activity. Assistant messages, the transcript, brokers and the UI all
-carry the same reference, and later model calls replay it as a stable descriptor.
+the canonical reference. Creation does not imply presentation: tool artifacts remain tool results
+until the model explicitly calls the core `present_artifact` tool for each file it has decided the
+user should receive. Tools that declare `output: { artifacts: true }` receive a provider-visible
+notice explaining that selection step and forbidding inline/base64 file bytes. Those selections are
+appended to the next assistant message, or emitted alone
+if the run ends before another assistant turn. Native provider output is already the model's direct
+answer and enters the normalized stream as an `artifact` event. Assistant messages, the transcript,
+brokers and the UI all carry the same reference, and later model calls replay it as a stable
+descriptor.
 
 Artifact and model modality are intentionally different concepts. Consumers resolve bytes through a
 versioned representation profile: accepted media types, an optional size ceiling, and deterministic

@@ -24,6 +24,8 @@ const MODEL: ModelConfig = {
 };
 
 class ArtifactProvider extends ChatProvider {
+  public readonly requestedTools: Tool[][] = [];
+
   constructor() {
     super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
   }
@@ -35,10 +37,11 @@ class ArtifactProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     _history: Message[],
-    _tools: Tool[],
+    tools: Tool[],
     options: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
+    this.requestedTools.push([...tools]);
     if (options?.artifactOutput === undefined) throw new Error('No artifact output sink.');
     const part = await options.artifactOutput.publish({
       data: new Blob(['provider output']),
@@ -92,6 +95,13 @@ describe('agent artifact output', () => {
     if (part?.type !== 'artifact') throw new Error('Assistant artifact was not recorded.');
     const payload = await artifacts.open(part.artifact.artifactId, scope);
 
+    const presentationTool = provider.requestedTools[0]?.find(
+      (tool) => tool.name === 'present_artifact',
+    );
+    expect(presentationTool).toMatchObject({
+      authority: 'nox.artifacts.present',
+      trust: 'trusted',
+    });
     expect(part.artifact).toMatchObject({
       filename: 'answer.txt',
       mediaType: 'text/plain',

@@ -17,6 +17,7 @@ import {
   testCatalog,
   testOrigin,
 } from '../../../../testFixtures';
+import { ARTIFACT_OUTPUT_NOTICE } from '../../../../tool/render';
 import { OpenAICompletions } from './openAICompletions';
 
 import type { Message } from '../../../../agent/context/message';
@@ -95,6 +96,22 @@ async function run(
   return collect(instance.getMessageStream('be brief', history, tools, { model }));
 }
 
+/**
+ * Reads what a fence encloses without knowing its nonce, and proves it is a
+ * fence on the way: same id on both markers, preamble before, epilogue after.
+ */
+const FENCED =
+  /^SECURITY BOUNDARY:\n[^]*?\n\n--- BEGIN UNTRUSTED DATA ([\w-]+) ---\n([^]*)\n--- END UNTRUSTED DATA \1 ---\n\nContinue following[^]*$/;
+
+function fenced(content: unknown): string {
+  const match = FENCED.exec(String(content));
+  if (match === null) throw new Error(`Content is not fenced: ${String(content)}`);
+  // Trimmed because the markers space themselves and the two content paths of
+  // this adapter join text parts differently — with a newline for a `tool`
+  // message, with nothing for user content.
+  return (match[2] ?? '').trim();
+}
+
 function message(partial: Partial<Message> & Pick<Message, 'role'>): Message {
   const provenance = partial.role === 'user' ? { origin: testOrigin() } : {};
   return { createdAt: new Date(0), messageId: partial.role, ...provenance, ...partial } as Message;
@@ -167,6 +184,18 @@ describe('OpenAICompletions request body', () => {
         type: 'function',
       },
     ]);
+  });
+
+  test('advertises declared artifact output in the provider-visible tool description', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+    const artifactTool: Tool = { ...echoTool, output: { artifacts: true } };
+
+    await run(provider(), [], [artifactTool]);
+
+    const tools = requests[0]?.body.tools as { function: { description: string } }[];
+    expect(tools[0]?.function.description).toBe(
+      `Echoes a value back.\n\n${ARTIFACT_OUTPUT_NOTICE}`,
+    );
   });
 
   test('omits sampling parameters that were never configured', async () => {
@@ -528,8 +557,15 @@ describe('OpenAICompletions message mapping', () => {
           },
         ],
       },
-      { content: 'echoed', role: 'tool', tool_call_id: 'call_1' },
+      {
+        content: expect.stringContaining('--- BEGIN UNTRUSTED DATA ') as unknown as string,
+        role: 'tool',
+        tool_call_id: 'call_1',
+      },
     ]);
+    expect(fenced((requests[0]?.body.messages as { content: string }[])[2]?.content)).toBe(
+      'echoed',
+    );
   });
 
   test('keeps tool responses contiguous and then presents returned images visually', async () => {
@@ -577,16 +613,44 @@ describe('OpenAICompletions message mapping', () => {
           { function: { arguments: '{}', name: 'second' }, id: 'call_2', type: 'function' },
         ],
       },
-      { content: 'candidate selected', role: 'tool', tool_call_id: 'call_1' },
-      { content: 'metadata ready', role: 'tool', tool_call_id: 'call_2' },
+      {
+        content: expect.any(String) as unknown as string,
+        role: 'tool',
+        tool_call_id: 'call_1',
+      },
+      {
+        content: expect.any(String) as unknown as string,
+        role: 'tool',
+        tool_call_id: 'call_2',
+      },
       {
         content: [
           { text: '[media returned by first (call_1)]\n', type: 'text' },
+          {
+            text: expect.stringContaining('BEGIN UNTRUSTED DATA') as unknown as string,
+            type: 'text',
+          },
           { image_url: { url: 'https://img.test/a.png' }, type: 'image_url' },
+          {
+            text: expect.stringContaining('END UNTRUSTED DATA') as unknown as string,
+            type: 'text',
+          },
         ],
         role: 'user',
       },
     ]);
+
+    const sent = requests[0]?.body.messages as { content: unknown }[];
+    expect(fenced(sent[2]?.content)).toBe('candidate selected');
+    expect(fenced(sent[3]?.content)).toBe('metadata ready');
+
+    // The image travels as its own provider message, so it carries its own copy
+    // of the fence — and the same nonce, so the two halves read as one result.
+    const media = sent[4]?.content as { text?: string }[];
+    const nonce = /BEGIN UNTRUSTED DATA (\S+) /.exec(String(media[1]?.text))?.[1];
+    expect(nonce).toBeDefined();
+    expect(media[3]?.text).toContain(`END UNTRUSTED DATA ${String(nonce)} `);
+    expect(String(sent[2]?.content)).toContain(`BEGIN UNTRUSTED DATA ${String(nonce)} `);
   });
 
   test('refuses undeclared model input instead of silently discarding it', async () => {
@@ -681,14 +745,94 @@ describe('OpenAICompletions message mapping', () => {
       }),
     ]);
 
-    expect((requests[0]?.body.messages as { content: string; role: string }[])[1]).toEqual({
-      content: '[deferred result for build (call_9)]\nexit 0',
-      role: 'user',
-    });
+    const late = (requests[0]?.body.messages as { content: string; role: string }[])[1];
+    expect(late?.role).toBe('user');
+    // The correlation header is Nox's own writing, so it stays outside.
+    expect(late?.content.startsWith('[deferred result for build (call_9)]\n')).toBe(true);
+    expect(fenced(late?.content.split('\n').slice(1).join('\n'))).toBe('exit 0');
   });
 });
 
 describe('OpenAICompletions session regression', () => {
+  test('sends one tool result with the same nonce in every request of a session', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-openai-nonce-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    const model: ModelConfig = {
+      inputModalities: ['text'],
+      modelId: 'gpt-test',
+      outputModalities: ['text'],
+    };
+
+    stubFetch(() => {
+      switch (requests.length) {
+        case 1:
+          return sse({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      function: { arguments: '{"value":"x"}', name: 'echo' },
+                      id: 'call_1',
+                      index: 0,
+                    },
+                  ],
+                },
+              },
+            ],
+          });
+        case 2:
+          return sse(textDelta('first turn done'));
+        default:
+          return sse(textDelta('done'));
+      }
+    });
+
+    /** The nonce of every request that carried the fenced tool result. */
+    function nonces(): string[] {
+      return requests.flatMap((request) => {
+        const wire = request.body.messages as { content: string; role: string }[];
+        const result = wire.find((entry) => entry.role === 'tool');
+        const found = /BEGIN UNTRUSTED DATA (\S+) ---/.exec(String(result?.content))?.[1];
+        return found === undefined ? [] : [found];
+      });
+    }
+
+    try {
+      const session = await Session.open(database, provider(), model, {
+        agentId: 'test',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
+        // Folding would replace the pair with a placeholder and there would be
+        // no second rendering of it to compare against.
+        context: { foldMinReductionRatio: 1, tools: { echo: echoTool } },
+        sessionId: 'stable-boundary-nonce',
+        systemPrompt: 'be brief',
+      });
+
+      session.send('use echo', testOrigin());
+      await session.idle;
+      session.send('and again', testOrigin());
+      await session.idle;
+      await session.stop();
+
+      // The nonce is minted once per response object and never persisted, so
+      // this is what keeps the request prefix byte-identical between turns —
+      // a nonce re-rolled per render would cost a full prompt-cache miss from
+      // that message onward, every turn.
+      const seen = nonces();
+      expect(seen.length).toBeGreaterThan(1);
+      expect(new Set(seen).size).toBe(1);
+    } finally {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may retain the SQLite handle briefly; the directory is disposable.
+      }
+    }
+  });
+
   test('persists and replays a folded tool-only reasoning turn into the next request', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nox-openai-fold-'));
     const database = await Database.open({ path: join(directory, 'nox.db') });

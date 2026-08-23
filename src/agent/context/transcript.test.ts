@@ -131,6 +131,7 @@ describe('Transcript', () => {
         response: [{ text: '0123456789'.repeat(100), type: 'text' }],
         role: 'toolResponse',
         trackId: 'track',
+        trust: 'untrusted',
       },
     ]);
 
@@ -153,6 +154,7 @@ describe('Transcript', () => {
         response: [{ text: 'ack-only needle', type: 'text' }],
         role: 'toolResponse',
         trackId: 'track',
+        trust: 'untrusted',
       },
     ]);
 
@@ -170,6 +172,7 @@ describe('Transcript', () => {
         response: [{ text: 'waiting for approval', type: 'text' }],
         role: 'toolResponse',
         trackId: 'track',
+        trust: 'untrusted',
       },
       {
         createdAt: new Date(CREATED_AT.getTime() + 1),
@@ -179,6 +182,7 @@ describe('Transcript', () => {
         response: [{ text: 'finished', type: 'text' }],
         role: 'toolResponse',
         trackId: 'track',
+        trust: 'untrusted',
       },
     ]);
 

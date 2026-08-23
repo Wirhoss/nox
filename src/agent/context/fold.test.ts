@@ -69,6 +69,7 @@ function response(messageId: string, trackId: string, size = 2000): Message {
     response: [{ text: 'y'.repeat(size), type: 'text' }],
     role: 'toolResponse',
     trackId,
+    trust: 'untrusted',
   });
 }
 
@@ -248,6 +249,7 @@ describe('foldHistory', () => {
       response: [{ text: 'later', type: 'text' }],
       role: 'toolResponse',
       trackId: 'track',
+      trust: 'untrusted',
     });
     const history = [assistant('anchor'), call('call', 'track', 4000), deferred];
 

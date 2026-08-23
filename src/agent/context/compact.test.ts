@@ -51,6 +51,7 @@ function toolResponse(messageId: string, trackId: string): Message {
     response: [],
     role: 'toolResponse',
     trackId,
+    trust: 'untrusted',
   });
 }
 

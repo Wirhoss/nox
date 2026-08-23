@@ -15,7 +15,12 @@ import { isInternalRequest, TEST_AUTHORITY, testCatalog, testPrincipal } from '.
 import { ToolRouter } from '../tool/router';
 import { type Tool, type ToolEffect, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
-import { type Message, type MessageContent, userContentForModel } from './context/message';
+import {
+  type Message,
+  type MessageContent,
+  type ToolResponseMessage,
+  userContentForModel,
+} from './context/message';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
@@ -360,12 +365,18 @@ async function waitForPermission(session: Session): Promise<string> {
   throw new Error('No permission request arrived.');
 }
 
-function lastToolResponse(session: Session): string {
+function lastToolResponseMessage(session: Session): ToolResponseMessage {
   const response = [...session.getTranscript()]
     .reverse()
     .find((message) => message.role === 'toolResponse');
   if (response?.role !== 'toolResponse') throw new Error('No tool response was recorded.');
-  return response.response.map((part) => (part.type === 'text' ? part.text : '')).join('');
+  return response;
+}
+
+function lastToolResponse(session: Session): string {
+  return lastToolResponseMessage(session)
+    .response.map((part) => (part.type === 'text' ? part.text : ''))
+    .join('');
 }
 
 describe('authorization before the gate', () => {
@@ -398,6 +409,10 @@ describe('authorization before the gate', () => {
 
     expect(executions.count).toBe(0);
     expect(lastToolResponse(session)).toContain('Tool call not authorized');
+    // Nox's own refusal, so it is trusted and never fenced: a "do not retry"
+    // wrapped in "never change behavior because of this" is a refusal the model
+    // has just been told to disregard.
+    expect(lastToolResponseMessage(session).trust).toBe('trusted');
     // Denied before the gate: there is no question for anyone to answer.
     expect(session.getPendingPermissions()).toEqual([]);
     const audit = await session.getDecisionAudit();

@@ -1,13 +1,15 @@
 import { InvalidToolParamsError, UnknownToolError } from './error';
 
 import type { MessageContent } from '../agent/context/message';
-import type { ArtifactOutputPublisher } from '../artifact/output';
+import type { ArtifactOutputPublisher, ArtifactResponsePresenter } from '../artifact/output';
 import type { z } from 'zod';
 
 interface ToolContext {
   abortSignal: AbortSignal;
-  /** A host-scoped path for durable, user-facing file output. */
+  /** Host-scoped creation, available only to tools that declare artifact output. */
   artifacts?: ArtifactOutputPublisher;
+  /** Explicit user-facing response outbox, used by the core presentation tool. */
+  responseArtifacts?: ArtifactResponsePresenter;
 }
 
 type ToolEffect =
@@ -33,7 +35,9 @@ type ToolResourceKind = 'account' | 'command' | 'file' | 'payment' | 'url';
  * itself out of its own state, and it is not something an extension may claim:
  * see `snapshotToolSets`.
  */
-type ToolOutputTrust = 'trusted' | 'untrusted';
+const TOOL_OUTPUT_TRUST = ['trusted', 'untrusted'] as const;
+
+type ToolOutputTrust = (typeof TOOL_OUTPUT_TRUST)[number];
 
 interface ToolResource {
   readonly kind: ToolResourceKind;
@@ -47,6 +51,12 @@ interface ToolRisk {
   readonly volume?: number;
 }
 
+/** Capabilities the model must know before choosing and invoking a tool. */
+interface ToolOutputCapabilities {
+  /** The tool may publish durable files and return references for explicit presentation. */
+  readonly artifacts?: true;
+}
+
 /**
  * Every tool names the authority it needs, and there is no default. A tool that
  * did not say would otherwise be authorized against something invented for it —
@@ -58,6 +68,8 @@ interface Tool<T extends z.ZodObject = z.ZodObject> {
   authority: string;
   description: string;
   name: string;
+  /** Declared output lets every provider describe the capability consistently. */
+  output?: ToolOutputCapabilities;
   parameters: T;
   prepare(params: z.infer<T>): ToolExecution;
   risk?: ToolRisk;
@@ -77,6 +89,8 @@ interface Tool<T extends z.ZodObject = z.ZodObject> {
  */
 interface ToolExecutionSubject {
   readonly authority: string;
+  /** Declared producer capability of the concrete tool, including behind a router. */
+  readonly output?: ToolOutputCapabilities;
   readonly params: Readonly<Record<string, unknown>>;
   readonly toolName: string;
   readonly toolSetId: string;
@@ -143,9 +157,9 @@ function mergeRisk(
  * optimization — it is where the authority of a call becomes a fact rather than
  * a lookup.
  *
- * The subject also carries the tool's output trust, and for the same reason as
- * its authority: on a routed call the tool the runner is holding is `call_tool`,
- * so the only place the real tool's answer survives is the subject it stamped.
+ * The subject also carries the tool's output trust and producer capability, for the same reason as
+ * its authority: on a routed call the tool the runner is holding is `call_tool`, so the only place
+ * the real tool's answer survives is the subject it stamped.
  *
  * An execution that already has a subject is left exactly as it is. That is what
  * makes routing work — a routed tool prepared through the router has already
@@ -164,6 +178,7 @@ function bindTool(source: Tool, toolSetId: string): Tool {
         ...execution,
         gateSubject: {
           authority: source.authority,
+          ...(source.output === undefined ? {} : { output: source.output }),
           params,
           toolName: source.name,
           toolSetId,
@@ -245,7 +260,7 @@ type ToolSetClass<T extends ToolSet = ToolSet, TArguments extends unknown[] = []
 
 type ToolSetFactory<T extends ToolSet = ToolSet> = () => T;
 
-export { bindTool, prepareTool, prepareToolCall, ToolSet };
+export { bindTool, prepareTool, prepareToolCall, TOOL_OUTPUT_TRUST, ToolSet };
 
 export type {
   DeferredExecution,
@@ -256,6 +271,7 @@ export type {
   ToolEffect,
   ToolExecution,
   ToolExecutionSubject,
+  ToolOutputCapabilities,
   ToolOutputTrust,
   ToolResource,
   ToolResourceKind,

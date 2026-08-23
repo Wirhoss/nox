@@ -3,6 +3,8 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { SecretHandle } from '../../../../config/secrets';
 import { WebTools } from './webTools';
 
+import type { ArtifactOutputInput, ArtifactOutputPublisher } from '../../../../artifact/output';
+
 const realFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -144,6 +146,90 @@ describe('WebTools', () => {
         type: 'text',
       },
     ]);
+  });
+
+  test('publishes bounded Markdown as a durable artifact without echoing its bytes', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        Response.json({
+          results: [
+            {
+              markdown: 'artifact body',
+              metadata: { title: 'Artifact: Article' },
+              success: true,
+              url: 'https://example.test/article',
+            },
+          ],
+          success: true,
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    let published: ArtifactOutputInput | undefined;
+    const artifacts: ArtifactOutputPublisher = {
+      publish: (input) => {
+        published = input;
+        if (!(input.data instanceof Blob)) throw new Error('Expected a Blob.');
+        return Promise.resolve({
+          artifact: {
+            artifactId: 'art_webpage1',
+            filename: input.filename,
+            mediaType: 'text/markdown',
+            size: input.data.size,
+          },
+          type: 'artifact',
+        });
+      },
+    };
+    const tools = new WebTools({
+      extract: { url: 'https://crawl.example.test/' },
+      type: 'web',
+    });
+    const execution = tools.prepare('web_extract', {
+      returnArtifacts: true,
+      urls: ['https://example.test/article'],
+    });
+    const content = await execution.run({
+      abortSignal: new AbortController().signal,
+      artifacts,
+    });
+
+    expect(execution.risk).toMatchObject({
+      effects: ['network', 'read', 'write'],
+      reversible: false,
+    });
+    expect(tools.tools.web_extract?.output).toEqual({ artifacts: true });
+    expect(published).toMatchObject({
+      declaredMediaType: 'text/markdown',
+      filename: 'Artifact- Article.md',
+    });
+    if (!(published?.data instanceof Blob)) throw new Error('Markdown was not published.');
+    expect(await published.data.text()).toBe('artifact body');
+    expect(content).toEqual([
+      {
+        text: JSON.stringify({
+          results: [
+            {
+              artifactId: 'art_webpage1',
+              title: 'Artifact: Article',
+              truncated: false,
+              url: 'https://example.test/article',
+            },
+          ],
+        }),
+        type: 'text',
+      },
+      {
+        artifact: {
+          artifactId: 'art_webpage1',
+          filename: 'Artifact- Article.md',
+          mediaType: 'text/markdown',
+          size: 13,
+        },
+        type: 'artifact',
+      },
+    ]);
+    expect(JSON.stringify(content)).not.toContain('artifact body');
   });
 
   test('returns an image as model-visible content instead of a textual URL', async () => {

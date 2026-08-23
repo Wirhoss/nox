@@ -3,14 +3,16 @@ import { z } from 'zod';
 
 import { ChatProvider } from '../provider/provider';
 import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
+import { ToolRouter } from '../tool/router';
+import { bindTool, type Tool, type ToolContext } from '../tool/tool';
 import { EventLog } from '../utils/eventLog';
+import { presentArtifactTool } from './artifactTool';
 import { Context } from './context/context';
 import { Runner } from './runner';
 
 import type { ArtifactOutputHost, ArtifactOutputProvenance } from '../artifact/output';
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
-import type { Tool, ToolContext } from '../tool/tool';
 import type { Message, MessageContent, UserMessage } from './context/message';
 import type { AgentEvent } from './events';
 
@@ -82,15 +84,19 @@ function says(text: string): Script {
   };
 }
 
-function calls(name: string, trackId: string): Script {
+function callsWith(name: string, trackId: string, arguments_: Record<string, unknown>): Script {
   // eslint-disable-next-line @typescript-eslint/require-await
   return async function* (): AsyncIterable<ProviderSourceEvent> {
     yield {
-      toolCall: { arguments: {}, name, role: 'toolCall', trackId },
+      toolCall: { arguments: arguments_, name, role: 'toolCall', trackId },
       type: 'toolCall',
     };
     yield { type: 'end' };
   };
+}
+
+function calls(name: string, trackId: string): Script {
+  return callsWith(name, trackId, {});
 }
 
 function immediateTool(name: string, run: (ctx: ToolContext) => Promise<MessageContent[]>): Tool {
@@ -156,7 +162,10 @@ function setup(
 }
 
 function roles(context: Context): string[] {
-  return context.getHistory().map((message) => message.role);
+  return context
+    .getFullHistory()
+    .filter((message) => message.role !== 'compacted' && message.role !== 'folded')
+    .map((message) => message.role);
 }
 
 function eventTypes(events: EventLog<AgentEvent>): string[] {
@@ -211,6 +220,7 @@ describe('Runner', () => {
             type: 'artifact',
           }),
       }),
+      reference: () => Promise.resolve(undefined),
     };
     const nativeOutput: Script = async function* (_signal, options) {
       if (options?.artifactOutput === undefined) throw new Error('missing artifact output');
@@ -241,39 +251,133 @@ describe('Runner', () => {
     ]);
   });
 
-  test('promotes a tool-published artifact into the final assistant reply', async () => {
+  test('does not give an undeclared tool hidden artifact capabilities', async () => {
+    let receivedPresenter = true;
+    let receivedPublisher = true;
+    const inspect = immediateTool('inspect_output', (ctx) => {
+      receivedPresenter = ctx.responseArtifacts !== undefined;
+      receivedPublisher = ctx.artifacts !== undefined;
+      return Promise.resolve([{ text: 'checked', type: 'text' }]);
+    });
+    const artifactOutputs: ArtifactOutputHost = {
+      publisher: (provenance) => {
+        if (provenance.type === 'tool') {
+          throw new Error('Undeclared tool received an artifact publisher.');
+        }
+        return {
+          publish: () => Promise.reject(new Error('Provider did not publish in this test.')),
+        };
+      },
+      reference: () => Promise.resolve(undefined),
+    };
+    const { runner } = setup(
+      [calls('inspect_output', 'track-inspect'), says('done')],
+      [inspect],
+      undefined,
+      undefined,
+      artifactOutputs,
+    );
+
+    runner.send(user('inspect'));
+    await runner.idle;
+
+    expect(receivedPresenter).toBeFalse();
+    expect(receivedPublisher).toBeFalse();
+  });
+
+  test('gives a routed declared producer its publisher and concrete provenance', async () => {
+    let receivedPresenter = true;
+    let receivedPublisher = false;
+    const producer: Tool = {
+      ...immediateTool('routed_producer', (ctx) => {
+        receivedPresenter = ctx.responseArtifacts !== undefined;
+        receivedPublisher = ctx.artifacts !== undefined;
+        return Promise.resolve([{ text: 'produced', type: 'text' }]);
+      }),
+      output: { artifacts: true },
+    };
+    const router = new ToolRouter([bindTool(producer, 'routed-set')]);
+    const callTool = router.tools.call_tool;
+    if (callTool === undefined) throw new Error('Router did not expose call_tool.');
+    let toolProvenance: ArtifactOutputProvenance | undefined;
+    const artifactOutputs: ArtifactOutputHost = {
+      publisher: (provenance) => {
+        if (provenance.type === 'tool') toolProvenance = provenance;
+        return {
+          publish: () => Promise.reject(new Error('No bytes are published in this test.')),
+        };
+      },
+      reference: () => Promise.resolve(undefined),
+    };
+    const { runner } = setup(
+      [
+        callsWith('call_tool', 'track-routed', {
+          name: 'routed_producer',
+          params: '{}',
+        }),
+        says('done'),
+      ],
+      [callTool],
+      undefined,
+      undefined,
+      artifactOutputs,
+    );
+
+    runner.send(user('produce through the router'));
+    await runner.idle;
+
+    expect(receivedPresenter).toBeFalse();
+    expect(receivedPublisher).toBeTrue();
+    expect(toolProvenance).toMatchObject({
+      details: {
+        toolName: 'routed_producer',
+        toolSetId: 'routed-set',
+        trackId: 'track-routed',
+      },
+      type: 'tool',
+    });
+  });
+
+  test('attaches a tool artifact only after the model explicitly presents it', async () => {
     const provenance: ArtifactOutputProvenance[] = [];
+    const generated = {
+      artifact: {
+        artifactId: 'art_generated1',
+        filename: 'report.txt',
+        mediaType: 'text/plain',
+        size: 6,
+      },
+      type: 'artifact' as const,
+    };
     const artifactOutputs: ArtifactOutputHost = {
       publisher: (entry) => {
         provenance.push(entry);
-        return {
-          publish: () =>
-            Promise.resolve({
-              artifact: {
-                artifactId: 'art_generated1',
-                filename: 'report.txt',
-                mediaType: 'text/plain',
-                size: 6,
-              },
-              type: 'artifact',
-            }),
-        };
+        return { publish: () => Promise.resolve(generated) };
       },
+      reference: (artifactId) =>
+        Promise.resolve(artifactId === generated.artifact.artifactId ? generated : undefined),
     };
-    const publish = immediateTool('publish', async (ctx) => {
-      if (ctx.artifacts === undefined) throw new Error('missing artifact output');
-      return [
-        { text: 'created', type: 'text' },
-        await ctx.artifacts.publish({
-          data: new Blob(['report']),
-          declaredMediaType: 'text/plain',
-          filename: 'report.txt',
-        }),
-      ];
-    });
+    const publish: Tool = {
+      ...immediateTool('publish', async (ctx) => {
+        if (ctx.artifacts === undefined) throw new Error('missing artifact output');
+        return [
+          { text: 'created', type: 'text' },
+          await ctx.artifacts.publish({
+            data: new Blob(['report']),
+            declaredMediaType: 'text/plain',
+            filename: 'report.txt',
+          }),
+        ];
+      }),
+      output: { artifacts: true },
+    };
     const { context, runner } = setup(
-      [calls('publish', 'track-output'), says('ready')],
-      [publish],
+      [
+        calls('publish', 'track-output'),
+        callsWith('present_artifact', 'track-present', { artifactId: 'art_generated1' }),
+        says('ready'),
+      ],
+      [publish, presentArtifactTool()],
       undefined,
       undefined,
       artifactOutputs,
@@ -296,15 +400,7 @@ describe('Runner', () => {
     expect(final?.role).toBe('assistant');
     expect(final?.role === 'assistant' ? final.content : []).toEqual([
       { text: 'ready', type: 'text' },
-      {
-        artifact: {
-          artifactId: 'art_generated1',
-          filename: 'report.txt',
-          mediaType: 'text/plain',
-          size: 6,
-        },
-        type: 'artifact',
-      },
+      generated,
     ]);
     const toolProvenance = provenance.find((entry) => entry.type === 'tool');
     expect(toolProvenance).toMatchObject({
@@ -316,6 +412,62 @@ describe('Runner', () => {
       type: 'tool',
     });
     expect(typeof toolProvenance?.details?.runId).toBe('string');
+  });
+
+  test('returns selected artifacts alone when the loop ends before another assistant turn', async () => {
+    const generated = {
+      artifact: {
+        artifactId: 'art_selected01',
+        filename: 'selected.txt',
+        mediaType: 'text/plain',
+        size: 8,
+      },
+      type: 'artifact' as const,
+    };
+    const artifactOutputs: ArtifactOutputHost = {
+      publisher: () => ({ publish: () => Promise.resolve(generated) }),
+      reference: (artifactId) =>
+        Promise.resolve(artifactId === generated.artifact.artifactId ? generated : undefined),
+    };
+    const { context, runner } = setup(
+      [
+        callsWith('present_artifact', 'track-select', {
+          artifactId: generated.artifact.artifactId,
+        }),
+      ],
+      [presentArtifactTool()],
+      1,
+      undefined,
+      artifactOutputs,
+    );
+
+    runner.send(user('return the file'));
+    await runner.idle;
+
+    const assistant = context.getFullHistory().findLast((message) => message.role === 'assistant');
+    expect(assistant?.role === 'assistant' ? assistant.content : []).toEqual([generated]);
+  });
+
+  test('does not expose a tool artifact the model did not select for the response', async () => {
+    const generated = {
+      artifact: {
+        artifactId: 'art_private01',
+        filename: 'scratch.txt',
+        mediaType: 'text/plain',
+        size: 7,
+      },
+      type: 'artifact' as const,
+    };
+    const scratch = immediateTool('scratch', () => Promise.resolve([generated]));
+    const { context, runner } = setup([calls('scratch', 'track-scratch'), says('done')], [scratch]);
+
+    runner.send(user('work privately first'));
+    await runner.idle;
+
+    const assistant = context.getFullHistory().findLast((message) => message.role === 'assistant');
+    expect(assistant?.role === 'assistant' ? assistant.content : []).toEqual([
+      { text: 'done', type: 'text' },
+    ]);
   });
 
   test('tool calls in one reply run concurrently', async () => {

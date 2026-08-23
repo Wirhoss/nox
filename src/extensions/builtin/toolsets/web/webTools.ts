@@ -185,6 +185,29 @@ function resolvedPublicUrl(value: string, pageUrl: string): string | undefined {
   }
 }
 
+function markdownFilename(result: CrawlResult, pageUrl: string, index: number): string {
+  let fallback = `page-${String(index + 1)}`;
+  try {
+    const url = new URL(pageUrl);
+    fallback = `${url.hostname}${url.pathname === '/' ? '' : `-${url.pathname}`}`;
+  } catch {
+    // Crawl4AI may omit or corrupt its echoed URL; the positional fallback is stable.
+  }
+
+  const title = result.metadata?.title?.trim();
+  const source = title !== undefined && title.length > 0 ? title : fallback;
+  const normalized = Array.from(source.normalize('NFKC'), (character) =>
+    (character.codePointAt(0) ?? 0) < 32 ? '-' : character,
+  ).join('');
+  const stem = normalized
+    .replace(/[<>:"/\\|?*]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '')
+    .trim()
+    .slice(0, 200);
+  return `${stem.length === 0 ? `page-${String(index + 1)}` : stem}.md`;
+}
+
 function imagesFrom(result: CrawlResult, pageUrl: string, limit: number) {
   return (result.media?.images ?? [])
     .flatMap((image) => {
@@ -318,6 +341,12 @@ class WebTools extends ToolSet {
         .max(50)
         .default(12)
         .describe('Maximum discovered image URLs to return for each page.'),
+      returnArtifacts: z
+        .boolean()
+        .default(false)
+        .describe(
+          'Return each bounded Markdown page as a durable .md artifact instead of inline content.',
+        ),
       urls: z
         .array(httpUrlSchema('A public page URL to crawl.'))
         .min(1)
@@ -329,15 +358,25 @@ class WebTools extends ToolSet {
       authority: WEB_EXTRACT_AUTHORITY,
       description: 'Extract web pages and return separate Markdown results for each URL.',
       name: 'web_extract',
+      output: { artifacts: true },
       parameters,
-      prepare: ({ maxCharactersPerPage, maxImagesPerPage, urls }) => ({
+      prepare: ({ maxCharactersPerPage, maxImagesPerPage, returnArtifacts, urls }) => ({
         risk: {
-          effects: ['network', 'read'],
-          resources: urls.map((url) => ({ kind: 'url' as const, value: url })),
-          reversible: true,
+          effects: returnArtifacts ? ['network', 'read', 'write'] : ['network', 'read'],
+          resources: [
+            ...urls.map((url) => ({ kind: 'url' as const, value: url })),
+            ...(returnArtifacts
+              ? [{ kind: 'file' as const, value: 'conversation artifact output' }]
+              : []),
+          ],
+          reversible: !returnArtifacts,
           volume: urls.length,
         },
-        run: async ({ abortSignal }) => {
+        run: async ({ abortSignal, artifacts }) => {
+          if (returnArtifacts && artifacts === undefined) {
+            throw new Error('Artifact output is not available in this session.');
+          }
+
           const response = await fetch(`${baseUrl(config.url)}/crawl`, {
             body: JSON.stringify({
               browser_config: { params: { headless: true }, type: 'BrowserConfig' },
@@ -351,23 +390,45 @@ class WebTools extends ToolSet {
           if (!response.ok) throw await responseError(response);
 
           const crawled = crawlResults(await response.json());
-          return text({
-            results: crawled.map((result, index) => {
-              const completeContent = markdownFrom(result);
-              const pageUrl = result.url ?? urls[index] ?? '';
-              const images = imagesFrom(result, pageUrl, maxImagesPerPage);
-              return {
-                content: completeContent.slice(0, maxCharactersPerPage),
-                ...(result.success === false
-                  ? { error: result.error_message ?? 'Crawl4AI could not crawl this page.' }
-                  : {}),
-                ...(images.length === 0 ? {} : { images }),
-                ...(result.metadata?.title === undefined ? {} : { title: result.metadata.title }),
-                truncated: completeContent.length > maxCharactersPerPage,
-                url: pageUrl,
-              };
-            }),
-          });
+          const output: MessageContent[] = [];
+          const results = [];
+          for (const [index, result] of crawled.entries()) {
+            const completeContent = markdownFrom(result);
+            const content = completeContent.slice(0, maxCharactersPerPage);
+            const pageUrl = result.url ?? urls[index] ?? '';
+            const images = imagesFrom(result, pageUrl, maxImagesPerPage);
+            const common = {
+              ...(result.success === false
+                ? { error: result.error_message ?? 'Crawl4AI could not crawl this page.' }
+                : {}),
+              ...(images.length === 0 ? {} : { images }),
+              ...(result.metadata?.title === undefined ? {} : { title: result.metadata.title }),
+              truncated: completeContent.length > maxCharactersPerPage,
+              url: pageUrl,
+            };
+
+            if (!returnArtifacts) {
+              results.push({ content, ...common });
+              continue;
+            }
+            if (result.success === false) {
+              results.push(common);
+              continue;
+            }
+
+            // The publisher exists after the guard above; keeping this explicit makes the
+            // no-artifact session failure happen before any page is committed.
+            if (artifacts === undefined) throw new Error('Artifact output became unavailable.');
+            const artifact = await artifacts.publish({
+              data: new Blob([content], { type: 'text/markdown' }),
+              declaredMediaType: 'text/markdown',
+              filename: markdownFilename(result, pageUrl, index),
+            });
+            output.push(artifact);
+            results.push({ artifactId: artifact.artifact.artifactId, ...common });
+          }
+
+          return [...text({ results }), ...output];
         },
         title: `Extract ${String(urls.length)} web page${urls.length === 1 ? '' : 's'}`,
         type: 'immediate',

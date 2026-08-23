@@ -830,6 +830,9 @@ describe('Gateway', () => {
       );
 
       expect(types(broker)).toContainAllValues([
+        // Declared `contextChanges`, and a settled tool loop folds, so this
+        // transport genuinely receives one.
+        'contextChange',
         'contextUsage',
         'fragment',
         'message',

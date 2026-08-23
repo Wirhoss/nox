@@ -57,6 +57,14 @@ describe('ArtifactOutputSink', () => {
       type: 'provider',
     });
     expect(stored.scope).toEqual(scope);
+    expect(await new ArtifactOutputSink(pipeline, scope).reference(stored.artifactId)).toEqual(
+      part,
+    );
+    expect(
+      await new ArtifactOutputSink(pipeline, artifactConversationScope('web', 'other')).reference(
+        stored.artifactId,
+      ),
+    ).toBeUndefined();
   });
 
   test('uses broker identity in conversation ownership', () => {

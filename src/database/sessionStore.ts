@@ -179,6 +179,7 @@ function toRow(sessionId: string, seq: number, message: Message): MessageRowInse
         name: message.name,
         role: 'toolResponse',
         trackId: message.trackId,
+        trust: message.trust,
       };
   }
 }
@@ -247,6 +248,10 @@ function toMessage(row: MessageRow): Message {
         response: row.content ?? fail(row, 'content'),
         role: row.role,
         trackId: row.trackId ?? fail(row, 'trackId'),
+        // Not `fail`: a row from before trust was recorded is a real row of a
+        // real session, and the safe reading of a missing verdict is the one
+        // that fences the content rather than the one that vouches for it.
+        trust: row.trust ?? 'untrusted',
       };
   }
 }

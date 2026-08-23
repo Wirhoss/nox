@@ -332,6 +332,7 @@ describe('Context compaction', () => {
       response: [{ text: payload, type: 'text' }],
       role: 'toolResponse',
       trackId: track,
+      trust: 'untrusted',
     });
 
     const provider = new SummaryProvider([]);
@@ -399,6 +400,7 @@ describe('Context compaction', () => {
           response: [{ text: 'y'.repeat(12_000), type: 'text' }],
           role: 'toolResponse',
           trackId: 'track',
+          trust: 'untrusted',
         },
       ],
       reserveForOutput: 2_000,
@@ -439,6 +441,7 @@ describe('Context compaction', () => {
           response: [{ text: 'y'.repeat(8_000), type: 'text' }],
           role: 'toolResponse',
           trackId: 'track',
+          trust: 'untrusted',
         },
       ],
       reserveForOutput: 2_000,
@@ -488,6 +491,7 @@ describe('Context compaction', () => {
           response: [{ text: 'y'.repeat(12_000), type: 'text' }],
           role: 'toolResponse',
           trackId: 'track',
+          trust: 'untrusted',
         },
       ],
       onAppend: (message) => appended.push(message),
@@ -533,6 +537,7 @@ describe('Context compaction', () => {
           response: [{ text: 'y'.repeat(4000), type: 'text' }],
           role: 'toolResponse',
           trackId: 'track',
+          trust: 'untrusted',
         },
         textMessage('assistant', 'suffix', 'unchanged'),
       ],

@@ -21,6 +21,12 @@ interface ArtifactOutputPublisher {
 
 interface ArtifactOutputHost {
   publisher(provenance: ArtifactOutputProvenance, signal?: AbortSignal): ArtifactOutputPublisher;
+  reference(artifactId: string): Promise<ContentArtifact | undefined>;
+}
+
+/** The response outbox exposed to the one explicit presentation tool. */
+interface ArtifactResponsePresenter {
+  addArtifact(artifactId: string): Promise<ContentArtifact>;
 }
 
 /**
@@ -35,6 +41,13 @@ class ArtifactOutputSink implements ArtifactOutputHost {
   constructor(artifacts: ArtifactPipeline, scope: ArtifactScope) {
     this.#artifacts = artifacts;
     this.#scope = artifactScopeSchema.parse(scope);
+  }
+
+  public async reference(artifactId: string): Promise<ContentArtifact | undefined> {
+    const reference = await this.#artifacts.ref(artifactId, this.#scope);
+    return reference === undefined
+      ? undefined
+      : Object.freeze({ artifact: reference, type: 'artifact' });
   }
 
   public publisher(
@@ -79,4 +92,5 @@ export type {
   ArtifactOutputInput,
   ArtifactOutputProvenance,
   ArtifactOutputPublisher,
+  ArtifactResponsePresenter,
 };

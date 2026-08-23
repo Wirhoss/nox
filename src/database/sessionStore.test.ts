@@ -87,6 +87,7 @@ function everyRole(): Message[] {
       response: [{ text: 'no such file', type: 'text' }],
       role: 'toolResponse',
       trackId: 'track-1',
+      trust: 'untrusted',
     },
     {
       anchorMessageId: 'a1',
@@ -117,6 +118,49 @@ describe('SessionStore', () => {
 
     const loaded = await store.load('session-1');
     expect(loaded?.messages.map(messageToString)).toEqual(original.map(messageToString));
+  });
+
+  test('a tool response keeps its trust across a reload, and a row without one fences', async () => {
+    const database = await openDatabase();
+    const store = new SessionStore(database);
+    await store.create('session-1');
+
+    store.append('session-1', {
+      createdAt: CREATED_AT,
+      execution: 'immediate',
+      messageId: 'catalog',
+      name: 'search_tool',
+      response: [{ text: 'the tool catalog', type: 'text' }],
+      role: 'toolResponse',
+      trackId: 'track-1',
+      trust: 'trusted',
+    });
+    await store.flushed;
+
+    // A row written before this column existed. Its content is real tool output
+    // that nothing can vouch for any more, so the reading that fences it is the
+    // only safe one — `trusted` here would un-fence every historical result.
+    await database.exclusive((db) => {
+      db.insert(messages)
+        .values({
+          content: [{ text: 'a page from 2024', type: 'text' }],
+          createdAt: CREATED_AT.getTime(),
+          execution: 'immediate',
+          messageId: 'legacy',
+          name: 'fetch',
+          role: 'toolResponse',
+          seq: 1,
+          sessionId: 'session-1',
+          trackId: 'track-2',
+        })
+        .run();
+    });
+
+    const loaded = await store.load('session-1');
+    const [catalog, legacy] = loaded?.messages ?? [];
+
+    expect(catalog?.role === 'toolResponse' ? catalog.trust : undefined).toBe('trusted');
+    expect(legacy?.role === 'toolResponse' ? legacy.trust : undefined).toBe('untrusted');
   });
 
   test('messages come back in append order regardless of write timing', async () => {

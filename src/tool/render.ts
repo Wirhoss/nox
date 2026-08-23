@@ -4,6 +4,10 @@ import type { JsonSchema } from '../utils/jsonSchema';
 import type { Tool } from './tool';
 
 const MAX_DEPTH = 3;
+const ARTIFACT_OUTPUT_NOTICE =
+  'Output: Works with durable artifact references. Tool artifacts are not attached automatically; ' +
+  'call present_artifact with an artifact ID only when you decide the user should receive it. ' +
+  'Do not encode file bytes as base64 or inline them in text.';
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
@@ -78,12 +82,19 @@ function toolParametersSchema(tool: Tool): JsonSchema {
   return schema as JsonSchema;
 }
 
+/** The exact capability prose used by direct provider tools and routed discovery. */
+function toolDescription(tool: Tool): string {
+  return tool.output?.artifacts === true
+    ? `${tool.description}\n\n${ARTIFACT_OUTPUT_NOTICE}`
+    : tool.description;
+}
+
 function renderTool(tool: Tool): string {
   const schema = toolParametersSchema(tool);
 
   const lines = [
     `Tool: ${tool.name}`,
-    `Description: ${tool.description}`,
+    `Description: ${toolDescription(tool)}`,
     `\nArguments: ${JSON.stringify(placeholders(schema), null, 2)}`,
   ];
 
@@ -95,6 +106,6 @@ function renderTool(tool: Tool): string {
   return lines.join('\n');
 }
 
-export { renderTool, toolParametersSchema };
+export { ARTIFACT_OUTPUT_NOTICE, renderTool, toolDescription, toolParametersSchema };
 
 export type { JsonSchema };

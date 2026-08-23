@@ -237,6 +237,10 @@ describe('Session', () => {
       'toolCall',
       'toolResponse',
       'assistant',
+      // The runner folds a settled tool loop, and the fold is itself a stored
+      // message: the pair stays in the transcript and the placeholder records
+      // that the active history no longer carries it.
+      'folded',
     ]);
   });
 

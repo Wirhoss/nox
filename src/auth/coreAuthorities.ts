@@ -1,5 +1,8 @@
 import { type AuthorityDefinition, CORE_OWNER_ID } from './authority';
 
+/** Choosing which conversation-owned artifact is presented to the user. */
+const ARTIFACT_PRESENT_AUTHORITY = 'nox.artifacts.present';
+
 /** Reading the session's own transcript back. */
 const HISTORY_SEARCH_AUTHORITY = 'nox.history.search';
 const HISTORY_READ_AUTHORITY = 'nox.history.read';
@@ -20,6 +23,11 @@ const TOOL_CALL_AUTHORITY = 'nox.tools.call';
  * extension, so the core names itself as the owner and stays under `nox.`.
  */
 const CORE_AUTHORITIES: readonly AuthorityDefinition[] = Object.freeze([
+  Object.freeze({
+    description: 'Attach a conversation-owned artifact to the next assistant response.',
+    id: ARTIFACT_PRESENT_AUTHORITY,
+    ownerExtensionId: CORE_OWNER_ID,
+  }),
   Object.freeze({
     description: 'Read an earlier tool result from this session by track ID.',
     id: HISTORY_READ_AUTHORITY,
@@ -43,6 +51,7 @@ const CORE_AUTHORITIES: readonly AuthorityDefinition[] = Object.freeze([
 ]);
 
 export {
+  ARTIFACT_PRESENT_AUTHORITY,
   CORE_AUTHORITIES,
   HISTORY_READ_AUTHORITY,
   HISTORY_SEARCH_AUTHORITY,

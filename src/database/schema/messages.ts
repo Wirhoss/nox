@@ -5,6 +5,7 @@ import {
   type MessageContent,
   TOOL_RESPONSE_EXECUTIONS,
 } from '../../agent/context/message';
+import { TOOL_OUTPUT_TRUST } from '../../tool/tool';
 import { sessions } from './sessions';
 
 const messages = sqliteTable(
@@ -35,6 +36,13 @@ const messages = sqliteTable(
     trackId: text('track_id'),
     /** The transport's own ID for the message the principal sent. */
     transportMessageId: text('transport_message_id'),
+    /**
+     * Whose writing a tool response is, for the roles that have one. Nullable
+     * because no other role does, and because rows written before this column
+     * existed cannot say — both read back as `untrusted`, which is the reading
+     * that fences content rather than trusting it by default.
+     */
+    trust: text('trust', { enum: TOOL_OUTPUT_TRUST }),
   },
   (table) => [
     uniqueIndex('messages_session_seq_idx').on(table.sessionId, table.seq),

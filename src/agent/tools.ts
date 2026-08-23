@@ -1,8 +1,6 @@
-import { CORE_OWNER_ID } from '../auth/authority';
+import { type AuthorityCatalog, CORE_OWNER_ID } from '../auth/authority';
 import { ROUTER_TOOL_NAMES, ToolRouter } from '../tool/router';
 import { bindTool, type Tool, type ToolSetGrant } from '../tool/tool';
-
-import type { AuthorityCatalog } from '../auth/authority';
 
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
 

@@ -37,6 +37,7 @@ export type {
   ArtifactOutputInput,
   ArtifactOutputProvenance,
   ArtifactOutputPublisher,
+  ArtifactResponsePresenter,
 } from './output';
 export type { ArtifactPipelineOptions, ArtifactResolveOptions } from './pipeline';
 export type {

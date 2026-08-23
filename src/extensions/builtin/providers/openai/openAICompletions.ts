@@ -6,6 +6,7 @@ import {
   type ToolCallMessage,
   userContentForModel,
 } from '../../../../agent/context/message';
+import { toolResponseContentForModel, untrustedFence } from '../../../../agent/context/untrusted';
 import {
   type ArtifactPipeline,
   ArtifactProcessorOutputError,
@@ -24,7 +25,7 @@ import {
 } from '../../../../provider/config';
 import { ProviderError, type ProviderErrorCode } from '../../../../provider/error';
 import { ChatProvider } from '../../../../provider/provider';
-import { toolParametersSchema } from '../../../../tool/render';
+import { toolDescription, toolParametersSchema } from '../../../../tool/render';
 
 import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
 import type { Tool } from '../../../../tool/tool';
@@ -528,27 +529,28 @@ class OpenAICompletions extends ChatProvider {
           break;
         }
         case 'toolResponse': {
-          const responseText = message.response
+          // Untrusted output is fenced here rather than in the transcript, so
+          // the provider sees what the tool returned plus a boundary, while
+          // what Nox stores stays exactly what the tool returned.
+          const content = toolResponseContentForModel(message);
+          const responseText = content
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
-          const media = message.response.filter((part) => part.type !== 'text');
+          const media = content.filter((part) => part.type !== 'text');
 
           if (message.execution === 'deferredResult') {
             // A late deferred result cannot be a `tool` message: those must sit
             // right after their tool_calls turn. Surface it as user content
             // correlated by track ID instead.
             await flushToolMedia();
+            // The correlation header is Nox's own, so it stays outside the
+            // fence, and the parts go through in the order the tool returned
+            // them — media it produced belongs inside the boundary, not after.
             const header = `[deferred result for ${message.name} (${message.trackId})]`;
             messages.push({
               content: await this.toOpenAIUserContent(
-                [
-                  {
-                    text: `${header}${responseText.length === 0 ? '' : `\n${responseText}`}`,
-                    type: 'text',
-                  },
-                  ...media,
-                ],
+                [{ text: `${header}\n`, type: 'text' }, ...content],
                 model,
               ),
               role: 'user',
@@ -562,8 +564,12 @@ class OpenAICompletions extends ChatProvider {
             tool_call_id: message.trackId,
           });
           if (media.length > 0) {
+            // Media travels as its own provider message, so it needs its own
+            // copy of the fence — the same one, so the two halves read as one
+            // result rather than as two unrelated blocks.
+            const fence = untrustedFence(message);
             pendingToolMedia.push({
-              content: media,
+              content: fence === undefined ? media : [fence.open, ...media, fence.close],
               label: `[media returned by ${message.name} (${message.trackId})]`,
             });
           }
@@ -704,7 +710,7 @@ class OpenAICompletions extends ChatProvider {
   private toOpenAITools(tools: Tool[]): Record<string, unknown>[] {
     return tools.map((tool) => ({
       function: {
-        description: tool.description,
+        description: toolDescription(tool),
         name: tool.name,
         parameters: toolParametersSchema(tool),
       },

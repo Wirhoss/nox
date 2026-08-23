@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { TEST_AUTHORITY } from '../testFixtures';
 import { InvalidToolParamsError, UnknownToolError } from './error';
 import { ToolRouter } from './router';
+import { bindTool, type Tool, type ToolContext } from './tool';
 
 import type { MessageContent } from '../agent/context/message';
-import type { Tool, ToolContext } from './tool';
 
 function text(value: string): MessageContent[] {
   return [{ text: value, type: 'text' }];
@@ -34,8 +34,33 @@ describe('ToolRouter', () => {
     expect(Object.isFrozen(router.tools)).toBe(true);
   });
 
+  test('routes a call under the routed tool own trust, not the router own', () => {
+    // `call_tool` is a doorway: it returns the routed tool's execution, already
+    // stamped. If the router restamped it, every scraped page would arrive
+    // wearing the trust of a core tool.
+    const scraper = immediateTool('fetch_page');
+    const router = new ToolRouter([bindTool(scraper, 'scraper')]);
+    const callTool = router.tools.call_tool;
+    if (callTool === undefined) throw new Error('The router exposes call_tool.');
+    const routed = bindTool(callTool, 'nox.router');
+
+    const execution = routed.prepare({ name: 'fetch_page', params: '{}' });
+    expect(execution.gateSubject?.toolName).toBe('fetch_page');
+    expect(execution.gateSubject?.trust).toBe('untrusted');
+
+    // The catalog it renders is Nox describing its own tool table, so that one
+    // is trusted — and it is the only tool in here that is.
+    const searchTool = router.tools.search_tool;
+    if (searchTool === undefined) throw new Error('The router exposes search_tool.');
+    const search = bindTool(searchTool, 'nox.router');
+    expect(search.prepare({ query: 'fetch' }).gateSubject?.trust).toBe('trusted');
+  });
+
   test('searches deterministically and returns exact rendered tool definitions', async () => {
-    const weather = immediateTool('weather_forecast', 'Get a weather forecast for a city.');
+    const weather: Tool = {
+      ...immediateTool('weather_forecast', 'Get a weather forecast for a city.'),
+      output: { artifacts: true },
+    };
     const calendar = immediateTool('calendar_events', 'List appointments by date.');
     const forward = new ToolRouter([weather, calendar]);
     const reverse = new ToolRouter([calendar, weather]);
@@ -54,6 +79,8 @@ describe('ToolRouter', () => {
 
     expect(payload.tools).toContain('Tool: weather_forecast');
     expect(payload.tools).toContain('Description: Get a weather forecast for a city.');
+    expect(payload.tools).toContain('call present_artifact with an artifact ID');
+    expect(payload.tools).toContain('Do not encode file bytes as base64');
     expect(payload.tools).not.toContain('Tool: calendar_events');
   });
 

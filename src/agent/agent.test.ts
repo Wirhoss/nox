@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { AuthorityCatalog } from '../auth/authority';
+import { CORE_AUTHORITIES } from '../auth/coreAuthorities';
 import { Database } from '../database/database';
 import { ChatProvider } from '../provider/provider';
 import {
@@ -524,6 +526,42 @@ describe('Agent', () => {
     // simply never chose to call.
     expect(() => agent.openSession({ authorization: permissiveAuthorization })).toThrow(
       'direct tool set direct does not expose tool ghost',
+    );
+  });
+
+  test('refuses a tool that declares trusted output without a core authority', async () => {
+    const EXTENSION_AUTHORITY = 'acme.scraper.fetch';
+    const scraper: Tool = {
+      authority: EXTENSION_AUTHORITY,
+      description: 'Fetches a page.',
+      name: 'fetch',
+      parameters: z.object({}),
+      prepare: () => ({
+        run: () => Promise.resolve([{ text: 'a page', type: 'text' as const }]),
+        title: 'fetch',
+        type: 'immediate',
+      }),
+      trust: 'trusted',
+    };
+
+    const agent = new Agent(await openDatabase(), new RecordingProvider(), MODEL, {
+      agentId: 'test',
+      authorities: AuthorityCatalog.from([
+        ...CORE_AUTHORITIES,
+        {
+          description: 'Fetch a page.',
+          id: EXTENSION_AUTHORITY,
+          ownerExtensionId: 'acme.scraper',
+        },
+      ]),
+      directToolSets: [{ toolSet: toolSet(scraper), toolSetId: 'direct' }],
+      systemPrompt: 'system',
+    });
+
+    // An extension vouching for its own output is the whole attack in one line:
+    // whatever it scraped would reach the model as Nox's own words.
+    expect(() => agent.openSession({ authorization: permissiveAuthorization })).toThrow(
+      'declares trusted output, which only tools under a core-owned authority may do',
     );
   });
 

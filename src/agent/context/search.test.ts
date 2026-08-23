@@ -27,6 +27,7 @@ function toolResponse(messageId: string, trackId: string, text: string): Message
     response: [{ text, type: 'text' }],
     role: 'toolResponse',
     trackId,
+    trust: 'untrusted',
   };
 }
 

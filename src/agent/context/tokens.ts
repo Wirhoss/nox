@@ -1,5 +1,6 @@
 import { toolParametersSchema } from '../../tool/render';
 import { type Message, messageToString } from './message';
+import { UNTRUSTED_FENCE_TEXT } from './untrusted';
 
 import type { Tool } from '../../tool/tool';
 
@@ -70,6 +71,7 @@ function mediaTokens(message: Message): number {
 class TokenEstimator {
   readonly #cache = new WeakMap<Message, number>();
   readonly #count: (text: string) => number;
+  readonly #fenceTokens: number;
   readonly #prefixTokens: number;
 
   constructor(
@@ -78,6 +80,9 @@ class TokenEstimator {
     tokenCounter: (text: string) => number = estimateTokensByCharacters,
   ) {
     this.#count = tokenCounter;
+    // Untrusted tool output is fenced on its way to a provider, not in storage,
+    // so the fence is real cost this would otherwise never see.
+    this.#fenceTokens = this.#countText(UNTRUSTED_FENCE_TEXT);
     this.#prefixTokens =
       this.#countText(stableSerialize({ content: systemPrompt, role: 'system' })) +
       SYSTEM_TOKEN_OVERHEAD +
@@ -105,7 +110,8 @@ class TokenEstimator {
         this.#countText(messageToString(message)),
       ) +
       mediaTokens(message) +
-      MESSAGE_TOKEN_OVERHEAD;
+      MESSAGE_TOKEN_OVERHEAD +
+      (message.role === 'toolResponse' && message.trust === 'untrusted' ? this.#fenceTokens : 0);
 
     if (Object.isFrozen(message)) this.#cache.set(message, estimate);
     return estimate;

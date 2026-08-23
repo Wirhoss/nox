@@ -1,3 +1,4 @@
+import { PRESENT_ARTIFACT_TOOL_NAME, presentArtifactTool } from './artifactTool';
 import { Session } from './session';
 import { composeSessionTools } from './tools';
 
@@ -132,11 +133,23 @@ class Agent {
   public openSession(options: OpenSessionOptions = {}): Promise<Session> {
     // Snapshot before Session.open reaches storage: changes after this call
     // belong to later sessions, even while this one is still loading.
-    const tools = composeSessionTools(
+    const configuredTools = composeSessionTools(
       this.#directToolSets,
       this.#routedToolSets,
       this.#authorities,
     );
+    const outputEnabled = this.#artifacts !== undefined && options.artifactScope !== undefined;
+    if (outputEnabled && configuredTools[PRESENT_ARTIFACT_TOOL_NAME] !== undefined) {
+      throw new Error(
+        `Configured tool ${PRESENT_ARTIFACT_TOOL_NAME} conflicts with Nox's artifact response tool.`,
+      );
+    }
+    const tools = outputEnabled
+      ? Object.freeze({
+          ...configuredTools,
+          [PRESENT_ARTIFACT_TOOL_NAME]: presentArtifactTool(),
+        })
+      : configuredTools;
 
     return Session.open(this.#database, this.#provider, this.#model, {
       ...options,
