@@ -3,6 +3,7 @@ import { configPolicies, type SectionPolicies, type SectionPolicy } from './poli
 
 import type { Config, ConfigUpdate, ContributionKey, DirectoryKey } from '../../config/config';
 import type { ConfigApply, ConfigSection } from '../../config/section';
+import type { ToolSetCatalog, ToolSetInventory } from '../../extensions/toolSetCatalog';
 import type { BlueprintContext } from './blueprints';
 
 /**
@@ -67,10 +68,12 @@ function sorted(record: Record<string, unknown>): Record<string, unknown> {
 class ConfigStore {
   readonly #config: Config;
   readonly #policies: SectionPolicies;
+  readonly #toolSets: ToolSetCatalog;
 
   constructor(options: BlueprintContext) {
     this.#config = options.config;
     this.#policies = configPolicies(options);
+    this.#toolSets = options.toolSets;
   }
 
   /** The agent a new web conversation uses, when the installation names one. */
@@ -112,6 +115,11 @@ class ConfigStore {
     return sections[key].kind !== 'file';
   }
 
+  /** Tools exposed by each configured capability, using the runtime factories' own answer. */
+  public toolSetInventory(): Promise<readonly ToolSetInventory[]> {
+    return this.#toolSets.inventory();
+  }
+
   /** Throws `ConfigError('unresolved')` for a section the extensions have not reached yet. */
   public read(key: ConfigKey): unknown {
     const value = this.#config.get(key);
@@ -119,7 +127,10 @@ class ConfigStore {
   }
 
   public async write(key: ConfigKey, next: unknown): Promise<ConfigUpdate<unknown>> {
-    return this.#config.update(key, next as never);
+    const validate = this.#policy(key).validateSection;
+    return this.#config.update(key, next as never, async (value) => {
+      await validate?.(value);
+    });
   }
 
   public readEntry(key: EntryKey, entryId: string): unknown {
@@ -163,7 +174,7 @@ class ConfigStore {
   }
 
   /** A section with nothing to insist on has no row, which is not a special case. */
-  #policy(key: EntryKey): SectionPolicy {
+  #policy(key: ConfigKey): SectionPolicy {
     return this.#policies[key] ?? {};
   }
 }

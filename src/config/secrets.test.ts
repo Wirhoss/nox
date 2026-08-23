@@ -7,13 +7,29 @@ import { eq } from 'drizzle-orm';
 
 import { Database } from '../database/database';
 import { secrets } from '../database/schema';
-import { resolveSecrets, SecretError, SecretHandle, secretRefSchema, SecretStore } from './secrets';
+import {
+  composeWithSecrets,
+  findSecretReferences,
+  resolveSecrets,
+  type SecretConsumer,
+  SecretError,
+  SecretHandle,
+  type SecretReference,
+  secretRefSchema,
+  SecretStore,
+} from './secrets';
 
 const databases: Database[] = [];
 const directories: string[] = [];
 
+const CONSUMER: SecretConsumer = { extensionId: 'nox.test', location: 'providers.main' };
+
 function ref(secretId: string) {
   return secretRefSchema.parse({ $secret: secretId });
+}
+
+function reference(secretId: string, location: string): SecretReference {
+  return { location, secretId };
 }
 
 async function dataDirectory(): Promise<string> {
@@ -22,7 +38,10 @@ async function dataDirectory(): Promise<string> {
   return directory;
 }
 
-async function openStore(existingDirectory?: string): Promise<{
+async function openStore(
+  existingDirectory?: string,
+  references: readonly SecretReference[] = [],
+): Promise<{
   database: Database;
   directory: string;
   store: SecretStore;
@@ -30,7 +49,11 @@ async function openStore(existingDirectory?: string): Promise<{
   const directory = existingDirectory ?? (await dataDirectory());
   const database = await Database.open({ path: join(directory, 'nox.db') });
   databases.push(database);
-  const store = await SecretStore.open({ dataDirectory: directory, database });
+  const store = await SecretStore.open({
+    dataDirectory: directory,
+    database,
+    references: () => references,
+  });
   return { database, directory, store };
 }
 
@@ -51,30 +74,56 @@ describe('secret references', () => {
     expect(secretRefSchema.safeParse('inline-token').success).toBeFalse();
     expect(secretRefSchema.safeParse({ $secret: '../token' }).success).toBeFalse();
   });
+
+  test('are found wherever configuration names one, with the path that names it', () => {
+    const found = findSecretReferences(
+      {
+        internet: {
+          extract: { apiKey: { $secret: 'CRAWL4AI_API_KEY' }, url: 'https://crawl.example' },
+          search: { apiKey: { $secret: 'SEARXNG_API_KEY' }, url: 'https://search.example' },
+        },
+        plain: { url: 'https://nothing.example' },
+      },
+      'toolSets',
+    );
+
+    expect(found).toEqual([
+      reference('CRAWL4AI_API_KEY', 'toolSets.internet.extract.apiKey'),
+      reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey'),
+    ]);
+  });
+
+  test('are found inside arrays, which contributed configuration may hold', () => {
+    const found = findSecretReferences(
+      { relay: { hooks: [{ token: { $secret: 'HOOK' } }] } },
+      'brokers',
+    );
+
+    expect(found).toEqual([reference('HOOK', 'brokers.relay.hooks.0.token')]);
+  });
 });
 
 describe('SecretStore', () => {
   test('creates an encrypted managed secret and returns only safe metadata', async () => {
     const { database, directory, store } = await openStore();
     const metadata = await store.set('API_TOKEN', 'very-secret');
-    const consumer = { extensionId: 'nox.test', location: 'providers.main.apiKey' };
 
-    const handle = await store.resolve(ref('API_TOKEN'), consumer);
+    const handle = await store.resolve(ref('API_TOKEN'), CONSUMER);
     const row = database.db.select().from(secrets).get();
 
     expect(metadata.createdAt).toBeNumber();
     expect(metadata.secretId).toBe('API_TOKEN');
     expect(metadata.updatedAt).toBeNumber();
-    expect(await store.list()).toEqual([metadata]);
+    expect(await store.list()).toEqual([{ ...metadata, references: [], stored: true }]);
     expect(await store.has('API_TOKEN')).toBeTrue();
     expect(handle).toBeInstanceOf(SecretHandle);
-    expect(handle.id).toBe('API_TOKEN');
-    expect(handle.reveal()).toBe('very-secret');
+    expect(handle?.id).toBe('API_TOKEN');
+    expect(handle?.reveal()).toBe('very-secret');
     expect(String(handle)).toBe('[redacted]');
     expect(JSON.stringify({ handle })).toBe('{"handle":"[redacted]"}');
     expect(JSON.stringify(row)).not.toContain('very-secret');
     expect(await readFile(join(directory, '.secret-key'))).toHaveLength(32);
-    expect(store.consumers('API_TOKEN')).toEqual([consumer]);
+    expect(store.consumers('API_TOKEN')).toEqual([CONSUMER]);
   });
 
   test('persists across a database reopen with the same installation key', async () => {
@@ -83,25 +132,21 @@ describe('SecretStore', () => {
     await first.database.close();
 
     const second = await openStore(first.directory);
-    const handle = await second.store.resolve(ref('API_TOKEN'), {
-      extensionId: 'nox.test',
-      location: 'providers.main.apiKey',
-    });
+    const handle = await second.store.resolve(ref('API_TOKEN'), CONSUMER);
 
-    expect(handle.reveal()).toBe('survives-restart');
+    expect(handle?.reveal()).toBe('survives-restart');
   });
 
   test('rotates future handles while existing handles remain immutable snapshots', async () => {
     const { store } = await openStore();
-    const consumer = { extensionId: 'nox.test', location: 'providers.main.apiKey' };
     const created = await store.set('API_TOKEN', 'first');
-    const first = await store.resolve(ref('API_TOKEN'), consumer);
+    const first = await store.resolve(ref('API_TOKEN'), CONSUMER);
 
     const replaced = await store.set('API_TOKEN', 'second');
-    const second = await store.resolve(ref('API_TOKEN'), consumer);
+    const second = await store.resolve(ref('API_TOKEN'), CONSUMER);
 
-    expect(first.reveal()).toBe('first');
-    expect(second.reveal()).toBe('second');
+    expect(first?.reveal()).toBe('first');
+    expect(second?.reveal()).toBe('second');
     expect(replaced.createdAt).toBe(created.createdAt);
     expect(replaced.updatedAt).toBeGreaterThan(created.updatedAt);
     expect(await store.list()).toHaveLength(1);
@@ -120,8 +165,9 @@ describe('SecretStore', () => {
       { extensionId: 'nox.toolset.web', location: 'toolSets.internet' },
     );
 
-    expect(resolved.extract.apiKey.reveal()).toBe('shared');
-    expect(resolved.search.apiKey.reveal()).toBe('shared');
+    expect(resolved.value.extract.apiKey.reveal()).toBe('shared');
+    expect(resolved.value.search.apiKey.reveal()).toBe('shared');
+    expect(resolved.missing).toEqual([]);
     expect(store.consumers('SHARED_TOKEN')).toEqual([
       { extensionId: 'nox.toolset.web', location: 'toolSets.internet.extract.apiKey' },
       { extensionId: 'nox.toolset.web', location: 'toolSets.internet.search.apiKey' },
@@ -141,7 +187,7 @@ describe('SecretStore', () => {
       location: 'toolSets.discord-admin.token',
     });
 
-    expect(broker.reveal()).toBe(toolSet.reveal());
+    expect(broker?.reveal()).toBe(toolSet?.reveal());
     expect(store.consumers('DISCORD_BOT_TOKEN')).toEqual([
       { extensionId: 'nox.broker.discord', location: 'brokers.discord.token' },
       { extensionId: 'nox.toolset.discord', location: 'toolSets.discord-admin.token' },
@@ -163,25 +209,7 @@ describe('SecretStore', () => {
     expect(await store.delete('API_TOKEN')).toBeFalse();
     expect(await store.has('API_TOKEN')).toBeFalse();
     expect(await store.list()).toEqual([]);
-    expect(
-      store.resolve(ref('API_TOKEN'), {
-        extensionId: 'nox.test',
-        location: 'providers.main.apiKey',
-      }),
-    ).rejects.toMatchObject({ code: 'missing' });
-  });
-
-  test('fails closed without putting secret values in diagnostics', async () => {
-    const { store } = await openStore();
-
-    const failure = store.resolve(ref('MISSING_TOKEN'), {
-      extensionId: 'nox.provider.test',
-      location: 'providers.main.apiKey',
-    });
-
-    expect(failure).rejects.toBeInstanceOf(SecretError);
-    expect(failure).rejects.toThrow('MISSING_TOKEN');
-    expect(failure).rejects.toThrow('providers.main.apiKey');
+    expect(await store.resolve(ref('API_TOKEN'), CONSUMER)).toBeUndefined();
   });
 
   test('detects a modified encrypted envelope', async () => {
@@ -194,6 +222,9 @@ describe('SecretStore', () => {
         .run();
     });
 
+    // Unreadable is not "unset": it is a broken installation, and treating the
+    // two alike would hide a key-management failure behind a puzzling
+    // authentication one.
     const failure = store.resolve(ref('API_TOKEN'), {
       extensionId: 'nox.test',
       location: 'brokers.discord.token',
@@ -224,5 +255,191 @@ describe('SecretStore', () => {
     databases.push(database);
 
     expect(SecretStore.open({ dataDirectory: directory, database })).rejects.toThrow('32 bytes');
+  });
+});
+
+describe('secrets configuration names but nobody has stored', () => {
+  test('are listed, so a needed credential is never invisible', async () => {
+    const { store } = await openStore(undefined, [
+      reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey'),
+    ]);
+
+    expect(await store.list()).toEqual([
+      {
+        references: [reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey')],
+        secretId: 'SEARXNG_API_KEY',
+        stored: false,
+      },
+    ]);
+    expect(await store.has('SEARXNG_API_KEY')).toBeFalse();
+  });
+
+  test('resolve to nothing rather than failing, so a boot is not how you find out', async () => {
+    const { store } = await openStore();
+
+    const handle = await store.resolve(ref('SEARXNG_API_KEY'), CONSUMER);
+
+    // Whether a credential is required belongs to whatever reads it, not to the
+    // store; a store that threw would make every unfilled optional key a failed
+    // boot.
+    expect(handle).toBeUndefined();
+    expect(store.consumers('SEARXNG_API_KEY')).toEqual([CONSUMER]);
+  });
+
+  test('leave their property absent, so an optional field reads as unset', async () => {
+    const { store } = await openStore();
+
+    const resolved = await resolveSecrets(
+      { apiKey: ref('MISSING'), baseUrl: 'x' },
+      store,
+      CONSUMER,
+    );
+
+    // Not `{ apiKey: undefined }`: that is a present key to a `.parse`, and an
+    // optional field has to read as absent for its schema to accept it.
+    expect('apiKey' in resolved.value).toBeFalse();
+    expect(resolved.value.baseUrl).toBe('x');
+    expect(resolved.missing).toEqual([reference('MISSING', 'providers.main.apiKey')]);
+  });
+
+  test('writing a value fills the referenced row rather than adding a second one', async () => {
+    const { store } = await openStore(undefined, [
+      reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey'),
+    ]);
+
+    const metadata = await store.set('SEARXNG_API_KEY', 'searxng-token');
+    const listed = await store.list();
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      createdAt: metadata.createdAt,
+      secretId: 'SEARXNG_API_KEY',
+      stored: true,
+      updatedAt: metadata.updatedAt,
+    });
+    expect(listed[0]?.references).toHaveLength(1);
+  });
+
+  test('deleting the value leaves the reference behind', async () => {
+    const { store } = await openStore(undefined, [
+      reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey'),
+    ]);
+    await store.set('SEARXNG_API_KEY', 'searxng-token');
+
+    expect(await store.delete('SEARXNG_API_KEY')).toBeTrue();
+    expect(await store.list()).toMatchObject([{ secretId: 'SEARXNG_API_KEY', stored: false }]);
+  });
+
+  test('stored and referenced IDs are one list, sorted by ID', async () => {
+    const { store } = await openStore(undefined, [
+      reference('CRAWL4AI_API_KEY', 'toolSets.internet.extract.apiKey'),
+      reference('OPENAI_API_KEY', 'providers.main.apiKey'),
+    ]);
+    await store.set('ZONE_TOKEN', 'stored-only');
+    await store.set('OPENAI_API_KEY', 'referenced-and-stored');
+
+    expect((await store.list()).map((summary) => [summary.secretId, summary.stored])).toEqual([
+      ['CRAWL4AI_API_KEY', false],
+      ['OPENAI_API_KEY', true],
+      ['ZONE_TOKEN', true],
+    ]);
+  });
+
+  test('one ID named twice keeps both locations, which is what reuse looks like', async () => {
+    const { store } = await openStore(undefined, [
+      reference('VENDOR_TOKEN', 'providers.secondary.apiKey'),
+      reference('VENDOR_TOKEN', 'providers.main.apiKey'),
+    ]);
+
+    const [summary, ...rest] = await store.list();
+
+    expect(rest).toBeEmpty();
+    expect(summary?.references.map((one) => one.location)).toEqual([
+      'providers.main.apiKey',
+      'providers.secondary.apiKey',
+    ]);
+  });
+
+  test('references of an unnamed ID read as empty rather than throwing', async () => {
+    const { store } = await openStore();
+    await store.set('ZONE_TOKEN', 'stored-only');
+
+    expect(store.references('ZONE_TOKEN')).toEqual([]);
+    expect(store.references('NEVER_HEARD_OF_IT')).toEqual([]);
+  });
+});
+
+describe('composeWithSecrets', () => {
+  test('hands the factory a config with its credentials in place', async () => {
+    const { store } = await openStore();
+    await store.set('API_TOKEN', 'live-value');
+
+    const built = await composeWithSecrets(
+      { apiKey: ref('API_TOKEN'), baseUrl: 'https://api.example' },
+      store,
+      CONSUMER,
+      (config) => config.apiKey.reveal(),
+    );
+
+    expect(built).toBe('live-value');
+  });
+
+  test('explains which secret was missing when the factory rejects the gap', async () => {
+    const { store } = await openStore();
+
+    const failure = composeWithSecrets(
+      { apiKey: ref('DISCORD_TOKEN') },
+      store,
+      { extensionId: 'nox.broker.discord', location: 'brokers.relay' },
+      // What a runtime schema does when a required credential is absent.
+      (config) => {
+        if (!('apiKey' in config)) throw new TypeError('apiKey is required');
+        return config;
+      },
+    );
+
+    // Without this the only report is a type error naming a field, which says
+    // nothing about which credential to store or where it was named.
+    expect(failure).rejects.toThrow('brokers.relay');
+    expect(failure).rejects.toThrow('DISCORD_TOKEN');
+    expect(failure).rejects.toThrow('brokers.relay.apiKey');
+  });
+
+  test('leaves an unrelated factory failure exactly as it was thrown', async () => {
+    const { store } = await openStore();
+    await store.set('API_TOKEN', 'live-value');
+    const thrown = new RangeError('baseUrl is required');
+
+    const failure = composeWithSecrets({ apiKey: ref('API_TOKEN') }, store, CONSUMER, () => {
+      throw thrown;
+    });
+
+    expect(failure).rejects.toBe(thrown);
+  });
+
+  test('does not disguise a failure that happens to coincide with a missing secret', async () => {
+    const { store } = await openStore();
+
+    const failure = composeWithSecrets({ apiKey: ref('MISSING') }, store, CONSUMER, () => {
+      throw new RangeError('something else entirely');
+    });
+
+    // The original is kept as the cause: the wrapper adds what the caller could
+    // not know, and hides nothing it did.
+    expect(failure).rejects.toMatchObject({ cause: { message: 'something else entirely' } });
+  });
+});
+
+describe('SecretError', () => {
+  test('names the secret and the location without carrying a value', async () => {
+    const { store } = await openStore();
+    await store.set('API_TOKEN', 'must-not-leak');
+
+    const error = new SecretError('missing', 'API_TOKEN', CONSUMER, 'is not configured.');
+
+    expect(error.code).toBe('missing');
+    expect(error.secretId).toBe('API_TOKEN');
+    expect(String(error)).toContain('providers.main');
+    expect(String(error)).not.toContain('must-not-leak');
   });
 });

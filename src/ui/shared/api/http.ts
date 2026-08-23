@@ -1,16 +1,29 @@
 import { z } from 'zod'
 
 const API_PREFIX = '/api'
-const errorResponseSchema = z.object({ error: z.string() })
+const errorResponseSchema = z.object({
+  detail: z.string().optional(),
+  error: z.string(),
+  problems: z.array(z.string()).optional(),
+  reasons: z.array(z.string()).optional(),
+})
+
+type ApiErrorDetails = z.infer<typeof errorResponseSchema>
 
 class ApiError extends Error {
   public readonly code: string | undefined
+  public readonly detail: string | undefined
+  public readonly problems: readonly string[]
+  public readonly reasons: readonly string[]
   public readonly status: number
 
-  constructor(status: number, code?: string) {
-    super(`Nox API request failed with status ${String(status)}.`)
+  constructor(status: number, details?: ApiErrorDetails) {
+    super(details?.detail ?? `Nox API request failed with status ${String(status)}.`)
     this.name = 'ApiError'
-    this.code = code
+    this.code = details?.error
+    this.detail = details?.detail
+    this.problems = details?.problems ?? []
+    this.reasons = details?.reasons ?? []
     this.status = status
   }
 }
@@ -45,7 +58,7 @@ async function requestJson<Output>(
 
   if (!response.ok) {
     const parsedError = errorResponseSchema.safeParse(body)
-    throw new ApiError(response.status, parsedError.success ? parsedError.data.error : undefined)
+    throw new ApiError(response.status, parsedError.success ? parsedError.data : undefined)
   }
 
   const parsed = schema.safeParse(body)
@@ -61,7 +74,7 @@ async function requestEmpty(path: string, init: RequestInit = {}): Promise<void>
 
   const body = await readJson(response)
   const parsedError = errorResponseSchema.safeParse(body)
-  throw new ApiError(response.status, parsedError.success ? parsedError.data.error : undefined)
+  throw new ApiError(response.status, parsedError.success ? parsedError.data : undefined)
 }
 
 async function requestStream(path: string, init: RequestInit = {}): Promise<Response> {
@@ -70,7 +83,7 @@ async function requestStream(path: string, init: RequestInit = {}): Promise<Resp
 
   const body = await readJson(response)
   const parsedError = errorResponseSchema.safeParse(body)
-  throw new ApiError(response.status, parsedError.success ? parsedError.data.error : undefined)
+  throw new ApiError(response.status, parsedError.success ? parsedError.data : undefined)
 }
 
 async function request(path: string, init: RequestInit): Promise<Response> {

@@ -24,7 +24,21 @@ const secretIdSchema = z
     'Use letters, digits, dots, dashes or underscores; paths are not secret IDs.',
   );
 
-/** A safe value for ordinary configuration: it names a secret but never contains it. */
+/**
+ * A safe value for ordinary configuration: it names a secret but never contains
+ * one.
+ *
+ * Putting this in a contribution's `configSchema` is how that contribution
+ * declares where a credential may go, and the declaration is enforced by the
+ * same parse that validates everything else: a `{"$secret":"..."}` written
+ * anywhere the schema does not allow it fails validation, so an extension cannot
+ * quietly read a credential from a position it never declared.
+ *
+ * Which secret fills the position is the operator's answer, not the extension's,
+ * and it has to be: two instances of one provider kind routinely talk to two
+ * services with two credentials, and an ID fixed by the extension would force
+ * them to share one.
+ */
 const secretRefSchema = z
   .object(
     { $secret: secretIdSchema },
@@ -35,8 +49,23 @@ const secretRefSchema = z
 
 type SecretRef = z.infer<typeof secretRefSchema>;
 
+/**
+ * One place configuration names a secret.
+ *
+ * This is what makes a credential visible before anything uses it. References
+ * are read from the configuration as it stands, so a secret named by an entry
+ * that has not been composed — a tool set no agent was granted, an entry saved
+ * a moment ago — is as knowable as one a running provider already holds.
+ */
+interface SecretReference {
+  /** Config location, for example `providers.main.apiKey`. */
+  readonly location: string;
+  readonly secretId: string;
+}
+
 type SecretErrorCode = 'missing' | 'unreadable';
 
+/** Something that resolved a secret in this process, with the position it read it from. */
 interface SecretConsumer {
   readonly extensionId: string;
   /** Config location, for example `providers.main.apiKey`. */
@@ -49,10 +78,33 @@ interface SecretMetadata {
   readonly updatedAt: number;
 }
 
+/**
+ * One known secret ID, whether or not a value was ever written for it.
+ *
+ * A secret is a name before it is a value: configuration can name one that
+ * nobody has supplied yet, and that is the ordinary state of a fresh install
+ * rather than an error. `stored` is the difference, and the timestamps exist
+ * only on the stored side, because a reference has no history of its own.
+ */
+interface SecretSummary {
+  readonly createdAt?: number;
+  readonly references: readonly SecretReference[];
+  readonly secretId: string;
+  readonly stored: boolean;
+  readonly updatedAt?: number;
+}
+
 interface SecretStoreOptions {
   readonly dataDirectory: string;
   readonly database: Database;
   readonly logger?: Logger;
+  /**
+   * Read on every call rather than captured. The store opens before the
+   * extensions that describe the configuration have activated, and configuration
+   * keeps changing afterwards — an entry saved through the settings surface names
+   * its secret immediately, with no restart in between.
+   */
+  readonly references?: () => readonly SecretReference[];
 }
 
 interface EncryptedSecret {
@@ -128,6 +180,11 @@ class SecretHandle {
  *
  * Resolved values are snapshots. Replacing a secret affects future handles;
  * already composed contributions keep their old handle until they restart.
+ *
+ * What the store knows is wider than what it holds. An ID is known because a
+ * value was written for it, because configuration names it, or both, and `list`
+ * is that union — so a credential something needs is something an operator can
+ * see and answer, rather than something a failed boot reports.
  */
 class SecretStore {
   readonly #cache = new Map<string, Promise<string>>();
@@ -135,11 +192,18 @@ class SecretStore {
   readonly #database: Database;
   readonly #key: Buffer;
   readonly #logger: Logger;
+  readonly #references: () => readonly SecretReference[];
 
-  private constructor(database: Database, key: Buffer, logger: Logger) {
+  private constructor(
+    database: Database,
+    key: Buffer,
+    logger: Logger,
+    references: () => readonly SecretReference[],
+  ) {
     this.#database = database;
     this.#key = key;
     this.#logger = logger;
+    this.#references = references;
   }
 
   public static async open(options: SecretStoreOptions): Promise<SecretStore> {
@@ -147,15 +211,42 @@ class SecretStore {
       Boolean(database.select({ secretId: secrets.secretId }).from(secrets).limit(1).get()),
     );
     const key = await loadOrCreateMasterKey(options.dataDirectory, hasStoredSecrets);
-    return new SecretStore(options.database, key, options.logger ?? silentLogger);
+    return new SecretStore(
+      options.database,
+      key,
+      options.logger ?? silentLogger,
+      options.references ?? (() => Object.freeze([])),
+    );
   }
 
+  /**
+   * What has resolved this ID since the process started. Narrower than
+   * `references` on purpose: a reference is a fact about the configuration,
+   * while a consumer is something actually holding a snapshot of the value, and
+   * only the second says whether a replacement waits for a restart.
+   */
   public consumers(secretId: string): readonly SecretConsumer[] {
     return Object.freeze([...(this.#consumers.get(secretId)?.values() ?? [])]);
   }
 
-  /** Metadata is safe for administrative surfaces; encrypted fields never leave this class. */
-  public async list(): Promise<readonly SecretMetadata[]> {
+  /** Every place the configuration names this ID, composed or not. */
+  public references(secretId: string): readonly SecretReference[] {
+    return Object.freeze(
+      this.#references()
+        .filter((reference) => reference.secretId === secretId)
+        .sort((a, b) => a.location.localeCompare(b.location)),
+    );
+  }
+
+  /**
+   * Every known secret ID: stored, referenced, or both. Metadata is safe for
+   * administrative surfaces; encrypted fields never leave this class.
+   *
+   * Sorted by ID rather than by where the knowledge came from, because to an
+   * operator these are one list — a credential that exists and one that is still
+   * expected sit next to each other, and the difference is a field on the row.
+   */
+  public async list(): Promise<readonly SecretSummary[]> {
     const rows = await this.#database.exclusive((database) =>
       database
         .select({
@@ -167,7 +258,37 @@ class SecretStore {
         .orderBy(asc(secrets.secretId))
         .all(),
     );
-    return Object.freeze(rows.map((row) => Object.freeze(row)));
+
+    const summaries = new Map<string, SecretSummary>(
+      rows.map((row) => [
+        row.secretId,
+        { ...row, references: Object.freeze([]), stored: true } satisfies SecretSummary,
+      ]),
+    );
+    for (const reference of this.#references()) {
+      const known = summaries.get(reference.secretId) ?? {
+        references: Object.freeze([]),
+        secretId: reference.secretId,
+        stored: false,
+      };
+      summaries.set(reference.secretId, {
+        ...known,
+        references: Object.freeze([...known.references, reference]),
+      });
+    }
+
+    return Object.freeze(
+      [...summaries.values()]
+        .sort((a, b) => a.secretId.localeCompare(b.secretId))
+        .map((summary) =>
+          Object.freeze({
+            ...summary,
+            references: Object.freeze(
+              [...summary.references].sort((a, b) => a.location.localeCompare(b.location)),
+            ),
+          }),
+        ),
+    );
   }
 
   public async has(secretId: string): Promise<boolean> {
@@ -237,15 +358,24 @@ class SecretStore {
     return deleted;
   }
 
-  public async resolve(reference: SecretRef, consumer: SecretConsumer): Promise<SecretHandle> {
+  /**
+   * The value behind one reference, or `undefined` when nothing is stored for it.
+   *
+   * Absence is not an error here, and that is deliberate. Whether a credential is
+   * required is a property of the contribution that reads it, not of the store,
+   * and a store that threw would make every unfilled optional key a failed boot —
+   * which is precisely how a missing credential used to be discovered.
+   *
+   * A value that exists but cannot be decrypted still throws. That is a broken
+   * installation rather than an unfilled requirement, and treating the two alike
+   * would hide a key-management failure behind a puzzling authentication one.
+   */
+  public async resolve(
+    reference: SecretRef,
+    consumer: SecretConsumer,
+  ): Promise<SecretHandle | undefined> {
     const { $secret: secretId } = secretRefSchema.parse(reference);
-    const consumerKey = `${consumer.extensionId}\u0000${consumer.location}`;
-    let consumers = this.#consumers.get(secretId);
-    if (consumers === undefined) {
-      consumers = new Map();
-      this.#consumers.set(secretId, consumers);
-    }
-    consumers.set(consumerKey, Object.freeze({ ...consumer }));
+    this.#recordConsumer(secretId, consumer);
 
     let pending = this.#cache.get(secretId);
     if (pending === undefined) {
@@ -258,15 +388,37 @@ class SecretStore {
       value = await pending;
     } catch (error) {
       if (error instanceof SecretLoadError) {
+        if (error.code === 'missing') {
+          this.#logger.debug(
+            { extensionId: consumer.extensionId, location: consumer.location, secretId },
+            'Secret named by configuration has no stored value.',
+          );
+          return undefined;
+        }
         throw new SecretError(error.code, secretId, consumer, error.message, { cause: error });
       }
       throw error;
     }
+
     this.#logger.debug(
       { extensionId: consumer.extensionId, location: consumer.location, secretId },
       'Secret resolved.',
     );
     return new SecretHandle(secretId, value);
+  }
+
+  /**
+   * Recorded before the value is read, so a credential is attributed to whoever
+   * asked for it whether or not one exists to give them.
+   */
+  #recordConsumer(secretId: string, consumer: SecretConsumer): void {
+    const consumerKey = `${consumer.extensionId}\u0000${consumer.location}`;
+    let consumers = this.#consumers.get(secretId);
+    if (consumers === undefined) {
+      consumers = new Map();
+      this.#consumers.set(secretId, consumers);
+    }
+    consumers.set(consumerKey, Object.freeze({ ...consumer }));
   }
 
   async #load(secretId: string): Promise<string> {
@@ -283,7 +435,16 @@ class SecretStore {
   }
 }
 
-/** Config factories see the same shape they declared, with references replaced by handles. */
+/**
+ * Config factories see the same shape they declared, with references replaced by
+ * handles.
+ *
+ * A reference whose secret has no stored value leaves its property absent rather
+ * than present-and-undefined, so the contribution's own runtime schema is what
+ * decides whether that is acceptable: an optional credential simply is not there,
+ * and a required one fails that parse. The type describes a fully supplied
+ * installation; the parse is what enforces it.
+ */
 type ResolvedSecrets<T> = T extends SecretRef
   ? SecretHandle
   : T extends readonly unknown[]
@@ -292,12 +453,55 @@ type ResolvedSecrets<T> = T extends SecretRef
       ? { [K in keyof T]: ResolvedSecrets<T[K]> }
       : T;
 
+/** One configured entry, with every secret it names replaced by a handle. */
+interface ResolvedEntry<T> {
+  /** Secret IDs this entry names that have no stored value, in reference order. */
+  readonly missing: readonly SecretReference[];
+  readonly value: ResolvedSecrets<T>;
+}
+
 async function resolveSecrets<T>(
   value: T,
   store: SecretStore,
   consumer: SecretConsumer,
-): Promise<ResolvedSecrets<T>> {
-  return resolveAt(value, store, consumer, []) as Promise<ResolvedSecrets<T>>;
+): Promise<ResolvedEntry<T>> {
+  const missing: SecretReference[] = [];
+  const resolved = (await resolveAt(value, store, consumer, [], missing)) as ResolvedSecrets<T>;
+  return Object.freeze({ missing: Object.freeze(missing), value: resolved });
+}
+
+/**
+ * Builds a contribution from its configured entry, with credentials in place.
+ *
+ * The wrapping exists for one failure that is otherwise unreadable: a required
+ * credential whose secret is unset arrives as an absent property, so the
+ * contribution's schema rejects it with a type error naming a field and nothing
+ * else. Here the entry's own unstored references are known, so the error can say
+ * which secret is missing and where it was named.
+ */
+async function composeWithSecrets<TConfig, TValue>(
+  entry: TConfig,
+  store: SecretStore,
+  consumer: SecretConsumer,
+  create: (config: ResolvedSecrets<TConfig>) => TValue,
+): Promise<TValue> {
+  const resolved = await resolveSecrets(entry, store, consumer);
+  try {
+    return create(resolved.value);
+  } catch (error) {
+    if (resolved.missing.length === 0) throw error;
+    const named = resolved.missing
+      .map((reference) => `"${reference.secretId}" at ${reference.location}`)
+      .join(', ');
+    throw new Error(
+      `${consumer.location} could not be built, and ${
+        resolved.missing.length === 1 ? 'the secret it names has' : 'the secrets it names have'
+      } no stored value: ${named}. Store ${
+        resolved.missing.length === 1 ? 'it' : 'them'
+      } in the secrets surface, then restart.`,
+      { cause: error },
+    );
+  }
 }
 
 async function resolveAt(
@@ -305,16 +509,19 @@ async function resolveAt(
   store: SecretStore,
   consumer: SecretConsumer,
   path: readonly string[],
+  missing: SecretReference[],
 ): Promise<unknown> {
   if (isSecretRef(value)) {
-    return store.resolve(value, {
-      ...consumer,
-      location: [consumer.location, ...path].join('.'),
-    });
+    const location = [consumer.location, ...path].join('.');
+    const handle = await store.resolve(value, { ...consumer, location });
+    if (handle === undefined) missing.push(Object.freeze({ location, secretId: value.$secret }));
+    return handle;
   }
   if (Array.isArray(value)) {
     return Promise.all(
-      value.map((item, index) => resolveAt(item, store, consumer, [...path, String(index)])),
+      value.map((item, index) =>
+        resolveAt(item, store, consumer, [...path, String(index)], missing),
+      ),
     );
   }
   if (value === null || typeof value !== 'object') return value;
@@ -322,12 +529,46 @@ async function resolveAt(
   if (prototype !== Object.prototype && prototype !== null) return value;
 
   const entries = await Promise.all(
-    Object.entries(value).map(async ([key, item]) => [
-      key,
-      await resolveAt(item, store, consumer, [...path, key]),
-    ]),
+    Object.entries(value).map(
+      async ([key, item]) =>
+        [key, await resolveAt(item, store, consumer, [...path, key], missing)] as const,
+    ),
   );
-  return Object.fromEntries(entries);
+  // An unresolved reference leaves nothing behind rather than an explicit
+  // `undefined`: an optional field has to read as absent for its schema to
+  // accept it, and `{ apiKey: undefined }` is not absent to a `.parse`.
+  return Object.fromEntries(entries.filter(([, item]) => item !== undefined));
+}
+
+/**
+ * Every secret named inside one configured value, with the path that names it.
+ *
+ * Walking configuration for references is not the host guessing where a
+ * credential might be: a reference only validates where a contribution's schema
+ * declared `secretRefSchema`, so every position found here is one an extension
+ * asked for.
+ */
+function findSecretReferences(value: unknown, basePath = ''): readonly SecretReference[] {
+  const found: SecretReference[] = [];
+  visitReferences(value, basePath, found);
+  return Object.freeze(found.sort((a, b) => a.location.localeCompare(b.location)));
+}
+
+function visitReferences(value: unknown, path: string, found: SecretReference[]): void {
+  if (isSecretRef(value)) {
+    found.push(Object.freeze({ location: path, secretId: value.$secret }));
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      visitReferences(item, `${path}.${String(index)}`, found);
+    });
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    visitReferences(item, path.length === 0 ? key : `${path}.${key}`, found);
+  }
 }
 
 function isSecretRef(value: unknown): value is SecretRef {
@@ -419,13 +660,25 @@ function isExistingFile(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST';
 }
 
-export { resolveSecrets, SecretError, SecretHandle, secretIdSchema, secretRefSchema, SecretStore };
+export {
+  composeWithSecrets,
+  findSecretReferences,
+  resolveSecrets,
+  SecretError,
+  SecretHandle,
+  secretIdSchema,
+  secretRefSchema,
+  SecretStore,
+};
 
 export type {
+  ResolvedEntry,
   ResolvedSecrets,
   SecretConsumer,
   SecretErrorCode,
   SecretMetadata,
   SecretRef,
+  SecretReference,
   SecretStoreOptions,
+  SecretSummary,
 };

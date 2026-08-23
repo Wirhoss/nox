@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { secretRefSchema, SecretStore } from '../../config/secrets';
+import { type SecretReference, secretRefSchema, SecretStore } from '../../config/secrets';
 import { Database } from '../../database/database';
 import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from '../auth/registration';
@@ -17,6 +17,10 @@ const servers: ApiServer[] = [];
 
 const PASSWORD = 'correct-horse-battery';
 
+function reference(secretId: string, location: string): SecretReference {
+  return { location, secretId };
+}
+
 interface SecretNox {
   readonly headers: Record<string, string>;
   readonly secrets: SecretStore;
@@ -24,7 +28,7 @@ interface SecretNox {
 }
 
 /** A claimed Nox with one account logged in and the secret routes mounted. */
-async function secretNox(): Promise<SecretNox> {
+async function secretNox(referenced: readonly SecretReference[] = []): Promise<SecretNox> {
   const directory = await mkdtemp(join(tmpdir(), 'nox-secrets-'));
   directories.push(directory);
 
@@ -34,6 +38,7 @@ async function secretNox(): Promise<SecretNox> {
     dataDirectory: directory,
     database,
     logger: silentLogger,
+    references: () => referenced,
   });
   const store = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
   const account = await store.register('esteban', PASSWORD);
@@ -57,6 +62,14 @@ async function secretNox(): Promise<SecretNox> {
     secrets,
     url: `${server.url}/api`,
   };
+}
+
+/** Something that composed against this ID and now holds a snapshot of it. */
+async function hold(nox: SecretNox, secretId: string): Promise<void> {
+  await nox.secrets.resolve(secretRefSchema.parse({ $secret: secretId }), {
+    extensionId: 'test.extension',
+    location: 'providers.main.apiKey',
+  });
 }
 
 async function write(nox: SecretNox, secretId: string, value: string): Promise<Response> {
@@ -148,10 +161,7 @@ describe('reading secrets', () => {
     const nox = await secretNox();
     await write(nox, 'TOKEN', 'value');
 
-    await nox.secrets.resolve(secretRefSchema.parse({ $secret: 'TOKEN' }), {
-      extensionId: 'test.extension',
-      location: 'providers.main.apiKey',
-    });
+    await hold(nox, 'TOKEN');
     const response = await fetch(`${nox.url}/secrets/TOKEN`, { headers: nox.headers });
     const body = (await response.json()) as {
       consumers: { extensionId: string; location: string }[];
@@ -177,6 +187,66 @@ describe('reading secrets', () => {
     expect(await response.json()).toEqual({ error: 'secret_not_found' });
   });
 
+  test('lists a secret configuration names before anyone stored a value', async () => {
+    const nox = await secretNox([reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey')]);
+
+    const response = await fetch(`${nox.url}/secrets`, { headers: nox.headers });
+    const body = (await response.json()) as { secrets: Record<string, unknown>[] };
+
+    // The failure this surface exists to prevent: a credential something needs
+    // being invisible until a boot fails over it.
+    expect(response.status).toBe(200);
+    expect(body.secrets).toHaveLength(1);
+    expect(body.secrets[0]).toMatchObject({
+      consumers: [],
+      references: [{ location: 'toolSets.internet.search.apiKey', secretId: 'SEARXNG_API_KEY' }],
+      secretId: 'SEARXNG_API_KEY',
+      stored: false,
+    });
+    expect(body.secrets[0]).not.toHaveProperty('createdAt');
+    expect(body.secrets[0]).not.toHaveProperty('updatedAt');
+  });
+
+  test('reads a referenced secret by ID rather than answering 404', async () => {
+    const nox = await secretNox([reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey')]);
+
+    const response = await fetch(`${nox.url}/secrets/SEARXNG_API_KEY`, { headers: nox.headers });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ secretId: 'SEARXNG_API_KEY', stored: false });
+  });
+
+  test('one ID named by two entries reads as one secret with two references', async () => {
+    const nox = await secretNox([
+      reference('VENDOR_TOKEN', 'providers.main.apiKey'),
+      reference('VENDOR_TOKEN', 'providers.secondary.apiKey'),
+    ]);
+
+    const response = await fetch(`${nox.url}/secrets`, { headers: nox.headers });
+    const body = (await response.json()) as { secrets: { references: unknown[] }[] };
+
+    // Reuse is the point: one value an operator fills once, named by as many
+    // entries as need it.
+    expect(body.secrets).toHaveLength(1);
+    expect(body.secrets[0]?.references).toHaveLength(2);
+  });
+
+  test('writing a referenced secret fills its row instead of adding another', async () => {
+    const nox = await secretNox([reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey')]);
+
+    const written = await write(nox, 'SEARXNG_API_KEY', 'searxng-token');
+    const response = await fetch(`${nox.url}/secrets`, { headers: nox.headers });
+    const body = (await response.json()) as { secrets: Record<string, unknown>[] };
+
+    expect(written.status).toBe(201);
+    expect(await written.json()).toMatchObject({
+      references: [{ location: 'toolSets.internet.search.apiKey' }],
+      stored: true,
+    });
+    expect(body.secrets).toHaveLength(1);
+    expect(body.secrets[0]).toMatchObject({ secretId: 'SEARXNG_API_KEY', stored: true });
+  });
+
   test('says nothing at all without a token', async () => {
     const nox = await secretNox();
     await write(nox, 'TOKEN', 'value');
@@ -193,10 +263,7 @@ describe('removing secrets', () => {
   test('removes one and reports who was still holding it', async () => {
     const nox = await secretNox();
     await write(nox, 'TOKEN', 'value');
-    await nox.secrets.resolve(secretRefSchema.parse({ $secret: 'TOKEN' }), {
-      extensionId: 'test.extension',
-      location: 'providers.main.apiKey',
-    });
+    await hold(nox, 'TOKEN');
 
     const response = await fetch(`${nox.url}/secrets/TOKEN`, {
       headers: nox.headers,
@@ -211,6 +278,26 @@ describe('removing secrets', () => {
     expect(body.consumers).toHaveLength(1);
     expect(body.restartRequired).toBeTrue();
     expect(await nox.secrets.has('TOKEN')).toBeFalse();
+  });
+
+  test('deleting the value of a referenced secret leaves the reference listed', async () => {
+    const nox = await secretNox([reference('SEARXNG_API_KEY', 'toolSets.internet.search.apiKey')]);
+    await write(nox, 'SEARXNG_API_KEY', 'searxng-token');
+
+    const response = await fetch(`${nox.url}/secrets/SEARXNG_API_KEY`, {
+      headers: nox.headers,
+      method: 'DELETE',
+    });
+    const body = (await response.json()) as { references: unknown[] };
+    const listed = await fetch(`${nox.url}/secrets`, { headers: nox.headers });
+
+    // The value is gone; what names it is not. A list that dropped the ID here
+    // would hide a credential the configuration still expects.
+    expect(response.status).toBe(200);
+    expect(body.references).toHaveLength(1);
+    expect(await listed.json()).toMatchObject({
+      secrets: [{ secretId: 'SEARXNG_API_KEY', stored: false }],
+    });
   });
 
   test('answers 404 for a secret nothing stores', async () => {

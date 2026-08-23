@@ -1,3 +1,4 @@
+export { AppReferenceError } from './app';
 export { BlueprintReferenceError } from './blueprints';
 export { configPolicies } from './policies';
 export { configRoutes } from './routes';

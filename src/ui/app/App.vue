@@ -17,7 +17,8 @@ onMounted(() => {
 watch(
   [() => auth.state.type, () => route.name],
   ([stateType, routeName]) => {
-    if (stateType === 'authenticated' && routeName !== 'chat') {
+    if (stateType === 'checking') return
+    if (stateType === 'authenticated' && routeName === 'access') {
       void router.replace({ name: 'chat' })
       return
     }

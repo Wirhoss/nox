@@ -1,12 +1,16 @@
+import { assertAppReferences } from './app';
 import {
   assertBlueprintReferences,
   type BlueprintContext,
   blueprintRemovalReasons,
   instanceRemovalReasons,
 } from './blueprints';
+import { assertBrokerReferences, brokerAgentRemovalReasons } from './brokers';
 
+import type { AppConfig } from '../../config/app';
 import type { Blueprint } from '../../config/blueprint';
-import type { EntryKey } from './store';
+import type { ConfigKey } from '../../config/sections';
+import type { BrokerConfig } from '../../extensions/contribution-points/brokers';
 
 /**
  * What a section insists on beyond its schema. Both halves are about the rest of
@@ -25,9 +29,11 @@ interface SectionPolicy {
    * serializes configuration writes. Throwing leaves the entry as it was.
    */
   readonly validate?: (entryId: string, value: unknown) => Promise<void> | void;
+  /** Judgement over a section written as one document, after schema parsing. */
+  readonly validateSection?: (value: unknown) => Promise<void> | void;
 }
 
-type SectionPolicies = Partial<Record<EntryKey, SectionPolicy>>;
+type SectionPolicies = Partial<Record<ConfigKey, SectionPolicy>>;
 
 /**
  * Every judgement the configuration surface makes, in one table.
@@ -47,10 +53,23 @@ function configPolicies(context: BlueprintContext): SectionPolicies {
   const { config } = context;
 
   return {
+    app: {
+      validateSection: (value) => {
+        assertAppReferences(value as AppConfig, config);
+      },
+    },
     blueprints: {
-      reasonsToKeep: (agentId) => blueprintRemovalReasons(config, agentId),
+      reasonsToKeep: (agentId) => [
+        ...blueprintRemovalReasons(config, agentId),
+        ...brokerAgentRemovalReasons(context, agentId),
+      ],
       validate: async (agentId, value) =>
         assertBlueprintReferences(agentId, value as Blueprint, context),
+    },
+    brokers: {
+      validate: (brokerId, value) => {
+        assertBrokerReferences(brokerId, value as BrokerConfig, context);
+      },
     },
     providers: {
       reasonsToKeep: (instanceId) => instanceRemovalReasons(config, 'providers', instanceId),

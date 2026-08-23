@@ -1,0 +1,341 @@
+import { defineStore } from 'pinia'
+import { readonly, ref } from 'vue'
+
+import { useAuthStore } from '@/app/stores/auth.store'
+import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
+
+import {
+  type ConfigCatalog,
+  type ConfigSection,
+  type ConfigValue,
+  type Secret,
+  settingsApi,
+  type ToolSetInventory,
+} from '../api/settings.api'
+
+type SettingsResourceState =
+  | { readonly message: string; readonly type: 'failed' }
+  | { readonly type: 'idle' }
+  | { readonly type: 'loading' }
+  | { readonly type: 'ready' }
+
+type SettingsMutationState =
+  | { readonly message: string; readonly type: 'failed' }
+  | { readonly restartRequired: boolean; readonly type: 'saved' }
+  | { readonly type: 'idle' }
+  | { readonly type: 'saving' }
+
+/** One credential the operator typed alongside the entry that names it. */
+interface ManagedSecretWrite {
+  readonly secretId: string
+  readonly value: string
+}
+
+const useSettingsStore = defineStore('settings', () => {
+  const auth = useAuthStore()
+  const catalog = ref<ConfigCatalog>()
+  const references = ref<Readonly<Record<string, ConfigSection>>>({})
+  const section = ref<ConfigSection>()
+  const secrets = ref<readonly Secret[]>([])
+  const toolSetInventory = ref<readonly ToolSetInventory[]>([])
+  const resource = ref<SettingsResourceState>({ type: 'idle' })
+  const mutation = ref<SettingsMutationState>({ type: 'idle' })
+
+  let loadVersion = 0
+
+  async function loadSection(sectionKey: string): Promise<void> {
+    const version = ++loadVersion
+    resource.value = { type: 'loading' }
+    mutation.value = { type: 'idle' }
+
+    try {
+      const accessToken = requireAccessToken()
+      const referenceKeys =
+        sectionKey === 'blueprints'
+          ? ['providers', 'toolSets']
+          : ['app', 'brokers'].includes(sectionKey)
+            ? ['blueprints']
+            : []
+      const [nextCatalog, nextSection, nextReferences, nextSecrets, nextToolSetInventory] =
+        await Promise.all([
+          settingsApi.listConfig(accessToken),
+          settingsApi.readSection(accessToken, sectionKey),
+          Promise.all(
+            referenceKeys.map(
+              async (key) => [key, await settingsApi.readSection(accessToken, key)] as const,
+            ),
+          ),
+          ['brokers', 'providers', 'toolSets'].includes(sectionKey)
+            ? settingsApi.listSecrets(accessToken)
+            : undefined,
+          sectionKey === 'blueprints' ? settingsApi.listToolSetInventory(accessToken) : [],
+        ])
+      if (version !== loadVersion) return
+      catalog.value = nextCatalog
+      references.value = Object.fromEntries(nextReferences)
+      if (nextSecrets !== undefined) secrets.value = nextSecrets
+      toolSetInventory.value = nextToolSetInventory
+      section.value = nextSection
+      resource.value = { type: 'ready' }
+    } catch (error) {
+      if (version !== loadVersion) return
+      failResource(error)
+    }
+  }
+
+  async function loadSecrets(): Promise<void> {
+    const version = ++loadVersion
+    resource.value = { type: 'loading' }
+    mutation.value = { type: 'idle' }
+
+    try {
+      const accessToken = requireAccessToken()
+      const [nextCatalog, nextSecrets] = await Promise.all([
+        settingsApi.listConfig(accessToken),
+        settingsApi.listSecrets(accessToken),
+      ])
+      if (version !== loadVersion) return
+      catalog.value = nextCatalog
+      section.value = undefined
+      secrets.value = nextSecrets
+      resource.value = { type: 'ready' }
+    } catch (error) {
+      if (version !== loadVersion) return
+      failResource(error)
+    }
+  }
+
+  async function saveSection(sectionKey: string, value: ConfigValue): Promise<boolean> {
+    return mutate(async () => {
+      const saved = await settingsApi.replaceSection({
+        accessToken: requireAccessToken(),
+        section: sectionKey,
+        value,
+      })
+      const { restartRequired, ...nextSection } = saved
+      section.value = nextSection
+      return restartRequired
+    })
+  }
+
+  async function createEntry(
+    sectionKey: string,
+    entryId: string,
+    value: ConfigValue,
+  ): Promise<boolean> {
+    return mutate(async () => {
+      const saved = await settingsApi.createEntry({
+        accessToken: requireAccessToken(),
+        entryId,
+        section: sectionKey,
+        value,
+      })
+      updateEntry(entryId, saved.value)
+      return saved.restartRequired
+    })
+  }
+
+  async function saveEntry(
+    sectionKey: string,
+    entryId: string,
+    value: ConfigValue,
+  ): Promise<boolean> {
+    return mutate(async () => {
+      const saved = await settingsApi.replaceEntry({
+        accessToken: requireAccessToken(),
+        entryId,
+        section: sectionKey,
+        value,
+      })
+      updateEntry(entryId, saved.value)
+      return saved.restartRequired
+    })
+  }
+
+  async function deleteEntry(sectionKey: string, entryId: string): Promise<boolean> {
+    return mutate(async () => {
+      const removed = await settingsApi.deleteEntry({
+        accessToken: requireAccessToken(),
+        entryId,
+        section: sectionKey,
+      })
+      if (section.value !== undefined) {
+        const nextValue = Object.fromEntries(
+          Object.entries(section.value.value).filter(([candidateId]) => candidateId !== entryId),
+        )
+        section.value = { ...section.value, value: nextValue }
+      }
+      return removed.restartRequired
+    })
+  }
+
+  async function saveSecret(secretId: string, value: string): Promise<boolean> {
+    return mutate(async () => {
+      const saved = await settingsApi.saveSecret({
+        accessToken: requireAccessToken(),
+        secretId,
+        value,
+      })
+      upsertSecret(saved)
+      return saved.restartRequired
+    })
+  }
+
+  /**
+   * Writes the credentials an entry names, then the entry itself.
+   *
+   * One operation because it is one intent: an operator filling in a provider
+   * types the endpoint and the key together, and a form that saved the entry
+   * first would leave configuration naming a secret that does not exist yet.
+   * Secrets go first for the same reason.
+   */
+  async function saveEntryWithSecrets(
+    sectionKey: string,
+    entryId: string,
+    value: ConfigValue,
+    creating: boolean,
+    secretWrites: readonly ManagedSecretWrite[] = [],
+  ): Promise<boolean> {
+    return mutate(async () => {
+      const accessToken = requireAccessToken()
+      let secretRestartRequired = false
+      for (const secretWrite of secretWrites) {
+        const savedSecret = await settingsApi.saveSecret({ accessToken, ...secretWrite })
+        upsertSecret(savedSecret)
+        secretRestartRequired ||= savedSecret.restartRequired
+      }
+
+      const savedEntry = creating
+        ? await settingsApi.createEntry({ accessToken, entryId, section: sectionKey, value })
+        : await settingsApi.replaceEntry({ accessToken, entryId, section: sectionKey, value })
+      updateEntry(entryId, savedEntry.value)
+      return secretRestartRequired || savedEntry.restartRequired
+    })
+  }
+
+  /**
+   * Deleting a secret deletes its value, not its name. An ID configuration still
+   * names survives as an unset row — dropping it would hide a credential the
+   * configuration still expects, which is the failure this list exists to
+   * prevent.
+   */
+  async function deleteSecret(secretId: string): Promise<boolean> {
+    return mutate(async () => {
+      const removed = await settingsApi.deleteSecret({
+        accessToken: requireAccessToken(),
+        secretId,
+      })
+      secrets.value =
+        removed.references.length === 0
+          ? secrets.value.filter((secret) => secret.secretId !== secretId)
+          : secrets.value.map((secret) =>
+              secret.secretId === secretId
+                ? {
+                    consumers: secret.consumers,
+                    references: removed.references,
+                    restartRequired: removed.restartRequired,
+                    secretId,
+                    stored: false,
+                  }
+                : secret,
+            )
+      return removed.restartRequired
+    })
+  }
+
+  function clearMutation(): void {
+    mutation.value = { type: 'idle' }
+  }
+
+  function upsertSecret(saved: Secret): void {
+    secrets.value = [
+      ...secrets.value.filter((secret) => secret.secretId !== saved.secretId),
+      saved,
+    ].sort((a, b) => a.secretId.localeCompare(b.secretId))
+  }
+
+  function updateEntry(entryId: string, value: ConfigValue): void {
+    if (section.value === undefined) return
+    section.value = {
+      ...section.value,
+      value: { ...section.value.value, [entryId]: value },
+    }
+  }
+
+  async function mutate(operation: () => Promise<boolean>): Promise<boolean> {
+    mutation.value = { type: 'saving' }
+    try {
+      const restartRequired = await operation()
+      mutation.value = { restartRequired, type: 'saved' }
+      return true
+    } catch (error) {
+      if (isUnauthorized(error)) auth.requireLogin()
+      mutation.value = { message: settingsErrorMessage(error), type: 'failed' }
+      return false
+    }
+  }
+
+  function failResource(error: unknown): void {
+    if (isUnauthorized(error)) auth.requireLogin()
+    resource.value = { message: settingsErrorMessage(error), type: 'failed' }
+  }
+
+  function requireAccessToken(): string {
+    const token = auth.accessToken
+    if (token === undefined) throw new Error('Settings requires an authenticated Nox session.')
+    return token
+  }
+
+  return {
+    catalog: readonly(catalog),
+    clearMutation,
+    createEntry,
+    deleteEntry,
+    deleteSecret,
+    loadSection,
+    loadSecrets,
+    mutation: readonly(mutation),
+    references: readonly(references),
+    resource: readonly(resource),
+    saveEntry,
+    saveEntryWithSecrets,
+    saveSecret,
+    saveSection,
+    section: readonly(section),
+    secrets: readonly(secrets),
+    toolSetInventory: readonly(toolSetInventory),
+  }
+})
+
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401
+}
+
+function settingsErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.detail !== undefined) return error.detail
+    switch (error.code) {
+      case 'entry_exists':
+        return 'An entry with that ID already exists.'
+      case 'entry_in_use': {
+        const reasons = error.reasons.join(' ')
+        return reasons.length > 0 ? reasons : 'This entry is still in use.'
+      }
+      case 'invalid_config':
+        return 'The configuration was rejected by Nox.'
+      case 'section_unresolved':
+        return 'This section has not loaded in the running node.'
+      case undefined:
+        return `Nox refused the change (${String(error.status)}).`
+      default:
+        return `Nox refused the change (${String(error.status)} // ${error.code}).`
+    }
+  }
+  if (error instanceof ApiConnectionError) return 'The Nox node could not be reached.'
+  if (error instanceof ApiContractError) return 'Nox returned an unexpected settings response.'
+  return error instanceof Error ? error.message : 'The settings operation failed unexpectedly.'
+}
+
+export { settingsErrorMessage, useSettingsStore }
+
+export type { SettingsMutationState, SettingsResourceState }

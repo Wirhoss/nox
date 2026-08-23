@@ -4,6 +4,7 @@ import { type Logger, silentLogger } from '../logger/logger';
 import { Mutex } from '../utils/mutex';
 import { ConfigError } from './error';
 import { type LoaderContext, loadSection, removeEntry, updateEntry, updateSection } from './loader';
+import { findSecretReferences, type SecretReference } from './secrets';
 import { type ConfigKey, type ConfigMap, sections, type Sections } from './sections';
 
 import type { ContributionReader } from '../extensions/contribution';
@@ -138,6 +139,25 @@ class Config {
     });
   }
 
+  /**
+   * Every secret the configuration names right now, with the location naming it.
+   *
+   * Read from the values held here rather than from what has been composed, so a
+   * credential is knowable the moment it is configured: a tool set no agent was
+   * granted, a provider saved a second ago through the settings surface, and one
+   * a running adapter already holds all answer the same way.
+   *
+   * Every loaded section is walked rather than a chosen few. A reference only
+   * survives validation where a contribution's schema declared `secretRefSchema`,
+   * so there is nothing to exclude — and a section that gains credentials later
+   * needs no change here.
+   */
+  public secretReferences(): readonly SecretReference[] {
+    return Object.freeze(
+      this.loaded.flatMap((key) => findSecretReferences(this.#values.get(key), key)),
+    );
+  }
+
   public get<K extends ConfigKey>(key: K): ConfigMap[K] {
     if (!this.#values.has(key)) {
       throw new ConfigError(
@@ -157,6 +177,7 @@ class Config {
   public async update<K extends ConfigKey>(
     key: K,
     next: ConfigMap[K],
+    validate?: (value: ConfigMap[K]) => Promise<void> | void,
   ): Promise<ConfigUpdate<ConfigMap[K]>> {
     const section = erase(key);
 
@@ -167,6 +188,9 @@ class Config {
         next,
         this.#values.get(key),
         section.kind === 'contribution' ? this.#reader(key) : undefined,
+        async (parsed) => {
+          await validate?.(parsed as ConfigMap[K]);
+        },
       );
 
       this.#values.set(key, value);

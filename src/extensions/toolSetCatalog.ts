@@ -1,9 +1,25 @@
-import { resolveSecrets, type SecretStore } from '../config/secrets';
+import { composeWithSecrets, type SecretStore } from '../config/secrets';
 import { type ToolSetConfig, toolSets } from './contribution-points/toolsets';
 
 import type { ToolSetGrantConfig } from '../config/blueprint';
 import type { ToolSet, ToolSetGrant } from '../tool/tool';
 import type { ContributionReader } from './contribution';
+
+interface ToolInventory {
+  readonly authority: string;
+  readonly description: string;
+  readonly name: string;
+}
+
+interface ToolSetInventory {
+  readonly available: boolean;
+  readonly description?: string;
+  readonly id: string;
+  readonly name?: string;
+  readonly problem?: string;
+  readonly tools: readonly ToolInventory[];
+  readonly type: string;
+}
 
 interface ToolSetCatalogOptions {
   /**
@@ -52,6 +68,55 @@ class ToolSetCatalog {
     return Object.freeze(Object.keys(this.#configured()).sort((a, b) => a.localeCompare(b)));
   }
 
+  /**
+   * Describes what every configured instance actually exposes. Factories remain
+   * the authority here: configuration fields and contribution kinds cannot tell a
+   * surface which tools survived instance-level enablement without rebuilding the
+   * same rules a second time.
+   *
+   * One broken, dormant instance does not hide every other capability. Its row is
+   * returned as unavailable so an operator can still repair the agents and tool
+   * sets that do compose.
+   */
+  public async inventory(): Promise<readonly ToolSetInventory[]> {
+    const configured = this.#configured();
+    return Object.freeze(
+      await Promise.all(
+        this.configuredIds.map(async (id): Promise<ToolSetInventory> => {
+          const type = configured[id]?.type ?? '';
+          try {
+            const toolSet = await this.open(id);
+            const tools = Object.values(toolSet.tools)
+              .map((tool) =>
+                Object.freeze({
+                  authority: tool.authority,
+                  description: tool.description,
+                  name: tool.name,
+                }),
+              )
+              .sort((a, b) => a.name.localeCompare(b.name));
+            return Object.freeze({
+              available: true,
+              description: toolSet.description,
+              id,
+              name: toolSet.name,
+              tools: Object.freeze(tools),
+              type,
+            });
+          } catch (error) {
+            return Object.freeze({
+              available: false,
+              id,
+              problem: error instanceof Error ? error.message : String(error),
+              tools: Object.freeze([]),
+              type,
+            });
+          }
+        }),
+      ),
+    );
+  }
+
   /** Opens one configured instance, or returns the one already open. */
   public async open(toolSetId: string): Promise<ToolSet> {
     const existing = this.#opened.get(toolSetId);
@@ -76,11 +141,11 @@ class ToolSetCatalog {
       );
     }
 
-    const toolSet = contribution.value.create(
-      await resolveSecrets(entry, this.#secretStore, {
-        extensionId: contribution.extensionId,
-        location: `toolSets.${toolSetId}`,
-      }),
+    const toolSet = await composeWithSecrets(
+      entry,
+      this.#secretStore,
+      { extensionId: contribution.extensionId, location: `toolSets.${toolSetId}` },
+      (config) => contribution.value.create(config),
     );
     this.#opened.set(toolSetId, toolSet);
 
@@ -114,4 +179,4 @@ class ToolSetCatalog {
 
 export { ToolSetCatalog };
 
-export type { ToolSetCatalogOptions };
+export type { ToolInventory, ToolSetCatalogOptions, ToolSetInventory };

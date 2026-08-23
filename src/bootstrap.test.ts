@@ -416,7 +416,10 @@ describe('bootstrap', () => {
     expect(String(error)).toContain('baseUrl');
   });
 
-  test('rejects a plaintext credential in ordinary configuration', async () => {
+  test('refuses a plaintext credential in ordinary configuration', async () => {
+    // The position is declared by the adapter's schema as a reference and only a
+    // reference, so a literal is rejected by the same parse that validates the
+    // rest of the entry.
     const error = await failure({
       providers: { main: { ...PROVIDERS.main, apiKey: 'plaintext' } },
     });
@@ -425,10 +428,29 @@ describe('bootstrap', () => {
     expect(String(error)).toContain('$secret');
   });
 
-  test('fails closed when a configured secret cannot be resolved', async () => {
-    const error = await failure({ secrets: {} });
+  test('boots when configuration names a credential nobody has stored yet', async () => {
+    // `apiKey` is optional, so an empty store is an ordinary state the secrets
+    // surface shows as an unfilled row rather than a failure only a boot reports.
+    const application = await boot({ secrets: {} });
 
-    expect(String(error)).toContain('OPENAI_API_KEY');
-    expect(String(error)).toContain('providers.main.apiKey');
+    expect(application.getAgent('nox')).toBeDefined();
+    expect(application.services.get(secretStoreService).consumers('OPENAI_API_KEY')).toEqual([
+      { extensionId: 'nox.provider.openai', location: 'providers.main.apiKey' },
+    ]);
+  });
+
+  test('lists what configuration names, so an unfilled credential is visible', async () => {
+    const application = await boot({ secrets: {} });
+    const listed = await application.services.get(secretStoreService).list();
+
+    // The bug this whole surface exists for: before, a referenced-but-unstored
+    // secret appeared nowhere at all.
+    expect(listed).toMatchObject([
+      {
+        references: [{ location: 'providers.main.apiKey', secretId: 'OPENAI_API_KEY' }],
+        secretId: 'OPENAI_API_KEY',
+        stored: false,
+      },
+    ]);
   });
 });

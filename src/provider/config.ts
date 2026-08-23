@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SecretHandle, secretRefSchema } from '../config/secrets';
+import { httpUrlSchema } from '../config/url';
 
 const samplingParametersConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
@@ -27,7 +28,10 @@ const modelConfigSchema = z.discriminatedUnion('type', [textModelConfigSchema]);
 type ModelConfig = z.infer<typeof modelConfigSchema>;
 
 const providerConfigShape = {
-  baseUrl: z.string(),
+  // Validated rather than taken as a string: it is concatenated into every
+  // request URL, and it is one of the few configured values logged verbatim
+  // when a request never reaches the provider.
+  baseUrl: httpUrlSchema('The HTTP(S) base URL of the provider endpoint.'),
   maxRetries: z.number().int().nonnegative().default(2),
   maxRetryDelayMs: z.number().nonnegative().default(30_000),
   modelConfigs: z.array(modelConfigSchema).optional(),
@@ -35,7 +39,15 @@ const providerConfigShape = {
   timeoutMs: z.number().positive().optional(),
 };
 
-/** Stored configuration accepts references only; plaintext credentials are invalid. */
+/**
+ * What `providers.json` may contain. `apiKey` accepts a reference and never a
+ * literal: the file says which managed secret this provider uses, and the value
+ * itself stays in the store.
+ *
+ * Per instance, because that is what a provider is. Two entries of one kind
+ * routinely talk to two services with two credentials, so the ID belongs to the
+ * entry rather than to the adapter that reads it.
+ */
 const providerBaseConfigSchema = z.object({
   ...providerConfigShape,
   apiKey: secretRefSchema.optional(),

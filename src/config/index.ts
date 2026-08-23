@@ -6,6 +6,8 @@ export { ConfigError, isConfigError } from './error';
 export { contributionSchema, instanceIdSchema } from './loader';
 export { contributionSection, directorySection, fileSection } from './section';
 export {
+  composeWithSecrets,
+  findSecretReferences,
   resolveSecrets,
   SecretError,
   SecretHandle,
@@ -14,6 +16,7 @@ export {
   SecretStore,
 } from './secrets';
 export { sections } from './sections';
+export { httpUrlSchema } from './url';
 
 export type { AppConfig } from './app';
 export type { Blueprint, ToolSetGrantConfig } from './blueprint';
@@ -28,11 +31,14 @@ export type {
   FileSection,
 } from './section';
 export type {
+  ResolvedEntry,
   ResolvedSecrets,
   SecretConsumer,
   SecretErrorCode,
   SecretMetadata,
   SecretRef,
+  SecretReference,
   SecretStoreOptions,
+  SecretSummary,
 } from './secrets';
 export type { ConfigKey, ConfigMap } from './sections';

@@ -43,6 +43,8 @@ describe('openAIExtension', () => {
 
     const provider = app.contributions
       .get(providers, 'openai_completions')
+      // The stored shape carries a reference where the runtime one carries a
+      // handle; this entry names no credential, so there is nothing to resolve.
       ?.value.create({ ...config, apiKey: undefined });
 
     expect(provider).toBeInstanceOf(OpenAICompletions);

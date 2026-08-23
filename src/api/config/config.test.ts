@@ -12,6 +12,11 @@ import { readEnvConfig } from '../../config/env';
 import { SecretStore } from '../../config/secrets';
 import { Database } from '../../database/database';
 import { ContributionRegistry } from '../../extensions/contribution';
+import {
+  brokerBaseConfigSchema,
+  brokerContribution,
+  brokers,
+} from '../../extensions/contribution-points/brokers';
 import { providerContribution, providers } from '../../extensions/contribution-points/providers';
 import {
   toolSetBaseConfigSchema,
@@ -28,6 +33,7 @@ import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
 import { ConfigStore } from './store';
 
+import type { Broker } from '../../gateway/broker';
 import type { ChatProvider } from '../../provider/provider';
 
 const databases: Database[] = [];
@@ -47,10 +53,23 @@ const PROVIDER = { baseUrl: 'https://main.test', type: 'fake_provider' };
 class FakeTools extends ToolSet {
   constructor(config: { enabledTools?: readonly string[] }) {
     super('Fake tools', 'Tools that exist only in this test.', config.enabledTools);
+    this.addTools();
   }
 
   protected override addTools(): void {
-    // Nothing to add: no test in this file opens the set.
+    for (const name of ['fake_read', 'fake_write']) {
+      this.registerTool({
+        authority: `test.extension.${name}`,
+        description: `${name} test capability.`,
+        name,
+        parameters: z.object({}),
+        prepare: () => ({
+          run: () => Promise.resolve([]),
+          title: name,
+          type: 'immediate',
+        }),
+      });
+    }
   }
 }
 
@@ -64,6 +83,14 @@ function registry(): ContributionRegistry {
   const contributions = new ContributionRegistry();
   const scoped = contributions.scoped(TEST_EXTENSION, new DisposableStore());
 
+  scoped.register(
+    brokers,
+    'fake_broker',
+    brokerContribution({
+      configSchema: brokerBaseConfigSchema.extend({ type: z.literal('fake_broker') }),
+      create: () => ({}) as Broker,
+    }),
+  );
   scoped.register(
     providers,
     'fake_provider',
@@ -86,6 +113,7 @@ function registry(): ContributionRegistry {
 
 interface NoxOptions {
   blueprints?: Record<string, unknown>;
+  brokers?: Record<string, unknown>;
   /** Left unresolved, the contributed sections have no value to administer. */
   resolve?: boolean;
 }
@@ -106,6 +134,7 @@ async function configNox(options: NoxOptions = {}): Promise<ConfigNox> {
   for (const [agentId, blueprint] of Object.entries(options.blueprints ?? { nox: NOX })) {
     await writeFile(join(directory, 'blueprints', `${agentId}.json`), JSON.stringify(blueprint));
   }
+  await writeFile(join(directory, 'brokers.json'), JSON.stringify(options.brokers ?? {}));
   await writeFile(join(directory, 'providers.json'), JSON.stringify({ main: PROVIDER }));
   await writeFile(
     join(directory, 'toolsets.json'),
@@ -201,6 +230,38 @@ describe('reading configuration', () => {
     expect(section('app')).toMatchObject({ entries: false, writable: true });
   });
 
+  test('describes the tools exposed by configured capability instances', async () => {
+    const nox = await configNox();
+
+    const response = await fetch(`${nox.url}/capabilities/tool-sets`, { headers: nox.headers });
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      toolSets: [
+        {
+          available: true,
+          description: 'Tools that exist only in this test.',
+          id: 'internet',
+          name: 'Fake tools',
+          tools: [
+            {
+              authority: 'test.extension.fake_read',
+              description: 'fake_read test capability.',
+              name: 'fake_read',
+            },
+            {
+              authority: 'test.extension.fake_write',
+              description: 'fake_write test capability.',
+              name: 'fake_write',
+            },
+          ],
+          type: 'fake_tools',
+        },
+      ],
+    });
+  });
+
   test('reads one section back with the defaults its schema resolved', async () => {
     const nox = await configNox();
 
@@ -272,6 +333,45 @@ describe('writing a whole section', () => {
     expect(body.value.logLevel).toBe('debug');
     expect(await onDisk(nox.directory, 'app.json')).toMatchObject({ logLevel: 'debug' });
     expect(nox.config.get('app').logLevel).toBe('debug');
+  });
+
+  test('refuses a web-chat default that cannot compose on restart', async () => {
+    const nox = await configNox({
+      blueprints: {
+        nox: NOX,
+        spare: { ...NOX, systemPrompt: 'be spare' },
+      },
+    });
+
+    const missing = await fetch(`${nox.url}/config/app`, {
+      body: JSON.stringify({ logLevel: 'debug' }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+    expect(missing.status).toBe(422);
+    expect((await missing.json()) as { problems: string[] }).toMatchObject({
+      problems: ['chat.defaultAgent is required when 2 agents are configured'],
+    });
+
+    const unknown = await fetch(`${nox.url}/config/app`, {
+      body: JSON.stringify({ chat: { defaultAgent: 'ghost' } }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+    expect(unknown.status).toBe(422);
+    expect((await unknown.json()) as { problems: string[] }).toMatchObject({
+      problems: ['chat.defaultAgent names "ghost", but blueprints configures no such agent'],
+    });
+
+    const valid = await fetch(`${nox.url}/config/app`, {
+      body: JSON.stringify({ chat: { defaultAgent: 'spare' } }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+    expect(valid.status).toBe(200);
+    expect(await onDisk(nox.directory, 'app.json')).toMatchObject({
+      chat: { defaultAgent: 'spare' },
+    });
   });
 
   test('refuses a document its schema rejects, leaving the file alone', async () => {
@@ -398,6 +498,50 @@ describe('writing one entry', () => {
     expect(Object.keys(await onDisk(nox.directory, 'providers.json'))).toEqual(['main']);
   });
 
+  test('refuses broker routes and grants that gateway composition cannot resolve', async () => {
+    const nox = await configNox();
+
+    const unknownAgent = await fetch(`${nox.url}/config/brokers/discord`, {
+      body: JSON.stringify({ agent: 'ghost', type: 'fake_broker' }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+    expect(unknownAgent.status).toBe(422);
+    expect((await unknownAgent.json()) as { problems: string[] }).toMatchObject({
+      problems: ['blueprints configures no base agent "ghost"'],
+    });
+
+    const unknownAuthority = await fetch(`${nox.url}/config/brokers/discord`, {
+      body: JSON.stringify({
+        agent: 'nox',
+        grants: { esteban: ['nox.unknown'] },
+        type: 'fake_broker',
+      }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+    expect(unknownAuthority.status).toBe(422);
+    expect((await unknownAuthority.json()) as { problems: string[] }).toMatchObject({
+      problems: [expect.stringContaining('nox.unknown')],
+    });
+    expect(await onDisk(nox.directory, 'brokers.json')).toEqual({});
+  });
+
+  test('accepts unresolved dormant routes on a disabled broker', async () => {
+    const nox = await configNox();
+
+    const response = await fetch(`${nox.url}/config/brokers/discord`, {
+      body: JSON.stringify({ agent: 'ghost', enabled: false, type: 'fake_broker' }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(201);
+    expect(await onDisk(nox.directory, 'brokers.json')).toMatchObject({
+      discord: { agent: 'ghost', enabled: false },
+    });
+  });
+
   test('has no instances to address in a section holding one document', async () => {
     const nox = await configNox();
 
@@ -464,6 +608,27 @@ describe('removing one entry', () => {
     // check reading only strings would have missed.
     expect(response.status).toBe(409);
     expect(body.reasons).toEqual(['blueprints/nox.json names it.']);
+  });
+
+  test('refuses to remove an agent an enabled broker still routes to', async () => {
+    const nox = await configNox({
+      blueprints: {
+        nox: NOX,
+        spare: { ...NOX, systemPrompt: 'be spare' },
+      },
+      brokers: {
+        discord: { agent: 'nox', type: 'fake_broker' },
+      },
+    });
+
+    const response = await fetch(`${nox.url}/config/blueprints/nox`, {
+      headers: nox.headers,
+      method: 'DELETE',
+    });
+    const body = (await response.json()) as { reasons: string[] };
+
+    expect(response.status).toBe(409);
+    expect(body.reasons).toEqual(['brokers.json entry "discord" names it as its base agent.']);
   });
 
   test('answers 404 for an instance nothing configures', async () => {

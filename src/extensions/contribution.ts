@@ -37,7 +37,12 @@ type ContributionConfigSchema = z.ZodObject<{ type: z.ZodLiteral<string> }>;
  */
 interface ConfigurableContribution<TSchema extends ContributionConfigSchema, TValue> {
   readonly configSchema: TSchema;
-  /** Config has already been validated; secret references arrive as opaque handles. */
+  /**
+   * Config has already been validated, and every credential it named has been
+   * replaced by an opaque handle. A contribution reads a secret only where its
+   * own schema declared one, because that is the only place a reference could
+   * have survived validation.
+   */
   create(config: ResolvedSecrets<z.infer<TSchema>>): TValue;
 }
 

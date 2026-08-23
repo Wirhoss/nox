@@ -12,6 +12,16 @@ import { OpenAICompletions } from './openAICompletions';
  * checked against, and the configuration module is the thing that reads that
  * file. An extension that parsed its config privately would leave the file
  * unvalidatable by anything but itself.
+ *
+ * The credential it needs is handed over for the same reason. `OPENAI_API_KEY`
+ * is a shared name, not this extension's property: any other adapter speaking to
+ * the same vendor declares the same ID and the two merge into one credential an
+ * operator fills once. Naming it here is what makes it appear as something to
+ * fill in before a provider is configured, rather than as a failed boot after.
+ *
+ * Optional, because `baseUrl` is free: an OpenAI-compatible endpoint on a
+ * private network commonly wants no credential at all, and declaring the key
+ * required would make every such deployment look permanently misconfigured.
  */
 const openAIExtension = defineExtension({
   manifest: { engines: { nox: '^0.1.0' }, id: 'nox.provider.openai' },

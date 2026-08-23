@@ -1,6 +1,7 @@
 export { authConfigSchema, AuthStore, RegistrationWindow } from './auth';
 export { ChatHub, chatRoutes } from './chat';
 export {
+  AppReferenceError,
   BlueprintReferenceError,
   configPolicies,
   configRoutes,

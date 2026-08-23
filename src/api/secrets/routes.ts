@@ -4,8 +4,8 @@ import { z } from 'zod';
 import {
   type SecretConsumer,
   secretIdSchema,
-  type SecretMetadata,
   type SecretStore,
+  type SecretSummary,
 } from '../../config/secrets';
 import { authGuard } from '../auth/guard';
 
@@ -32,9 +32,19 @@ interface SecretRoutesOptions {
 }
 
 /**
- * What a secret looks like from outside: when it was written, and who asked for
- * it since this process started. Never the value — not on create, not on read,
- * not on delete. A route that could return one is a route that eventually does.
+ * What a secret looks like from outside: where configuration names it, whether a
+ * value has been written for it, when that happened, and who has asked for it
+ * since this process started. Never the value — not on create, not on read, not
+ * on delete. A route that could return one is a route that eventually does.
+ *
+ * `references` and `consumers` are close but not the same, and the difference is
+ * the point. A reference is a fact about the configuration as it stands, known
+ * whether or not anything has been composed from it. A consumer is something
+ * holding a snapshot of the value right now, which is the only thing that can
+ * make a replacement wait for a restart.
+ *
+ * A row with references and `stored: false` is the case this surface exists to
+ * make visible: configuration names a credential nobody has supplied yet.
  *
  * `restartRequired` is the honest answer rather than a cautious one. Resolved
  * secrets are snapshots: whoever already holds a handle keeps the old value
@@ -42,15 +52,17 @@ interface SecretRoutesOptions {
  * effect immediately, and replacing one a provider is using does not.
  */
 function describe(
-  metadata: SecretMetadata,
+  summary: SecretSummary,
   consumers: readonly SecretConsumer[],
 ): Record<string, unknown> {
   return {
     consumers: [...consumers].sort((a, b) => a.location.localeCompare(b.location)),
-    createdAt: metadata.createdAt,
+    references: [...summary.references],
     restartRequired: consumers.length > 0,
-    secretId: metadata.secretId,
-    updatedAt: metadata.updatedAt,
+    secretId: summary.secretId,
+    stored: summary.stored,
+    ...(summary.createdAt === undefined ? {} : { createdAt: summary.createdAt }),
+    ...(summary.updatedAt === undefined ? {} : { updatedAt: summary.updatedAt }),
   };
 }
 
@@ -75,26 +87,35 @@ function createSecretRoutes(options: SecretRoutesOptions) {
     new Elysia({ name: 'nox.api.secrets.routes' })
       .use(authGuard(store))
 
-      /** Every managed secret, by ID. Sorted, so a redraw never reorders a list. */
+      /**
+       * Every known secret, by ID: the ones holding a value and the ones
+       * configuration names without one. Both belong here — an operator asking
+       * what credentials this Nox has is asking the same question as one asking
+       * what it is still missing, and answering only the first is what makes a
+       * needed credential invisible until something fails over it.
+       *
+       * Sorted, so a redraw never reorders a list.
+       */
       .get(
         '/secrets',
         async () => ({
-          secrets: (await secrets.list()).map((metadata) =>
-            describe(metadata, secrets.consumers(metadata.secretId)),
+          secrets: (await secrets.list()).map((summary) =>
+            describe(summary, secrets.consumers(summary.secretId)),
           ),
         }),
         { authenticated: true },
       )
 
+      /** One of them. Referenced but unwritten is a secret, not a 404. */
       .get(
         '/secrets/:secretId',
         async ({ params, status }) => {
-          const metadata = (await secrets.list()).find(
+          const summary = (await secrets.list()).find(
             (candidate) => candidate.secretId === params.secretId,
           );
-          if (metadata === undefined) return status(404, NO_SECRET);
+          if (summary === undefined) return status(404, NO_SECRET);
 
-          return describe(metadata, secrets.consumers(params.secretId));
+          return describe(summary, secrets.consumers(params.secretId));
         },
         { authenticated: true, params: secretParamsSchema },
       )
@@ -114,7 +135,10 @@ function createSecretRoutes(options: SecretRoutesOptions) {
         async ({ body, params, status }) => {
           const created = !(await secrets.has(params.secretId));
           const metadata = await secrets.set(params.secretId, body.value);
-          const described = describe(metadata, secrets.consumers(params.secretId));
+          const described = describe(
+            { ...metadata, references: secrets.references(params.secretId), stored: true },
+            secrets.consumers(params.secretId),
+          );
 
           return created ? status(201, described) : described;
         },
@@ -133,10 +157,14 @@ function createSecretRoutes(options: SecretRoutesOptions) {
         '/secrets/:secretId',
         async ({ params, status }) => {
           const consumers = secrets.consumers(params.secretId);
+          // Read before the delete: what still names this ID is unchanged by the
+          // value going away, and it is what says whether the ID stays listed.
+          const references = secrets.references(params.secretId);
           if (!(await secrets.delete(params.secretId))) return status(404, NO_SECRET);
 
           return {
             consumers: [...consumers].sort((a, b) => a.location.localeCompare(b.location)),
+            references: [...references],
             restartRequired: consumers.length > 0,
             secretId: params.secretId,
           };

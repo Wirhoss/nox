@@ -13,7 +13,7 @@ import { GrantAuthorizationProvider, OwnerAuthorizationProvider } from './auth/a
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
-import { resolveSecrets, SecretStore } from './config/secrets';
+import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
 import { WebBroker } from './extensions/builtin/brokers/web/webBroker';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
@@ -75,6 +75,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       dataDirectory: env.dataDir,
       database,
       logger: logger.child('secrets'),
+      references: () => config.secretReferences(),
     });
   } catch (error) {
     await database.close();
@@ -405,11 +406,11 @@ async function openGateway(
           catalog,
           `grants:${brokerId}`,
         ),
-        broker: contribution.value.create(
-          await resolveSecrets(entry, secretStore, {
-            extensionId: contribution.extensionId,
-            location: `brokers.${brokerId}`,
-          }),
+        broker: await composeWithSecrets(
+          entry,
+          secretStore,
+          { extensionId: contribution.extensionId, location: `brokers.${brokerId}` },
+          (resolved) => contribution.value.create(resolved),
         ),
         brokerId,
         conversations: Object.freeze(conversationGrants),
@@ -457,11 +458,11 @@ async function openProvider(
     );
   }
 
-  const provider = contribution.value.create(
-    await resolveSecrets(entry, secretStore, {
-      extensionId: contribution.extensionId,
-      location: `providers.${providerId}`,
-    }),
+  const provider = await composeWithSecrets(
+    entry,
+    secretStore,
+    { extensionId: contribution.extensionId, location: `providers.${providerId}` },
+    (config) => contribution.value.create(config),
   );
   opened.set(providerId, provider);
   return provider;

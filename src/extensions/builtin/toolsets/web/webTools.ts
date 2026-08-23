@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SecretHandle, secretRefSchema } from '../../../../config/secrets';
+import { httpUrlSchema } from '../../../../config/url';
 import { type Tool, ToolSet } from '../../../../tool/tool';
 import { stableStringify } from '../../../../utils/json';
 import { toolSetBaseConfigSchema } from '../../../contribution-points/toolsets';
@@ -15,6 +16,14 @@ import type { MessageContent } from '../../../../agent/context/message';
 const WEB_SEARCH_AUTHORITY = 'nox.toolset.web.search';
 const WEB_EXTRACT_AUTHORITY = 'nox.toolset.web.extract';
 
+/**
+ * One shape, built twice over what fills `apiKey`: a reference in the stored
+ * form, an opaque handle in the runtime form the factory receives.
+ *
+ * Per endpoint, because search and extract are separate services that happen to
+ * be bundled in one tool set — one credential for both would have an operator
+ * send a SearXNG token to Crawl4AI.
+ */
 function createWebToolsConfigSchema<TApiKey extends z.ZodType>(apiKey: TApiKey) {
   const endpoint = z.object({
     apiKey: apiKey.optional(),
@@ -128,15 +137,6 @@ async function responseError(response: Response): Promise<Error> {
   );
 }
 
-function httpUrlSchema(description: string): z.ZodType<string> {
-  return z
-    .url()
-    .refine((value) => ['http:', 'https:'].includes(new URL(value).protocol), {
-      message: 'Only HTTP and HTTPS URLs are supported.',
-    })
-    .describe(description);
-}
-
 function crawlResults(body: unknown): CrawlResult[] {
   if (typeof body !== 'object' || body === null) {
     throw new Error('Crawl4AI returned an invalid response.');
@@ -183,8 +183,9 @@ class WebTools extends ToolSet {
 
   protected override addTools(): void {
     if (this.#config.search !== undefined) this.registerTool(this.#searchTool(this.#config.search));
-    if (this.#config.extract !== undefined)
+    if (this.#config.extract !== undefined) {
       this.registerTool(this.#extractTool(this.#config.extract));
+    }
   }
 
   #searchTool(config: SearchConfig): Tool {

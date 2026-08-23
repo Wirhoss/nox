@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { isConfigError } from '../../config/error';
 import { entryIdSchema } from '../../config/loader';
 import { authGuard } from '../auth/guard';
+import { AppReferenceError } from './app';
 import { BlueprintReferenceError } from './blueprints';
+import { BrokerReferenceError } from './brokers';
 import { type ConfigStore, EntryInUseError } from './store';
 
 import type { ConfigKey } from '../../config/sections';
@@ -62,7 +64,11 @@ function refusal(error: unknown): Refusal | undefined {
       status: 409,
     };
   }
-  if (error instanceof BlueprintReferenceError) {
+  if (
+    error instanceof AppReferenceError ||
+    error instanceof BlueprintReferenceError ||
+    error instanceof BrokerReferenceError
+  ) {
     return {
       body: { detail: error.message, error: 'unknown_reference', problems: error.problems },
       status: 422,
@@ -126,6 +132,15 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
        * conversation uses. It lives in `app.json` and is only repeated here.
        */
       .get('/config', () => ({ defaultAgent: config.defaultAgent, sections: config.sections() }), {
+        authenticated: true,
+      })
+
+      /**
+       * Runtime capability inventory for blueprint editors. This is deliberately
+       * separate from toolsets.json: the configured document says which instance
+       * and kind exist, while its factory says which tools that instance exposes.
+       */
+      .get('/capabilities/tool-sets', async () => ({ toolSets: await config.toolSetInventory() }), {
         authenticated: true,
       })
 
