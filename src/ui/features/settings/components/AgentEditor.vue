@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -30,6 +31,7 @@ type ToolGrant = string | { readonly id: string; readonly tools?: readonly strin
 interface ToolSetOption {
   readonly available: boolean
   readonly description: string
+  readonly extensionId?: string
   readonly name: string
   readonly toolSetId: string
   readonly tools: readonly ToolInventory[]
@@ -68,6 +70,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
+const { hasMessage, plural, t } = useI18n()
 const mode = ref<EditorMode>('form')
 const draft = ref<AgentDraft>(newAgentTemplate())
 const jsonSource = ref('')
@@ -97,7 +100,11 @@ const selectedValue = computed<ConfigValue>(() => {
   const value = props.section.value[props.entryId]
   return isConfigValue(value) ? value : newAgentTemplate()
 })
-const title = computed(() => (props.creating ? 'New agent' : (props.entryId ?? 'Agent')))
+const title = computed(() =>
+  props.creating
+    ? t('settings.agent.titleNew')
+    : (props.entryId ?? t('settings.agent.titleFallback')),
+)
 const sourceName = computed(() =>
   props.entryId === undefined ? props.section.name : `${props.section.name}/${props.entryId}.json`,
 )
@@ -121,10 +128,23 @@ const toolSets = computed<ToolSetOption[]>(() =>
       const inventory = settings.toolSetInventory.find((candidate) => candidate.id === toolSetId)
       return {
         available: inventory?.available ?? false,
-        description: inventory?.description ?? '',
-        name: inventory?.name ?? '',
+        description: contributionMessage(
+          inventory?.extensionId,
+          'toolSet.description',
+          inventory?.description,
+        ),
+        extensionId: inventory?.extensionId,
+        name: contributionMessage(inventory?.extensionId, 'toolSet.name', inventory?.name),
         toolSetId,
-        tools: inventory?.tools ?? [],
+        tools:
+          inventory?.tools.map((tool) => ({
+            ...tool,
+            description: contributionMessage(
+              inventory.extensionId,
+              `tools.${tool.name}.description`,
+              tool.description,
+            ),
+          })) ?? [],
         type: inventory?.type ?? (isConfigValue(value) ? stringValue(value.type) : ''),
       }
     })
@@ -266,8 +286,14 @@ function setTaskValue(task: TaskName, property: 'model' | 'provider', value: str
   clearFeedback(`${task}.${property}`)
 }
 
+function contributionMessage(extensionId: string | undefined, key: string, fallback = ''): string {
+  if (extensionId === undefined) return fallback
+  const messageKey = `${extensionId}.${key}`
+  return hasMessage(messageKey) ? t(messageKey) : fallback
+}
+
 function channelLabel(channel: ToolChannel): string {
-  return channel === 'direct' ? 'Direct' : 'Routed'
+  return channel === 'direct' ? t('settings.agent.direct') : t('settings.agent.routed')
 }
 
 function otherChannel(channel: ToolChannel): ToolChannel {
@@ -295,7 +321,7 @@ function optionFor(toolSetId: string): ToolSetOption {
       name: '',
       toolSetId,
       tools: [],
-      type: 'Unknown contribution',
+      type: t('settings.agent.unknownContribution'),
     }
   )
 }
@@ -361,7 +387,7 @@ function toolOptions(channel: ToolChannel, toolSetId: string): readonly ToolInve
     if (!byName.has(name)) {
       byName.set(name, {
         authority: 'inventory.unavailable',
-        description: 'Preserved from the configured allowlist.',
+        description: t('settings.agent.preservedAllowlist'),
         name,
       })
     }
@@ -506,8 +532,7 @@ async function save(): Promise<void> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(nextEntryId)) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        entryId:
-          'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.',
+        entryId: t('settings.validation.entryId'),
       }
       return
     }
@@ -529,16 +554,18 @@ async function remove(): Promise<void> {
 
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (draft.value.provider.trim().length === 0) errors.provider = 'Select a configured provider.'
-  if (draft.value.model.trim().length === 0) errors.model = 'Enter the conversational model ID.'
-  if (draft.value.systemPrompt.trim().length === 0)
-    errors.systemPrompt = 'System prompt is required.'
+  if (draft.value.provider.trim().length === 0)
+    errors.provider = t('settings.agent.validation.provider')
+  if (draft.value.model.trim().length === 0) errors.model = t('settings.agent.validation.model')
+  if (draft.value.systemPrompt.trim().length === 0) {
+    errors.systemPrompt = t('settings.agent.validation.systemPrompt')
+  }
 
   if (
     maxIterationsInput.value !== 'unlimited' &&
     (!Number.isInteger(Number(maxIterationsInput.value)) || Number(maxIterationsInput.value) <= 0)
   ) {
-    errors.maxIterations = 'Use a positive whole number or “unlimited”.'
+    errors.maxIterations = t('settings.agent.validation.maxIterations')
   }
 
   validateOptionalNumber(errors, 'temperature', 0, 1)
@@ -555,27 +582,26 @@ function validateForm(): boolean {
     numericInputs.contextWindow.length === 0 &&
     (numericInputs.reserveForOutput.length > 0 || numericInputs.compactAtRatio.length > 0)
   ) {
-    errors.contextWindow = 'Context window is required when configuring context pressure.'
+    errors.contextWindow = t('settings.agent.validation.contextWindowRequired')
   }
   if (
     numericInputs.contextWindow.length > 0 &&
     numericInputs.reserveForOutput.length > 0 &&
     Number(numericInputs.reserveForOutput) >= Number(numericInputs.contextWindow)
   ) {
-    errors.reserveForOutput = 'Reserve for output must be smaller than the context window.'
+    errors.reserveForOutput = t('settings.agent.validation.reserveSmaller')
   }
 
   for (const task of ['compaction', 'title'] as const) {
     if (taskValue(task, 'provider').length > 0 && taskValue(task, 'model').length === 0) {
-      errors[`${task}.model`] = 'A provider override requires a model ID.'
+      errors[`${task}.model`] = t('settings.agent.validation.overrideModel')
     }
   }
 
   for (const channel of ['direct', 'routed'] as const) {
     for (const grant of draft.value.toolSets[channel]) {
       if (typeof grant === 'object' && grant.tools?.length === 0) {
-        errors[`toolSets.${channel}.${grant.id}`] =
-          'Select at least one tool or grant the complete tool set.'
+        errors[`toolSets.${channel}.${grant.id}`] = t('settings.agent.validation.toolSelection')
       }
     }
   }
@@ -600,13 +626,17 @@ function validateOptionalNumber(
     (minimum !== undefined && value < minimum) ||
     (maximum !== undefined && value > maximum)
   ) {
-    const range =
-      minimum !== undefined && maximum !== undefined
-        ? ` between ${String(minimum)} and ${String(maximum)}`
-        : minimum !== undefined
-          ? ` of at least ${String(minimum)}`
-          : ''
-    errors[key] = `Use ${integer ? 'a whole number' : 'a number'}${range}.`
+    if (minimum !== undefined && maximum !== undefined) {
+      errors[key] = integer
+        ? t('settings.validation.integerRange', { maximum, minimum })
+        : t('settings.validation.numberRange', { maximum, minimum })
+    } else if (minimum !== undefined) {
+      errors[key] = integer
+        ? t('settings.validation.integerMinimum', { minimum })
+        : t('settings.validation.numberMinimum', { minimum })
+    } else {
+      errors[key] = integer ? t('settings.validation.integer') : t('settings.validation.number')
+    }
   }
 }
 
@@ -614,16 +644,13 @@ function parseJson(report: boolean): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
     if (!isConfigValue(parsed)) {
-      if (report) jsonError.value = 'Agent configuration must be one JSON object.'
+      if (report) jsonError.value = t('settings.agent.validation.configurationObject')
       return undefined
     }
     if (report) jsonError.value = undefined
     return parsed
-  } catch (error) {
-    if (report) {
-      jsonError.value =
-        error instanceof SyntaxError ? error.message : 'Configuration is not valid JSON.'
-    }
+  } catch {
+    if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
   }
 }
@@ -638,7 +665,7 @@ function clearFeedback(field?: string): void {
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm('Discard the unsaved agent changes?')
+  return !dirty.value || window.confirm(t('settings.confirm.discardAgent'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -738,9 +765,12 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   <article class="agent-editor">
     <header class="agent-editor__header">
       <div>
-        <p>AGENT BLUEPRINT // {{ props.entryId?.toUpperCase() ?? 'NEW' }}</p>
+        <p>
+          {{ t('settings.agent.header') }} //
+          {{ props.entryId?.toUpperCase() ?? t('common.new').toUpperCase() }}
+        </p>
         <h2>{{ title }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <div class="agent-editor__header-side">
         <div class="agent-editor__badges">
@@ -749,16 +779,18 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             v-if="settings.catalog?.defaultAgent === props.entryId"
             class="agent-editor__badge--default"
           >
-            DEFAULT AGENT
+            {{ t('settings.agent.defaultAgent') }}
           </span>
-          <span class="agent-editor__badge--restart">APPLIES ON RESTART</span>
+          <span class="agent-editor__badge--restart">{{
+            t('settings.editor.appliesOnRestart')
+          }}</span>
         </div>
-        <div class="agent-editor__modes" aria-label="Editor mode">
+        <div class="agent-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
-            Form
+            {{ t('settings.editor.form') }}
           </button>
           <button :aria-pressed="mode === 'json'" type="button" @click="switchMode('json')">
-            JSON
+            {{ t('settings.editor.json') }}
           </button>
         </div>
       </div>
@@ -767,15 +799,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
     <div class="agent-editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Agent blueprint saved"
+        :title="t('settings.agent.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>Restart Nox to compose this agent from the saved blueprint.</p>
+        <p>{{ t('settings.agent.savedBody') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Agent change refused"
+        :title="t('settings.agent.changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -786,8 +818,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         id="agent-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"
-        hint="Stable identity used by conversations, configuration references and the blueprint file."
-        label="Agent ID"
+        :hint="t('settings.agent.idHint')"
+        :label="t('settings.agent.id')"
         placeholder="researcher"
         required
         @update:model-value="setEntryId($event)"
@@ -796,17 +828,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
       <template v-if="mode === 'form'">
         <section class="agent-editor__section" aria-labelledby="agent-identity-title">
           <div class="agent-editor__section-copy">
-            <p>01 // IDENTITY</p>
-            <h3 id="agent-identity-title">Identity and model</h3>
-            <span>The model handling the conversation and the operator-facing description.</span>
+            <p>01 // {{ t('settings.agent.identity') }}</p>
+            <h3 id="agent-identity-title">{{ t('settings.agent.identityModel') }}</h3>
+            <span>{{ t('settings.agent.identityModelHelp') }}</span>
           </div>
           <div class="agent-editor__fields">
             <NoxTextField
               id="agent-description"
               :model-value="draft.description"
-              hint="Shown when choosing an agent. It is not part of the system prompt."
-              label="Description"
-              placeholder="Personal assistant"
+              :hint="t('settings.agent.descriptionHint')"
+              :label="t('settings.agent.description')"
+              :placeholder="t('settings.agent.descriptionPlaceholder')"
               @update:model-value="setString('description', $event)"
             />
             <div class="agent-editor__field-grid">
@@ -814,14 +846,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 class="agent-editor__field"
                 :class="{ 'agent-editor__field--invalid': fieldErrors.provider }"
               >
-                <label for="agent-provider">Provider <small>REQ</small></label>
+                <label for="agent-provider"
+                  >{{ t('settings.agent.provider') }}
+                  <small>{{ t('common.requiredShort') }}</small></label
+                >
                 <select
                   id="agent-provider"
                   :value="draft.provider"
                   :aria-invalid="fieldErrors.provider !== undefined"
                   @change="setProvider(($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="">Select provider</option>
+                  <option value="">{{ t('settings.agent.selectProvider') }}</option>
                   <option
                     v-for="provider in providers"
                     :key="provider.providerId"
@@ -838,8 +873,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="agent-model"
                 :model-value="draft.model"
                 :error="fieldErrors.model"
-                hint="Exact model ID exposed by the selected provider."
-                label="Model"
+                :hint="t('settings.agent.modelHint')"
+                :label="t('settings.agent.model')"
                 list="agent-model-options"
                 placeholder="model-id"
                 required
@@ -857,8 +892,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               id="agent-max-iterations"
               :model-value="maxIterationsInput"
               :error="fieldErrors.maxIterations"
-              hint="Maximum model/tool loop iterations, or “unlimited”."
-              label="Maximum iterations"
+              :hint="t('settings.agent.maxIterationsHint')"
+              :label="t('settings.agent.maxIterations')"
               required
               @update:model-value="setMaxIterations($event)"
             />
@@ -867,22 +902,23 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="agent-editor__section" aria-labelledby="agent-directive-title">
           <div class="agent-editor__section-copy">
-            <p>02 // DIRECTIVE</p>
-            <h3 id="agent-directive-title">System prompt</h3>
-            <span
-              >The permanent instruction applied before every conversation with this agent.</span
-            >
+            <p>02 // {{ t('settings.agent.directive') }}</p>
+            <h3 id="agent-directive-title">{{ t('settings.agent.systemPrompt') }}</h3>
+            <span>{{ t('settings.agent.systemPromptHelp') }}</span>
           </div>
           <div
             class="agent-editor__field"
             :class="{ 'agent-editor__field--invalid': fieldErrors.systemPrompt }"
           >
-            <label for="agent-system-prompt">System prompt <small>REQ</small></label>
+            <label for="agent-system-prompt"
+              >{{ t('settings.agent.systemPrompt') }}
+              <small>{{ t('common.requiredShort') }}</small></label
+            >
             <textarea
               id="agent-system-prompt"
               :value="draft.systemPrompt"
               :aria-invalid="fieldErrors.systemPrompt !== undefined"
-              placeholder="You are..."
+              :placeholder="t('settings.agent.systemPromptPlaceholder')"
               @input="setString('systemPrompt', ($event.target as HTMLTextAreaElement).value)"
             ></textarea>
             <p v-if="fieldErrors.systemPrompt" class="agent-editor__error">
@@ -893,12 +929,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="agent-editor__section" aria-labelledby="agent-tools-title">
           <div class="agent-editor__section-copy">
-            <p>03 // CAPABILITIES</p>
-            <h3 id="agent-tools-title">Tool set grants</h3>
-            <span>
-              Direct tools enter the model request immediately. Routed tools are discovered through
-              search and call.
-            </span>
+            <p>03 // {{ t('settings.agent.capabilities') }}</p>
+            <h3 id="agent-tools-title">{{ t('settings.agent.toolSetGrants') }}</h3>
+            <span>{{ t('settings.agent.toolSetGrantsHelp') }}</span>
           </div>
           <div
             v-if="
@@ -916,28 +949,34 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             >
               <header>
                 <div>
-                  <span>{{ channel === 'direct' ? 'MODEL CONTEXT' : 'ON-DEMAND ROUTER' }}</span>
+                  <span>{{
+                    channel === 'direct'
+                      ? t('settings.agent.modelContext')
+                      : t('settings.agent.onDemandRouter')
+                  }}</span>
                   <h4 :id="`agent-${channel}-tools-title`">{{ channelLabel(channel) }}</h4>
-                  <small>{{ draft.toolSets[channel].length }} GRANTED</small>
+                  <small>{{
+                    t('settings.agent.grantedCount', { count: draft.toolSets[channel].length })
+                  }}</small>
                 </div>
                 <button
                   type="button"
                   :aria-expanded="addingToolSet[channel]"
                   @click="toggleToolSetPicker(channel)"
                 >
-                  {{ addingToolSet[channel] ? 'Close' : '+ Add' }}
+                  {{ addingToolSet[channel] ? t('common.close') : `+ ${t('common.add')}` }}
                 </button>
               </header>
 
               <div v-if="addingToolSet[channel]" class="agent-editor__toolset-picker">
                 <label :for="`agent-${channel}-toolset-search`">
-                  Search configured Tool Sets
+                  {{ t('settings.agent.searchToolSets') }}
                 </label>
                 <input
                   :id="`agent-${channel}-toolset-search`"
                   :value="toolSetSearch[channel]"
                   type="search"
-                  placeholder="Name, type or description"
+                  :placeholder="t('settings.agent.searchToolSetsPlaceholder')"
                   @input="toolSetSearch[channel] = ($event.target as HTMLInputElement).value"
                 />
                 <div v-if="addCandidates(channel).length > 0">
@@ -954,14 +993,16 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     <span>
                       {{
                         isToolSetGranted(otherChannel(channel), candidate.toolSetId)
-                          ? `MOVE FROM ${channelLabel(otherChannel(channel)).toUpperCase()}`
-                          : 'ADD'
+                          ? t('settings.agent.moveFrom', {
+                              channel: channelLabel(otherChannel(channel)),
+                            })
+                          : t('common.add').toUpperCase()
                       }}
                       →
                     </span>
                   </button>
                 </div>
-                <p v-else>No matching Tool Sets are available.</p>
+                <p v-else>{{ t('settings.agent.noMatchingToolSets') }}</p>
               </div>
 
               <div v-if="grantedToolSets(channel).length > 0" class="agent-editor__grants">
@@ -977,22 +1018,31 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     </div>
                     <button
                       type="button"
-                      :aria-label="`Remove ${toolSet.toolSetId} from ${channelLabel(channel)}`"
+                      :aria-label="
+                        t('settings.agent.removeToolSet', {
+                          channel: channelLabel(channel),
+                          toolSet: toolSet.toolSetId,
+                        })
+                      "
                       @click="removeToolSet(channel, toolSet.toolSetId)"
                     >
-                      Remove
+                      {{ t('common.remove') }}
                     </button>
                   </header>
 
                   <p v-if="toolSet.description">{{ toolSet.description }}</p>
                   <p v-else-if="!toolSet.available" class="agent-editor__inventory-warning">
-                    Runtime tool inventory unavailable. Complete-set grants remain editable; use
-                    JSON to preserve an unknown allowlist.
+                    {{ t('settings.agent.inventoryUnavailable') }}
                   </p>
 
                   <div
                     class="agent-editor__grant-scope"
-                    :aria-label="`${toolSet.toolSetId} grant scope in ${channelLabel(channel)}`"
+                    :aria-label="
+                      t('settings.agent.grantScope', {
+                        channel: channelLabel(channel),
+                        toolSet: toolSet.toolSetId,
+                      })
+                    "
                     role="group"
                   >
                     <button
@@ -1000,7 +1050,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       :aria-pressed="!isLimitedGrant(channel, toolSet.toolSetId)"
                       @click="setGrantScope(channel, toolSet.toolSetId, false)"
                     >
-                      All tools
+                      {{ t('settings.agent.allTools') }}
                     </button>
                     <button
                       type="button"
@@ -1008,7 +1058,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       :disabled="toolOptions(channel, toolSet.toolSetId).length === 0"
                       @click="setGrantScope(channel, toolSet.toolSetId, true)"
                     >
-                      Selected tools
+                      {{ t('settings.agent.selectedTools') }}
                       <small v-if="isLimitedGrant(channel, toolSet.toolSetId)">
                         {{ grantTools(channel, toolSet.toolSetId).length }}
                       </small>
@@ -1022,8 +1072,13 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     <input
                       :value="toolSearch[`${channel}:${toolSet.toolSetId}`] ?? ''"
                       type="search"
-                      :aria-label="`Search tools in ${toolSet.toolSetId} for ${channelLabel(channel)}`"
-                      placeholder="Search tools"
+                      :aria-label="
+                        t('settings.agent.searchToolsIn', {
+                          channel: channelLabel(channel),
+                          toolSet: toolSet.toolSetId,
+                        })
+                      "
+                      :placeholder="t('settings.agent.searchTools')"
                       @input="
                         toolSearch[`${channel}:${toolSet.toolSetId}`] = (
                           $event.target as HTMLInputElement
@@ -1046,7 +1101,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                         </span>
                       </label>
                     </div>
-                    <p v-else>No tools match this search.</p>
+                    <p v-else>{{ t('settings.agent.noToolsMatch') }}</p>
                   </div>
 
                   <p
@@ -1058,27 +1113,29 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 </article>
               </div>
               <p v-else class="agent-editor__grant-empty">
-                No {{ channel }} capabilities. Use + Add to grant one.
+                {{ t(`settings.agent.noChannelCapabilities.${channel}`) }}
               </p>
             </section>
           </div>
           <p v-else class="agent-editor__empty">
-            No Tool Set entries are currently configured by active extensions.
+            {{ t('settings.agent.noToolSetsConfigured') }}
           </p>
         </section>
 
         <section class="agent-editor__section" aria-labelledby="agent-tasks-title">
           <div class="agent-editor__section-copy">
-            <p>04 // INTERNAL TASKS</p>
-            <h3 id="agent-tasks-title">Task model overrides</h3>
-            <span>Leave these empty to use the conversational provider and model.</span>
+            <p>04 // {{ t('settings.agent.internalTasks') }}</p>
+            <h3 id="agent-tasks-title">{{ t('settings.agent.taskOverrides') }}</h3>
+            <span>{{ t('settings.agent.taskOverridesHelp') }}</span>
           </div>
           <div class="agent-editor__tasks">
             <fieldset v-for="task in ['compaction', 'title'] as const" :key="task">
-              <legend>{{ task }}</legend>
+              <legend>{{ t(`settings.agent.task.${task}`) }}</legend>
               <div class="agent-editor__field-grid">
                 <div class="agent-editor__field">
-                  <label :for="`agent-${task}-provider`">Provider override</label>
+                  <label :for="`agent-${task}-provider`">{{
+                    t('settings.agent.providerOverride')
+                  }}</label>
                   <select
                     :id="`agent-${task}-provider`"
                     :value="taskValue(task, 'provider')"
@@ -1086,7 +1143,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       setTaskValue(task, 'provider', ($event.target as HTMLSelectElement).value)
                     "
                   >
-                    <option value="">Use agent provider</option>
+                    <option value="">{{ t('settings.agent.useAgentProvider') }}</option>
                     <option
                       v-for="provider in providers"
                       :key="provider.providerId"
@@ -1100,8 +1157,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   :id="`agent-${task}-model`"
                   :model-value="taskValue(task, 'model')"
                   :error="fieldErrors[`${task}.model`]"
-                  label="Model override"
-                  placeholder="Use agent model"
+                  :label="t('settings.agent.modelOverride')"
+                  :placeholder="t('settings.agent.useAgentModel')"
                   @update:model-value="setTaskValue(task, 'model', $event)"
                 />
               </div>
@@ -1111,20 +1168,20 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <details class="agent-editor__advanced-group">
           <summary>
-            <span>05 // RUNTIME TUNING</span>
-            <strong>Generation and context</strong>
-            <small>Optional provider sampling and context pressure controls.</small>
+            <span>05 // {{ t('settings.agent.runtimeTuning') }}</span>
+            <strong>{{ t('settings.agent.generationContext') }}</strong>
+            <small>{{ t('settings.agent.generationContextHelp') }}</small>
           </summary>
           <div class="agent-editor__advanced-content">
             <fieldset>
-              <legend>Generation</legend>
+              <legend>{{ t('settings.agent.generation') }}</legend>
               <div class="agent-editor__numeric-grid">
                 <NoxTextField
                   id="agent-temperature"
                   :model-value="numericInputs.temperature"
                   :error="fieldErrors.temperature"
                   hint="0–1"
-                  label="Temperature"
+                  :label="t('settings.agent.temperature')"
                   @update:model-value="
                     setOptionalNumber('generation', 'temperature', 'temperature', $event)
                   "
@@ -1134,21 +1191,21 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   :model-value="numericInputs.topP"
                   :error="fieldErrors.topP"
                   hint="0–1"
-                  label="Top P"
+                  :label="t('settings.agent.topP')"
                   @update:model-value="setOptionalNumber('generation', 'topP', 'topP', $event)"
                 />
                 <NoxTextField
                   id="agent-top-k"
                   :model-value="numericInputs.topK"
                   :error="fieldErrors.topK"
-                  label="Top K"
+                  :label="t('settings.agent.topK')"
                   @update:model-value="setOptionalNumber('generation', 'topK', 'topK', $event)"
                 />
                 <NoxTextField
                   id="agent-max-tokens"
                   :model-value="numericInputs.maxTokens"
                   :error="fieldErrors.maxTokens"
-                  label="Max tokens"
+                  :label="t('settings.agent.maxTokens')"
                   @update:model-value="
                     setOptionalNumber('generation', 'maxTokens', 'maxTokens', $event)
                   "
@@ -1158,7 +1215,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   :model-value="numericInputs.frequencyPenalty"
                   :error="fieldErrors.frequencyPenalty"
                   hint="−2–2"
-                  label="Frequency penalty"
+                  :label="t('settings.agent.frequencyPenalty')"
                   @update:model-value="
                     setOptionalNumber('generation', 'frequencyPenalty', 'frequencyPenalty', $event)
                   "
@@ -1168,7 +1225,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   :model-value="numericInputs.presencePenalty"
                   :error="fieldErrors.presencePenalty"
                   hint="−2–2"
-                  label="Presence penalty"
+                  :label="t('settings.agent.presencePenalty')"
                   @update:model-value="
                     setOptionalNumber('generation', 'presencePenalty', 'presencePenalty', $event)
                   "
@@ -1176,13 +1233,13 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               </div>
             </fieldset>
             <fieldset>
-              <legend>Context pressure</legend>
+              <legend>{{ t('settings.agent.contextPressure') }}</legend>
               <div class="agent-editor__numeric-grid">
                 <NoxTextField
                   id="agent-context-window"
                   :model-value="numericInputs.contextWindow"
                   :error="fieldErrors.contextWindow"
-                  label="Context window"
+                  :label="t('settings.agent.contextWindow')"
                   @update:model-value="
                     setOptionalNumber('context', 'contextWindow', 'contextWindow', $event)
                   "
@@ -1191,7 +1248,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   id="agent-reserve-output"
                   :model-value="numericInputs.reserveForOutput"
                   :error="fieldErrors.reserveForOutput"
-                  label="Reserve for output"
+                  :label="t('settings.agent.reserveOutput')"
                   @update:model-value="
                     setOptionalNumber('context', 'reserveForOutput', 'reserveForOutput', $event)
                   "
@@ -1201,7 +1258,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   :model-value="numericInputs.compactAtRatio"
                   :error="fieldErrors.compactAtRatio"
                   hint="0–1"
-                  label="Compact at ratio"
+                  :label="t('settings.agent.compactRatio')"
                   @update:model-value="
                     setOptionalNumber('context', 'compactAtRatio', 'compactAtRatio', $event)
                   "
@@ -1213,22 +1270,21 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="agent-editor__section" aria-labelledby="agent-gate-title">
           <div class="agent-editor__section-copy">
-            <p>06 // PERMISSION GATE</p>
-            <h3 id="agent-gate-title">Action policy</h3>
-            <span>
-              Override the runtime gate for this agent. Parameter matching rules remain available in
-              JSON mode.
-            </span>
+            <p>06 // {{ t('settings.agent.permissionGate') }}</p>
+            <h3 id="agent-gate-title">{{ t('settings.agent.actionPolicy') }}</h3>
+            <span>{{ t('settings.agent.actionPolicyHelp') }}</span>
           </div>
           <div class="agent-editor__gate">
             <label class="agent-editor__switch">
               <input type="checkbox" :checked="hasGate" @change="toggleGate($event)" />
-              <span>Use a custom gate policy</span>
+              <span>{{ t('settings.agent.customGate') }}</span>
             </label>
             <template v-if="hasGate">
               <div class="agent-editor__field-grid">
                 <div class="agent-editor__field">
-                  <label for="agent-default-verdict">Default verdict</label>
+                  <label for="agent-default-verdict">{{
+                    t('settings.agent.defaultVerdict')
+                  }}</label>
                   <select
                     id="agent-default-verdict"
                     :value="gateString('defaultVerdict', 'escalate')"
@@ -1236,23 +1292,23 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       setGateString('defaultVerdict', ($event.target as HTMLSelectElement).value)
                     "
                   >
-                    <option value="allow">Allow</option>
-                    <option value="escalate">Escalate</option>
-                    <option value="deny">Deny</option>
+                    <option value="allow">{{ t('settings.agent.verdict.allow') }}</option>
+                    <option value="escalate">{{ t('settings.agent.verdict.escalate') }}</option>
+                    <option value="deny">{{ t('settings.agent.verdict.deny') }}</option>
                   </select>
                 </div>
                 <NoxTextField
                   id="agent-escalation-timeout"
                   :model-value="gateNumber('escalationTimeoutMs', 120000)"
                   :error="fieldErrors['gate.escalationTimeoutMs']"
-                  label="Escalation timeout (ms)"
+                  :label="t('settings.agent.escalationTimeout')"
                   @update:model-value="setGateNumber('escalationTimeoutMs', $event)"
                 />
                 <NoxTextField
                   id="agent-max-permissions"
                   :model-value="gateNumber('maxPendingPermissions', 8)"
                   :error="fieldErrors['gate.maxPendingPermissions']"
-                  label="Maximum pending permissions"
+                  :label="t('settings.agent.maxPendingPermissions')"
                   @update:model-value="setGateNumber('maxPendingPermissions', $event)"
                 />
               </div>
@@ -1262,12 +1318,14 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   :checked="gateHeuristicsEnabled()"
                   @change="setGateHeuristics($event)"
                 />
-                <span>Enable risk heuristics</span>
+                <span>{{ t('settings.agent.riskHeuristics') }}</span>
               </label>
               <div class="agent-editor__rules-note">
-                <span>{{ gateRules }} {{ gateRules === 1 ? 'RULE' : 'RULES' }}</span>
-                <p>Tool, tool-set and parameter matching rules can be reviewed in JSON mode.</p>
-                <button type="button" @click="switchMode('json')">Open gate JSON →</button>
+                <span>{{ plural('settings.agent.rules', gateRules) }}</span>
+                <p>{{ t('settings.agent.rulesHelp') }}</p>
+                <button type="button" @click="switchMode('json')">
+                  {{ t('settings.agent.openGateJson') }} →
+                </button>
               </div>
             </template>
           </div>
@@ -1276,17 +1334,16 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
       <section v-else class="agent-editor__json" aria-labelledby="agent-json-title">
         <div class="agent-editor__section-copy">
-          <p>ADVANCED SURFACE</p>
-          <h3 id="agent-json-title">Blueprint JSON</h3>
-          <span>
-            Full fidelity access for gate rules, tool allowlists and fields without a curated
-            control. Saving replaces the blueprint whole.
-          </span>
+          <p>{{ t('settings.editor.advancedSurface') }}</p>
+          <h3 id="agent-json-title">{{ t('settings.agent.blueprintJson') }}</h3>
+          <span>{{ t('settings.agent.blueprintJsonHelp') }}</span>
         </div>
         <div class="agent-editor__json-field">
           <div>
-            <label for="agent-json">JSON object</label>
-            <button type="button" @click="formatJson()">Format document</button>
+            <label for="agent-json">{{ t('settings.editor.jsonObject') }}</label>
+            <button type="button" @click="formatJson()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
           <textarea
             id="agent-json"
@@ -1299,15 +1356,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         </div>
       </section>
 
-      <NoxNotice v-if="confirmingDelete" title="Remove agent blueprint?" tone="danger">
+      <NoxNotice v-if="confirmingDelete" :title="t('settings.agent.removeQuestion')" tone="danger">
         <div class="agent-editor__delete-confirmation">
           <p>
-            Nox will refuse to remove its final agent or the agent configured as the web default.
+            {{ t('settings.agent.removeWarning') }}
           </p>
           <div>
-            <NoxButton variant="ghost" @click="confirmingDelete = false">Cancel</NoxButton>
+            <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+              t('common.cancel')
+            }}</NoxButton>
             <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">
-              Remove agent
+              {{ t('settings.agent.remove') }}
             </NoxButton>
           </div>
         </div>
@@ -1320,18 +1379,22 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         variant="ghost"
         @click="confirmingDelete = true"
       >
-        Remove agent
+        {{ t('settings.agent.remove') }}
       </NoxButton>
       <span v-else></span>
       <div>
-        <span v-if="dirty" class="agent-editor__dirty">UNSAVED CHANGES</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">Discard</NoxButton>
+        <span v-if="dirty" class="agent-editor__dirty">{{
+          t('settings.editor.unsavedChanges')
+        }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
         <NoxButton
           :busy="settings.mutation.type === 'saving'"
           :disabled="!dirty && !props.creating"
           @click="save()"
         >
-          Save agent
+          {{ t('settings.agent.save') }}
         </NoxButton>
       </div>
     </footer>
@@ -1662,7 +1725,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   border-top: 1px solid var(--nox-border-subtle);
   color: var(--nox-text-secondary);
   background: transparent;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -2015,8 +2078,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   .agent-editor__header,
   .agent-editor__content,
   .agent-editor__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .agent-editor__section,

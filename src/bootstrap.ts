@@ -16,6 +16,8 @@ import { type EnvSource, readEnvConfig } from './config/env';
 import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
 import { WebBroker } from './extensions/builtin/brokers/web/webBroker';
+import { englishLanguageExtension } from './extensions/builtin/languages/en/extension';
+import { spanishLanguageExtension } from './extensions/builtin/languages/es/extension';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { authorities } from './extensions/contribution-points/authorities';
@@ -88,7 +90,12 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   const chat = new ChatHub();
 
   const application = new NoxApplication({
-    extensions: [openAIExtension, webToolsExtension],
+    extensions: [
+      englishLanguageExtension,
+      spanishLanguageExtension,
+      openAIExtension,
+      webToolsExtension,
+    ],
     logger,
   })
     .provide(configService, config)
@@ -116,6 +123,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     openApi(
       application,
       appConfig.api,
+      appConfig.ui.locale,
       auth,
       chat,
       new ConfigStore({
@@ -175,6 +183,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 function openApi(
   application: NoxApplication,
   config: ApiConfig,
+  locale: string,
   auth: ApiAuth,
   chat: ChatHub,
   configuration: ConfigStore,
@@ -192,6 +201,8 @@ function openApi(
       nox: () => application.state === 'running',
     },
     config: configuration,
+    languages: application.contributions,
+    locale,
     logger: logger.child('api'),
     secrets,
     uiDirectory,

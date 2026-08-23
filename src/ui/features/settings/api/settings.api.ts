@@ -35,6 +35,7 @@ const toolInventorySchema = z.object({
 const toolSetInventorySchema = z.object({
   available: z.boolean(),
   description: z.string().optional(),
+  extensionId: z.string().min(1).optional(),
   id: z.string().min(1),
   name: z.string().min(1).optional(),
   problem: z.string().optional(),

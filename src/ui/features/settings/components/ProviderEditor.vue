@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -46,6 +47,31 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
+const { t } = useI18n()
+const coreCopyKeys: ReadonlySet<string> = new Set([
+  'changeRefused',
+  'confirmDiscard',
+  'header',
+  'id',
+  'idHint',
+  'providerJson',
+  'providerJsonHelp',
+  'remove',
+  'removeQuestion',
+  'removeWarning',
+  'save',
+  'saved',
+  'savedBody',
+  'titleFallback',
+  'titleNew',
+  'validation.configurationObject',
+  'validation.curatedFormUnavailable',
+])
+const copy = (key: string, parameters: Readonly<Record<string, boolean | number | string>> = {}) =>
+  t(
+    coreCopyKeys.has(key) ? `settings.provider.${key}` : `nox.provider.openai.ui.${key}`,
+    parameters,
+  )
 const mode = ref<EditorMode>('form')
 const draft = ref<ProviderDraft>(newProviderTemplate())
 const jsonSource = ref('')
@@ -71,7 +97,9 @@ const selectedValue = computed<ConfigValue>(() => {
   const value = props.section.value[props.entryId]
   return isConfigValue(value) ? value : newProviderTemplate()
 })
-const title = computed(() => (props.creating ? 'New provider' : (props.entryId ?? 'Provider')))
+const title = computed(() =>
+  props.creating ? copy('titleNew') : (props.entryId ?? copy('titleFallback')),
+)
 const sourceName = computed(() => props.section.name)
 const referencedSecretId = computed(() => secretReferenceId(draft.value.apiKey))
 /**
@@ -113,6 +141,7 @@ watch(
 
 function resetEditor(): void {
   draft.value = asProviderDraft(selectedValue.value)
+  mode.value = draft.value.type === 'openai_completions' ? 'form' : 'json'
   entryIdInput.value = ''
   newSecretIdInput.value = ''
   secretValueInput.value = ''
@@ -332,6 +361,10 @@ function switchMode(nextMode: EditorMode): void {
 
   const parsed = parseJson(true)
   if (parsed === undefined) return
+  if (stringValue(parsed.type) !== 'openai_completions') {
+    jsonError.value = copy('validation.curatedFormUnavailable')
+    return
+  }
   draft.value = asProviderDraft(parsed)
   credentialSelection.value = referencedSecretId.value
   syncNumericInputs()
@@ -361,15 +394,14 @@ async function save(): Promise<void> {
   if (nextEntryId === undefined || !validEntryId(nextEntryId)) {
     fieldErrors.value = {
       ...fieldErrors.value,
-      entryId:
-        'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.',
+      entryId: t('settings.validation.entryId'),
     }
     return
   }
 
   const secretId = credentialTargetId(value)
   if (secretValueInput.value.length > 0 && !validSecretId(secretId)) {
-    fieldErrors.value = { ...fieldErrors.value, secretId: 'Choose a valid secret ID first.' }
+    fieldErrors.value = { ...fieldErrors.value, secretId: copy('validation.chooseSecretId') }
     return
   }
   const secretWrite =
@@ -392,20 +424,19 @@ async function remove(): Promise<void> {
 
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (draft.value.type.trim().length === 0) errors.type = 'Provider type is required.'
+  if (draft.value.type.trim().length === 0) errors.type = copy('validation.typeRequired')
   if (draft.value.baseUrl.trim().length === 0) {
-    errors.baseUrl = 'Base URL is required.'
+    errors.baseUrl = copy('validation.baseUrlRequired')
   } else {
     try {
       new URL(draft.value.baseUrl)
     } catch {
-      errors.baseUrl = 'Enter an absolute provider URL.'
+      errors.baseUrl = copy('validation.absoluteUrl')
     }
   }
 
   if (props.creating && !validEntryId(entryIdInput.value.trim())) {
-    errors.entryId =
-      'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+    errors.entryId = t('settings.validation.entryId')
   }
 
   validateRetry(errors, 'maxRetries', 0, true)
@@ -417,32 +448,31 @@ function validateForm(): boolean {
   draft.value.modelConfigs.forEach((model, index) => {
     const prefix = `model.${String(index)}`
     if (model.modelId.trim().length === 0) {
-      errors[`${prefix}.modelId`] = 'Model ID is required.'
+      errors[`${prefix}.modelId`] = copy('validation.modelIdRequired')
     } else if (modelIds.has(model.modelId)) {
-      errors[`${prefix}.modelId`] = 'Model IDs must be unique inside one provider.'
+      errors[`${prefix}.modelId`] = copy('validation.modelIdUnique')
     }
     modelIds.add(model.modelId)
 
     const context = modelContextInputs.value[index]?.trim() ?? ''
     if (context.length > 0 && (!Number.isInteger(Number(context)) || Number(context) <= 0)) {
-      errors[`${prefix}.contextWindow`] = 'Use a positive whole number.'
+      errors[`${prefix}.contextWindow`] = t('settings.validation.positiveInteger')
     }
     if (!model.inputModalities.includes('text')) {
-      errors[`${prefix}.inputModalities`] = 'The chat interface requires text input.'
+      errors[`${prefix}.inputModalities`] = copy('validation.textInputRequired')
     }
     if (!model.outputModalities.includes('text')) {
-      errors[`${prefix}.outputModalities`] = 'The chat interface requires text output.'
+      errors[`${prefix}.outputModalities`] = copy('validation.textOutputRequired')
     }
   })
 
   if (credentialSelection.value === NEW_SECRET) {
     const secretId = newSecretIdInput.value.trim()
     if (!validSecretId(secretId)) {
-      errors.secretId =
-        'Use up to 128 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+      errors.secretId = t('settings.validation.secretId')
     }
     if (secretValueInput.value.length === 0) {
-      errors.secretValue = 'Enter the value for the new managed secret.'
+      errors.secretValue = copy('validation.secretValueRequired')
     }
   }
 
@@ -460,7 +490,9 @@ function validateRetry(
   if (key === 'timeoutMs' && input.length === 0) return
   const value = Number(input)
   if (!Number.isFinite(value) || value < minimum || (integer && !Number.isInteger(value))) {
-    errors[key] = `Use ${integer ? 'a whole number' : 'a number'} of at least ${String(minimum)}.`
+    errors[key] = integer
+      ? t('settings.validation.integerMinimum', { minimum })
+      : t('settings.validation.numberMinimum', { minimum })
   }
 }
 
@@ -468,16 +500,13 @@ function parseJson(report: boolean): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
     if (!isConfigValue(parsed)) {
-      if (report) jsonError.value = 'Provider configuration must be one JSON object.'
+      if (report) jsonError.value = copy('validation.configurationObject')
       return undefined
     }
     if (report) jsonError.value = undefined
     return parsed
-  } catch (error) {
-    if (report) {
-      jsonError.value =
-        error instanceof SyntaxError ? error.message : 'Configuration is not valid JSON.'
-    }
+  } catch {
+    if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
   }
 }
@@ -499,7 +528,7 @@ function clearFeedback(field?: string): void {
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm('Discard the unsaved provider changes?')
+  return !dirty.value || window.confirm(copy('confirmDiscard'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -601,22 +630,27 @@ function withoutProperties(
   <article class="provider-editor">
     <header class="provider-editor__header">
       <div>
-        <p>MODEL PROVIDER // {{ props.entryId?.toUpperCase() ?? 'NEW' }}</p>
+        <p>
+          {{ copy('header') }} //
+          {{ props.entryId?.toUpperCase() ?? t('common.new').toUpperCase() }}
+        </p>
         <h2>{{ title }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <div class="provider-editor__header-side">
         <div class="provider-editor__badges">
           <span>{{ sourceName }}</span>
           <span>{{ draft.type }}</span>
-          <span class="provider-editor__badge--restart">APPLIES ON RESTART</span>
+          <span class="provider-editor__badge--restart">{{
+            t('settings.editor.appliesOnRestart')
+          }}</span>
         </div>
-        <div class="provider-editor__modes" aria-label="Editor mode">
+        <div class="provider-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
-            Form
+            {{ t('settings.editor.form') }}
           </button>
           <button :aria-pressed="mode === 'json'" type="button" @click="switchMode('json')">
-            JSON
+            {{ t('settings.editor.json') }}
           </button>
         </div>
       </div>
@@ -625,15 +659,15 @@ function withoutProperties(
     <div class="provider-editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Provider configuration saved"
+        :title="copy('saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>Restart Nox to compose this provider from the saved configuration.</p>
+        <p>{{ copy('savedBody') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Provider change refused"
+        :title="copy('changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -644,8 +678,8 @@ function withoutProperties(
         id="provider-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"
-        hint="Stable ID referenced by agent blueprints."
-        label="Provider ID"
+        :hint="copy('idHint')"
+        :label="copy('id')"
         placeholder="main"
         required
         @update:model-value="setEntryId($event)"
@@ -654,25 +688,27 @@ function withoutProperties(
       <template v-if="mode === 'form'">
         <section class="provider-editor__section" aria-labelledby="provider-adapter-title">
           <div class="provider-editor__section-copy">
-            <p>01 // ADAPTER</p>
-            <h3 id="provider-adapter-title">Endpoint identity</h3>
-            <span>The contributed adapter and the remote API endpoint it speaks to.</span>
+            <p>01 // {{ copy('adapter') }}</p>
+            <h3 id="provider-adapter-title">{{ copy('endpointIdentity') }}</h3>
+            <span>{{ copy('endpointIdentityHelp') }}</span>
           </div>
           <div class="provider-editor__fields">
             <div
               class="provider-editor__field"
               :class="{ 'provider-editor__field--invalid': fieldErrors.type }"
             >
-              <label for="provider-type">Provider type <small>REQ</small></label>
+              <label for="provider-type"
+                >{{ copy('type') }} <small>{{ t('common.requiredShort') }}</small></label
+              >
               <select
                 id="provider-type"
                 :value="draft.type"
                 :aria-invalid="fieldErrors.type !== undefined"
                 @change="setString('type', ($event.target as HTMLSelectElement).value)"
               >
-                <option value="openai_completions">OpenAI-compatible completions</option>
+                <option value="openai_completions">{{ copy('openaiCompletions') }}</option>
                 <option v-if="draft.type !== 'openai_completions'" :value="draft.type">
-                  {{ draft.type }} · contributed
+                  {{ draft.type }} · {{ t('common.contributed') }}
                 </option>
               </select>
               <p v-if="fieldErrors.type" class="provider-editor__error">{{ fieldErrors.type }}</p>
@@ -681,8 +717,8 @@ function withoutProperties(
               id="provider-base-url"
               :model-value="draft.baseUrl"
               :error="fieldErrors.baseUrl"
-              hint="Base path before /models and /chat/completions."
-              label="Base URL"
+              :hint="copy('baseUrlHint')"
+              :label="copy('baseUrl')"
               placeholder="https://api.example.com/v1"
               required
               type="text"
@@ -693,26 +729,23 @@ function withoutProperties(
 
         <section class="provider-editor__section" aria-labelledby="provider-credential-title">
           <div class="provider-editor__section-copy">
-            <p>02 // CREDENTIAL</p>
-            <h3 id="provider-credential-title">Managed secret</h3>
-            <span>
-              Configuration stores only a secret reference. Values enter through the write-only
-              Secrets surface and never return to this form.
-            </span>
+            <p>02 // {{ copy('credential') }}</p>
+            <h3 id="provider-credential-title">{{ copy('managedSecret') }}</h3>
+            <span>{{ copy('managedSecretHelp') }}</span>
           </div>
           <div class="provider-editor__credentials">
             <div class="provider-editor__field">
-              <label for="provider-secret">API credential</label>
+              <label for="provider-secret">{{ copy('apiCredential') }}</label>
               <select
                 id="provider-secret"
                 :value="credentialSelection"
                 @change="selectCredential(($event.target as HTMLSelectElement).value)"
               >
-                <option value="">No credential</option>
+                <option value="">{{ copy('noCredential') }}</option>
                 <option v-for="secretId in secretOptions" :key="secretId" :value="secretId">
                   {{ secretId }}
                 </option>
-                <option :value="NEW_SECRET">+ New managed secret</option>
+                <option :value="NEW_SECRET">+ {{ copy('newManagedSecret') }}</option>
               </select>
             </div>
 
@@ -721,8 +754,8 @@ function withoutProperties(
               id="provider-new-secret-id"
               :model-value="newSecretIdInput"
               :error="fieldErrors.secretId"
-              hint="The provider config will store this ID, never its value."
-              label="New secret ID"
+              :hint="copy('newSecretIdHint')"
+              :label="copy('newSecretId')"
               placeholder="OPENAI_API_KEY"
               required
               @update:model-value="setNewSecretId($event)"
@@ -733,17 +766,21 @@ function withoutProperties(
               class="provider-editor__secret-status"
             >
               <div>
-                <span>SECRET REFERENCE</span>
+                <span>{{ copy('secretReference') }}</span>
                 <strong>{{ credentialSelection }}</strong>
               </div>
               <div>
-                <span>STORE STATUS</span>
+                <span>{{ t('settings.secrets.storeStatus') }}</span>
                 <strong :class="{ 'provider-editor__secret-missing': !selectedSecretStored }">
-                  {{ selectedSecretStored ? 'STORED' : 'MISSING' }}
+                  {{
+                    selectedSecretStored
+                      ? t('settings.secrets.stored')
+                      : t('common.missing').toUpperCase()
+                  }}
                 </strong>
               </div>
               <NoxButton v-if="!secretWriteOpen" variant="secondary" @click="openSecretWrite()">
-                Replace value
+                {{ t('settings.secrets.replaceValue') }}
               </NoxButton>
             </div>
 
@@ -753,9 +790,9 @@ function withoutProperties(
                 :model-value="secretValueInput"
                 autocomplete="new-password"
                 :error="fieldErrors.secretValue"
-                hint="Intentionally blank even when this secret already exists."
-                label="New secret value"
-                placeholder="Value will not be shown again"
+                :hint="copy('secretValueHint')"
+                :label="copy('newSecretValue')"
+                :placeholder="t('settings.secrets.valuePlaceholder')"
                 :required="credentialSelection === NEW_SECRET"
                 type="password"
                 @update:model-value="setSecretValue($event)"
@@ -765,7 +802,7 @@ function withoutProperties(
                 variant="ghost"
                 @click="closeSecretWrite()"
               >
-                Cancel value update
+                {{ copy('cancelValueUpdate') }}
               </NoxButton>
             </div>
           </div>
@@ -773,20 +810,18 @@ function withoutProperties(
 
         <section class="provider-editor__section" aria-labelledby="provider-models-title">
           <div class="provider-editor__section-copy">
-            <p>03 // MODELS</p>
-            <h3 id="provider-models-title">Model catalog</h3>
-            <span>
-              Declared model metadata anchors context accounting and optional sampling defaults.
-            </span>
+            <p>03 // {{ copy('models') }}</p>
+            <h3 id="provider-models-title">{{ copy('modelCatalog') }}</h3>
+            <span>{{ copy('modelCatalogHelp') }}</span>
           </div>
           <div class="provider-editor__models">
             <NoxTextField
               id="provider-default-model"
               :model-value="defaultModel()"
-              hint="Used when a caller does not provide a model override."
-              label="Default model"
+              :hint="copy('defaultModelHint')"
+              :label="copy('defaultModel')"
               list="provider-model-options"
-              placeholder="Optional model ID"
+              :placeholder="copy('optionalModelId')"
               @update:model-value="setDefaultModel($event)"
             />
             <datalist id="provider-model-options">
@@ -804,15 +839,17 @@ function withoutProperties(
                 class="provider-editor__model"
               >
                 <header>
-                  <span>MODEL // {{ String(index + 1).padStart(2, '0') }}</span>
-                  <button type="button" @click="removeModel(index)">Remove</button>
+                  <span>{{ copy('model') }} // {{ String(index + 1).padStart(2, '0') }}</span>
+                  <button type="button" @click="removeModel(index)">
+                    {{ t('common.remove') }}
+                  </button>
                 </header>
                 <div class="provider-editor__field-grid">
                   <NoxTextField
                     :id="`provider-model-${String(index)}-id`"
                     :model-value="model.modelId"
                     :error="fieldErrors[`model.${String(index)}.modelId`]"
-                    label="Model ID"
+                    :label="copy('modelId')"
                     placeholder="model-id"
                     required
                     @update:model-value="setModelField(index, $event)"
@@ -821,14 +858,14 @@ function withoutProperties(
                     :id="`provider-model-${String(index)}-context`"
                     :model-value="modelContextInputs[index] ?? ''"
                     :error="fieldErrors[`model.${String(index)}.contextWindow`]"
-                    hint="Canonical context capacity in tokens."
-                    label="Context window"
+                    :hint="copy('contextWindowHint')"
+                    :label="copy('contextWindow')"
                     placeholder="131072"
                     @update:model-value="setModelContext(index, $event)"
                   />
                 </div>
                 <fieldset class="provider-editor__modalities">
-                  <legend>Accepted input modalities</legend>
+                  <legend>{{ copy('inputModalities') }}</legend>
                   <label v-for="modality in MODEL_MODALITIES" :key="modality">
                     <input
                       type="checkbox"
@@ -843,11 +880,10 @@ function withoutProperties(
                         )
                       "
                     />
-                    <span>{{ modality }}</span>
+                    <span>{{ copy(`modality.${modality}`) }}</span>
                   </label>
                   <small>
-                    Declare only inputs this exact model accepts. Provider adapters still validate
-                    whether they can encode each modality.
+                    {{ copy('inputModalitiesHelp') }}
                   </small>
                   <p
                     v-if="fieldErrors[`model.${String(index)}.inputModalities`]"
@@ -857,7 +893,7 @@ function withoutProperties(
                   </p>
                 </fieldset>
                 <fieldset class="provider-editor__modalities">
-                  <legend>Generated output modalities</legend>
+                  <legend>{{ copy('outputModalities') }}</legend>
                   <label v-for="modality in MODEL_MODALITIES" :key="modality">
                     <input
                       type="checkbox"
@@ -872,11 +908,10 @@ function withoutProperties(
                         )
                       "
                     />
-                    <span>{{ modality }}</span>
+                    <span>{{ copy(`modality.${modality}`) }}</span>
                   </label>
                   <small>
-                    Outputs are independent from accepted inputs. The current chat stream always
-                    requires text output.
+                    {{ copy('outputModalitiesHelp') }}
                   </small>
                   <p
                     v-if="fieldErrors[`model.${String(index)}.outputModalities`]"
@@ -898,50 +933,50 @@ function withoutProperties(
                     )
                   "
                 >
-                  Additional sampling fields are preserved and available in JSON mode.
+                  {{ copy('additionalFields') }}
                 </p>
               </article>
             </div>
             <button class="provider-editor__add-model" type="button" @click="addModel()">
-              + Add model configuration
+              + {{ copy('addModel') }}
             </button>
           </div>
         </section>
 
         <details class="provider-editor__advanced-group">
           <summary>
-            <span>04 // RESILIENCE</span>
-            <strong>Retries and timeout</strong>
-            <small>Connection timing applied to this provider instance.</small>
+            <span>04 // {{ copy('resilience') }}</span>
+            <strong>{{ copy('retriesTimeout') }}</strong>
+            <small>{{ copy('retriesTimeoutHelp') }}</small>
           </summary>
           <div class="provider-editor__retry-grid">
             <NoxTextField
               id="provider-max-retries"
               :model-value="retryInputs.maxRetries"
               :error="fieldErrors.maxRetries"
-              label="Maximum retries"
+              :label="copy('maxRetries')"
               @update:model-value="setRetryNumber('maxRetries', $event)"
             />
             <NoxTextField
               id="provider-retry-delay"
               :model-value="retryInputs.retryDelayMs"
               :error="fieldErrors.retryDelayMs"
-              label="Initial retry delay (ms)"
+              :label="copy('initialRetryDelay')"
               @update:model-value="setRetryNumber('retryDelayMs', $event)"
             />
             <NoxTextField
               id="provider-max-retry-delay"
               :model-value="retryInputs.maxRetryDelayMs"
               :error="fieldErrors.maxRetryDelayMs"
-              label="Maximum retry delay (ms)"
+              :label="copy('maxRetryDelay')"
               @update:model-value="setRetryNumber('maxRetryDelayMs', $event)"
             />
             <NoxTextField
               id="provider-timeout"
               :model-value="retryInputs.timeoutMs"
               :error="fieldErrors.timeoutMs"
-              hint="Empty means no provider-level timeout."
-              label="Request timeout (ms)"
+              :hint="copy('timeoutHint')"
+              :label="copy('requestTimeout')"
               @update:model-value="setRetryNumber('timeoutMs', $event)"
             />
           </div>
@@ -950,17 +985,16 @@ function withoutProperties(
 
       <section v-else class="provider-editor__json" aria-labelledby="provider-json-title">
         <div class="provider-editor__section-copy">
-          <p>ADVANCED SURFACE</p>
-          <h3 id="provider-json-title">Provider JSON</h3>
-          <span>
-            Full fidelity access for contributed adapters and model sampling fields. Credentials do
-            not belong in this document; each adapter declares what Nox must supply separately.
-          </span>
+          <p>{{ t('settings.editor.advancedSurface') }}</p>
+          <h3 id="provider-json-title">{{ copy('providerJson') }}</h3>
+          <span>{{ copy('providerJsonHelp') }}</span>
         </div>
         <div class="provider-editor__json-field">
           <div>
-            <label for="provider-json">JSON object</label>
-            <button type="button" @click="formatJson()">Format document</button>
+            <label for="provider-json">{{ t('settings.editor.jsonObject') }}</label>
+            <button type="button" @click="formatJson()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
           <textarea
             id="provider-json"
@@ -973,13 +1007,15 @@ function withoutProperties(
         </div>
       </section>
 
-      <NoxNotice v-if="confirmingDelete" title="Remove provider?" tone="danger">
+      <NoxNotice v-if="confirmingDelete" :title="copy('removeQuestion')" tone="danger">
         <div class="provider-editor__delete-confirmation">
-          <p>Nox will refuse this operation while an agent blueprint still names this provider.</p>
+          <p>{{ copy('removeWarning') }}</p>
           <div>
-            <NoxButton variant="ghost" @click="confirmingDelete = false">Cancel</NoxButton>
+            <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+              t('common.cancel')
+            }}</NoxButton>
             <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">
-              Remove provider
+              {{ copy('remove') }}
             </NoxButton>
           </div>
         </div>
@@ -992,18 +1028,22 @@ function withoutProperties(
         variant="ghost"
         @click="confirmingDelete = true"
       >
-        Remove provider
+        {{ copy('remove') }}
       </NoxButton>
       <span v-else></span>
       <div>
-        <span v-if="dirty" class="provider-editor__dirty">UNSAVED CHANGES</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">Discard</NoxButton>
+        <span v-if="dirty" class="provider-editor__dirty">{{
+          t('settings.editor.unsavedChanges')
+        }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
         <NoxButton
           :busy="settings.mutation.type === 'saving'"
           :disabled="!dirty && !props.creating"
           @click="save()"
         >
-          Save provider
+          {{ copy('save') }}
         </NoxButton>
       </div>
     </footer>
@@ -1467,8 +1507,7 @@ function withoutProperties(
   .provider-editor__header,
   .provider-editor__content,
   .provider-editor__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .provider-editor__section,

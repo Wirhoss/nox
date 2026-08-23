@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../../../../application';
+import { translationFragments } from '../../../contribution-points/languages';
 import { toolSets } from '../../../contribution-points/toolsets';
 import { webToolsExtension } from './extension';
 import { WebTools } from './webTools';
@@ -19,6 +20,24 @@ describe('webToolsExtension', () => {
     expect(contribution?.extensionId).toBe('nox.toolset.web');
     expect(contribution?.value.configSchema).toBe(WebTools.configSchema);
     expect(contribution?.value.configSchema.shape.type.value).toBe('web');
+    await app.stop();
+  });
+
+  test('owns every locale for its own UI namespace', async () => {
+    const app = await started();
+
+    const english = app.contributions.get(translationFragments, 'nox.toolset.web.en');
+    const spanish = app.contributions.get(translationFragments, 'nox.toolset.web.es');
+
+    expect(english?.extensionId).toBe('nox.toolset.web');
+    expect(english?.value.namespace).toBe('nox.toolset.web');
+    expect(english?.value.messages['ui.searchUrl']).toBe('Search service URL');
+    expect(spanish?.extensionId).toBe('nox.toolset.web');
+    expect(spanish?.value.namespace).toBe('nox.toolset.web');
+    expect(spanish?.value.messages['ui.searchUrl']).toBe('URL del servicio de búsqueda');
+    expect(Object.keys(spanish?.value.messages ?? {}).sort()).toEqual(
+      Object.keys(english?.value.messages ?? {}).sort(),
+    );
     await app.stop();
   });
 

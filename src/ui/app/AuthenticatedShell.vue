@@ -4,13 +4,17 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 
 import { useAuthStore } from '@/app/stores/auth.store'
 import { authErrorMessage } from '@/features/auth/model/errorMessage'
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxMark } from '@/shared/ui/NoxMark'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 
 const auth = useAuthStore()
+const { t } = useI18n()
 const route = useRoute()
-const account = computed(() => (auth.state.type === 'authenticated' ? auth.state.account : undefined))
+const account = computed(() =>
+  auth.state.type === 'authenticated' ? auth.state.account : undefined,
+)
 const logoutError = ref<string>()
 const loggingOut = ref(false)
 const settingsActive = computed(() => route.path.startsWith('/settings'))
@@ -21,7 +25,7 @@ async function logout(): Promise<void> {
   try {
     await auth.logout()
   } catch (error) {
-    logoutError.value = authErrorMessage(error)
+    logoutError.value = authErrorMessage(error, t)
   } finally {
     loggingOut.value = false
   }
@@ -33,32 +37,38 @@ async function logout(): Promise<void> {
     <aside class="sidebar">
       <NoxMark />
 
-      <nav class="sidebar__nav" aria-label="Primary navigation">
+      <nav class="sidebar__nav" :aria-label="t('navigation.primary')">
         <RouterLink
           class="sidebar__item"
           exact-active-class="sidebar__item--active"
           :to="{ name: 'chat' }"
         >
-          <span>01</span> Chat
+          <span>01</span> {{ t('navigation.chat') }}
         </RouterLink>
-        <span class="sidebar__item" aria-disabled="true"><span>02</span> Sessions</span>
-        <span class="sidebar__item" aria-disabled="true"><span>03</span> Audit</span>
+        <span class="sidebar__item" aria-disabled="true"
+          ><span>02</span> {{ t('navigation.sessions') }}</span
+        >
+        <span class="sidebar__item" aria-disabled="true"
+          ><span>03</span> {{ t('navigation.audit') }}</span
+        >
         <RouterLink
           class="sidebar__item"
           :class="{ 'sidebar__item--active': settingsActive }"
           :aria-current="settingsActive ? 'page' : undefined"
           :to="{ name: 'settings', params: { section: 'general' } }"
         >
-          <span>04</span> Settings
+          <span>04</span> {{ t('navigation.settings') }}
         </RouterLink>
       </nav>
 
       <footer class="sidebar__footer">
         <div>
-          <span>IDENTITY</span>
+          <span>{{ t('navigation.identity') }}</span>
           <strong>{{ account.username }}</strong>
         </div>
-        <NoxButton :busy="loggingOut" variant="ghost" @click="logout()">Disconnect</NoxButton>
+        <NoxButton :busy="loggingOut" variant="ghost" @click="logout()">{{
+          t('navigation.disconnect')
+        }}</NoxButton>
       </footer>
     </aside>
 
@@ -66,7 +76,11 @@ async function logout(): Promise<void> {
       <RouterView />
     </section>
 
-    <NoxNotice v-if="logoutError !== undefined" class="shell__logout-error" title="Logout failed">
+    <NoxNotice
+      v-if="logoutError !== undefined"
+      class="shell__logout-error"
+      :title="t('navigation.logoutFailed')"
+    >
       <p>{{ logoutError }}</p>
     </NoxNotice>
   </main>
@@ -86,7 +100,7 @@ async function logout(): Promise<void> {
   min-height: 0;
   flex-direction: column;
   padding: var(--nox-space-6);
-  border-right: 1px solid var(--nox-border-subtle);
+  border-inline-end: 1px solid var(--nox-border-subtle);
   background: var(--nox-canvas-raised);
 }
 
@@ -101,7 +115,7 @@ async function logout(): Promise<void> {
   align-items: center;
   gap: var(--nox-space-3);
   padding: var(--nox-space-3);
-  border-left: 2px solid transparent;
+  border-inline-start: 2px solid transparent;
   color: var(--nox-text-muted);
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-sm);
@@ -113,7 +127,7 @@ async function logout(): Promise<void> {
 }
 
 .sidebar__item--active {
-  border-left-color: var(--nox-action-primary);
+  border-inline-start-color: var(--nox-action-primary);
   color: var(--nox-text-primary);
   background: var(--nox-surface-1);
 }
@@ -159,7 +173,7 @@ async function logout(): Promise<void> {
 .shell__logout-error {
   position: fixed;
   z-index: var(--nox-layer-toast);
-  right: var(--nox-space-5);
+  inset-inline-end: var(--nox-space-5);
   bottom: var(--nox-space-5);
   width: min(24rem, calc(100% - var(--nox-space-8)));
 }

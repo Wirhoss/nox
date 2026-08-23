@@ -5,6 +5,7 @@ import { type AuthState, useAuthStore } from '@/app/stores/auth.store'
 import AccessFrame from '@/features/auth/components/AccessFrame.vue'
 import LoginForm from '@/features/auth/components/LoginForm.vue'
 import RegistrationForm from '@/features/auth/components/RegistrationForm.vue'
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 
@@ -17,49 +18,50 @@ interface FrameCopy {
 }
 
 const auth = useAuthStore()
+const { t } = useI18n()
 const frame = computed<FrameCopy>(() => copyFor(auth.state))
 
 function copyFor(state: AuthState): FrameCopy {
   switch (state.type) {
     case 'authenticated':
       return {
-        description: 'Access accepted. Opening the active surface.',
-        eyebrow: 'NOX // ACCESS CONTROL',
-        status: 'Authorized',
+        description: t('access.authenticated.description'),
+        eyebrow: t('access.authenticated.eyebrow'),
+        status: t('access.authenticated.status'),
         statusTone: 'operational',
-        title: `Welcome, ${state.account.username}`,
+        title: t('access.authenticated.title', { username: state.account.username }),
       }
     case 'checking':
       return {
-        description: 'Contacting the local runtime and reading its actual registration state.',
-        eyebrow: 'NOX // LINK INITIALIZATION',
-        status: 'Connecting',
+        description: t('access.checking.description'),
+        eyebrow: t('access.checking.eyebrow'),
+        status: t('access.checking.status'),
         statusTone: 'waiting',
-        title: 'Establishing node link',
+        title: t('access.checking.title'),
       }
     case 'registration-required':
       return {
-        description: 'Create the single operator identity that will own this installation.',
-        eyebrow: 'NOX // FIRST CLAIM',
-        status: 'Unclaimed node',
+        description: t('access.registration.description'),
+        eyebrow: t('access.registration.eyebrow'),
+        status: t('access.registration.status'),
         statusTone: 'waiting',
-        title: 'Claim this machine',
+        title: t('access.registration.title'),
       }
     case 'signed-out':
       return {
-        description: 'Identify yourself to enter this local Nox installation.',
-        eyebrow: 'NOX // ACCESS CONTROL',
-        status: 'Node online',
+        description: t('access.signedOut.description'),
+        eyebrow: t('access.signedOut.eyebrow'),
+        status: t('access.signedOut.status'),
         statusTone: 'operational',
-        title: 'Return to Nox',
+        title: t('access.signedOut.title'),
       }
     case 'unavailable':
       return {
-        description: 'The web surface is running, but the Nox runtime did not answer.',
-        eyebrow: 'NOX // CONNECTION FAULT',
-        status: 'Node unavailable',
+        description: t('access.unavailable.description'),
+        eyebrow: t('access.unavailable.eyebrow'),
+        status: t('access.unavailable.status'),
         statusTone: 'danger',
-        title: 'Waiting for Nox node',
+        title: t('access.unavailable.title'),
       }
   }
 }
@@ -75,7 +77,7 @@ function copyFor(state: AuthState): FrameCopy {
   >
     <div v-if="auth.state.type === 'checking'" class="pending" aria-live="polite">
       <span class="pending__cursor" aria-hidden="true"></span>
-      <p>Reading <code>/api/auth/status</code></p>
+      <p>{{ t('access.checking.reading') }} <code>/api/auth/status</code></p>
     </div>
 
     <RegistrationForm v-else-if="auth.state.type === 'registration-required'" />
@@ -83,10 +85,12 @@ function copyFor(state: AuthState): FrameCopy {
     <LoginForm v-else-if="auth.state.type === 'signed-out'" />
 
     <div v-else-if="auth.state.type === 'unavailable'" class="recovery">
-      <NoxNotice title="Runtime did not answer" tone="danger">
-        <p>Check that the container is running and that its HTTP surface is reachable.</p>
+      <NoxNotice :title="t('access.unavailable.noticeTitle')" tone="danger">
+        <p>{{ t('access.unavailable.noticeBody') }}</p>
       </NoxNotice>
-      <NoxButton block variant="secondary" @click="auth.initialize()">Retry connection</NoxButton>
+      <NoxButton block variant="secondary" @click="auth.initialize()">{{
+        t('common.retryConnection')
+      }}</NoxButton>
     </div>
   </AccessFrame>
 </template>

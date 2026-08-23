@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, type DeepReadonly, ref } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
+
 import { renderMarkdown } from '../model/markdown'
 import ReasoningActivityCard from './ReasoningActivityCard.vue'
 import RunActivityCard from './RunActivityCard.vue'
@@ -23,6 +25,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const { formatDate, plural, t } = useI18n()
 const detailsOpen = ref(false)
 const hasDetails = computed(() => props.item.kind === 'assistant' && props.activity !== undefined)
 const renderedMessage = computed(() => renderMarkdown(props.item.text))
@@ -35,10 +38,7 @@ function mediaUrl(part: ChatMediaPart): string {
 }
 
 const timestamp = computed(() =>
-  new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(props.item.createdAt)),
+  formatDate(props.item.createdAt, { dateStyle: 'medium', timeStyle: 'short' }),
 )
 </script>
 
@@ -50,13 +50,11 @@ const timestamp = computed(() =>
     >
       <summary class="message__process-summary">
         <span class="message__process-chevron" aria-hidden="true"></span>
-        <strong>Response process</strong>
-        <span>
-          {{ props.processItems?.length }} step{{ props.processItems?.length === 1 ? '' : 's' }}
-        </span>
+        <strong>{{ t('chat.message.responseProcess') }}</strong>
+        <span>{{ plural('chat.message.steps', props.processItems?.length ?? 0) }}</span>
       </summary>
 
-      <div class="message__process-body" aria-label="Response process">
+      <div class="message__process-body" :aria-label="t('chat.message.responseProcess')">
         <template v-for="processItem in props.processItems" :key="processItem.id">
           <ReasoningActivityCard v-if="processItem.kind === 'reasoning'" :item="processItem" />
           <ToolActivityCard v-else :item="processItem" />
@@ -64,23 +62,25 @@ const timestamp = computed(() =>
       </div>
     </details>
 
-    <header class="message__author">{{ props.item.kind === 'user' ? 'YOU' : 'NOX' }}</header>
+    <header class="message__author">
+      {{ props.item.kind === 'user' ? t('chat.message.you') : 'NOX' }}
+    </header>
     <div v-if="props.item.media.length > 0" class="message__media">
       <template v-for="(part, index) in props.item.media" :key="`${part.type}-${String(index)}`">
         <img
           v-if="part.type === 'image'"
           :src="mediaUrl(part)"
-          alt="Image attached to this message"
+          :alt="t('chat.message.attachedImage')"
           loading="lazy"
         />
         <audio v-else-if="part.type === 'audio'" :src="mediaUrl(part)" controls preload="metadata">
-          Audio attached to this message.
+          {{ t('chat.message.attachedAudio') }}
         </audio>
         <video v-else-if="part.type === 'video'" :src="mediaUrl(part)" controls preload="metadata">
-          Video attached to this message.
+          {{ t('chat.message.attachedVideo') }}
         </video>
         <a v-else :href="mediaUrl(part)" target="_blank" rel="noopener noreferrer">
-          Open attached document
+          {{ t('chat.message.openDocument') }}
         </a>
       </template>
     </div>
@@ -114,7 +114,7 @@ const timestamp = computed(() =>
           :class="{ 'message__details-chevron--open': detailsOpen }"
           aria-hidden="true"
         ></span>
-        <span>Details</span>
+        <span>{{ t('common.details') }}</span>
       </button>
 
       <div
@@ -140,8 +140,9 @@ const timestamp = computed(() =>
   justify-self: start;
   padding: var(--nox-space-5) var(--nox-space-6);
   border: 1px solid var(--nox-border-subtle);
-  border-left: 2px solid var(--nox-action-primary);
-  border-radius: var(--nox-radius-panel) var(--nox-radius-panel) var(--nox-radius-panel) 0;
+  border-inline-start: 2px solid var(--nox-action-primary);
+  border-radius: var(--nox-radius-panel);
+  border-end-start-radius: 0;
   background: var(--nox-surface-1);
 }
 
@@ -150,7 +151,8 @@ const timestamp = computed(() =>
   width: min(88%, 38rem);
   padding: var(--nox-space-4) var(--nox-space-5);
   border: 1px solid var(--nox-border-subtle);
-  border-radius: var(--nox-radius-panel) var(--nox-radius-panel) 0 var(--nox-radius-panel);
+  border-radius: var(--nox-radius-panel);
+  border-end-end-radius: 0;
   background: var(--nox-surface-2);
 }
 
@@ -185,7 +187,7 @@ const timestamp = computed(() =>
 
 .message--user .message__timestamp {
   grid-column: 1 / -1;
-  text-align: right;
+  text-align: end;
 }
 
 .message__details-summary {
@@ -197,7 +199,7 @@ const timestamp = computed(() =>
   gap: var(--nox-space-2);
   padding: 0;
   border: 0;
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--nox-text-muted);
   background: transparent;
   cursor: pointer;
@@ -262,7 +264,7 @@ const timestamp = computed(() =>
 }
 
 .message__process-summary > span:last-child {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .message__process-chevron {
@@ -367,7 +369,7 @@ const timestamp = computed(() =>
 
 .message__text :deep(ul),
 .message__text :deep(ol) {
-  padding-left: var(--nox-space-6);
+  padding-inline-start: var(--nox-space-6);
   margin: 0 0 var(--nox-space-4);
 }
 
@@ -386,8 +388,8 @@ const timestamp = computed(() =>
 }
 
 .message__text :deep(blockquote) {
-  padding-left: var(--nox-space-4);
-  border-left: 3px solid var(--nox-border-strong);
+  padding-inline-start: var(--nox-space-4);
+  border-inline-start: 3px solid var(--nox-border-strong);
   margin: 0 0 var(--nox-space-4);
   color: var(--nox-text-secondary);
 }
@@ -440,7 +442,7 @@ const timestamp = computed(() =>
 .message__text :deep(td) {
   padding: var(--nox-space-2) var(--nox-space-3);
   border: 1px solid var(--nox-border-subtle);
-  text-align: left;
+  text-align: start;
 }
 
 .message__text :deep(th) {
@@ -538,7 +540,7 @@ const timestamp = computed(() =>
   display: inline-block;
   width: 0.55rem;
   height: 1em;
-  margin-left: var(--nox-space-1);
+  margin-inline-start: var(--nox-space-1);
   background: var(--nox-action-primary);
   content: '';
   vertical-align: -0.12em;

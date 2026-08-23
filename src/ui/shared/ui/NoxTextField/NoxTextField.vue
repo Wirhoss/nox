@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
+
 defineOptions({ inheritAttrs: false })
 
 interface Props {
@@ -17,6 +19,7 @@ interface Props {
   type?: 'email' | 'password' | 'text'
 }
 
+const { t } = useI18n()
 const props = withDefaults(defineProps<Props>(), {
   autocomplete: undefined,
   disabled: false,
@@ -52,7 +55,9 @@ function onInput(event: Event): void {
   <div class="field" :class="{ 'field--invalid': props.error !== undefined }">
     <label class="field__label" :for="props.id">
       <span>{{ props.label }}</span>
-      <span v-if="props.required" class="field__required" aria-hidden="true">REQ</span>
+      <span v-if="props.required" class="field__required" aria-hidden="true">{{
+        t('common.requiredShort')
+      }}</span>
     </label>
 
     <input

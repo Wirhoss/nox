@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '@/shared/i18n'
+import LanguageSelector from '@/shared/i18n/LanguageSelector.vue'
 import { NoxMark } from '@/shared/ui/NoxMark'
 import { NoxPanel } from '@/shared/ui/NoxPanel'
 import { NoxStatus } from '@/shared/ui/NoxStatus'
@@ -16,12 +18,13 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   statusTone: 'operational',
 })
+const { t } = useI18n()
 </script>
 
 <template>
   <main class="access">
     <div class="access__rail" aria-hidden="true">
-      <span>LOCAL NODE</span>
+      <span>{{ t('access.frame.localNode') }}</span>
       <span>00 / NOX</span>
     </div>
 
@@ -30,22 +33,22 @@ const props = withDefaults(defineProps<Props>(), {
         <NoxMark />
 
         <div class="access__statement">
-          <p class="access__overline">Personal runtime</p>
-          <p class="access__manifesto">A private machine.<br />Awake when you are not.</p>
+          <p class="access__overline">{{ t('access.frame.personalRuntime') }}</p>
+          <p class="access__manifesto">{{ t('access.frame.manifesto') }}</p>
         </div>
 
         <dl class="access__facts">
           <div>
-            <dt>Mode</dt>
-            <dd>Local-first</dd>
+            <dt>{{ t('access.frame.mode') }}</dt>
+            <dd>{{ t('access.frame.localFirst') }}</dd>
           </div>
           <div>
-            <dt>Surface</dt>
-            <dd>Web access</dd>
+            <dt>{{ t('access.frame.surface') }}</dt>
+            <dd>{{ t('access.frame.webAccess') }}</dd>
           </div>
           <div>
-            <dt>Identity</dt>
-            <dd>Single operator</dd>
+            <dt>{{ t('access.frame.identity') }}</dt>
+            <dd>{{ t('access.frame.singleOperator') }}</dd>
           </div>
         </dl>
       </aside>
@@ -66,8 +69,9 @@ const props = withDefaults(defineProps<Props>(), {
         </div>
 
         <footer class="access__footer">
-          <span>OWNER OPERATED</span>
-          <span>NOX ACCESS SURFACE</span>
+          <span>{{ t('access.frame.ownerOperated') }}</span>
+          <LanguageSelector />
+          <span>{{ t('access.frame.accessSurface') }}</span>
         </footer>
       </NoxPanel>
     </div>
@@ -86,7 +90,7 @@ const props = withDefaults(defineProps<Props>(), {
   align-items: center;
   justify-content: space-between;
   padding: var(--nox-space-6) 0;
-  border-right: 1px solid var(--nox-border-subtle);
+  border-inline-end: 1px solid var(--nox-border-subtle);
   color: var(--nox-text-muted);
   font-family: var(--nox-font-mono);
   font-size: 0.6rem;
@@ -136,6 +140,7 @@ const props = withDefaults(defineProps<Props>(), {
   font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.04;
+  white-space: pre-line;
 }
 
 .access__facts {

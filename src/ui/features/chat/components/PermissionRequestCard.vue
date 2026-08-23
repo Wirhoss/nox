@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type DeepReadonly } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 
@@ -12,6 +13,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const { t } = useI18n()
 const emit = defineEmits<{ decide: [requestId: string, decision: PermissionDecision] }>()
 
 const isClosed = computed(() => props.item.state.type === 'resolved')
@@ -20,8 +22,10 @@ const params = computed(() => JSON.stringify(props.item.request.params, undefine
 const outcome = computed(() => {
   if (props.item.state.type !== 'resolved') return undefined
   const { resolution, scope } = props.item.state.outcome
-  if (resolution !== 'approved') return resolution
-  return scope === 'session' ? 'approved for session' : 'approved once'
+  if (resolution !== 'approved') return t(`chat.permission.outcome.${resolution}`)
+  return scope === 'session'
+    ? t('chat.permission.outcome.approvedSession')
+    : t('chat.permission.outcome.approvedOnce')
 })
 
 function decide(decision: PermissionDecision): void {
@@ -33,10 +37,12 @@ function decide(decision: PermissionDecision): void {
   <article class="permission" :class="{ 'permission--closed': isClosed }">
     <header class="permission__header">
       <div>
-        <p class="permission__eyebrow">Permission required</p>
+        <p class="permission__eyebrow">{{ t('chat.permission.required') }}</p>
         <h2>{{ props.item.request.title }}</h2>
       </div>
-      <span class="permission__state">{{ outcome ?? props.item.state.type }}</span>
+      <span class="permission__state">{{
+        outcome ?? t(`chat.permission.state.${props.item.state.type}`)
+      }}</span>
     </header>
 
     <div class="permission__body">
@@ -48,47 +54,43 @@ function decide(decision: PermissionDecision): void {
 
       <dl class="permission__facts">
         <div>
-          <dt>Tool</dt>
+          <dt>{{ t('chat.permission.tool') }}</dt>
           <dd>{{ props.item.request.toolName }}</dd>
         </div>
         <div>
-          <dt>Tool set</dt>
+          <dt>{{ t('chat.permission.toolSet') }}</dt>
           <dd>{{ props.item.request.toolSetId }}</dd>
         </div>
         <div v-if="props.item.request.risk?.reversible !== undefined">
-          <dt>Reversible</dt>
-          <dd>{{ props.item.request.risk.reversible ? 'Yes' : 'No' }}</dd>
+          <dt>{{ t('chat.permission.reversible') }}</dt>
+          <dd>{{ props.item.request.risk.reversible ? t('common.yes') : t('common.no') }}</dd>
         </div>
       </dl>
 
       <ul v-if="props.item.request.signals.length > 0" class="permission__signals">
         <li v-for="signal in props.item.request.signals" :key="signal.code">
-          <span>{{ signal.severity }}</span>
+          <span>{{ t(`chat.permission.severity.${signal.severity}`) }}</span>
           {{ signal.reason }}
         </li>
       </ul>
 
       <NoxNotice
         v-if="props.item.state.type === 'failed'"
-        title="Decision was not delivered"
+        :title="t('chat.permission.notDelivered')"
         tone="danger"
       >
         <p>{{ props.item.state.message }}</p>
       </NoxNotice>
 
       <details class="permission__details">
-        <summary>Technical details</summary>
+        <summary>{{ t('chat.permission.technicalDetails') }}</summary>
         <pre>{{ params }}</pre>
       </details>
     </div>
 
     <footer v-if="!isClosed" class="permission__actions">
-      <NoxButton
-        :disabled="isSubmitting"
-        variant="ghost"
-        @click="decide({ decision: 'deny' })"
-      >
-        Deny
+      <NoxButton :disabled="isSubmitting" variant="ghost" @click="decide({ decision: 'deny' })">
+        {{ t('chat.permission.deny') }}
       </NoxButton>
       <div>
         <NoxButton
@@ -96,13 +98,13 @@ function decide(decision: PermissionDecision): void {
           variant="secondary"
           @click="decide({ decision: 'approve', scope: 'once' })"
         >
-          Approve once
+          {{ t('chat.permission.approveOnce') }}
         </NoxButton>
         <NoxButton
           :disabled="isSubmitting"
           @click="decide({ decision: 'approve', scope: 'session' })"
         >
-          Approve for session
+          {{ t('chat.permission.approveSession') }}
         </NoxButton>
       </div>
     </footer>
@@ -178,7 +180,7 @@ function decide(decision: PermissionDecision): void {
 
 .permission__preview {
   padding: var(--nox-space-4);
-  border-left: 2px solid var(--nox-status-warning);
+  border-inline-start: 2px solid var(--nox-status-warning);
   color: var(--nox-text-primary);
   background: var(--nox-surface-2);
   white-space: pre-wrap;
@@ -225,7 +227,7 @@ function decide(decision: PermissionDecision): void {
 }
 
 .permission__signals span {
-  margin-right: var(--nox-space-2);
+  margin-inline-end: var(--nox-space-2);
   color: var(--nox-status-warning);
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-xs);

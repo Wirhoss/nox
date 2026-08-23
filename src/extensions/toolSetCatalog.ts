@@ -14,6 +14,7 @@ interface ToolInventory {
 interface ToolSetInventory {
   readonly available: boolean;
   readonly description?: string;
+  readonly extensionId?: string;
   readonly id: string;
   readonly name?: string;
   readonly problem?: string;
@@ -84,6 +85,7 @@ class ToolSetCatalog {
       await Promise.all(
         this.configuredIds.map(async (id): Promise<ToolSetInventory> => {
           const type = configured[id]?.type ?? '';
+          const extensionId = this.#contributions.get(toolSets, type)?.extensionId;
           try {
             const toolSet = await this.open(id);
             const tools = Object.values(toolSet.tools)
@@ -98,6 +100,7 @@ class ToolSetCatalog {
             return Object.freeze({
               available: true,
               description: toolSet.description,
+              extensionId,
               id,
               name: toolSet.name,
               tools: Object.freeze(tools),
@@ -106,6 +109,7 @@ class ToolSetCatalog {
           } catch (error) {
             return Object.freeze({
               available: false,
+              extensionId,
               id,
               problem: error instanceof Error ? error.message : String(error),
               tools: Object.freeze([]),

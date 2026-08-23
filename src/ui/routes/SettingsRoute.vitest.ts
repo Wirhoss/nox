@@ -20,6 +20,7 @@ describe('Settings route', () => {
       chat: { defaultAgent: 'nox' },
       database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
       logLevel: 'info',
+      ui: { locale: 'en' },
     }
 
     server.use(
@@ -63,6 +64,7 @@ describe('Settings route', () => {
     expect(await screen.findByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByLabelText(/^Bind host/)).toHaveProperty('value', '127.0.0.1')
     expect(screen.getByLabelText(/^Default agent/)).toHaveProperty('value', 'nox')
+    expect(screen.getByLabelText(/^Default language/)).toHaveProperty('value', 'en')
     expect(screen.getByLabelText(/^Database path/)).toHaveProperty('value', 'state/nox.db')
     expect(screen.getByRole('checkbox', { name: /Secure refresh cookies/ })).toHaveProperty(
       'checked',
@@ -77,6 +79,7 @@ describe('Settings route', () => {
     )
     await fireEvent.click(screen.getByRole('button', { name: 'Form' }))
     await fireEvent.update(screen.getByLabelText(/^Default agent/), 'support')
+    await fireEvent.update(screen.getByLabelText(/^Default language/), 'es')
     await fireEvent.update(screen.getByLabelText(/^Log level/), 'debug')
     await fireEvent.click(screen.getByRole('checkbox', { name: /Secure refresh cookies/ }))
     await fireEvent.click(screen.getByRole('button', { name: 'Save general settings' }))
@@ -92,6 +95,7 @@ describe('Settings route', () => {
       chat: { defaultAgent: 'support' },
       database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
       logLevel: 'debug',
+      ui: { locale: 'es' },
     })
   })
 
@@ -107,6 +111,7 @@ describe('Settings route', () => {
       chat: {},
       database: { busyTimeoutMs: 5000, path: 'nox.db', synchronous: 'normal' },
       logLevel: 'info',
+      ui: { locale: 'en' },
     }
 
     server.use(

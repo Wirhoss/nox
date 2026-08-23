@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 
 import { useActiveSessionStore } from '../stores/activeSession.store'
 
 const session = useActiveSessionStore()
+const { t } = useI18n()
 const conversations = computed(() => session.conversations)
 
 function shortId(value: string): string {
@@ -14,30 +16,34 @@ function shortId(value: string): string {
 
 function relativeTime(value: string): string {
   const elapsedMinutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60_000))
-  if (elapsedMinutes < 1) return 'now'
-  if (elapsedMinutes < 60) return `${String(elapsedMinutes)}m`
+  if (elapsedMinutes < 1) return t('chat.conversation.now')
+  if (elapsedMinutes < 60) return t('chat.conversation.minutesShort', { count: elapsedMinutes })
   const hours = Math.round(elapsedMinutes / 60)
-  if (hours < 24) return `${String(hours)}h`
-  return `${String(Math.round(hours / 24))}d`
+  if (hours < 24) return t('chat.conversation.hoursShort', { count: hours })
+  return t('chat.conversation.daysShort', { count: Math.round(hours / 24) })
 }
 </script>
 
 <template>
   <section class="conversations" aria-labelledby="recent-conversations-title">
     <header>
-      <h2 id="recent-conversations-title">Conversations</h2>
+      <h2 id="recent-conversations-title">{{ t('chat.conversation.plural') }}</h2>
       <span>{{ conversations.length }}</span>
     </header>
 
     <NoxButton block variant="secondary" @click="session.newConversation()">
-      + New conversation
+      + {{ t('chat.conversation.new') }}
     </NoxButton>
 
-    <p v-if="session.catalog.type === 'loading'" class="conversations__state">Scanning links…</p>
+    <p v-if="session.catalog.type === 'loading'" class="conversations__state">
+      {{ t('chat.conversation.scanning') }}
+    </p>
     <p v-else-if="session.catalog.type === 'failed'" class="conversations__state">
       {{ session.catalog.message }}
     </p>
-    <p v-else-if="conversations.length === 0" class="conversations__state">No previous signal.</p>
+    <p v-else-if="conversations.length === 0" class="conversations__state">
+      {{ t('chat.conversation.none') }}
+    </p>
 
     <ol v-else>
       <li v-for="conversation in conversations" :key="conversation.conversationId">
@@ -123,7 +129,7 @@ function relativeTime(value: string): string {
   color: var(--nox-text-secondary);
   background: transparent;
   font-family: var(--nox-font-mono);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 

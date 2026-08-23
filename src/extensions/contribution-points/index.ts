@@ -6,6 +6,13 @@ export {
   brokerGrantsSchema,
   brokers,
 } from './brokers';
+export {
+  defineLanguagePack,
+  defineTranslationFragment,
+  languagePacks,
+  localeSchema,
+  translationFragments,
+} from './languages';
 export { providerConfigSchema, providerContribution, providers } from './providers';
 export {
   toolSetBaseConfigSchema,
@@ -16,5 +23,11 @@ export {
 
 export type { AuthorityContribution } from './authorities';
 export type { BrokerConfig, BrokerConfigSchema, BrokerContribution } from './brokers';
+export type {
+  LanguagePack,
+  LanguagePackInput,
+  TranslationFragment,
+  TranslationFragmentInput,
+} from './languages';
 export type { ProviderConfig, ProviderConfigSchema, ProviderContribution } from './providers';
 export type { ToolSetConfig, ToolSetConfigSchema, ToolSetContribution } from './toolsets';

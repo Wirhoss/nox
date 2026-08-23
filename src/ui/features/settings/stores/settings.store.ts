@@ -3,6 +3,7 @@ import { readonly, ref } from 'vue'
 
 import { useAuthStore } from '@/app/stores/auth.store'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
+import { useI18n } from '@/shared/i18n'
 
 import {
   type ConfigCatalog,
@@ -33,6 +34,7 @@ interface ManagedSecretWrite {
 
 const useSettingsStore = defineStore('settings', () => {
   const auth = useAuthStore()
+  const { t } = useI18n()
   const catalog = ref<ConfigCatalog>()
   const references = ref<Readonly<Record<string, ConfigSection>>>({})
   const section = ref<ConfigSection>()
@@ -270,14 +272,14 @@ const useSettingsStore = defineStore('settings', () => {
       return true
     } catch (error) {
       if (isUnauthorized(error)) auth.requireLogin()
-      mutation.value = { message: settingsErrorMessage(error), type: 'failed' }
+      mutation.value = { message: settingsErrorMessage(error, t), type: 'failed' }
       return false
     }
   }
 
   function failResource(error: unknown): void {
     if (isUnauthorized(error)) auth.requireLogin()
-    resource.value = { message: settingsErrorMessage(error), type: 'failed' }
+    resource.value = { message: settingsErrorMessage(error, t), type: 'failed' }
   }
 
   function requireAccessToken(): string {
@@ -311,29 +313,33 @@ function isUnauthorized(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401
 }
 
-function settingsErrorMessage(error: unknown): string {
+type Translate = (
+  key: string,
+  parameters?: Readonly<Record<string, boolean | number | string>>,
+) => string
+
+function settingsErrorMessage(error: unknown, t: Translate): string {
   if (error instanceof ApiError) {
-    if (error.detail !== undefined) return error.detail
     switch (error.code) {
       case 'entry_exists':
-        return 'An entry with that ID already exists.'
-      case 'entry_in_use': {
-        const reasons = error.reasons.join(' ')
-        return reasons.length > 0 ? reasons : 'This entry is still in use.'
-      }
+        return t('settings.error.entryExists')
+      case 'entry_in_use':
+        return t('settings.error.entryInUse')
       case 'invalid_config':
-        return 'The configuration was rejected by Nox.'
+        return t('settings.error.invalidConfig')
       case 'section_unresolved':
-        return 'This section has not loaded in the running node.'
+        return t('settings.error.sectionUnresolved')
+      case 'unknown_reference':
+        return t('settings.error.unknownReference')
       case undefined:
-        return `Nox refused the change (${String(error.status)}).`
+        return t('settings.error.refused', { status: error.status })
       default:
-        return `Nox refused the change (${String(error.status)} // ${error.code}).`
+        return t('settings.error.refusedWithCode', { code: error.code, status: error.status })
     }
   }
-  if (error instanceof ApiConnectionError) return 'The Nox node could not be reached.'
-  if (error instanceof ApiContractError) return 'Nox returned an unexpected settings response.'
-  return error instanceof Error ? error.message : 'The settings operation failed unexpectedly.'
+  if (error instanceof ApiConnectionError) return t('settings.error.nodeUnreachable')
+  if (error instanceof ApiContractError) return t('settings.error.unexpectedResponse')
+  return t('settings.error.unexpected')
 }
 
 export { settingsErrorMessage, useSettingsStore }

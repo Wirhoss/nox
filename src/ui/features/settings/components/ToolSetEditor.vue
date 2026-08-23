@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -53,6 +54,28 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
+const { t } = useI18n()
+const coreCopyKeys: ReadonlySet<string> = new Set([
+  'changeRefused',
+  'confirmDiscard',
+  'header',
+  'id',
+  'idHint',
+  'remove',
+  'removeQuestion',
+  'removeWarning',
+  'save',
+  'saved',
+  'savedBody',
+  'titleFallback',
+  'titleNew',
+  'toolSetJson',
+  'toolSetJsonHelp',
+  'validation.configurationObject',
+  'validation.curatedFormUnavailable',
+])
+const copy = (key: string, parameters: Readonly<Record<string, boolean | number | string>> = {}) =>
+  t(coreCopyKeys.has(key) ? `settings.toolSet.${key}` : `nox.toolset.web.ui.${key}`, parameters)
 const mode = ref<EditorMode>('form')
 const draft = ref<ToolSetDraft>(newToolSetTemplate())
 const jsonSource = ref('')
@@ -81,7 +104,9 @@ const selectedValue = computed<ConfigValue>(() => {
   const value = props.section.value[props.entryId]
   return isConfigValue(value) ? value : newToolSetTemplate()
 })
-const title = computed(() => (props.creating ? 'New tool set' : (props.entryId ?? 'Tool set')))
+const title = computed(() =>
+  props.creating ? copy('titleNew') : (props.entryId ?? copy('titleFallback')),
+)
 const sourceName = computed(() => props.section.name)
 const dirty = computed(() => {
   if (mode.value === 'json') {
@@ -329,7 +354,7 @@ function setToolEnabled(key: EndpointKey, enabled: boolean): void {
   if (next.length === 0) {
     fieldErrors.value = {
       ...fieldErrors.value,
-      enabledTools: 'At least one configured tool must remain exposed.',
+      enabledTools: copy('validation.oneToolExposed'),
     }
     return
   }
@@ -380,7 +405,7 @@ function switchMode(nextMode: EditorMode): void {
   const parsed = parseJson(true)
   if (parsed === undefined) return
   if (stringValue(parsed.type) !== 'web') {
-    jsonError.value = 'This contributed tool-set type has no curated form. Continue in JSON mode.'
+    jsonError.value = copy('validation.curatedFormUnavailable')
     return
   }
   draft.value = asToolSetDraft(parsed)
@@ -412,8 +437,7 @@ async function save(): Promise<void> {
   if (nextEntryId === undefined || !validEntryId(nextEntryId)) {
     fieldErrors.value = {
       ...fieldErrors.value,
-      entryId:
-        'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.',
+      entryId: t('settings.validation.entryId'),
     }
     return
   }
@@ -448,7 +472,7 @@ function collectSecretWrites(
     if (!validSecretId(secretId)) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`${key}.secretId`]: 'Choose a valid secret ID before entering its value.',
+        [`${key}.secretId`]: copy('validation.chooseSecretId'),
       }
       return undefined
     }
@@ -456,7 +480,7 @@ function collectSecretWrites(
     if (duplicate !== undefined && duplicate !== pendingValue) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`${key}.secretValue`]: 'Both endpoints use this secret ID but specify different values.',
+        [`${key}.secretValue`]: copy('validation.conflictingSecretValues'),
       }
       return undefined
     }
@@ -472,16 +496,15 @@ async function remove(): Promise<void> {
 
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (draft.value.type !== 'web') errors.type = 'Use JSON mode for contributed tool-set types.'
+  if (draft.value.type !== 'web') errors.type = copy('validation.useJson')
   if (props.creating && !validEntryId(entryIdInput.value.trim())) {
-    errors.entryId =
-      'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+    errors.entryId = t('settings.validation.entryId')
   }
 
   const configured = configuredEndpoints()
-  if (configured.length === 0) errors.endpoints = 'Configure search, extract, or both.'
+  if (configured.length === 0) errors.endpoints = copy('validation.configureEndpoint')
   if (configured.length > 0 && !configured.some((key) => isToolEnabled(key))) {
-    errors.enabledTools = 'At least one configured tool must remain exposed.'
+    errors.enabledTools = copy('validation.oneToolExposed')
   }
   for (const key of configured) validateEndpoint(key, errors)
 
@@ -491,36 +514,34 @@ function validateForm(): boolean {
 
 function validateEndpoint(key: EndpointKey, errors: Record<string, string>): void {
   const url = endpointString(key, 'url')
-  if (!validHttpUrl(url)) errors[`${key}.url`] = 'Enter an absolute HTTP or HTTPS URL.'
+  if (!validHttpUrl(url)) errors[`${key}.url`] = copy('validation.httpUrl')
   validatePositiveInteger(errors, key, 'timeoutMs', true)
 
   if (key === 'search') {
     if (endpointString(key, 'defaultLanguage').trim().length === 0) {
-      errors['search.defaultLanguage'] = 'Default language is required.'
+      errors['search.defaultLanguage'] = copy('validation.defaultLanguageRequired')
     }
     const defaultMax = validatePositiveInteger(errors, key, 'defaultMaxResults')
     const maximum = validatePositiveInteger(errors, key, 'maxResults')
     if (defaultMax !== undefined && maximum !== undefined && defaultMax > maximum) {
-      errors['search.defaultMaxResults'] = 'The default cannot exceed the endpoint maximum.'
+      errors['search.defaultMaxResults'] = copy('validation.defaultExceedsMaximum')
     }
   } else {
     const defaultMax = validatePositiveInteger(errors, key, 'defaultMaxCharactersPerPage')
     const maximum = validatePositiveInteger(errors, key, 'maxCharactersPerPage')
     validatePositiveInteger(errors, key, 'maxUrls')
     if (defaultMax !== undefined && maximum !== undefined && defaultMax > maximum) {
-      errors['extract.defaultMaxCharactersPerPage'] =
-        'The default cannot exceed the endpoint maximum.'
+      errors['extract.defaultMaxCharactersPerPage'] = copy('validation.defaultExceedsMaximum')
     }
   }
 
   const state = credentials[key]
   if (state.selection === NEW_SECRET) {
     if (!validSecretId(state.newId.trim())) {
-      errors[`${key}.secretId`] =
-        'Use up to 128 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+      errors[`${key}.secretId`] = t('settings.validation.secretId')
     }
     if (state.value.length === 0) {
-      errors[`${key}.secretValue`] = 'Enter the value for the new managed secret.'
+      errors[`${key}.secretValue`] = copy('validation.secretValueRequired')
     }
   }
 }
@@ -535,7 +556,7 @@ function validatePositiveInteger(
   if (optional && value.length === 0) return undefined
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    errors[`${key}.${property}`] = 'Use a positive whole number.'
+    errors[`${key}.${property}`] = t('settings.validation.positiveInteger')
     return undefined
   }
   return parsed
@@ -566,16 +587,13 @@ function parseJson(report: boolean): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
     if (!isConfigValue(parsed)) {
-      if (report) jsonError.value = 'Tool-set configuration must be one JSON object.'
+      if (report) jsonError.value = copy('validation.configurationObject')
       return undefined
     }
     if (report) jsonError.value = undefined
     return parsed
-  } catch (error) {
-    if (report) {
-      jsonError.value =
-        error instanceof SyntaxError ? error.message : 'Configuration is not valid JSON.'
-    }
+  } catch {
+    if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
   }
 }
@@ -597,7 +615,7 @@ function clearFeedback(field?: string): void {
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm('Discard the unsaved tool-set changes?')
+  return !dirty.value || window.confirm(copy('confirmDiscard'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -707,22 +725,27 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   <article class="tool-set-editor">
     <header class="tool-set-editor__header">
       <div>
-        <p>TOOL SET // {{ props.entryId?.toUpperCase() ?? 'NEW' }}</p>
+        <p>
+          {{ copy('header') }} //
+          {{ props.entryId?.toUpperCase() ?? t('common.new').toUpperCase() }}
+        </p>
         <h2>{{ title }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <div class="tool-set-editor__header-side">
         <div class="tool-set-editor__badges">
           <span>{{ sourceName }}</span>
           <span>{{ draft.type }}</span>
-          <span class="tool-set-editor__badge--restart">APPLIES ON RESTART</span>
+          <span class="tool-set-editor__badge--restart">{{
+            t('settings.editor.appliesOnRestart')
+          }}</span>
         </div>
-        <div class="tool-set-editor__modes" aria-label="Editor mode">
+        <div class="tool-set-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
-            Form
+            {{ t('settings.editor.form') }}
           </button>
           <button :aria-pressed="mode === 'json'" type="button" @click="switchMode('json')">
-            JSON
+            {{ t('settings.editor.json') }}
           </button>
         </div>
       </div>
@@ -731,15 +754,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
     <div class="tool-set-editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Tool-set configuration saved"
+        :title="copy('saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>Restart Nox to compose this capability bundle from the saved configuration.</p>
+        <p>{{ copy('savedBody') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Tool-set change refused"
+        :title="copy('changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -750,8 +773,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         id="tool-set-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"
-        hint="Stable ID granted by agent blueprints."
-        label="Tool-set ID"
+        :hint="copy('idHint')"
+        :label="copy('id')"
         placeholder="internet"
         required
         @update:model-value="setEntryId($event)"
@@ -760,28 +783,27 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
       <template v-if="mode === 'form'">
         <section class="tool-set-editor__section" aria-labelledby="tool-set-surface-title">
           <div class="tool-set-editor__section-copy">
-            <p>01 // SURFACE</p>
-            <h3 id="tool-set-surface-title">Capability surface</h3>
-            <span>
-              The contributed implementation and the exact tools exposed when an agent receives this
-              set.
-            </span>
+            <p>01 // {{ copy('surface') }}</p>
+            <h3 id="tool-set-surface-title">{{ copy('capabilitySurface') }}</h3>
+            <span>{{ copy('capabilitySurfaceHelp') }}</span>
           </div>
           <div class="tool-set-editor__fields">
             <div
               class="tool-set-editor__field"
               :class="{ 'tool-set-editor__field--invalid': fieldErrors.type }"
             >
-              <label for="tool-set-type">Tool-set type <small>REQ</small></label>
+              <label for="tool-set-type"
+                >{{ copy('type') }} <small>{{ t('common.requiredShort') }}</small></label
+              >
               <select
                 id="tool-set-type"
                 :value="draft.type"
                 :aria-invalid="fieldErrors.type !== undefined"
                 @change="setType(($event.target as HTMLSelectElement).value)"
               >
-                <option value="web">Web tools</option>
+                <option value="web">{{ copy('webTools') }}</option>
                 <option v-if="draft.type !== 'web'" :value="draft.type">
-                  {{ draft.type }} · contributed
+                  {{ draft.type }} · {{ t('common.contributed') }}
                 </option>
               </select>
               <p v-if="fieldErrors.type" class="tool-set-editor__error">{{ fieldErrors.type }}</p>
@@ -797,10 +819,10 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 <span>
                   <strong>{{ TOOL_NAMES[key] }}</strong>
                   <small>{{
-                    key === 'search' ? 'NETWORK / READ / SEARCH' : 'NETWORK / READ / EXTRACT'
+                    key === 'search' ? copy('searchAuthority') : copy('extractAuthority')
                   }}</small>
                 </span>
-                <em>{{ isToolEnabled(key) ? 'EXPOSED' : 'HELD' }}</em>
+                <em>{{ isToolEnabled(key) ? copy('exposed') : copy('held') }}</em>
               </label>
             </div>
             <p v-if="fieldErrors.enabledTools" class="tool-set-editor__error">
@@ -811,16 +833,18 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="tool-set-editor__section" aria-labelledby="tool-set-search-title">
           <div class="tool-set-editor__section-copy">
-            <p>02 // SEARCH</p>
-            <h3 id="tool-set-search-title">SearXNG endpoint</h3>
-            <span>Public web search with bounded result counts and a default language.</span>
+            <p>02 // {{ copy('search') }}</p>
+            <h3 id="tool-set-search-title">{{ copy('searchEndpoint') }}</h3>
+            <span>{{ copy('searchEndpointHelp') }}</span>
             <label class="tool-set-editor__endpoint-toggle">
               <input
                 type="checkbox"
                 :checked="endpointConfigured('search')"
                 @change="toggleEndpoint('search', ($event.target as HTMLInputElement).checked)"
               />
-              <span>{{ endpointConfigured('search') ? 'CONFIGURED' : 'DISABLED' }}</span>
+              <span>{{
+                endpointConfigured('search') ? copy('configured') : copy('disabled')
+              }}</span>
             </label>
           </div>
           <div v-if="endpointConfigured('search')" class="tool-set-editor__endpoint">
@@ -828,21 +852,21 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               id="tool-set-search-url"
               :model-value="endpointString('search', 'url')"
               :error="fieldErrors['search.url']"
-              hint="Nox appends /search and requests the JSON result format."
-              label="Search service URL"
+              :hint="copy('searchUrlHint')"
+              :label="copy('searchUrl')"
               placeholder="https://search.example"
               required
               @update:model-value="setEndpointString('search', 'url', $event)"
             />
             <div class="tool-set-editor__credential">
               <div class="tool-set-editor__field">
-                <label for="tool-set-search-secret">Search credential</label>
+                <label for="tool-set-search-secret">{{ copy('searchCredential') }}</label>
                 <select
                   id="tool-set-search-secret"
                   :value="credentials.search.selection"
                   @change="selectCredential('search', ($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="">No credential</option>
+                  <option value="">{{ copy('noCredential') }}</option>
                   <option
                     v-for="secretId in credentialOptions('search')"
                     :key="secretId"
@@ -850,7 +874,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   >
                     {{ secretId }}
                   </option>
-                  <option :value="NEW_SECRET">+ New managed secret</option>
+                  <option :value="NEW_SECRET">+ {{ copy('newManagedSecret') }}</option>
                 </select>
               </div>
               <div
@@ -859,7 +883,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               >
                 <span>{{ credentials.search.selection }}</span>
                 <strong :class="{ 'tool-set-editor__secret-missing': !secretStored('search') }">
-                  {{ secretStored('search') ? 'STORED' : 'MISSING' }}
+                  {{
+                    secretStored('search')
+                      ? t('settings.secrets.stored')
+                      : t('common.missing').toUpperCase()
+                  }}
                 </strong>
               </div>
               <NoxTextField
@@ -867,8 +895,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-search-secret-id"
                 :model-value="credentials.search.newId"
                 :error="fieldErrors['search.secretId']"
-                hint="The tool-set config will store this ID, never its value."
-                label="New search secret ID"
+                :hint="copy('secretIdHint')"
+                :label="copy('newSearchSecretId')"
                 placeholder="SEARXNG_API_KEY"
                 required
                 @update:model-value="setNewSecretId('search', $event)"
@@ -879,9 +907,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 :model-value="credentials.search.value"
                 autocomplete="new-password"
                 :error="fieldErrors['search.secretValue']"
-                hint="Blank preserves an existing value. Secrets are never read back."
-                label="Search credential value"
-                placeholder="Search credential value"
+                :hint="copy('credentialValueHint')"
+                :label="copy('searchCredentialValue')"
+                :placeholder="copy('searchCredentialValue')"
                 :required="credentials.search.selection === NEW_SECRET"
                 type="password"
                 @update:model-value="setSecretValue('search', $event)"
@@ -892,8 +920,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-search-language"
                 :model-value="endpointString('search', 'defaultLanguage')"
                 :error="fieldErrors['search.defaultLanguage']"
-                hint="SearXNG language code such as en, es, or all."
-                label="Default language"
+                :hint="copy('defaultLanguageHint')"
+                :label="copy('defaultLanguage')"
                 placeholder="all"
                 required
                 @update:model-value="setEndpointString('search', 'defaultLanguage', $event)"
@@ -902,8 +930,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-search-timeout"
                 :model-value="numericInputs.searchTimeoutMs"
                 :error="fieldErrors['search.timeoutMs']"
-                hint="Empty uses the runtime default of 30000 ms."
-                label="Timeout (ms)"
+                :hint="copy('timeoutHint')"
+                :label="copy('timeout')"
                 placeholder="30000"
                 @update:model-value="
                   setEndpointNumber('search', 'timeoutMs', 'searchTimeoutMs', $event, true)
@@ -913,7 +941,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-search-default-max"
                 :model-value="numericInputs.searchDefaultMaxResults"
                 :error="fieldErrors['search.defaultMaxResults']"
-                label="Default results"
+                :label="copy('defaultResults')"
                 required
                 @update:model-value="
                   setEndpointNumber(
@@ -928,7 +956,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-search-max"
                 :model-value="numericInputs.searchMaxResults"
                 :error="fieldErrors['search.maxResults']"
-                label="Maximum results"
+                :label="copy('maximumResults')"
                 required
                 @update:model-value="
                   setEndpointNumber('search', 'maxResults', 'searchMaxResults', $event)
@@ -937,23 +965,25 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             </div>
           </div>
           <div v-else class="tool-set-editor__disabled-endpoint">
-            <strong>SEARCH TOOL OFFLINE</strong>
-            <span>Enable this endpoint to expose <code>web_search</code>.</span>
+            <strong>{{ copy('searchOffline') }}</strong>
+            <span>{{ copy('enableSearch') }}</span>
           </div>
         </section>
 
         <section class="tool-set-editor__section" aria-labelledby="tool-set-extract-title">
           <div class="tool-set-editor__section-copy">
-            <p>03 // EXTRACT</p>
-            <h3 id="tool-set-extract-title">Crawl4AI endpoint</h3>
-            <span>Readable page extraction with strict batch and response-size ceilings.</span>
+            <p>03 // {{ copy('extract') }}</p>
+            <h3 id="tool-set-extract-title">{{ copy('extractEndpoint') }}</h3>
+            <span>{{ copy('extractEndpointHelp') }}</span>
             <label class="tool-set-editor__endpoint-toggle">
               <input
                 type="checkbox"
                 :checked="endpointConfigured('extract')"
                 @change="toggleEndpoint('extract', ($event.target as HTMLInputElement).checked)"
               />
-              <span>{{ endpointConfigured('extract') ? 'CONFIGURED' : 'DISABLED' }}</span>
+              <span>{{
+                endpointConfigured('extract') ? copy('configured') : copy('disabled')
+              }}</span>
             </label>
           </div>
           <div v-if="endpointConfigured('extract')" class="tool-set-editor__endpoint">
@@ -961,21 +991,21 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               id="tool-set-extract-url"
               :model-value="endpointString('extract', 'url')"
               :error="fieldErrors['extract.url']"
-              hint="Crawl4AI HTTP endpoint receiving batched crawl requests."
-              label="Extraction service URL"
+              :hint="copy('extractUrlHint')"
+              :label="copy('extractUrl')"
               placeholder="https://crawl.example"
               required
               @update:model-value="setEndpointString('extract', 'url', $event)"
             />
             <div class="tool-set-editor__credential">
               <div class="tool-set-editor__field">
-                <label for="tool-set-extract-secret">Extraction credential</label>
+                <label for="tool-set-extract-secret">{{ copy('extractCredential') }}</label>
                 <select
                   id="tool-set-extract-secret"
                   :value="credentials.extract.selection"
                   @change="selectCredential('extract', ($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="">No credential</option>
+                  <option value="">{{ copy('noCredential') }}</option>
                   <option
                     v-for="secretId in credentialOptions('extract')"
                     :key="secretId"
@@ -983,7 +1013,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   >
                     {{ secretId }}
                   </option>
-                  <option :value="NEW_SECRET">+ New managed secret</option>
+                  <option :value="NEW_SECRET">+ {{ copy('newManagedSecret') }}</option>
                 </select>
               </div>
               <div
@@ -992,7 +1022,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               >
                 <span>{{ credentials.extract.selection }}</span>
                 <strong :class="{ 'tool-set-editor__secret-missing': !secretStored('extract') }">
-                  {{ secretStored('extract') ? 'STORED' : 'MISSING' }}
+                  {{
+                    secretStored('extract')
+                      ? t('settings.secrets.stored')
+                      : t('common.missing').toUpperCase()
+                  }}
                 </strong>
               </div>
               <NoxTextField
@@ -1000,8 +1034,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-extract-secret-id"
                 :model-value="credentials.extract.newId"
                 :error="fieldErrors['extract.secretId']"
-                hint="The tool-set config will store this ID, never its value."
-                label="New extract secret ID"
+                :hint="copy('secretIdHint')"
+                :label="copy('newExtractSecretId')"
                 placeholder="CRAWL4AI_API_KEY"
                 required
                 @update:model-value="setNewSecretId('extract', $event)"
@@ -1012,9 +1046,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 :model-value="credentials.extract.value"
                 autocomplete="new-password"
                 :error="fieldErrors['extract.secretValue']"
-                hint="Blank preserves an existing value. Secrets are never read back."
-                label="Extraction credential value"
-                placeholder="Extraction credential value"
+                :hint="copy('credentialValueHint')"
+                :label="copy('extractCredentialValue')"
+                :placeholder="copy('extractCredentialValue')"
                 :required="credentials.extract.selection === NEW_SECRET"
                 type="password"
                 @update:model-value="setSecretValue('extract', $event)"
@@ -1025,8 +1059,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-extract-timeout"
                 :model-value="numericInputs.extractTimeoutMs"
                 :error="fieldErrors['extract.timeoutMs']"
-                hint="Empty uses the runtime default of 30000 ms."
-                label="Timeout (ms)"
+                :hint="copy('timeoutHint')"
+                :label="copy('timeout')"
                 placeholder="30000"
                 @update:model-value="
                   setEndpointNumber('extract', 'timeoutMs', 'extractTimeoutMs', $event, true)
@@ -1036,7 +1070,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-extract-max-urls"
                 :model-value="numericInputs.extractMaxUrls"
                 :error="fieldErrors['extract.maxUrls']"
-                label="Maximum URLs per call"
+                :label="copy('maximumUrls')"
                 required
                 @update:model-value="
                   setEndpointNumber('extract', 'maxUrls', 'extractMaxUrls', $event)
@@ -1046,7 +1080,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-extract-default-max"
                 :model-value="numericInputs.extractDefaultMaxCharactersPerPage"
                 :error="fieldErrors['extract.defaultMaxCharactersPerPage']"
-                label="Default characters per page"
+                :label="copy('defaultCharacters')"
                 required
                 @update:model-value="
                   setEndpointNumber(
@@ -1061,7 +1095,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="tool-set-extract-max"
                 :model-value="numericInputs.extractMaxCharactersPerPage"
                 :error="fieldErrors['extract.maxCharactersPerPage']"
-                label="Maximum characters per page"
+                :label="copy('maximumCharacters')"
                 required
                 @update:model-value="
                   setEndpointNumber(
@@ -1075,29 +1109,28 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             </div>
           </div>
           <div v-else class="tool-set-editor__disabled-endpoint">
-            <strong>EXTRACTION TOOL OFFLINE</strong>
-            <span>Enable this endpoint to expose <code>web_extract</code>.</span>
+            <strong>{{ copy('extractOffline') }}</strong>
+            <span>{{ copy('enableExtract') }}</span>
           </div>
         </section>
 
-        <NoxNotice v-if="fieldErrors.endpoints" title="No endpoint configured" tone="danger">
+        <NoxNotice v-if="fieldErrors.endpoints" :title="copy('noEndpoint')" tone="danger">
           <p>{{ fieldErrors.endpoints }}</p>
         </NoxNotice>
       </template>
 
       <section v-else class="tool-set-editor__json" aria-labelledby="tool-set-json-title">
         <div class="tool-set-editor__section-copy">
-          <p>ADVANCED SURFACE</p>
-          <h3 id="tool-set-json-title">Tool-set JSON</h3>
-          <span>
-            Full fidelity access for contributed implementations. Credentials do not belong in this
-            document; each implementation declares what Nox must supply separately.
-          </span>
+          <p>{{ t('settings.editor.advancedSurface') }}</p>
+          <h3 id="tool-set-json-title">{{ copy('toolSetJson') }}</h3>
+          <span>{{ copy('toolSetJsonHelp') }}</span>
         </div>
         <div class="tool-set-editor__json-field">
           <div>
-            <label for="tool-set-json">JSON object</label>
-            <button type="button" @click="formatJson()">Format document</button>
+            <label for="tool-set-json">{{ t('settings.editor.jsonObject') }}</label>
+            <button type="button" @click="formatJson()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
           <textarea
             id="tool-set-json"
@@ -1110,13 +1143,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         </div>
       </section>
 
-      <NoxNotice v-if="confirmingDelete" title="Remove tool set?" tone="danger">
+      <NoxNotice v-if="confirmingDelete" :title="copy('removeQuestion')" tone="danger">
         <div class="tool-set-editor__delete-confirmation">
-          <p>Nox will refuse this operation while an agent blueprint still grants this tool set.</p>
+          <p>{{ copy('removeWarning') }}</p>
           <div>
-            <NoxButton variant="ghost" @click="confirmingDelete = false">Cancel</NoxButton>
+            <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+              t('common.cancel')
+            }}</NoxButton>
             <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">
-              Remove tool set
+              {{ copy('remove') }}
             </NoxButton>
           </div>
         </div>
@@ -1129,18 +1164,22 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         variant="ghost"
         @click="confirmingDelete = true"
       >
-        Remove tool set
+        {{ copy('remove') }}
       </NoxButton>
       <span v-else></span>
       <div>
-        <span v-if="dirty" class="tool-set-editor__dirty">UNSAVED CHANGES</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">Discard</NoxButton>
+        <span v-if="dirty" class="tool-set-editor__dirty">{{
+          t('settings.editor.unsavedChanges')
+        }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
         <NoxButton
           :busy="settings.mutation.type === 'saving'"
           :disabled="!dirty && !props.creating"
           @click="save()"
         >
-          Save tool set
+          {{ copy('save') }}
         </NoxButton>
       </div>
     </footer>
@@ -1536,8 +1575,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   .tool-set-editor__header,
   .tool-set-editor__content,
   .tool-set-editor__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .tool-set-editor__section,

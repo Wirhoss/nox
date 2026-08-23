@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -24,6 +25,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
+const { t } = useI18n()
 const source = ref('')
 const original = ref('')
 const entryIdInput = ref('')
@@ -38,8 +40,8 @@ const selectedValue = computed<ConfigValue | undefined>(() => {
 })
 const dirty = computed(() => source.value !== original.value)
 const title = computed(() => {
-  if (props.creating) return `New ${props.definition.label.toLowerCase()}`
-  return props.entryId ?? props.definition.plural
+  if (props.creating) return t('settings.navigation.newEntry', { entry: t(props.definition.label) })
+  return props.entryId ?? t(props.definition.plural)
 })
 const sourceName = computed(() => {
   if (props.entryId !== undefined && props.section.kind === 'directory') {
@@ -82,8 +84,7 @@ async function save(): Promise<void> {
   if (props.creating) {
     const entryId = entryIdInput.value.trim()
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(entryId)) {
-      entryIdError.value =
-        'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+      entryIdError.value = t('settings.validation.entryId')
       return
     }
     saved = await settings.createEntry(props.section.key, entryId, value)
@@ -106,18 +107,18 @@ function parseSource(): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(source.value)
     if (!isConfigValue(parsed)) {
-      sourceError.value = 'Configuration must be one JSON object.'
+      sourceError.value = t('settings.validation.configurationObject')
       return undefined
     }
     return parsed
-  } catch (error) {
-    sourceError.value = error instanceof SyntaxError ? error.message : 'Configuration is not valid JSON.'
+  } catch {
+    sourceError.value = t('settings.validation.invalidJson')
     return undefined
   }
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm('Discard the unsaved configuration changes?')
+  return !dirty.value || window.confirm(t('settings.confirm.discardConfiguration'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -127,27 +128,10 @@ function isConfigValue(value: unknown): value is ConfigValue {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function newEntryTemplate(sectionKey: string): ConfigValue {
-  switch (sectionKey) {
-    case 'blueprints':
-      return {
-        description: '',
-        model: '',
-        provider: '',
-        systemPrompt: '',
-        toolSets: { direct: [], routed: [] },
-      }
-    case 'providers':
-      return { baseUrl: '', defaultModel: '', type: 'openai_completions' }
-    case 'toolSets':
-      return {
-        extract: { url: '' },
-        search: { url: '' },
-        type: 'web',
-      }
-    default:
-      return {}
-  }
+function newEntryTemplate(_sectionKey: string): ConfigValue {
+  // A generic editor cannot invent configuration owned by an extension. The
+  // extension-specific editor, when one exists, supplies its own initial value.
+  return {}
 }
 </script>
 
@@ -155,34 +139,34 @@ function newEntryTemplate(sectionKey: string): ConfigValue {
   <article class="editor">
     <header class="editor__header">
       <div>
-        <p>CONFIGURATION // {{ props.section.key.toUpperCase() }}</p>
+        <p>{{ t('settings.navigation.configuration') }} // {{ props.section.key.toUpperCase() }}</p>
         <h2>{{ title }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
-      <div class="editor__badges" aria-label="Configuration metadata">
+      <div class="editor__badges" :aria-label="t('settings.editor.metadata')">
         <span>{{ sourceName }}</span>
         <span v-if="props.section.applies === 'restart'" class="editor__badge--restart">
-          APPLIES ON RESTART
+          {{ t('settings.editor.appliesOnRestart') }}
         </span>
-        <span v-else>HOT APPLY</span>
+        <span v-else>{{ t('settings.editor.hotApply') }}</span>
       </div>
     </header>
 
     <div class="editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Configuration saved"
+        :title="t('settings.editor.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
         <p v-if="settings.mutation.restartRequired">
-          The document is on disk. Restart Nox to activate this change.
+          {{ t('settings.editor.savedRestart') }}
         </p>
-        <p v-else>The running node accepted this change immediately.</p>
+        <p v-else>{{ t('settings.editor.savedImmediate') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Change refused"
+        :title="t('settings.editor.changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -193,26 +177,25 @@ function newEntryTemplate(sectionKey: string): ConfigValue {
         id="settings-entry-id"
         v-model="entryIdInput"
         :error="entryIdError"
-        hint="Stable ID used by configuration references and, for agents, transcript identity."
-        label="Entry ID"
+        :hint="t('settings.editor.entryIdHint')"
+        :label="t('settings.editor.entryId')"
         placeholder="example-id"
         required
       />
 
       <section class="editor__group" aria-labelledby="json-editor-title">
         <div class="editor__group-copy">
-          <p>ADVANCED SURFACE</p>
-          <h3 id="json-editor-title">Configuration JSON</h3>
-          <span>
-            Nox validates this object with the same schema used for files on disk. Saving replaces
-            the document whole; omitted keys are not merged back.
-          </span>
+          <p>{{ t('settings.editor.advancedSurface') }}</p>
+          <h3 id="json-editor-title">{{ t('settings.editor.configurationJson') }}</h3>
+          <span>{{ t('settings.editor.configurationJsonHelp') }}</span>
         </div>
 
         <div class="editor__json-field">
           <div class="editor__json-label">
-            <label for="settings-json">JSON object</label>
-            <button type="button" @click="formatSource()">Format document</button>
+            <label for="settings-json">{{ t('settings.editor.jsonObject') }}</label>
+            <button type="button" @click="formatSource()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
           <textarea
             id="settings-json"
@@ -228,16 +211,21 @@ function newEntryTemplate(sectionKey: string): ConfigValue {
         </div>
       </section>
 
-      <NoxNotice v-if="confirmingDelete" title="Remove configuration entry?" tone="danger">
+      <NoxNotice
+        v-if="confirmingDelete"
+        :title="t('settings.editor.removeEntryQuestion')"
+        tone="danger"
+      >
         <div class="editor__delete-confirmation">
           <p>
-            Nox will refuse this operation if another entry still references
-            <code>{{ props.entryId }}</code>.
+            {{ t('settings.editor.removeEntryReference', { entry: props.entryId ?? '' }) }}
           </p>
           <div>
-            <NoxButton variant="ghost" @click="confirmingDelete = false">Cancel</NoxButton>
+            <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+              t('common.cancel')
+            }}</NoxButton>
             <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">
-              Remove entry
+              {{ t('settings.editor.removeEntry') }}
             </NoxButton>
           </div>
         </div>
@@ -250,18 +238,20 @@ function newEntryTemplate(sectionKey: string): ConfigValue {
         variant="ghost"
         @click="confirmingDelete = true"
       >
-        Remove {{ props.definition.label.toLowerCase() }}
+        {{ t('settings.editor.removeNamed', { entry: t(props.definition.label) }) }}
       </NoxButton>
       <span v-else></span>
       <div>
-        <span v-if="dirty" class="editor__dirty">UNSAVED CHANGES</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">Discard</NoxButton>
+        <span v-if="dirty" class="editor__dirty">{{ t('settings.editor.unsavedChanges') }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
         <NoxButton
           :busy="settings.mutation.type === 'saving'"
           :disabled="!dirty && !props.creating"
           @click="save()"
         >
-          Save changes
+          {{ t('settings.editor.saveChanges') }}
         </NoxButton>
       </div>
     </footer>
@@ -460,8 +450,7 @@ function newEntryTemplate(sectionKey: string): ConfigValue {
   .editor__header,
   .editor__content,
   .editor__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .editor__group {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, type DeepReadonly } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
+
 import type { ChatUsage } from '../api/chat.schemas'
 import type { RunActivityItem } from '../stores/activeSession.store'
 
@@ -10,22 +12,25 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const { formatDate, formatNumber, plural, t } = useI18n()
 
 const label = computed(() => {
-  if (props.item.historical === true) return 'Recorded activity'
+  if (props.item.historical === true) return t('chat.activity.recorded')
   switch (props.item.status) {
     case 'aborted':
-      return 'Run aborted'
+      return t('chat.activity.aborted')
     case 'completed':
-      return 'Run completed'
+      return t('chat.activity.completed')
     case 'failed':
-      return 'Run failed'
+      return t('chat.run.failed')
     case 'maxIterations':
-      return 'Iteration limit reached'
+      return t('chat.activity.iterationLimit')
     case undefined:
-      return props.item.reasoning.some((entry) => entry.streaming) ? 'Reasoning live' : 'Run active'
+      return props.item.reasoning.some((entry) => entry.streaming)
+        ? t('chat.activity.reasoningLive')
+        : t('chat.activity.active')
   }
-  return 'Run active'
+  return t('chat.activity.active')
 })
 
 const tone = computed(() => {
@@ -57,21 +62,13 @@ const displayedUsage = computed<ChatUsage | undefined>(() => {
   )
 })
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US').format(value)
-}
-
 function formatDuration(milliseconds: number): string {
   if (milliseconds < 1_000) return `${String(Math.round(milliseconds))} ms`
   return `${(milliseconds / 1_000).toFixed(1)} s`
 }
 
 function formatTime(value: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(new Date(value))
+  return formatDate(value, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 </script>
 
@@ -86,12 +83,18 @@ function formatTime(value: string): string {
       <strong>{{ label }}</strong>
       <span v-if="props.item.modelId !== undefined">{{ props.item.modelId }}</span>
       <span v-if="props.item.tools.length > 0">
-        {{ props.item.tools.length }} tool{{ props.item.tools.length === 1 ? '' : 's' }}
+        {{ plural('chat.activity.tools', props.item.tools.length) }}
       </span>
       <span v-if="displayedUsage !== undefined">
-        {{ formatNumber(displayedUsage.inputTokens + displayedUsage.outputTokens) }} tokens
+        {{
+          t('chat.context.tokens', {
+            count: formatNumber(displayedUsage.inputTokens + displayedUsage.outputTokens),
+          })
+        }}
       </span>
-      <span v-if="props.embedded !== true" class="activity__disclosure">DETAILS</span>
+      <span v-if="props.embedded !== true" class="activity__disclosure">{{
+        t('common.details')
+      }}</span>
     </component>
 
     <div class="activity__body">
@@ -104,67 +107,67 @@ function formatTime(value: string): string {
         class="activity__facts"
       >
         <div v-if="props.item.modelId !== undefined">
-          <dt>Model</dt>
+          <dt>{{ t('chat.activity.model') }}</dt>
           <dd>{{ props.item.modelId }}</dd>
         </div>
         <div v-if="props.item.trigger !== undefined">
-          <dt>Trigger</dt>
-          <dd>{{ props.item.trigger }}</dd>
+          <dt>{{ t('chat.activity.trigger') }}</dt>
+          <dd>{{ t(`chat.activity.triggerValue.${props.item.trigger}`) }}</dd>
         </div>
         <div v-if="props.item.startedAt !== undefined">
-          <dt>Started</dt>
+          <dt>{{ t('chat.activity.started') }}</dt>
           <dd :title="props.item.startedAt">{{ formatTime(props.item.startedAt) }}</dd>
         </div>
         <div v-if="props.item.durationMs !== undefined">
-          <dt>Duration</dt>
+          <dt>{{ t('chat.activity.duration') }}</dt>
           <dd>{{ formatDuration(props.item.durationMs) }}</dd>
         </div>
       </dl>
 
       <section v-if="props.item.retries.length > 0" class="activity__section">
-        <h3>Provider retries</h3>
+        <h3>{{ t('chat.activity.providerRetries') }}</h3>
         <ul class="activity__events">
           <li v-for="retry in props.item.retries" :key="retry.id">
-            <span>Attempt {{ retry.attempt }} · {{ formatDuration(retry.delayMs) }}</span>
+            <span
+              >{{ t('chat.activity.attempt', { attempt: retry.attempt }) }} ·
+              {{ formatDuration(retry.delayMs) }}</span
+            >
             <p>{{ retry.text }}</p>
           </li>
         </ul>
       </section>
 
       <section v-if="props.item.contextChanges.length > 0" class="activity__section">
-        <h3>Context changes</h3>
-        <div
-          v-for="change in props.item.contextChanges"
-          :key="change.id"
-          class="activity__context"
-        >
+        <h3>{{ t('chat.activity.contextChanges') }}</h3>
+        <div v-for="change in props.item.contextChanges" :key="change.id" class="activity__context">
           <p>
-            {{ change.change }} · {{ change.replacedMessageIds.length }} messages replaced
+            {{ t(`chat.activity.contextChange.${change.change}`) }} ·
+            {{ plural('chat.activity.messagesReplaced', change.replacedMessageIds.length) }}
           </p>
           <details class="activity__nested">
-            <summary>Replacement context</summary>
+            <summary>{{ t('chat.activity.replacementContext') }}</summary>
             <pre>{{ change.text }}</pre>
           </details>
         </div>
       </section>
 
       <section v-if="displayedUsage !== undefined" class="activity__section">
-        <h3>Token usage</h3>
+        <h3>{{ t('chat.activity.tokenUsage') }}</h3>
         <dl class="activity__facts">
           <div>
-            <dt>Input</dt>
+            <dt>{{ t('chat.activity.input') }}</dt>
             <dd>{{ formatNumber(displayedUsage.inputTokens) }}</dd>
           </div>
           <div>
-            <dt>Output</dt>
+            <dt>{{ t('chat.activity.output') }}</dt>
             <dd>{{ formatNumber(displayedUsage.outputTokens) }}</dd>
           </div>
           <div v-if="displayedUsage.cacheReadTokens !== undefined">
-            <dt>Cache read</dt>
+            <dt>{{ t('chat.activity.cacheRead') }}</dt>
             <dd>{{ formatNumber(displayedUsage.cacheReadTokens) }}</dd>
           </div>
           <div>
-            <dt>Model calls</dt>
+            <dt>{{ t('chat.activity.modelCalls') }}</dt>
             <dd>{{ props.item.usageCalls.length }}</dd>
           </div>
         </dl>
@@ -252,7 +255,7 @@ function formatTime(value: string): string {
 }
 
 .activity__disclosure {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--nox-text-muted);
   letter-spacing: 0.08em;
 }
@@ -312,7 +315,7 @@ function formatTime(value: string): string {
 .activity__events li,
 .activity__context {
   padding: var(--nox-space-3);
-  border-left: 2px solid var(--nox-border-strong);
+  border-inline-start: 2px solid var(--nox-border-strong);
   background: var(--nox-surface-input);
 }
 
@@ -349,7 +352,7 @@ function formatTime(value: string): string {
 }
 
 .activity__events li {
-  border-left-color: var(--nox-status-warning);
+  border-inline-start-color: var(--nox-status-warning);
 }
 
 .activity__context > p {

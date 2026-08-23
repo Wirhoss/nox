@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -22,6 +23,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [secretId: string]; deleted: [] }>()
 const settings = useSettingsStore()
+const { formatDate: localizeDate, plural, t } = useI18n()
 const secretIdInput = ref('')
 const value = ref('')
 const secretIdError = ref<string>()
@@ -57,12 +59,11 @@ async function save(): Promise<void> {
 
   const secretId = props.creating ? secretIdInput.value.trim() : props.secretId
   if (secretId === undefined || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(secretId)) {
-    secretIdError.value =
-      'Use up to 128 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+    secretIdError.value = t('settings.validation.secretId')
     return
   }
   if (value.value.length === 0) {
-    valueError.value = 'A secret value cannot be empty.'
+    valueError.value = t('settings.secrets.valueRequired')
     return
   }
 
@@ -78,25 +79,24 @@ async function remove(): Promise<void> {
 }
 
 function canLeave(): boolean {
-  return value.value.length === 0 || window.confirm('Discard the secret value you entered?')
+  return value.value.length === 0 || window.confirm(t('settings.confirm.discardSecret'))
 }
 
 onBeforeRouteLeave(canLeave)
 onBeforeRouteUpdate(canLeave)
 
 function formatDate(timestamp: number | undefined): string {
-  if (timestamp === undefined) return 'NOT STORED'
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(timestamp))
+  if (timestamp === undefined) return t('settings.secrets.notStored')
+  return localizeDate(timestamp, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 /** Why this ID is known: configuration names it, someone stored it, or both. */
 function origin(references: readonly { readonly location: string }[]): string {
-  if (references.length === 0) return 'stored, referenced by nothing'
-  if (references.length === 1) return `used by ${references[0]?.location ?? ''}`
-  return `used by ${String(references.length)} configured entries`
+  if (references.length === 0) return t('settings.secrets.originUnreferenced')
+  if (references.length === 1) {
+    return t('settings.secrets.originOne', { location: references[0]?.location ?? '' })
+  }
+  return t('settings.secrets.originMany', { count: references.length })
 }
 </script>
 
@@ -104,34 +104,40 @@ function origin(references: readonly { readonly location: string }[]): string {
   <article class="secrets">
     <header class="secrets__header">
       <div>
-        <p>SECURITY // MANAGED SECRETS</p>
-        <h2>{{ props.creating ? 'New secret' : (props.secretId ?? 'Secrets') }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <p>{{ t('settings.secrets.managed') }}</p>
+        <h2>
+          {{
+            props.creating
+              ? t('settings.secrets.new')
+              : (props.secretId ?? t(props.definition.plural))
+          }}
+        </h2>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <RouterLink
         v-if="!props.creating"
         class="secrets__create"
         :to="{ name: 'settings', params: { section: 'secrets' }, query: { create: '1' } }"
       >
-        + New secret
+        + {{ t('settings.secrets.new') }}
       </RouterLink>
     </header>
 
     <div class="secrets__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Secret stored"
+        :title="t('settings.secrets.storedTitle')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
         <p v-if="settings.mutation.restartRequired">
-          One or more running consumers retain the previous value until Nox restarts.
+          {{ t('settings.secrets.storedRestart') }}
         </p>
-        <p v-else>The value was accepted.</p>
+        <p v-else>{{ t('settings.secrets.valueAccepted') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Secret operation refused"
+        :title="t('settings.secrets.operationRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -140,12 +146,15 @@ function origin(references: readonly { readonly location: string }[]): string {
       <template v-if="editing">
         <section class="secrets__editor">
           <div class="secrets__group-copy">
-            <p>WRITE-ONLY VALUE</p>
-            <h3>{{ selectedSecretStored ? 'Replace credential' : 'Store credential' }}</h3>
-            <span>
-              Nox encrypts this value at rest. The browser can write it but no API can retrieve it
-              again.
-            </span>
+            <p>{{ t('settings.secrets.writeOnly') }}</p>
+            <h3>
+              {{
+                selectedSecretStored
+                  ? t('settings.secrets.replaceCredential')
+                  : t('settings.secrets.storeCredential')
+              }}
+            </h3>
+            <span>{{ t('settings.secrets.writeOnlyHelp') }}</span>
           </div>
 
           <div class="secrets__fields">
@@ -154,13 +163,13 @@ function origin(references: readonly { readonly location: string }[]): string {
               id="secret-id"
               v-model="secretIdInput"
               :error="secretIdError"
-              hint="Stable reference used in configuration, for example OPENAI_API_KEY."
-              label="Secret ID"
+              :hint="t('settings.secrets.idHint')"
+              :label="t('settings.secrets.id')"
               placeholder="OPENAI_API_KEY"
               required
             />
             <div v-else class="secrets__stored-id">
-              <span>SECRET ID</span>
+              <span>{{ t('settings.secrets.id') }}</span>
               <strong>{{ props.secretId }}</strong>
             </div>
             <NoxTextField
@@ -168,9 +177,9 @@ function origin(references: readonly { readonly location: string }[]): string {
               v-model="value"
               autocomplete="new-password"
               :error="valueError"
-              hint="The field is intentionally blank even when a value already exists."
-              label="New value"
-              placeholder="Value will not be shown again"
+              :hint="t('settings.secrets.blankHint')"
+              :label="t('settings.secrets.newValue')"
+              :placeholder="t('settings.secrets.valuePlaceholder')"
               required
               type="password"
               @input="settings.clearMutation()"
@@ -180,21 +189,23 @@ function origin(references: readonly { readonly location: string }[]): string {
 
         <section v-if="selectedSecret !== undefined" class="secrets__metadata">
           <div>
-            <span>CREATED</span>
+            <span>{{ t('settings.secrets.created') }}</span>
             <strong>{{ formatDate(selectedSecret.createdAt) }}</strong>
           </div>
           <div>
-            <span>UPDATED</span>
+            <span>{{ t('settings.secrets.updated') }}</span>
             <strong>{{ formatDate(selectedSecret.updatedAt) }}</strong>
           </div>
           <div>
-            <span>CONSUMERS</span>
+            <span>{{ t('settings.secrets.consumers') }}</span>
             <strong>{{ selectedSecret.consumers.length }}</strong>
           </div>
           <div>
-            <span>STORE STATUS</span>
+            <span>{{ t('settings.secrets.storeStatus') }}</span>
             <strong :class="{ secrets__missing: !selectedSecretStored }">
-              {{ selectedSecretStored ? 'STORED' : 'NOT SET' }}
+              {{
+                selectedSecretStored ? t('settings.secrets.stored') : t('settings.secrets.notSet')
+              }}
             </strong>
           </div>
         </section>
@@ -204,12 +215,9 @@ function origin(references: readonly { readonly location: string }[]): string {
           class="secrets__consumers"
         >
           <div class="secrets__group-copy">
-            <p>CONFIGURED REFERENCES</p>
-            <h3>Used by</h3>
-            <span>
-              Every configured entry naming this ID. One value serves all of them, which is what
-              reusing a credential across entries looks like.
-            </span>
+            <p>{{ t('settings.secrets.configuredReferences') }}</p>
+            <h3>{{ t('settings.secrets.usedBy') }}</h3>
+            <span>{{ t('settings.secrets.configuredReferencesHelp') }}</span>
           </div>
           <div class="secrets__consumer-list">
             <div v-for="usage in selectedSecret.references" :key="usage.location">
@@ -220,9 +228,9 @@ function origin(references: readonly { readonly location: string }[]): string {
 
         <section v-if="selectedSecret !== undefined" class="secrets__consumers">
           <div class="secrets__group-copy">
-            <p>RUNTIME REFERENCES</p>
-            <h3>Consumers</h3>
-            <span>Consumers already holding a handle keep their snapshot until restart.</span>
+            <p>{{ t('settings.secrets.runtimeReferences') }}</p>
+            <h3>{{ t('settings.secrets.consumers') }}</h3>
+            <span>{{ t('settings.secrets.runtimeReferencesHelp') }}</span>
           </div>
           <div v-if="selectedSecret.consumers.length > 0" class="secrets__consumer-list">
             <div v-for="consumer in selectedSecret.consumers" :key="consumer.location">
@@ -231,25 +239,28 @@ function origin(references: readonly { readonly location: string }[]): string {
             </div>
           </div>
           <p v-else class="secrets__unreferenced">
-            No running contribution has resolved this secret.
+            {{ t('settings.secrets.noRunningConsumer') }}
           </p>
         </section>
 
-        <NoxNotice v-if="confirmingDelete" title="Delete managed secret?" tone="danger">
+        <NoxNotice
+          v-if="confirmingDelete"
+          :title="t('settings.secrets.deleteQuestion')"
+          tone="danger"
+        >
           <div class="secrets__delete-confirmation">
             <p>
-              The value cannot be recovered. Running consumers may retain their current snapshot,
-              but the next restart will fail if configuration still references this ID.
+              {{ t('settings.secrets.deleteWarning') }}
             </p>
             <p v-if="selectedSecret !== undefined && selectedSecret.references.length > 0">
-              The ID stays listed as unset afterwards: {{ selectedSecret.references.length }}
-              configured
-              {{ selectedSecret.references.length === 1 ? 'entry' : 'entries' }} still name it.
+              {{ plural('settings.secrets.referencesRemain', selectedSecret.references.length) }}
             </p>
             <div>
-              <NoxButton variant="ghost" @click="confirmingDelete = false">Cancel</NoxButton>
+              <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+                t('common.cancel')
+              }}</NoxButton>
               <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">
-                Delete secret
+                {{ t('settings.secrets.delete') }}
               </NoxButton>
             </div>
           </div>
@@ -257,7 +268,11 @@ function origin(references: readonly { readonly location: string }[]): string {
       </template>
 
       <template v-else>
-        <section v-if="settings.secrets.length > 0" class="secrets__list" aria-label="Secrets">
+        <section
+          v-if="settings.secrets.length > 0"
+          class="secrets__list"
+          :aria-label="t(props.definition.plural)"
+        >
           <RouterLink
             v-for="secret in settings.secrets"
             :key="secret.secretId"
@@ -276,11 +291,15 @@ function origin(references: readonly { readonly location: string }[]): string {
               <strong>{{ secret.secretId }}</strong>
               <span>
                 {{ origin(secret.references) }} ·
-                {{ secret.stored ? `updated ${formatDate(secret.updatedAt)}` : 'awaiting a value' }}
+                {{
+                  secret.stored
+                    ? t('settings.secrets.updatedAt', { date: formatDate(secret.updatedAt) })
+                    : t('settings.secrets.awaitingValue')
+                }}
               </span>
             </div>
             <small :class="{ 'secrets__in-use': secret.stored, secrets__missing: !secret.stored }">
-              {{ secret.stored ? 'STORED' : 'NOT SET' }}
+              {{ secret.stored ? t('settings.secrets.stored') : t('settings.secrets.notSet') }}
             </small>
           </RouterLink>
         </section>
@@ -288,11 +307,8 @@ function origin(references: readonly { readonly location: string }[]): string {
         <section v-else class="secrets__empty">
           <span aria-hidden="true">◇</span>
           <div>
-            <h3>No known secrets</h3>
-            <p>
-              No configuration names a credential and none has been stored. Store one here, then
-              reference its ID from a provider, tool set or broker entry.
-            </p>
+            <h3>{{ t('settings.secrets.noneKnown') }}</h3>
+            <p>{{ t('settings.secrets.noneKnownHelp') }}</p>
           </div>
         </section>
       </template>
@@ -300,19 +316,21 @@ function origin(references: readonly { readonly location: string }[]): string {
 
     <footer v-if="editing" class="secrets__actions">
       <NoxButton v-if="selectedSecretStored" variant="ghost" @click="confirmingDelete = true">
-        Delete secret
+        {{ t('settings.secrets.delete') }}
       </NoxButton>
       <span v-else></span>
       <div>
         <NoxButton :disabled="value.length === 0" variant="secondary" @click="reset()">
-          Discard
+          {{ t('common.discard') }}
         </NoxButton>
         <NoxButton
           :busy="settings.mutation.type === 'saving'"
           :disabled="value.length === 0"
           @click="save()"
         >
-          {{ selectedSecretStored ? 'Replace value' : 'Store secret' }}
+          {{
+            selectedSecretStored ? t('settings.secrets.replaceValue') : t('settings.secrets.store')
+          }}
         </NoxButton>
       </div>
     </footer>
@@ -436,7 +454,7 @@ function origin(references: readonly { readonly location: string }[]): string {
 }
 
 .secrets__metadata > div + div {
-  border-left: 1px solid var(--nox-border-subtle);
+  border-inline-start: 1px solid var(--nox-border-subtle);
 }
 
 .secrets__metadata strong {
@@ -592,8 +610,7 @@ function origin(references: readonly { readonly location: string }[]): string {
   .secrets__header,
   .secrets__content,
   .secrets__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .secrets__editor,
@@ -616,7 +633,7 @@ function origin(references: readonly { readonly location: string }[]): string {
 
   .secrets__metadata > div + div {
     border-top: 1px solid var(--nox-border-subtle);
-    border-left: 0;
+    border-inline-start: 0;
   }
 }
 </style>

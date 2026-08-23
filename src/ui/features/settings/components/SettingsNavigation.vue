@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
+
 import {
   SETTINGS_GROUPS,
   SETTINGS_SECTIONS,
@@ -10,6 +12,7 @@ import {
 import { useSettingsStore } from '../stores/settings.store'
 
 const route = useRoute()
+const { t } = useI18n()
 const settings = useSettingsStore()
 const activeSlug = computed(() => String(route.params.section ?? 'general'))
 const activeDefinition = computed(() =>
@@ -29,27 +32,31 @@ const activeEntries = computed(() => {
   return Object.keys(settings.section.value)
 })
 
-function sectionsIn(group: SettingsSectionDefinition['group']): readonly SettingsSectionDefinition[] {
+function sectionsIn(
+  group: SettingsSectionDefinition['group'],
+): readonly SettingsSectionDefinition[] {
   return SETTINGS_SECTIONS.filter((section) => section.group === group)
 }
 
 function isLoaded(definition: SettingsSectionDefinition): boolean {
   if (definition.slug === 'secrets') return settings.resource.type === 'ready'
-  return settings.catalog?.sections.find((section) => section.key === definition.key)?.loaded ?? false
+  return (
+    settings.catalog?.sections.find((section) => section.key === definition.key)?.loaded ?? false
+  )
 }
 </script>
 
 <template>
   <aside class="settings-nav">
     <header class="settings-nav__header">
-      <p>NOX // CONFIGURATION</p>
-      <h1>Settings</h1>
-      <span>Machine control surface</span>
+      <p>NOX // {{ t('settings.navigation.configuration') }}</p>
+      <h1>{{ t('navigation.settings') }}</h1>
+      <span>{{ t('settings.navigation.controlSurface') }}</span>
     </header>
 
-    <nav aria-label="Settings sections" class="settings-nav__groups">
+    <nav :aria-label="t('settings.navigation.sections')" class="settings-nav__groups">
       <section v-for="group in SETTINGS_GROUPS" :key="group" class="settings-nav__group">
-        <h2>{{ group }}</h2>
+        <h2>{{ t(`settings.group.${group}`) }}</h2>
         <div class="settings-nav__links">
           <template v-for="definition in sectionsIn(group)" :key="definition.slug">
             <RouterLink
@@ -62,7 +69,7 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
                 :class="{ 'settings-nav__signal--online': isLoaded(definition) }"
                 aria-hidden="true"
               ></span>
-              <span>{{ definition.plural }}</span>
+              <span>{{ t(definition.plural) }}</span>
               <small v-if="activeSlug === definition.slug && activeEntries.length > 0">
                 {{ activeEntries.length }}
               </small>
@@ -85,7 +92,8 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
                   query: { create: '1' },
                 }"
               >
-                <span aria-hidden="true">+</span> New {{ definition.label.toLowerCase() }}
+                <span aria-hidden="true">+</span>
+                {{ t('settings.navigation.newEntry', { entry: t(definition.label) }) }}
               </RouterLink>
               <RouterLink
                 v-for="entryId in activeEntries"
@@ -99,9 +107,11 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
               >
                 {{ entryId }}
                 <small
-                  v-if="definition.key === 'blueprints' && settings.catalog?.defaultAgent === entryId"
+                  v-if="
+                    definition.key === 'blueprints' && settings.catalog?.defaultAgent === entryId
+                  "
                 >
-                  DEFAULT
+                  {{ t('common.default') }}
                 </small>
               </RouterLink>
             </div>
@@ -117,7 +127,7 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
   min-width: 0;
   min-height: 0;
   padding: var(--nox-space-6) var(--nox-space-4);
-  border-right: 1px solid var(--nox-border-subtle);
+  border-inline-end: 1px solid var(--nox-border-subtle);
   background: color-mix(in srgb, var(--nox-canvas-raised) 96%, transparent);
   overflow-y: auto;
 }
@@ -169,7 +179,7 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
   align-items: center;
   gap: var(--nox-space-3);
   padding: 0 var(--nox-space-3);
-  border-left: 2px solid transparent;
+  border-inline-start: 2px solid transparent;
   color: var(--nox-text-muted);
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-sm);
@@ -183,7 +193,7 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
 }
 
 .settings-nav__link--active {
-  border-left-color: var(--nox-action-primary);
+  border-inline-start-color: var(--nox-action-primary);
 }
 
 .settings-nav__link small {
@@ -206,7 +216,8 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
 .settings-nav__entries {
   display: grid;
   gap: var(--nox-space-1);
-  padding: var(--nox-space-1) 0 var(--nox-space-2) var(--nox-space-6);
+  padding-block: var(--nox-space-1) var(--nox-space-2);
+  padding-inline: var(--nox-space-6) 0;
 }
 
 .settings-nav__new,
@@ -257,7 +268,7 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
 
 @media (max-width: 48rem) {
   .settings-nav {
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid var(--nox-border-subtle);
   }
 

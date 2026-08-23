@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -76,6 +77,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
+const { t } = useI18n()
 const mode = ref<EditorMode>('form')
 const common = ref<BrokerCommonDraft>(newCommonTemplate())
 const baseGrants = ref<PrincipalGrantDraft[]>([])
@@ -96,7 +98,11 @@ const selectedValue = computed<ConfigValue>(() => {
   return isConfigValue(value) ? value : newBrokerTemplate()
 })
 const agents = computed(() => Object.keys(props.blueprintSection?.value ?? {}))
-const title = computed(() => (props.creating ? 'New broker' : (props.entryId ?? 'Broker')))
+const title = computed(() =>
+  props.creating
+    ? t('settings.broker.titleNew')
+    : (props.entryId ?? t('settings.broker.titleFallback')),
+)
 const sourceName = computed(() => props.section.name)
 const currentValue = computed<ConfigValue | undefined>(() =>
   mode.value === 'json' ? parseJson(false) : buildFormValue(false),
@@ -385,13 +391,15 @@ async function save(): Promise<void> {
   if (nextEntryId === undefined || !validEntryId(nextEntryId)) {
     fieldErrors.value = {
       ...fieldErrors.value,
-      entryId:
-        'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.',
+      entryId: t('settings.validation.entryId'),
     }
     return
   }
   if (commonEnabled(value) && nextEntryId === 'web') {
-    fieldErrors.value = { ...fieldErrors.value, entryId: 'The ID "web" is reserved for Nox chat.' }
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      entryId: t('settings.broker.validation.webReserved'),
+    }
     return
   }
 
@@ -427,7 +435,7 @@ function collectSecretWrites(
     if (!validSecretId(reference.secretId)) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`secret.${reference.path}`]: 'This configuration contains an invalid secret ID.',
+        [`secret.${reference.path}`]: t('settings.broker.validation.invalidSecretId'),
       }
       return undefined
     }
@@ -436,7 +444,7 @@ function collectSecretWrites(
     if (duplicate !== undefined && duplicate !== pendingValue) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`secret.${reference.path}`]: 'This secret ID has two different pending values.',
+        [`secret.${reference.path}`]: t('settings.broker.validation.conflictingSecretValues'),
       }
       return undefined
     }
@@ -450,7 +458,7 @@ function collectSecretWrites(
     if (missing !== undefined) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`secret.${missing.path}`]: 'Store a value before enabling this broker reference.',
+        [`secret.${missing.path}`]: t('settings.broker.validation.storeBeforeEnabling'),
       }
       return undefined
     }
@@ -465,18 +473,18 @@ async function remove(): Promise<void> {
 
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (common.value.type.trim().length === 0) errors.type = 'Contributed broker type is required.'
+  if (common.value.type.trim().length === 0)
+    errors.type = t('settings.broker.validation.typeRequired')
   if (common.value.agent.trim().length === 0) {
-    errors.agent = 'A base agent is required even while the broker is disabled.'
+    errors.agent = t('settings.broker.validation.baseAgentRequired')
   } else if (common.value.enabled && !agents.value.includes(common.value.agent)) {
-    errors.agent = 'Choose an agent blueprint available on this Nox.'
+    errors.agent = t('settings.broker.validation.agentAvailable')
   }
   if (props.creating && !validEntryId(entryIdInput.value.trim())) {
-    errors.entryId =
-      'Use up to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.'
+    errors.entryId = t('settings.validation.entryId')
   }
   if (props.creating && common.value.enabled && entryIdInput.value.trim() === 'web') {
-    errors.entryId = 'The ID "web" is reserved for Nox chat.'
+    errors.entryId = t('settings.broker.validation.webReserved')
   }
 
   validateGrantList(baseGrants.value, errors)
@@ -485,9 +493,9 @@ function validateForm(): boolean {
     const prefix = `conversation.${String(index)}`
     const id = conversation.conversationId.trim()
     if (id.length === 0) {
-      errors[`${prefix}.conversationId`] = 'Conversation ID is required.'
+      errors[`${prefix}.conversationId`] = t('settings.broker.validation.conversationIdRequired')
     } else if (conversationIds.has(id)) {
-      errors[`${prefix}.conversationId`] = 'Conversation IDs must be unique.'
+      errors[`${prefix}.conversationId`] = t('settings.broker.validation.conversationIdUnique')
     }
     conversationIds.add(id)
     if (
@@ -495,7 +503,7 @@ function validateForm(): boolean {
       conversation.agent.length > 0 &&
       !agents.value.includes(conversation.agent)
     ) {
-      errors[`${prefix}.agent`] = 'Choose an agent blueprint available on this Nox.'
+      errors[`${prefix}.agent`] = t('settings.broker.validation.agentAvailable')
     }
     validateGrantList(conversation.grants, errors, index)
   })
@@ -514,9 +522,9 @@ function validateGrantList(
     const subject = principal.subject.trim()
     const subjectError = grantErrorPrefix(principalIndex, conversationIndex, 'subject')
     if (subject.length === 0) {
-      errors[subjectError] = 'Sender ID is required.'
+      errors[subjectError] = t('settings.broker.validation.senderIdRequired')
     } else if (subjects.has(subject)) {
-      errors[subjectError] = 'Sender IDs must be unique inside this route.'
+      errors[subjectError] = t('settings.broker.validation.senderIdUnique')
     }
     subjects.add(subject)
 
@@ -529,9 +537,9 @@ function validateGrantList(
         `pattern.${String(patternIndex)}`,
       )
       if (!validGrantPattern(normalized)) {
-        errors[patternError] = 'Use an authority ID, namespace wildcard, or *.'
+        errors[patternError] = t('settings.broker.validation.authorityPattern')
       } else if (patterns.has(normalized)) {
-        errors[patternError] = 'Grant patterns must be unique for one sender.'
+        errors[patternError] = t('settings.broker.validation.grantUnique')
       }
       patterns.add(normalized)
     })
@@ -573,16 +581,13 @@ function parseTransportJson(report: boolean): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(transportJsonSource.value)
     if (!isConfigValue(parsed)) {
-      if (report) transportJsonError.value = 'Contribution payload must be one JSON object.'
+      if (report) transportJsonError.value = t('settings.broker.validation.payloadObject')
       return undefined
     }
     if (report) transportJsonError.value = undefined
     return parsed
-  } catch (error) {
-    if (report) {
-      transportJsonError.value =
-        error instanceof SyntaxError ? error.message : 'Contribution payload is not valid JSON.'
-    }
+  } catch {
+    if (report) transportJsonError.value = t('settings.broker.validation.payloadJson')
     return undefined
   }
 }
@@ -591,16 +596,13 @@ function parseJson(report: boolean): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
     if (!isConfigValue(parsed)) {
-      if (report) jsonError.value = 'Broker configuration must be one JSON object.'
+      if (report) jsonError.value = t('settings.broker.validation.configurationObject')
       return undefined
     }
     if (report) jsonError.value = undefined
     return parsed
-  } catch (error) {
-    if (report) {
-      jsonError.value =
-        error instanceof SyntaxError ? error.message : 'Configuration is not valid JSON.'
-    }
+  } catch {
+    if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
   }
 }
@@ -638,7 +640,7 @@ function clearFeedback(field?: string): void {
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm('Discard the unsaved broker changes?')
+  return !dirty.value || window.confirm(t('settings.confirm.discardBroker'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -748,27 +750,32 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   <article class="broker-editor">
     <header class="broker-editor__header">
       <div>
-        <p>BROKER // {{ props.entryId?.toUpperCase() ?? 'NEW' }}</p>
+        <p>
+          {{ t('settings.broker.header') }} //
+          {{ props.entryId?.toUpperCase() ?? t('common.new').toUpperCase() }}
+        </p>
         <h2>{{ title }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <div class="broker-editor__header-side">
         <div class="broker-editor__badges">
           <span>{{ sourceName }}</span>
-          <span>{{ common.type || 'TYPE UNSET' }}</span>
+          <span>{{ common.type || t('settings.broker.typeUnset') }}</span>
           <span
             :class="common.enabled ? 'broker-editor__badge--live' : 'broker-editor__badge--held'"
           >
-            {{ common.enabled ? 'ENABLED' : 'DISABLED' }}
+            {{ common.enabled ? t('common.enabled') : t('common.disabled') }}
           </span>
-          <span class="broker-editor__badge--restart">APPLIES ON RESTART</span>
+          <span class="broker-editor__badge--restart">{{
+            t('settings.editor.appliesOnRestart')
+          }}</span>
         </div>
-        <div class="broker-editor__modes" aria-label="Editor mode">
+        <div class="broker-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
-            Form
+            {{ t('settings.editor.form') }}
           </button>
           <button :aria-pressed="mode === 'json'" type="button" @click="switchMode('json')">
-            JSON
+            {{ t('settings.editor.json') }}
           </button>
         </div>
       </div>
@@ -777,15 +784,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
     <div class="broker-editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Broker configuration saved"
+        :title="t('settings.broker.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>Restart Nox to compose this transport and its conversation routes.</p>
+        <p>{{ t('settings.broker.savedBody') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Broker change refused"
+        :title="t('settings.broker.changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -796,8 +803,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         id="broker-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"
-        hint="Issuer and configured instance ID. The ID web is reserved."
-        label="Broker ID"
+        :hint="t('settings.broker.idHint')"
+        :label="t('settings.broker.id')"
         placeholder="discord"
         required
         @update:model-value="setEntryId($event)"
@@ -806,20 +813,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
       <template v-if="mode === 'form'">
         <section class="broker-editor__section" aria-labelledby="broker-route-title">
           <div class="broker-editor__section-copy">
-            <p>01 // ROUTING</p>
-            <h3 id="broker-route-title">Transport route</h3>
-            <span>
-              Every conversation enters through a contributed transport and falls back to one base
-              agent.
-            </span>
+            <p>01 // {{ t('settings.broker.routing') }}</p>
+            <h3 id="broker-route-title">{{ t('settings.broker.transportRoute') }}</h3>
+            <span>{{ t('settings.broker.transportRouteHelp') }}</span>
           </div>
           <div class="broker-editor__fields">
             <NoxTextField
               id="broker-type"
               :model-value="common.type"
               :error="fieldErrors.type"
-              hint="Discriminator registered by the installed broker extension."
-              label="Broker type"
+              :hint="t('settings.broker.typeHint')"
+              :label="t('settings.broker.type')"
               placeholder="discord"
               required
               @update:model-value="setCommon('type', $event)"
@@ -828,19 +832,22 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               class="broker-editor__field"
               :class="{ 'broker-editor__field--invalid': fieldErrors.agent }"
             >
-              <label for="broker-agent">Base agent <small>REQ</small></label>
+              <label for="broker-agent"
+                >{{ t('settings.broker.baseAgent') }}
+                <small>{{ t('common.requiredShort') }}</small></label
+              >
               <select
                 id="broker-agent"
                 :value="common.agent"
                 :aria-invalid="fieldErrors.agent !== undefined"
                 @change="setCommon('agent', ($event.target as HTMLSelectElement).value)"
               >
-                <option value="" disabled>Select an agent</option>
+                <option value="" disabled>{{ t('settings.broker.selectAgent') }}</option>
                 <option v-for="agentId in agents" :key="agentId" :value="agentId">
                   {{ agentId }}
                 </option>
                 <option v-if="common.agent && !agents.includes(common.agent)" :value="common.agent">
-                  {{ common.agent }} · missing
+                  {{ common.agent }} · {{ t('common.missing') }}
                 </option>
               </select>
               <p v-if="fieldErrors.agent" class="broker-editor__error">{{ fieldErrors.agent }}</p>
@@ -852,24 +859,19 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 @change="setEnabled(($event.target as HTMLInputElement).checked)"
               />
               <span>
-                <strong>Compose on restart</strong>
-                <small>
-                  Disabled entries remain configured but open no connection, route or secret.
-                </small>
+                <strong>{{ t('settings.broker.composeOnRestart') }}</strong>
+                <small>{{ t('settings.broker.composeOnRestartHelp') }}</small>
               </span>
-              <em>{{ common.enabled ? 'ENABLED' : 'HELD' }}</em>
+              <em>{{ common.enabled ? t('common.enabled') : t('settings.broker.held') }}</em>
             </label>
           </div>
         </section>
 
         <section class="broker-editor__section" aria-labelledby="broker-grants-title">
           <div class="broker-editor__section-copy">
-            <p>02 // AUTHORIZATION</p>
-            <h3 id="broker-grants-title">Base sender grants</h3>
-            <span>
-              Sender IDs are authenticated by this broker. No row means no authority; wildcard
-              grants deliberately accept future authorities in that namespace.
-            </span>
+            <p>02 // {{ t('settings.broker.authorization') }}</p>
+            <h3 id="broker-grants-title">{{ t('settings.broker.baseGrants') }}</h3>
+            <span>{{ t('settings.broker.baseGrantsHelp') }}</span>
           </div>
           <div class="broker-editor__grant-surface">
             <article
@@ -878,15 +880,20 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               class="broker-editor__principal"
             >
               <header>
-                <span>PRINCIPAL // {{ String(principalIndex + 1).padStart(2, '0') }}</span>
-                <button type="button" @click="removePrincipal(principalIndex)">Remove</button>
+                <span
+                  >{{ t('settings.broker.principal') }} //
+                  {{ String(principalIndex + 1).padStart(2, '0') }}</span
+                >
+                <button type="button" @click="removePrincipal(principalIndex)">
+                  {{ t('common.remove') }}
+                </button>
               </header>
               <NoxTextField
                 :id="`broker-principal-${String(principalIndex)}`"
                 :model-value="principal.subject"
                 :error="fieldErrors[`grant.${String(principalIndex)}.subject`]"
-                hint="Identity emitted by this transport, scoped to this broker issuer."
-                label="Sender ID"
+                :hint="t('settings.broker.senderIdHint')"
+                :label="t('settings.broker.senderId')"
                 placeholder="sender-id"
                 required
                 @update:model-value="setPrincipalSubject(principalIndex, $event)"
@@ -899,7 +906,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     :error="
                       fieldErrors[`grant.${String(principalIndex)}.pattern.${String(patternIndex)}`]
                     "
-                    label="Authority pattern"
+                    :label="t('settings.broker.authorityPattern')"
                     list="broker-authority-suggestions"
                     placeholder="nox.history.read"
                     required
@@ -909,27 +916,26 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     ×
                   </button>
                 </div>
-                <button type="button" @click="addPattern(principalIndex)">+ Add authority</button>
+                <button type="button" @click="addPattern(principalIndex)">
+                  + {{ t('settings.broker.addAuthority') }}
+                </button>
               </div>
             </article>
             <div v-if="baseGrants.length === 0" class="broker-editor__empty-grants">
-              <strong>FAIL CLOSED</strong>
-              <span>No base sender has tool authority on this broker.</span>
+              <strong>{{ t('settings.broker.failClosed') }}</strong>
+              <span>{{ t('settings.broker.noBaseAuthority') }}</span>
             </div>
             <button class="broker-editor__add" type="button" @click="addPrincipal()">
-              + Add sender grant
+              + {{ t('settings.broker.addSenderGrant') }}
             </button>
           </div>
         </section>
 
         <section class="broker-editor__section" aria-labelledby="broker-conversations-title">
           <div class="broker-editor__section-copy">
-            <p>03 // OVERRIDES</p>
-            <h3 id="broker-conversations-title">Named conversations</h3>
-            <span>
-              A transport conversation can choose another agent and replaces the base grants with
-              its own secure-default map.
-            </span>
+            <p>03 // {{ t('settings.broker.overrides') }}</p>
+            <h3 id="broker-conversations-title">{{ t('settings.broker.namedConversations') }}</h3>
+            <span>{{ t('settings.broker.namedConversationsHelp') }}</span>
           </div>
           <div class="broker-editor__conversation-list">
             <article
@@ -938,16 +944,21 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               class="broker-editor__conversation"
             >
               <header>
-                <span>CONVERSATION // {{ String(conversationIndex + 1).padStart(2, '0') }}</span>
-                <button type="button" @click="removeConversation(conversationIndex)">Remove</button>
+                <span
+                  >{{ t('settings.broker.conversation') }} //
+                  {{ String(conversationIndex + 1).padStart(2, '0') }}</span
+                >
+                <button type="button" @click="removeConversation(conversationIndex)">
+                  {{ t('common.remove') }}
+                </button>
               </header>
               <div class="broker-editor__field-grid">
                 <NoxTextField
                   :id="`broker-conversation-${String(conversationIndex)}-id`"
                   :model-value="conversation.conversationId"
                   :error="fieldErrors[`conversation.${String(conversationIndex)}.conversationId`]"
-                  hint="Transport-native channel, room or conversation ID."
-                  label="Conversation ID"
+                  :hint="t('settings.broker.conversationIdHint')"
+                  :label="t('settings.broker.conversationId')"
                   placeholder="channel-id"
                   required
                   @update:model-value="
@@ -956,7 +967,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 />
                 <div class="broker-editor__field">
                   <label :for="`broker-conversation-${String(conversationIndex)}-agent`">
-                    Agent override
+                    {{ t('settings.broker.agentOverride') }}
                   </label>
                   <select
                     :id="`broker-conversation-${String(conversationIndex)}-agent`"
@@ -969,7 +980,13 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       )
                     "
                   >
-                    <option value="">Use {{ common.agent || 'base agent' }}</option>
+                    <option value="">
+                      {{
+                        t('settings.broker.useBaseAgent', {
+                          agent: common.agent || t('settings.broker.baseAgent'),
+                        })
+                      }}
+                    </option>
                     <option v-for="agentId in agents" :key="agentId" :value="agentId">
                       {{ agentId }}
                     </option>
@@ -977,7 +994,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       v-if="conversation.agent && !agents.includes(conversation.agent)"
                       :value="conversation.agent"
                     >
-                      {{ conversation.agent }} · missing
+                      {{ conversation.agent }} · {{ t('common.missing') }}
                     </option>
                   </select>
                   <p
@@ -995,12 +1012,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   class="broker-editor__principal"
                 >
                   <header>
-                    <span>SENDER // {{ String(principalIndex + 1).padStart(2, '0') }}</span>
+                    <span
+                      >{{ t('settings.broker.sender') }} //
+                      {{ String(principalIndex + 1).padStart(2, '0') }}</span
+                    >
                     <button
                       type="button"
                       @click="removePrincipal(principalIndex, conversationIndex)"
                     >
-                      Remove
+                      {{ t('common.remove') }}
                     </button>
                   </header>
                   <NoxTextField
@@ -1011,7 +1031,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                         `conversation.${String(conversationIndex)}.grant.${String(principalIndex)}.subject`
                       ]
                     "
-                    label="Sender ID"
+                    :label="t('settings.broker.senderId')"
                     placeholder="sender-id"
                     required
                     @update:model-value="
@@ -1028,7 +1048,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                             `conversation.${String(conversationIndex)}.grant.${String(principalIndex)}.pattern.${String(patternIndex)}`
                           ]
                         "
-                        label="Authority pattern"
+                        :label="t('settings.broker.authorityPattern')"
                         list="broker-authority-suggestions"
                         placeholder="nox.history.read"
                         required
@@ -1044,46 +1064,45 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                       </button>
                     </div>
                     <button type="button" @click="addPattern(principalIndex, conversationIndex)">
-                      + Add authority
+                      + {{ t('settings.broker.addAuthority') }}
                     </button>
                   </div>
                 </article>
                 <div v-if="conversation.grants.length === 0" class="broker-editor__empty-grants">
-                  <strong>NO CONVERSATION GRANTS</strong>
-                  <span>Every sender is denied tool authority in this conversation.</span>
+                  <strong>{{ t('settings.broker.noConversationGrants') }}</strong>
+                  <span>{{ t('settings.broker.noConversationGrantsHelp') }}</span>
                 </div>
                 <button
                   class="broker-editor__add broker-editor__add--nested"
                   type="button"
                   @click="addPrincipal(conversationIndex)"
                 >
-                  + Add conversation sender
+                  + {{ t('settings.broker.addConversationSender') }}
                 </button>
               </div>
             </article>
             <div v-if="conversations.length === 0" class="broker-editor__empty-grants">
-              <strong>BASE ROUTE ONLY</strong>
-              <span>All conversations use the base agent and grants.</span>
+              <strong>{{ t('settings.broker.baseRouteOnly') }}</strong>
+              <span>{{ t('settings.broker.baseRouteOnlyHelp') }}</span>
             </div>
             <button class="broker-editor__add" type="button" @click="addConversation()">
-              + Add conversation override
+              + {{ t('settings.broker.addConversationOverride') }}
             </button>
           </div>
         </section>
 
         <section class="broker-editor__section" aria-labelledby="broker-payload-title">
           <div class="broker-editor__section-copy">
-            <p>04 // CONTRIBUTION</p>
-            <h3 id="broker-payload-title">Transport payload</h3>
-            <span>
-              Connection fields belong to the installed extension. Keep only its transport-specific
-              properties here; routing and grants stay on the curated surface.
-            </span>
+            <p>04 // {{ t('settings.broker.contribution') }}</p>
+            <h3 id="broker-payload-title">{{ t('settings.broker.transportPayload') }}</h3>
+            <span>{{ t('settings.broker.transportPayloadHelp') }}</span>
           </div>
           <div class="broker-editor__json-field">
             <div>
-              <label for="broker-transport-json">Contribution JSON</label>
-              <button type="button" @click="formatTransportJson()">Format payload</button>
+              <label for="broker-transport-json">{{ t('settings.broker.contributionJson') }}</label>
+              <button type="button" @click="formatTransportJson()">
+                {{ t('settings.broker.formatPayload') }}
+              </button>
             </div>
             <textarea
               id="broker-transport-json"
@@ -1101,17 +1120,16 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
       <section v-else class="broker-editor__json" aria-labelledby="broker-json-title">
         <div class="broker-editor__section-copy">
-          <p>ADVANCED SURFACE</p>
-          <h3 id="broker-json-title">Broker JSON</h3>
-          <span>
-            Full fidelity access to routing, authorization and contribution fields. Credentials must
-            remain <code>$secret</code> references.
-          </span>
+          <p>{{ t('settings.editor.advancedSurface') }}</p>
+          <h3 id="broker-json-title">{{ t('settings.broker.brokerJson') }}</h3>
+          <span>{{ t('settings.broker.brokerJsonHelp') }}</span>
         </div>
         <div class="broker-editor__json-field broker-editor__json-field--full">
           <div>
-            <label for="broker-json">JSON object</label>
-            <button type="button" @click="formatJson()">Format document</button>
+            <label for="broker-json">{{ t('settings.editor.jsonObject') }}</label>
+            <button type="button" @click="formatJson()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
           <textarea
             id="broker-json"
@@ -1130,12 +1148,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         aria-labelledby="broker-secrets-title"
       >
         <div class="broker-editor__section-copy">
-          <p>MANAGED CREDENTIALS</p>
-          <h3 id="broker-secrets-title">Managed references</h3>
-          <span>
-            Every credential this broker's configuration names. Values are written here and never
-            read back; the configuration keeps only the ID.
-          </span>
+          <p>{{ t('settings.broker.managedCredentials') }}</p>
+          <h3 id="broker-secrets-title">{{ t('settings.broker.managedReferences') }}</h3>
+          <span>{{ t('settings.broker.managedReferencesHelp') }}</span>
         </div>
         <div class="broker-editor__secret-list">
           <article v-for="reference in secretReferences" :key="reference.path">
@@ -1145,7 +1160,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 <strong>{{ reference.secretId }}</strong>
               </div>
               <em :class="{ 'broker-editor__secret-missing': !secretStored(reference.secretId) }">
-                {{ secretStored(reference.secretId) ? 'STORED' : 'MISSING' }}
+                {{
+                  secretStored(reference.secretId)
+                    ? t('settings.secrets.stored')
+                    : t('common.missing').toUpperCase()
+                }}
               </em>
             </header>
             <NoxTextField
@@ -1153,9 +1172,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               :model-value="pendingSecretValue(reference)"
               autocomplete="new-password"
               :error="fieldErrors[`secret.${reference.path}`]"
-              hint="Blank preserves an existing value."
-              :label="`New value // ${reference.secretId}`"
-              :placeholder="`New value for ${reference.secretId}`"
+              :hint="t('settings.broker.secretValueHint')"
+              :label="t('settings.broker.newValueLabel', { secret: reference.secretId })"
+              :placeholder="
+                t('settings.broker.newValuePlaceholder', { secret: reference.secretId })
+              "
               :required="!secretStored(reference.secretId) && common.enabled"
               type="password"
               @update:model-value="setPendingSecret(reference, $event)"
@@ -1172,13 +1193,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         ></option>
       </datalist>
 
-      <NoxNotice v-if="confirmingDelete" title="Remove broker?" tone="danger">
+      <NoxNotice v-if="confirmingDelete" :title="t('settings.broker.removeQuestion')" tone="danger">
         <div class="broker-editor__delete-confirmation">
-          <p>The external transport will stop being composed after Nox restarts.</p>
+          <p>{{ t('settings.broker.removeWarning') }}</p>
           <div>
-            <NoxButton variant="ghost" @click="confirmingDelete = false">Cancel</NoxButton>
+            <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+              t('common.cancel')
+            }}</NoxButton>
             <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">
-              Remove broker
+              {{ t('settings.broker.remove') }}
             </NoxButton>
           </div>
         </div>
@@ -1191,18 +1214,22 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         variant="ghost"
         @click="confirmingDelete = true"
       >
-        Remove broker
+        {{ t('settings.broker.remove') }}
       </NoxButton>
       <span v-else></span>
       <div>
-        <span v-if="dirty" class="broker-editor__dirty">UNSAVED CHANGES</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">Discard</NoxButton>
+        <span v-if="dirty" class="broker-editor__dirty">{{
+          t('settings.editor.unsavedChanges')
+        }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
         <NoxButton
           :busy="settings.mutation.type === 'saving'"
           :disabled="!dirty && !props.creating"
           @click="save()"
         >
-          Save broker
+          {{ t('settings.broker.save') }}
         </NoxButton>
       </div>
     </footer>
@@ -1676,8 +1703,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   .broker-editor__header,
   .broker-editor__content,
   .broker-editor__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .broker-editor__section,

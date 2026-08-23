@@ -1,6 +1,12 @@
 import { authorities } from '../../../contribution-points/authorities';
+import {
+  defineTranslationFragment,
+  translationFragments,
+} from '../../../contribution-points/languages';
 import { toolSetContribution, toolSets } from '../../../contribution-points/toolsets';
 import { defineExtension } from '../../../extension';
+import { englishMessages } from './messages';
+import { spanishMessages } from './messages.es';
 import {
   WEB_EXTRACT_AUTHORITY,
   WEB_SEARCH_AUTHORITY,
@@ -12,6 +18,26 @@ import {
 const webToolsExtension = defineExtension({
   manifest: { engines: { nox: '^0.1.0' }, id: 'nox.toolset.web' },
   activate(context) {
+    context.contributions.register(
+      translationFragments,
+      'nox.toolset.web.en',
+      defineTranslationFragment({
+        locale: 'en',
+        messages: englishMessages,
+        namespace: 'nox.toolset.web',
+      }),
+    );
+
+    context.contributions.register(
+      translationFragments,
+      'nox.toolset.web.es',
+      defineTranslationFragment({
+        locale: 'es',
+        messages: spanishMessages,
+        namespace: 'nox.toolset.web',
+      }),
+    );
+
     // Declared before the tools that reference them: an authority nobody
     // registered cannot be granted, and a tool naming one cannot be composed.
     context.contributions.register(authorities, WEB_SEARCH_AUTHORITY, {

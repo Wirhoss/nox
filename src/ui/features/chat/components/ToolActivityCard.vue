@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, type DeepReadonly } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
+
 import type { ChatMediaPart } from '../api/chat.schemas'
 import type { ToolActivity } from '../stores/activeSession.store'
 
@@ -9,26 +11,30 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const { t } = useI18n()
 
 const state = computed(() => {
   const response = props.item.responses[props.item.responses.length - 1]
-  if (response === undefined) return 'running'
-  if (response.isError) return 'failed'
+  if (response === undefined) return t('chat.tool.running')
+  if (response.isError) return t('chat.tool.failed')
   switch (response.execution) {
     case 'deferredAck':
-      return 'deferred'
+      return t('chat.tool.deferred')
     case 'permissionPending':
-      return 'awaiting permission'
+      return t('chat.tool.awaitingPermission')
     case 'deferredResult':
     case 'immediate':
-      return 'complete'
+      return t('chat.tool.complete')
   }
-  return 'running'
+  return t('chat.tool.running')
 })
 
 const tone = computed(() => {
-  if (state.value === 'failed') return 'error'
-  if (state.value === 'complete') return 'complete'
+  const response = props.item.responses[props.item.responses.length - 1]
+  if (response?.isError === true) return 'error'
+  if (response?.execution === 'deferredResult' || response?.execution === 'immediate') {
+    return 'complete'
+  }
   return 'active'
 })
 
@@ -37,13 +43,13 @@ function responseLabel(
 ): string {
   switch (execution) {
     case 'deferredAck':
-      return 'Deferred acknowledgment'
+      return t('chat.tool.deferredAcknowledgment')
     case 'deferredResult':
-      return 'Deferred result'
+      return t('chat.tool.deferredResult')
     case 'immediate':
-      return 'Result'
+      return t('chat.tool.result')
     case 'permissionPending':
-      return 'Permission pending'
+      return t('chat.tool.permissionPending')
   }
 }
 
@@ -63,7 +69,7 @@ function mediaUrl(part: ChatMediaPart): string {
     <summary class="tool__header">
       <span class="tool__chevron" aria-hidden="true"></span>
       <span class="tool__identity">
-        <span>Tool call</span>
+        <span>{{ t('chat.tool.call') }}</span>
         <strong>{{ props.item.name }}</strong>
       </span>
       <span class="tool__state">{{ state }}</span>
@@ -73,7 +79,7 @@ function mediaUrl(part: ChatMediaPart): string {
       <details v-if="props.item.arguments !== undefined" class="tool__nested">
         <summary>
           <span class="tool__chevron" aria-hidden="true"></span>
-          <span>Arguments</span>
+          <span>{{ t('chat.tool.arguments') }}</span>
         </summary>
         <pre>{{ formatArguments() }}</pre>
       </details>
@@ -87,7 +93,7 @@ function mediaUrl(part: ChatMediaPart): string {
             <summary>
               <span class="tool__chevron" aria-hidden="true"></span>
               <span>{{ responseLabel(response.execution) }}</span>
-              <span>{{ response.isError ? 'error' : 'ok' }}</span>
+              <span>{{ response.isError ? t('chat.tool.error') : t('chat.tool.ok') }}</span>
             </summary>
             <pre v-if="response.text.length > 0">{{ response.text }}</pre>
             <div v-if="response.media.length > 0" class="tool__media">
@@ -98,7 +104,7 @@ function mediaUrl(part: ChatMediaPart): string {
                 <img
                   v-if="part.type === 'image'"
                   :src="mediaUrl(part)"
-                  alt="Image returned by this tool"
+                  :alt="t('chat.tool.returnedImage')"
                   loading="lazy"
                 />
                 <audio
@@ -114,7 +120,7 @@ function mediaUrl(part: ChatMediaPart): string {
                   preload="metadata"
                 ></video>
                 <a v-else :href="mediaUrl(part)" target="_blank" rel="noopener noreferrer">
-                  Open returned document
+                  {{ t('chat.tool.openReturnedDocument') }}
                 </a>
               </template>
             </div>
@@ -129,7 +135,7 @@ function mediaUrl(part: ChatMediaPart): string {
 .tool {
   width: min(100%, 46rem);
   border: 1px solid var(--nox-border-subtle);
-  border-left: 2px solid var(--nox-status-info);
+  border-inline-start: 2px solid var(--nox-status-info);
   border-radius: var(--nox-radius-control);
   color: var(--nox-text-secondary);
   background: color-mix(in srgb, var(--nox-surface-1) 76%, transparent);
@@ -139,11 +145,11 @@ function mediaUrl(part: ChatMediaPart): string {
 }
 
 .tool--complete {
-  border-left-color: var(--nox-status-success);
+  border-inline-start-color: var(--nox-status-success);
 }
 
 .tool--error {
-  border-left-color: var(--nox-status-danger);
+  border-inline-start-color: var(--nox-status-danger);
 }
 
 .tool__header {

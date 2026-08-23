@@ -14,7 +14,8 @@ hljs.registerAliases(['astro', 'svelte', 'vue'], { languageName: 'xml' })
 
 function highlightCode(source: string, language: string): string {
   const normalizedLanguage = language.toLowerCase()
-  if (normalizedLanguage.length === 0 || hljs.getLanguage(normalizedLanguage) === undefined) return ''
+  if (normalizedLanguage.length === 0 || hljs.getLanguage(normalizedLanguage) === undefined)
+    return ''
 
   return hljs.highlight(source, {
     ignoreIllegals: true,

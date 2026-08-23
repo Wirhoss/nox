@@ -1,7 +1,7 @@
 interface SettingsSectionDefinition {
   readonly creatable: boolean
   readonly description: string
-  readonly group: 'CAPABILITIES' | 'INTELLIGENCE' | 'MACHINE' | 'SECURITY'
+  readonly group: 'capabilities' | 'intelligence' | 'machine' | 'security'
   readonly key?: string
   readonly label: string
   readonly plural: string
@@ -11,64 +11,64 @@ interface SettingsSectionDefinition {
 const SETTINGS_SECTIONS = Object.freeze([
   {
     creatable: false,
-    description: 'Runtime, access, storage and logging defaults.',
-    group: 'MACHINE',
+    description: 'settings.sections.general.description',
+    group: 'machine',
     key: 'app',
-    label: 'General',
-    plural: 'General',
+    label: 'settings.sections.general.label',
+    plural: 'settings.sections.general.plural',
     slug: 'general',
   },
   {
     creatable: true,
-    description: 'Agent identities, models, capabilities and gate policy.',
-    group: 'INTELLIGENCE',
+    description: 'settings.sections.agents.description',
+    group: 'intelligence',
     key: 'blueprints',
-    label: 'Agent',
-    plural: 'Agents',
+    label: 'settings.sections.agents.label',
+    plural: 'settings.sections.agents.plural',
     slug: 'agents',
   },
   {
     creatable: true,
-    description: 'Model endpoints and the models available through them.',
-    group: 'INTELLIGENCE',
+    description: 'settings.sections.providers.description',
+    group: 'intelligence',
     key: 'providers',
-    label: 'Provider',
-    plural: 'Providers',
+    label: 'settings.sections.providers.label',
+    plural: 'settings.sections.providers.plural',
     slug: 'providers',
   },
   {
     creatable: false,
-    description: 'Capability bundles contributed by extensions and granted to Agents.',
-    group: 'CAPABILITIES',
+    description: 'settings.sections.toolSets.description',
+    group: 'capabilities',
     key: 'toolSets',
-    label: 'Tool set',
-    plural: 'Tool Sets',
+    label: 'settings.sections.toolSets.label',
+    plural: 'settings.sections.toolSets.plural',
     slug: 'tool-sets',
   },
   {
     creatable: false,
-    description: 'Conversation transports contributed by extensions.',
-    group: 'CAPABILITIES',
+    description: 'settings.sections.brokers.description',
+    group: 'capabilities',
     key: 'brokers',
-    label: 'Broker',
-    plural: 'Brokers',
+    label: 'settings.sections.brokers.label',
+    plural: 'settings.sections.brokers.plural',
     slug: 'brokers',
   },
   {
     creatable: true,
-    description: 'Write-only credentials used by providers and extensions.',
-    group: 'SECURITY',
-    label: 'Secret',
-    plural: 'Secrets',
+    description: 'settings.sections.secrets.description',
+    group: 'security',
+    label: 'settings.sections.secrets.label',
+    plural: 'settings.sections.secrets.plural',
     slug: 'secrets',
   },
 ] as const satisfies readonly SettingsSectionDefinition[])
 
 const SETTINGS_GROUPS: readonly SettingsSectionDefinition['group'][] = Object.freeze([
-  'MACHINE',
-  'INTELLIGENCE',
-  'CAPABILITIES',
-  'SECURITY',
+  'machine',
+  'intelligence',
+  'capabilities',
+  'security',
 ])
 
 function settingsSection(slug: string): SettingsSectionDefinition | undefined {

@@ -249,6 +249,79 @@ for (const contribution of app.contributions.list(greeters)) {
 await app.stop();
 ```
 
+### Language extensions and extension-owned UI copy
+
+The browser contains message keys, not an embedded English catalog. Complete languages are
+contributions at `nox.languages`, and Nox exposes the active catalog through the public language API
+(the access screen needs it before an account can authenticate):
+
+| Route | Result |
+|---|---|
+| `GET /api/i18n/languages` | Available locales, direction, native name, fallback and configured locale |
+| `GET /api/i18n/languages/:locale` | The resolved flat message catalog for one locale |
+
+A language package is an ordinary extension:
+
+```ts
+import {
+  defineLanguagePack,
+  languagePacks,
+} from './src/extensions/contribution-points/languages';
+import { defineExtension } from './src/extensions';
+
+const spanish = defineExtension({
+  manifest: { engines: { nox: '^0.1.0' }, id: 'community.language.es' },
+  activate(context) {
+    context.contributions.register(
+      languagePacks,
+      'es',
+      defineLanguagePack({
+        direction: 'ltr',
+        locale: 'es',
+        messages: {
+          'common.cancel': 'Cancelar',
+          // ...the rest of the core catalog
+        },
+        name: 'Español',
+      }),
+    );
+  },
+});
+```
+
+Feature-specific copy does **not** belong to a core language package. The feature extension owns
+all of its translated fragments and mounts each locale below its own extension namespace. A language
+extension never needs to name OpenAI, Web Tools or any other optional feature:
+
+```ts
+import {
+  defineTranslationFragment,
+  translationFragments,
+} from './src/extensions/contribution-points/languages';
+
+context.contributions.register(
+  translationFragments,
+  'nox.provider.openai.es',
+  defineTranslationFragment({
+    locale: 'es',
+    namespace: 'nox.provider.openai',
+    messages: { 'ui.save': 'Guardar proveedor' },
+  }),
+);
+```
+
+The API prefixes that fragment as `nox.provider.openai.ui.save` and merges it only into `es`.
+The API rejects a fragment whose namespace differs from the extension that registered it. Duplicate
+locale/key ownership is an error rather than a load-order override. The client loads the
+selected locale and the default locale, so an extension remains usable in its fallback language when
+it has not translated a selected locale. Tool-set inventory also carries the contributing extension
+ID, allowing its names and descriptions to resolve from that same namespace instead of being baked
+into the UI.
+
+The installation preference lives at `ui.locale` in `app.json` and is editable under
+**Settings → General → Interface language**. The public access screen also offers the selector and
+keeps that browser's choice locally, since it must choose a language before authentication.
+
 What the runtime guarantees:
 
 - **Identity and compatibility are validated.** A malformed ID or an `engines.nox`

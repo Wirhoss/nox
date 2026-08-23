@@ -1,34 +1,49 @@
 import { z } from 'zod'
 
-const usernameSchema = z
-  .string()
-  .trim()
-  .min(3, 'Identity must contain at least 3 characters.')
-  .max(64, 'Identity cannot exceed 64 characters.')
-  .regex(/^[A-Za-z0-9._-]+$/, 'Use letters, digits, dots, dashes or underscores.')
+import type { MessageParameters } from '@/shared/i18n'
 
-const passwordSchema = z
-  .string()
-  .min(8, 'Password must contain at least 8 characters.')
-  .max(200, 'Password cannot exceed 200 characters.')
+type Translate = (key: string, parameters?: MessageParameters) => string
 
-const loginFormSchema = z.object({
-  password: passwordSchema,
-  username: usernameSchema,
-})
+interface LoginForm {
+  readonly password: string
+  readonly username: string
+}
 
-const registrationFormSchema = loginFormSchema
-  .extend({
-    code: z.string().trim().min(1, 'Enter the claim code printed by the Nox container.'),
-    confirmPassword: z.string().min(1, 'Confirm the password.'),
+interface RegistrationForm extends LoginForm {
+  readonly code: string
+  readonly confirmPassword: string
+}
+
+function credentialsSchema(t: Translate) {
+  return z.object({
+    password: z
+      .string()
+      .min(8, t('auth.validation.passwordMin'))
+      .max(200, t('auth.validation.passwordMax')),
+    username: z
+      .string()
+      .trim()
+      .min(3, t('auth.validation.identityMin'))
+      .max(64, t('auth.validation.identityMax'))
+      .regex(/^[A-Za-z0-9._-]+$/, t('auth.validation.identityCharacters')),
   })
-  .refine((value) => value.password === value.confirmPassword, {
-    message: 'Passwords do not match.',
-    path: ['confirmPassword'],
-  })
+}
 
-type LoginForm = z.infer<typeof loginFormSchema>
-type RegistrationForm = z.infer<typeof registrationFormSchema>
+function loginFormSchema(t: Translate): z.ZodType<LoginForm> {
+  return credentialsSchema(t)
+}
+
+function registrationFormSchema(t: Translate): z.ZodType<RegistrationForm> {
+  return credentialsSchema(t)
+    .extend({
+      code: z.string().trim().min(1, t('auth.validation.claimCodeRequired')),
+      confirmPassword: z.string().min(1, t('auth.validation.confirmPasswordRequired')),
+    })
+    .refine((value) => value.password === value.confirmPassword, {
+      message: t('auth.validation.passwordsMismatch'),
+      path: ['confirmPassword'],
+    })
+}
 
 export { loginFormSchema, registrationFormSchema }
 

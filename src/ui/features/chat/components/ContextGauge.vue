@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
+
 import type { ChatContextUsage } from '../api/chat.schemas'
 
 interface Props {
@@ -8,6 +10,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const { formatNumber: localizeNumber, t } = useI18n()
 
 const ratio = computed<number | undefined>(() => {
   const usage = props.usage
@@ -20,7 +23,9 @@ const percentage = computed(() =>
 const tokenLabel = computed(() => {
   const usage = props.usage
   if (usage === undefined) return '—'
-  if (usage.contextWindow === undefined) return `${formatNumber(usage.usedTokens)} tokens`
+  if (usage.contextWindow === undefined) {
+    return t('chat.context.tokens', { count: formatNumber(usage.usedTokens) })
+  }
   return `${formatNumber(usage.usedTokens)} / ${formatNumber(usage.contextWindow)}`
 })
 const compactRatio = computed(() => {
@@ -37,17 +42,19 @@ const tone = computed(() => {
 })
 const label = computed(() => {
   const usage = props.usage
-  if (usage === undefined) return 'Context usage is not available yet'
+  if (usage === undefined) return t('chat.context.notAvailable')
   if (usage.contextWindow === undefined) {
-    return `Context uses approximately ${formatNumber(usage.usedTokens)} tokens; model capacity is unknown`
+    return t('chat.context.capacityUnknown', { used: formatNumber(usage.usedTokens) })
   }
-  return `Context ${String(percentage.value)} percent full: approximately ${formatNumber(usage.usedTokens)} of ${formatNumber(usage.contextWindow)} tokens`
+  return t('chat.context.full', {
+    capacity: formatNumber(usage.contextWindow),
+    percentage: percentage.value ?? 0,
+    used: formatNumber(usage.usedTokens),
+  })
 })
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(
-    value,
-  )
+  return localizeNumber(value, { notation: 'compact', maximumFractionDigits: 1 })
 }
 </script>
 
@@ -56,7 +63,7 @@ function formatNumber(value: number): string {
     class="context-gauge"
     :class="`context-gauge--${tone}`"
     role="meter"
-    aria-label="Context window"
+    :aria-label="t('chat.context.window')"
     aria-valuemin="0"
     :aria-valuemax="props.usage?.contextWindow"
     :aria-valuenow="props.usage?.usedTokens"

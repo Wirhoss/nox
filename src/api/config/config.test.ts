@@ -242,6 +242,7 @@ describe('reading configuration', () => {
         {
           available: true,
           description: 'Tools that exist only in this test.',
+          extensionId: 'test.extension',
           id: 'internet',
           name: 'Fake tools',
           tools: [

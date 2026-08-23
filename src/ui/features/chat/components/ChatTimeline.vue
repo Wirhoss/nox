@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 
 import { useActiveSessionStore } from '../stores/activeSession.store'
@@ -11,6 +12,7 @@ import RunActivityCard from './RunActivityCard.vue'
 import ToolActivityCard from './ToolActivityCard.vue'
 
 const session = useActiveSessionStore()
+const { t } = useI18n()
 const timeline = ref<HTMLElement>()
 
 type SessionItem = (typeof session.items)[number]
@@ -69,8 +71,7 @@ const timelineEntries = computed<TimelineEntry[]>(() => {
 
   const entries: TimelineEntry[] = []
   for (const item of session.items) {
-    const activityTarget =
-      'turnId' in item ? activityTargetByTurn.get(item.turnId) : undefined
+    const activityTarget = 'turnId' in item ? activityTargetByTurn.get(item.turnId) : undefined
 
     if (item.kind === 'reasoning' || item.kind === 'tool') {
       if (processTargetByItem.has(item.id)) continue
@@ -117,28 +118,33 @@ watch(
 </script>
 
 <template>
-  <section ref="timeline" class="timeline" aria-label="Conversation" aria-live="polite">
+  <section
+    ref="timeline"
+    class="timeline"
+    :aria-label="t('chat.timeline.conversation')"
+    aria-live="polite"
+  >
     <NoxNotice
       v-if="session.history.type === 'loading'"
       class="timeline__state"
-      title="Loading transcript"
+      :title="t('chat.timeline.loadingTitle')"
     >
-      <p>Reconstructing the conversation from Nox storage.</p>
+      <p>{{ t('chat.timeline.loadingBody') }}</p>
     </NoxNotice>
 
     <NoxNotice
       v-else-if="session.history.type === 'failed'"
       class="timeline__state"
-      title="Transcript unavailable"
+      :title="t('chat.timeline.unavailableTitle')"
       tone="danger"
     >
       <p>{{ session.history.message }}</p>
     </NoxNotice>
 
     <div v-else-if="session.items.length === 0" class="timeline__empty">
-      <p class="timeline__eyebrow">NOX ONLINE</p>
-      <h2>What needs to be done?</h2>
-      <p>Start a new conversation through the configured web surface.</p>
+      <p class="timeline__eyebrow">{{ t('chat.timeline.online') }}</p>
+      <h2>{{ t('chat.timeline.emptyTitle') }}</h2>
+      <p>{{ t('chat.timeline.emptyBody') }}</p>
     </div>
 
     <template v-for="entry in timelineEntries" :key="entry.id">
@@ -149,12 +155,13 @@ watch(
         :process-items="entry.processItems"
       />
 
-      <section v-else-if="entry.kind === 'process'" class="timeline__process" aria-label="Response process">
+      <section
+        v-else-if="entry.kind === 'process'"
+        class="timeline__process"
+        :aria-label="t('chat.message.responseProcess')"
+      >
         <template v-for="processItem in entry.items" :key="processItem.id">
-          <ReasoningActivityCard
-            v-if="processItem.kind === 'reasoning'"
-            :item="processItem"
-          />
+          <ReasoningActivityCard v-if="processItem.kind === 'reasoning'" :item="processItem" />
           <ToolActivityCard v-else :item="processItem" />
         </template>
       </section>
@@ -162,7 +169,11 @@ watch(
       <template v-else>
         <ChatMessage v-if="entry.item.kind === 'user'" :item="entry.item" />
 
-        <NoxNotice v-else-if="entry.item.kind === 'error'" title="Run failed" tone="danger">
+        <NoxNotice
+          v-else-if="entry.item.kind === 'error'"
+          :title="t('chat.run.failed')"
+          tone="danger"
+        >
           <p>{{ entry.item.text }}</p>
         </NoxNotice>
 
@@ -208,22 +219,22 @@ watch(
   max-height: none;
   min-height: 2.65rem;
   border: 0;
-  border-left: 2px solid var(--nox-status-info);
+  border-inline-start: 2px solid var(--nox-status-info);
   border-radius: 0;
   background: transparent;
   overflow: visible;
 }
 
 .timeline__process :deep(.reasoning) {
-  border-left-color: color-mix(in srgb, var(--nox-status-info) 55%, transparent);
+  border-inline-start-color: color-mix(in srgb, var(--nox-status-info) 55%, transparent);
 }
 
 .timeline__process :deep(.tool--complete) {
-  border-left-color: var(--nox-status-success);
+  border-inline-start-color: var(--nox-status-success);
 }
 
 .timeline__process :deep(.tool--error) {
-  border-left-color: var(--nox-status-danger);
+  border-inline-start-color: var(--nox-status-danger);
 }
 
 .timeline__process :deep(.reasoning:not(:first-child)),

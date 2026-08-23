@@ -6,12 +6,14 @@ import { authRoutes } from './auth/routes';
 import { chatRoutes } from './chat/routes';
 import { configRoutes } from './config/routes';
 import { health, type ReadinessChecks } from './health';
+import { languageRoutes } from './i18n/routes';
 import { API_PREFIX } from './prefix';
 import { secretRoutes } from './secrets/routes';
 import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './serverConfig';
 import { ui } from './ui';
 
 import type { SecretStore } from '../config/secrets';
+import type { ContributionReader } from '../extensions/contribution';
 import type { Disposable } from '../extensions/disposable';
 import type { RegistrationWindow } from './auth/registration';
 import type { AuthStore } from './auth/store';
@@ -48,6 +50,10 @@ interface ApiServerOptions extends ApiConfigInput {
    * those reasons.
    */
   config?: ConfigStore;
+  /** Installation language preference exposed publicly with the language catalog. */
+  locale?: string;
+  /** Language packs and extension-owned translation fragments exposed to the UI. */
+  languages?: ContributionReader;
   logger?: Logger;
   /**
    * Mounts `/api/secrets`, where the credentials behind every outbound call are
@@ -99,6 +105,11 @@ class ApiServer implements Disposable {
     const api = new Elysia({ name: 'nox.api', prefix: API_PREFIX }).use(
       health({ checks: options.checks, version: options.version }),
     );
+    if (options.languages !== undefined) {
+      api.use(
+        languageRoutes({ configuredLocale: options.locale, contributions: options.languages }),
+      );
+    }
     if (options.auth !== undefined) {
       api.use(authRoutes(options.auth));
       if (options.config !== undefined) {

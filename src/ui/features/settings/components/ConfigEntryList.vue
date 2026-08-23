@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
+
 import { useSettingsStore } from '../stores/settings.store'
 
 import type { ConfigSection, ConfigValue } from '../api/settings.api'
@@ -13,6 +15,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const { t } = useI18n()
 const settings = useSettingsStore()
 const entries = computed(() =>
   Object.entries(props.section.value).map(([entryId, value]) => ({
@@ -28,11 +31,11 @@ function detail(value: ConfigValue): string {
     case 'providers':
       return [asString(value.type), asString(value.defaultModel)].filter(Boolean).join(' // ')
     case 'toolSets':
-      return asString(value.type) ?? 'Configured tool set'
+      return asString(value.type) ?? t('settings.entries.configuredToolSet')
     case 'brokers':
       return [asString(value.type), asString(value.agent)].filter(Boolean).join(' // ')
     default:
-      return 'Configured entry'
+      return t('settings.entries.configuredEntry')
   }
 }
 
@@ -53,9 +56,9 @@ function isConfigValue(value: unknown): value is ConfigValue {
   <article class="entry-list">
     <header class="entry-list__header">
       <div>
-        <p>CONFIGURATION // {{ props.section.key.toUpperCase() }}</p>
-        <h2>{{ props.definition.plural }}</h2>
-        <span>{{ props.definition.description }}</span>
+        <p>{{ t('settings.navigation.configuration') }} // {{ props.section.key.toUpperCase() }}</p>
+        <h2>{{ t(props.definition.plural) }}</h2>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <RouterLink
         v-if="props.definition.creatable"
@@ -66,27 +69,35 @@ function isConfigValue(value: unknown): value is ConfigValue {
           query: { create: '1' },
         }"
       >
-        + New {{ props.definition.label.toLowerCase() }}
+        + {{ t('settings.navigation.newEntry', { entry: t(props.definition.label) }) }}
       </RouterLink>
     </header>
 
     <div class="entry-list__content">
       <div class="entry-list__telemetry">
         <div>
-          <span>CONFIGURED</span>
+          <span>{{ t('settings.entries.configured') }}</span>
           <strong>{{ entries.length }}</strong>
         </div>
         <div>
-          <span>SOURCE</span>
+          <span>{{ t('settings.entries.source') }}</span>
           <strong>{{ props.section.name }}</strong>
         </div>
         <div>
-          <span>ACTIVATION</span>
-          <strong>{{ props.section.applies === 'restart' ? 'Restart' : 'Immediate' }}</strong>
+          <span>{{ t('settings.entries.activation') }}</span>
+          <strong>{{
+            props.section.applies === 'restart'
+              ? t('settings.entries.restart')
+              : t('settings.entries.immediate')
+          }}</strong>
         </div>
       </div>
 
-      <section v-if="entries.length > 0" class="entry-list__entries" :aria-label="props.definition.plural">
+      <section
+        v-if="entries.length > 0"
+        class="entry-list__entries"
+        :aria-label="t(props.definition.plural)"
+      >
         <RouterLink
           v-for="entry in entries"
           :key="entry.entryId"
@@ -106,25 +117,27 @@ function isConfigValue(value: unknown): value is ConfigValue {
                   settings.catalog?.defaultAgent === entry.entryId
                 "
               >
-                DEFAULT
+                {{ t('common.default') }}
               </small>
             </span>
             <strong>{{ detail(entry.value) }}</strong>
             <p v-if="description(entry.value) !== undefined">{{ description(entry.value) }}</p>
           </div>
-          <span class="entry-list__open">OPEN →</span>
+          <span class="entry-list__open">{{ t('common.open') }} →</span>
         </RouterLink>
       </section>
 
       <section v-else class="entry-list__empty">
         <span aria-hidden="true">∅</span>
         <div>
-          <h3>No {{ props.definition.plural.toLowerCase() }} configured</h3>
+          <h3>
+            {{ t('settings.entries.noneConfigured', { section: t(props.definition.plural) }) }}
+          </h3>
           <p v-if="props.definition.creatable">
-            This section is loaded and currently contains no entries. Create one to configure it.
+            {{ t('settings.entries.emptyCreatable') }}
           </p>
           <p v-else>
-            This section is loaded, but no active extension has contributed an entry.
+            {{ t('settings.entries.emptyContributed') }}
           </p>
         </div>
       </section>
@@ -203,7 +216,7 @@ function isConfigValue(value: unknown): value is ConfigValue {
 }
 
 .entry-list__telemetry > div + div {
-  border-left: 1px solid var(--nox-border-subtle);
+  border-inline-start: 1px solid var(--nox-border-subtle);
 }
 
 .entry-list__telemetry strong {
@@ -316,8 +329,7 @@ function isConfigValue(value: unknown): value is ConfigValue {
 @media (max-width: 60rem) {
   .entry-list__header,
   .entry-list__content {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 }
 
@@ -333,7 +345,7 @@ function isConfigValue(value: unknown): value is ConfigValue {
 
   .entry-list__telemetry > div + div {
     border-top: 1px solid var(--nox-border-subtle);
-    border-left: 0;
+    border-inline-start: 0;
   }
 
   .entry-list__open {

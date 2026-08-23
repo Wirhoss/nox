@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useAuthStore } from '@/app/stores/auth.store'
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -12,11 +13,16 @@ import { authErrorMessage } from '../model/errorMessage'
 import { type RegistrationForm, registrationFormSchema } from '../model/forms'
 
 const auth = useAuthStore()
+const { locale, t } = useI18n()
 const serverError = ref<string>()
 
+const validationSchema = computed(() => {
+  void locale.value
+  return toTypedSchema(registrationFormSchema(t))
+})
 const { defineField, errors, handleSubmit, isSubmitting } = useForm<RegistrationForm>({
   initialValues: { code: '', confirmPassword: '', password: '', username: '' },
-  validationSchema: toTypedSchema(registrationFormSchema),
+  validationSchema,
 })
 
 const [code, codeBindings] = defineField('code')
@@ -33,14 +39,18 @@ const submit = handleSubmit(async (values) => {
       username: values.username,
     })
   } catch (error) {
-    serverError.value = authErrorMessage(error)
+    serverError.value = authErrorMessage(error, t)
   }
 })
 </script>
 
 <template>
   <form class="form" novalidate @submit="submit">
-    <NoxNotice v-if="serverError !== undefined" title="Claim rejected" tone="danger">
+    <NoxNotice
+      v-if="serverError !== undefined"
+      :title="t('auth.registration.rejected')"
+      tone="danger"
+    >
       <p>{{ serverError }}</p>
     </NoxNotice>
 
@@ -50,10 +60,10 @@ const submit = handleSubmit(async (values) => {
       v-bind="codeBindings"
       class="form__code"
       name="code"
-      label="Claim code"
+      :label="t('auth.field.claimCode')"
       autocomplete="one-time-code"
       placeholder="NOX-XXXX-XXXX-XXXX"
-      hint="Printed in the current Nox container logs. A restart creates a new code."
+      :hint="t('auth.registration.claimCodeHint')"
       :error="errors.code"
       autocapitalize="characters"
       spellcheck="false"
@@ -65,10 +75,10 @@ const submit = handleSubmit(async (values) => {
       v-model="username"
       v-bind="usernameBindings"
       name="username"
-      label="Identity"
+      :label="t('auth.field.identity')"
       autocomplete="username"
       placeholder="operator"
-      hint="Letters, digits, dots, dashes and underscores only."
+      :hint="t('auth.registration.identityHint')"
       :error="errors.username"
       required
     />
@@ -79,10 +89,10 @@ const submit = handleSubmit(async (values) => {
         v-model="password"
         v-bind="passwordBindings"
         name="password"
-        label="Password"
+        :label="t('auth.field.password')"
         type="password"
         autocomplete="new-password"
-        placeholder="8 characters minimum"
+        :placeholder="t('auth.registration.passwordPlaceholder')"
         :error="errors.password"
         required
       />
@@ -92,16 +102,18 @@ const submit = handleSubmit(async (values) => {
         v-model="confirmPassword"
         v-bind="confirmPasswordBindings"
         name="confirmPassword"
-        label="Confirm password"
+        :label="t('auth.field.confirmPassword')"
         type="password"
         autocomplete="new-password"
-        placeholder="Repeat your password"
+        :placeholder="t('auth.registration.confirmPasswordPlaceholder')"
         :error="errors.confirmPassword"
         required
       />
     </div>
 
-    <NoxButton block :busy="isSubmitting" type="submit">Claim this Nox</NoxButton>
+    <NoxButton block :busy="isSubmitting" type="submit">{{
+      t('auth.registration.submit')
+    }}</NoxButton>
   </form>
 </template>
 

@@ -5,6 +5,7 @@ import ChatComposer from '@/features/chat/components/ChatComposer.vue'
 import ChatTimeline from '@/features/chat/components/ChatTimeline.vue'
 import ConversationList from '@/features/chat/components/ConversationList.vue'
 import { useActiveSessionStore } from '@/features/chat/stores/activeSession.store'
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxStatus } from '@/shared/ui/NoxStatus'
@@ -15,29 +16,33 @@ interface ConnectionStatus {
 }
 
 const session = useActiveSessionStore()
+const { t } = useI18n()
 const connectionStatus = computed<ConnectionStatus>(() => {
   switch (session.connection.type) {
     case 'connected':
-      return { label: 'Stream connected', tone: 'operational' }
+      return { label: t('chat.connection.connected'), tone: 'operational' }
     case 'connecting':
-      return { label: 'Connecting stream', tone: 'waiting' }
+      return { label: t('chat.connection.connecting'), tone: 'waiting' }
     case 'disconnected':
-      return { label: 'Stream disconnected', tone: 'danger' }
+      return { label: t('chat.connection.disconnected'), tone: 'danger' }
     case 'failed':
-      return { label: 'Stream failed', tone: 'danger' }
+      return { label: t('chat.connection.failed'), tone: 'danger' }
     case 'reconnecting':
-      return { label: `Reconnecting // ${String(session.connection.attempt)}`, tone: 'waiting' }
+      return {
+        label: t('chat.connection.reconnecting', { attempt: session.connection.attempt }),
+        tone: 'waiting',
+      }
     case 'unavailable':
-      return { label: 'Chat unavailable', tone: 'danger' }
+      return { label: t('chat.connection.unavailable'), tone: 'danger' }
   }
-  return { label: 'Unknown stream state', tone: 'danger' }
+  return { label: t('chat.connection.unknown'), tone: 'danger' }
 })
 // The session's own name once it has one; a conversation that has not been
 // named yet is still described by who is holding it.
 const conversationTitle = computed(() => {
   const conversation = session.activeConversation
-  if (conversation === undefined) return 'New conversation'
-  return conversation.title ?? `Conversation with ${conversation.agentId}`
+  if (conversation === undefined) return t('chat.conversation.new')
+  return conversation.title ?? t('chat.conversation.withAgent', { agent: conversation.agentId })
 })
 const shortConversationId = computed(() => session.conversationId.slice(-8).toUpperCase())
 
@@ -55,7 +60,7 @@ onBeforeUnmount(() => {
     <section class="surface" aria-labelledby="conversation-title">
       <header class="surface__header">
         <div>
-          <p>WEB CONVERSATION // {{ shortConversationId }}</p>
+          <p>{{ t('chat.conversation.web') }} // {{ shortConversationId }}</p>
           <h1 id="conversation-title">{{ conversationTitle }}</h1>
         </div>
         <div class="surface__telemetry">
@@ -67,39 +72,46 @@ onBeforeUnmount(() => {
         <NoxNotice
           v-if="session.connection.type === 'unavailable'"
           class="surface__notice"
-          title="Chat temporarily unavailable"
+          :title="t('chat.notice.unavailableTitle')"
           tone="danger"
         >
-          <p>The internal chat transport is not running.</p>
-          <NoxButton variant="secondary" @click="session.reconnect()">Retry connection</NoxButton>
+          <p>{{ t('chat.notice.unavailableBody') }}</p>
+          <NoxButton variant="secondary" @click="session.reconnect()">{{
+            t('common.retryConnection')
+          }}</NoxButton>
         </NoxNotice>
 
         <NoxNotice
           v-else-if="session.connection.type === 'failed'"
           class="surface__notice"
-          title="Chat stream failed"
+          :title="t('chat.notice.streamFailed')"
           tone="danger"
         >
           <p>{{ session.connection.message }}</p>
-          <NoxButton variant="secondary" @click="session.reconnect()">Open a new stream</NoxButton>
+          <NoxButton variant="secondary" @click="session.reconnect()">{{
+            t('chat.notice.openNewStream')
+          }}</NoxButton>
         </NoxNotice>
 
         <ChatTimeline />
 
         <div class="surface__composer">
-          <NoxNotice v-if="session.sendError !== undefined" title="Message not sent" tone="danger">
+          <NoxNotice
+            v-if="session.sendError !== undefined"
+            :title="t('chat.notice.messageNotSent')"
+            tone="danger"
+          >
             <p>{{ session.sendError }}</p>
           </NoxNotice>
           <ChatComposer />
-          <p class="surface__hint">Enter to execute · Shift + Enter for a new line</p>
+          <p class="surface__hint">{{ t('chat.composer.keyboardHint') }}</p>
         </div>
       </div>
     </section>
 
-    <aside class="conversation-rail" aria-label="Conversation browser">
+    <aside class="conversation-rail" :aria-label="t('chat.conversation.browser')">
       <ConversationList />
     </aside>
-
   </main>
 </template>
 
@@ -162,7 +174,7 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: var(--nox-layer-overlay);
   top: 6rem;
-  right: var(--nox-space-6);
+  inset-inline-end: var(--nox-space-6);
   width: min(24rem, calc(100% - var(--nox-space-8)));
   box-shadow: var(--nox-shadow-panel);
 }
@@ -188,7 +200,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   padding: var(--nox-space-5) var(--nox-space-4);
-  border-left: 1px solid var(--nox-border-subtle);
+  border-inline-start: 1px solid var(--nox-border-subtle);
   background: var(--nox-canvas-raised);
   overflow: hidden;
 }

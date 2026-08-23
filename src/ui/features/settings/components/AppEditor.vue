@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
@@ -12,11 +13,7 @@ import type { ConfigSection, ConfigValue } from '../api/settings.api'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'
-type NumericInputKey =
-  | 'accessTtlSeconds'
-  | 'busyTimeoutMs'
-  | 'port'
-  | 'refreshTtlSeconds'
+type NumericInputKey = 'accessTtlSeconds' | 'busyTimeoutMs' | 'port' | 'refreshTtlSeconds'
 
 interface ApiDraft extends ConfigValue {
   host: string
@@ -39,12 +36,17 @@ interface DatabaseDraft extends ConfigValue {
   synchronous: string
 }
 
+interface UiDraft extends ConfigValue {
+  locale: string
+}
+
 interface AppDraft extends ConfigValue {
   api: ApiDraft
   auth: AuthDraft
   chat: ChatDraft
   database: DatabaseDraft
   logLevel: string
+  ui: UiDraft
 }
 
 interface Props {
@@ -57,6 +59,7 @@ const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error'] as const
 const SYNCHRONOUS_MODES = ['extra', 'full', 'normal', 'off'] as const
 const props = defineProps<Props>()
 const settings = useSettingsStore()
+const { availableLanguages, plural, setLocale, t } = useI18n()
 const mode = ref<EditorMode>('form')
 const draft = ref<AppDraft>(appTemplate())
 const jsonSource = ref('')
@@ -75,6 +78,9 @@ const agentIds = computed(() =>
   Object.keys(props.blueprintSection?.value ?? {}).sort((a, b) => a.localeCompare(b)),
 )
 const configuredDefaultAgent = computed(() => draft.value.chat.defaultAgent ?? '')
+const configuredLocaleMissing = computed(
+  () => !availableLanguages.value.some((language) => language.locale === draft.value.ui.locale),
+)
 const defaultAgentMissing = computed(
   () =>
     configuredDefaultAgent.value.length > 0 &&
@@ -83,8 +89,8 @@ const defaultAgentMissing = computed(
 const automaticAgentLabel = computed(() => {
   const [only] = agentIds.value
   return agentIds.value.length === 1 && only !== undefined
-    ? `Automatic · ${only}`
-    : 'Select a default agent'
+    ? t('settings.general.automaticAgent', { agent: only })
+    : t('settings.general.selectDefaultAgent')
 })
 const dirty = computed(() => {
   if (mode.value === 'json') {
@@ -136,6 +142,12 @@ function setDatabaseString(field: 'path' | 'synchronous', value: string): void {
 function setLogLevel(value: string): void {
   draft.value = { ...draft.value, logLevel: value }
   clearFeedback('logLevel')
+}
+
+function setUiLocale(value: string): void {
+  draft.value = { ...draft.value, ui: { ...draft.value.ui, locale: value } }
+  clearFeedback('locale')
+  void setLocale(value)
 }
 
 function setDefaultAgent(value: string): void {
@@ -217,6 +229,7 @@ async function save(): Promise<void> {
 
   if (await settings.saveSection(props.section.key, value)) {
     draft.value = asAppDraft(value)
+    void setLocale(draft.value.ui.locale)
     syncNumericInputs()
     originalJsonSignature.value = JSON.stringify(value)
     originalSignature.value = formSignature()
@@ -226,27 +239,31 @@ async function save(): Promise<void> {
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
 
-  if (draft.value.api.host.trim().length === 0) errors.host = 'A bind host is required.'
+  if (draft.value.api.host.trim().length === 0)
+    errors.host = t('settings.general.validation.hostRequired')
   validateInteger(errors, 'port', 0, 65_535)
   validateInteger(errors, 'accessTtlSeconds', 60, 60 * 60)
   validateInteger(errors, 'refreshTtlSeconds', 60 * 60, 365 * 24 * 60 * 60)
   validateInteger(errors, 'busyTimeoutMs', 0)
 
   if (draft.value.database.path.trim().length === 0) {
-    errors.path = 'A database path is required.'
+    errors.path = t('settings.general.validation.pathRequired')
   }
   if (!SYNCHRONOUS_MODES.some((candidate) => candidate === draft.value.database.synchronous)) {
-    errors.synchronous = 'Choose a supported SQLite durability mode.'
+    errors.synchronous = t('settings.general.validation.durabilityMode')
   }
   if (!LOG_LEVELS.some((candidate) => candidate === draft.value.logLevel)) {
-    errors.logLevel = 'Choose a supported log level.'
+    errors.logLevel = t('settings.general.validation.logLevel')
+  }
+  if (!availableLanguages.value.some((language) => language.locale === draft.value.ui.locale)) {
+    errors.locale = t('settings.general.validation.locale')
   }
 
   const defaultAgent = configuredDefaultAgent.value
   if (defaultAgent.length === 0 && agentIds.value.length !== 1) {
-    errors.defaultAgent = 'Choose the agent used to open new web conversations.'
+    errors.defaultAgent = t('settings.general.validation.defaultAgentRequired')
   } else if (defaultAgent.length > 0 && !agentIds.value.includes(defaultAgent)) {
-    errors.defaultAgent = 'Choose an agent that exists in the blueprint directory.'
+    errors.defaultAgent = t('settings.general.validation.defaultAgentExists')
   }
 
   fieldErrors.value = errors
@@ -268,8 +285,8 @@ function validateInteger(
   ) {
     errors[key] =
       maximum === undefined
-        ? `Use a whole number of at least ${String(minimum)}.`
-        : `Use a whole number from ${String(minimum)} to ${String(maximum)}.`
+        ? t('settings.validation.integerMinimum', { minimum })
+        : t('settings.validation.integerRange', { maximum, minimum })
   }
 }
 
@@ -277,15 +294,14 @@ function parseJson(report: boolean): ConfigValue | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
     if (!isConfigValue(parsed)) {
-      if (report) jsonError.value = 'Application configuration must be one JSON object.'
+      if (report) jsonError.value = t('settings.general.validation.configurationObject')
       return undefined
     }
     if (report) jsonError.value = undefined
     return parsed
-  } catch (error) {
+  } catch {
     if (report) {
-      jsonError.value =
-        error instanceof SyntaxError ? error.message : 'Configuration is not valid JSON.'
+      jsonError.value = t('settings.validation.invalidJson')
     }
     return undefined
   }
@@ -301,7 +317,7 @@ function clearFeedback(field?: string): void {
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm('Discard the unsaved general settings?')
+  return !dirty.value || window.confirm(t('settings.confirm.discardGeneral'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -313,11 +329,13 @@ function asAppDraft(value: ConfigValue): AppDraft {
   const auth = objectValue(cloned.auth)
   const chat = objectValue(cloned.chat)
   const database = objectValue(cloned.database)
+  const ui = objectValue(cloned.ui)
   const defaultAgent = stringValue(chat.defaultAgent)
   const host = stringValue(api.host)
   const path = stringValue(database.path)
   const synchronous = stringValue(database.synchronous)
   const logLevel = stringValue(cloned.logLevel)
+  const uiLocale = stringValue(ui.locale)
 
   return {
     ...cloned,
@@ -343,6 +361,10 @@ function asAppDraft(value: ConfigValue): AppDraft {
       synchronous: synchronous.length > 0 ? synchronous : 'normal',
     },
     logLevel: logLevel.length > 0 ? logLevel : 'info',
+    ui: {
+      ...ui,
+      locale: uiLocale.length > 0 ? uiLocale : 'en',
+    },
   }
 }
 
@@ -383,21 +405,23 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   <article class="app-editor">
     <header class="app-editor__header">
       <div>
-        <p>MACHINE CONTROL // APPLICATION</p>
-        <h2>General</h2>
-        <span>{{ props.definition.description }}</span>
+        <p>{{ t('settings.general.machineControl') }}</p>
+        <h2>{{ t(props.definition.label) }}</h2>
+        <span>{{ t(props.definition.description) }}</span>
       </div>
       <div class="app-editor__header-side">
         <div class="app-editor__badges">
           <span>{{ props.section.name }}</span>
-          <span class="app-editor__badge--restart">APPLIES ON RESTART</span>
+          <span class="app-editor__badge--restart">{{
+            t('settings.editor.appliesOnRestart')
+          }}</span>
         </div>
-        <div class="app-editor__modes" aria-label="Editor mode">
+        <div class="app-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
-            Form
+            {{ t('settings.editor.form') }}
           </button>
           <button :aria-pressed="mode === 'json'" type="button" @click="switchMode('json')">
-            JSON
+            {{ t('settings.editor.json') }}
           </button>
         </div>
       </div>
@@ -406,29 +430,68 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
     <div class="app-editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        title="Application configuration saved"
+        :title="t('settings.general.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>The document is on disk. Restart Nox to apply the machine-level changes.</p>
+        <p>{{ t('settings.general.savedBody') }}</p>
       </NoxNotice>
 
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        title="Application change refused"
+        :title="t('settings.general.changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
       </NoxNotice>
 
       <template v-if="mode === 'form'">
+        <section class="app-editor__section" aria-labelledby="app-interface-title">
+          <div class="app-editor__section-copy">
+            <p>01 // {{ t('settings.general.interface') }}</p>
+            <h3 id="app-interface-title">{{ t('settings.general.interfaceLanguage') }}</h3>
+            <span>{{ t('settings.general.interfaceLanguageHelp') }}</span>
+          </div>
+          <div class="app-editor__fields">
+            <div
+              class="app-editor__field"
+              :class="{ 'app-editor__field--invalid': fieldErrors.locale }"
+            >
+              <label for="app-ui-locale">
+                {{ t('settings.general.locale') }}
+                <small>{{ t('common.requiredShort') }}</small>
+              </label>
+              <select
+                id="app-ui-locale"
+                :value="draft.ui.locale"
+                :aria-invalid="fieldErrors.locale !== undefined"
+                @change="setUiLocale(($event.target as HTMLSelectElement).value)"
+              >
+                <option
+                  v-for="language in availableLanguages"
+                  :key="language.locale"
+                  :value="language.locale"
+                >
+                  {{ language.name }}
+                </option>
+                <option v-if="configuredLocaleMissing" :value="draft.ui.locale">
+                  {{ draft.ui.locale }} · {{ t('common.missing') }}
+                </option>
+              </select>
+              <p v-if="fieldErrors.locale" class="app-editor__error">
+                {{ fieldErrors.locale }}
+              </p>
+              <p v-else class="app-editor__hint">
+                {{ t('settings.general.localeHint') }}
+              </p>
+            </div>
+          </div>
+        </section>
+
         <section class="app-editor__section" aria-labelledby="app-network-title">
           <div class="app-editor__section-copy">
-            <p>01 // CONTROL PLANE</p>
-            <h3 id="app-network-title">HTTP listener</h3>
-            <span>
-              Interface and port serving the authenticated API and this workbench. A wrong boundary
-              can make the node unreachable after restart.
-            </span>
+            <p>02 // {{ t('settings.general.controlPlane') }}</p>
+            <h3 id="app-network-title">{{ t('settings.general.httpListener') }}</h3>
+            <span>{{ t('settings.general.httpListenerHelp') }}</span>
           </div>
           <div class="app-editor__fields">
             <div class="app-editor__field-grid">
@@ -436,8 +499,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="app-api-host"
                 :model-value="draft.api.host"
                 :error="fieldErrors.host"
-                hint="Use 127.0.0.1 for local-only access or 0.0.0.0 for every interface."
-                label="Bind host"
+                :hint="t('settings.general.bindHostHint')"
+                :label="t('settings.general.bindHost')"
                 placeholder="0.0.0.0"
                 required
                 @update:model-value="setApiString('host', $event)"
@@ -446,9 +509,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="app-api-port"
                 :model-value="numericInputs.port"
                 :error="fieldErrors.port"
-                hint="0 asks the operating system for an ephemeral port."
+                :hint="t('settings.general.httpPortHint')"
                 inputmode="numeric"
-                label="HTTP port"
+                :label="t('settings.general.httpPort')"
                 placeholder="8080"
                 required
                 @update:model-value="setNumericInput('port', $event)"
@@ -459,12 +522,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="app-editor__section" aria-labelledby="app-chat-title">
           <div class="app-editor__section-copy">
-            <p>02 // WEB CHAT</p>
-            <h3 id="app-chat-title">Conversation entrypoint</h3>
-            <span>
-              Agent assigned to new browser conversations. Nox can infer it only while exactly one
-              Agent exists.
-            </span>
+            <p>03 // {{ t('settings.general.webChat') }}</p>
+            <h3 id="app-chat-title">{{ t('settings.general.conversationEntrypoint') }}</h3>
+            <span>{{ t('settings.general.conversationEntrypointHelp') }}</span>
           </div>
           <div class="app-editor__fields">
             <div
@@ -472,8 +532,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               :class="{ 'app-editor__field--invalid': fieldErrors.defaultAgent }"
             >
               <label for="app-default-agent">
-                Default agent
-                <small v-if="agentIds.length !== 1">REQ</small>
+                {{ t('settings.general.defaultAgent') }}
+                <small v-if="agentIds.length !== 1">{{ t('common.requiredShort') }}</small>
               </label>
               <select
                 id="app-default-agent"
@@ -486,14 +546,14 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   {{ agentId }}
                 </option>
                 <option v-if="defaultAgentMissing" :value="configuredDefaultAgent">
-                  {{ configuredDefaultAgent }} · missing
+                  {{ configuredDefaultAgent }} · {{ t('common.missing') }}
                 </option>
               </select>
               <p v-if="fieldErrors.defaultAgent" class="app-editor__error">
                 {{ fieldErrors.defaultAgent }}
               </p>
               <p v-else class="app-editor__hint">
-                {{ agentIds.length }} configured {{ agentIds.length === 1 ? 'Agent' : 'Agents' }}.
+                {{ plural('settings.general.configuredAgents', agentIds.length) }}
               </p>
             </div>
           </div>
@@ -501,12 +561,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="app-editor__section" aria-labelledby="app-auth-title">
           <div class="app-editor__section-copy">
-            <p>03 // ACCESS</p>
-            <h3 id="app-auth-title">Session security</h3>
-            <span>
-              Short-lived access tokens authorize requests; the refresh session keeps an operator
-              signed in and remains revocable.
-            </span>
+            <p>04 // {{ t('settings.general.access') }}</p>
+            <h3 id="app-auth-title">{{ t('settings.general.sessionSecurity') }}</h3>
+            <span>{{ t('settings.general.sessionSecurityHelp') }}</span>
           </div>
           <div class="app-editor__fields">
             <div class="app-editor__field-grid">
@@ -514,9 +571,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="app-access-ttl"
                 :model-value="numericInputs.accessTtlSeconds"
                 :error="fieldErrors.accessTtlSeconds"
-                hint="60–3600 seconds. Default: 900."
+                :hint="t('settings.general.accessTtlHint')"
                 inputmode="numeric"
-                label="Access token TTL (seconds)"
+                :label="t('settings.general.accessTtl')"
                 required
                 @update:model-value="setNumericInput('accessTtlSeconds', $event)"
               />
@@ -524,9 +581,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="app-refresh-ttl"
                 :model-value="numericInputs.refreshTtlSeconds"
                 :error="fieldErrors.refreshTtlSeconds"
-                hint="3600–31536000 seconds. Default: 30 days."
+                :hint="t('settings.general.refreshTtlHint')"
                 inputmode="numeric"
-                label="Refresh session TTL (seconds)"
+                :label="t('settings.general.refreshTtl')"
                 required
                 @update:model-value="setNumericInput('refreshTtlSeconds', $event)"
               />
@@ -538,19 +595,18 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 @change="setSecureCookies($event)"
               />
               <span>
-                <strong>Secure refresh cookies</strong>
-                <small>Send the refresh cookie only over HTTPS.</small>
+                <strong>{{ t('settings.general.secureCookies') }}</strong>
+                <small>{{ t('settings.general.secureCookiesHelp') }}</small>
               </span>
-              <b>{{ draft.auth.secureCookies ? 'ON' : 'OFF' }}</b>
+              <b>{{ draft.auth.secureCookies ? t('common.on') : t('common.off') }}</b>
             </label>
             <NoxNotice
               v-if="draft.auth.secureCookies"
-              title="HTTPS boundary required"
+              :title="t('settings.general.httpsRequired')"
               tone="warning"
             >
               <p>
-                Browsers will not return the refresh cookie over plain HTTP. Enable this only when
-                the public Nox endpoint is protected by TLS.
+                {{ t('settings.general.httpsRequiredHelp') }}
               </p>
             </NoxNotice>
           </div>
@@ -558,20 +614,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="app-editor__section" aria-labelledby="app-database-title">
           <div class="app-editor__section-copy">
-            <p>04 // DATA PLANE</p>
-            <h3 id="app-database-title">SQLite storage</h3>
-            <span>
-              Persistent state location, lock contention budget and durability policy. Relative
-              paths resolve inside the Nox data directory.
-            </span>
+            <p>05 // {{ t('settings.general.dataPlane') }}</p>
+            <h3 id="app-database-title">{{ t('settings.general.sqliteStorage') }}</h3>
+            <span>{{ t('settings.general.sqliteStorageHelp') }}</span>
           </div>
           <div class="app-editor__fields">
             <NoxTextField
               id="app-database-path"
               :model-value="draft.database.path"
               :error="fieldErrors.path"
-              hint="Absolute path or a path relative to the configured data directory."
-              label="Database path"
+              :hint="t('settings.general.databasePathHint')"
+              :label="t('settings.general.databasePath')"
               placeholder="nox.db"
               required
               @update:model-value="setDatabaseString('path', $event)"
@@ -581,9 +634,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 id="app-busy-timeout"
                 :model-value="numericInputs.busyTimeoutMs"
                 :error="fieldErrors.busyTimeoutMs"
-                hint="How long SQLite waits for a competing writer."
+                :hint="t('settings.general.busyTimeoutHint')"
                 inputmode="numeric"
-                label="Busy timeout (ms)"
+                :label="t('settings.general.busyTimeout')"
                 required
                 @update:model-value="setNumericInput('busyTimeoutMs', $event)"
               />
@@ -591,23 +644,27 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 class="app-editor__field"
                 :class="{ 'app-editor__field--invalid': fieldErrors.synchronous }"
               >
-                <label for="app-synchronous">Durability mode <small>REQ</small></label>
+                <label for="app-synchronous"
+                  >{{ t('settings.general.durabilityMode') }}
+                  <small>{{ t('common.requiredShort') }}</small></label
+                >
                 <select
                   id="app-synchronous"
                   :value="draft.database.synchronous"
                   :aria-invalid="fieldErrors.synchronous !== undefined"
-                  @change="setDatabaseString('synchronous', ($event.target as HTMLSelectElement).value)"
+                  @change="
+                    setDatabaseString('synchronous', ($event.target as HTMLSelectElement).value)
+                  "
                 >
-                  <option value="extra">Extra</option>
-                  <option value="full">Full</option>
-                  <option value="normal">Normal</option>
-                  <option value="off">Off</option>
+                  <option v-for="value in SYNCHRONOUS_MODES" :key="value" :value="value">
+                    {{ t(`settings.general.durability.${value}`) }}
+                  </option>
                 </select>
                 <p v-if="fieldErrors.synchronous" class="app-editor__error">
                   {{ fieldErrors.synchronous }}
                 </p>
                 <p v-else class="app-editor__hint">
-                  Normal balances WAL durability and write throughput.
+                  {{ t('settings.general.durabilityHint') }}
                 </p>
               </div>
             </div>
@@ -616,19 +673,19 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="app-editor__section" aria-labelledby="app-logging-title">
           <div class="app-editor__section-copy">
-            <p>05 // DIAGNOSTICS</p>
-            <h3 id="app-logging-title">Runtime logging</h3>
-            <span>
-              Minimum event severity written by Nox. Trace and debug can expose operational
-              metadata and produce substantially more output.
-            </span>
+            <p>06 // {{ t('settings.general.diagnostics') }}</p>
+            <h3 id="app-logging-title">{{ t('settings.general.runtimeLogging') }}</h3>
+            <span>{{ t('settings.general.runtimeLoggingHelp') }}</span>
           </div>
           <div class="app-editor__fields">
             <div
               class="app-editor__field"
               :class="{ 'app-editor__field--invalid': fieldErrors.logLevel }"
             >
-              <label for="app-log-level">Log level <small>REQ</small></label>
+              <label for="app-log-level"
+                >{{ t('settings.general.logLevel') }}
+                <small>{{ t('common.requiredShort') }}</small></label
+              >
               <select
                 id="app-log-level"
                 :value="draft.logLevel"
@@ -649,17 +706,16 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
       <section v-else class="app-editor__json" aria-labelledby="app-json-title">
         <div class="app-editor__section-copy">
-          <p>ADVANCED SURFACE</p>
-          <h3 id="app-json-title">Application JSON</h3>
-          <span>
-            Full document access using the same schema as <code>app.json</code>. Saving replaces the
-            document whole; defaults are materialized by Nox.
-          </span>
+          <p>{{ t('settings.editor.advancedSurface') }}</p>
+          <h3 id="app-json-title">{{ t('settings.general.applicationJson') }}</h3>
+          <span>{{ t('settings.general.applicationJsonHelp') }}</span>
         </div>
         <div class="app-editor__json-field">
           <div>
-            <label for="app-json">JSON object</label>
-            <button type="button" @click="formatJson()">Format document</button>
+            <label for="app-json">{{ t('settings.editor.jsonObject') }}</label>
+            <button type="button" @click="formatJson()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
           <textarea
             id="app-json"
@@ -676,14 +732,14 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
     <footer class="app-editor__actions">
       <span></span>
       <div>
-        <span v-if="dirty" class="app-editor__dirty">UNSAVED CHANGES</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">Discard</NoxButton>
-        <NoxButton
-          :busy="settings.mutation.type === 'saving'"
-          :disabled="!dirty"
-          @click="save()"
-        >
-          Save general settings
+        <span v-if="dirty" class="app-editor__dirty">{{
+          t('settings.editor.unsavedChanges')
+        }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
+        <NoxButton :busy="settings.mutation.type === 'saving'" :disabled="!dirty" @click="save()">
+          {{ t('settings.general.save') }}
         </NoxButton>
       </div>
     </footer>
@@ -1004,8 +1060,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   .app-editor__header,
   .app-editor__content,
   .app-editor__actions {
-    padding-right: var(--nox-space-5);
-    padding-left: var(--nox-space-5);
+    padding-inline: var(--nox-space-5);
   }
 
   .app-editor__section,

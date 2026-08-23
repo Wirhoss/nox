@@ -72,7 +72,13 @@ describe('ChatTimeline', () => {
     const message = container.querySelector('.message--assistant')
     const process = message?.querySelector<HTMLDetailsElement>(':scope > .message__process')
     const detailsButton = message?.querySelector<HTMLButtonElement>('.message__details-summary')
-    if (message === null || process === null || process === undefined || detailsButton === null || detailsButton === undefined) {
+    if (
+      message === null ||
+      process === null ||
+      process === undefined ||
+      detailsButton === null ||
+      detailsButton === undefined
+    ) {
       throw new Error('Expected process and run controls inside the assistant message.')
     }
 

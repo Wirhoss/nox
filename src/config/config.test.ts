@@ -36,6 +36,7 @@ const authDefaults = {
   secureCookies: false,
 } as const;
 const databaseDefaults = { busyTimeoutMs: 5000, path: 'nox.db', synchronous: 'normal' } as const;
+const uiDefaults = { locale: 'en' } as const;
 
 async function configDir(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'nox-config-'));
@@ -209,6 +210,7 @@ describe('config files', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'info',
+      ui: uiDefaults,
     });
     expect(await read(dir, 'app.json')).toEqual(value);
   });
@@ -226,7 +228,18 @@ describe('config files', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
+      ui: uiDefaults,
     });
+  });
+
+  test('normalizes the configured interface locale', async () => {
+    const dir = await configDir();
+    await write(dir, 'app.json', { ui: { locale: 'ES' } });
+
+    const value = await loadSection(appSection, context(dir));
+
+    expect(value).toMatchObject({ ui: { locale: 'es' } });
+    expect(await read(dir, 'app.json')).toMatchObject({ ui: { locale: 'es' } });
   });
 
   test('leaves an already complete file untouched', async () => {
@@ -237,6 +250,7 @@ describe('config files', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
+      ui: uiDefaults,
     });
     const before = await readFile(join(dir, 'app.json'), 'utf8');
 
@@ -491,6 +505,7 @@ describe('Config', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'info',
+      ui: uiDefaults,
     });
     expect(await read(dir, 'app.json')).toMatchObject({ logLevel: 'info' });
   });
@@ -505,6 +520,7 @@ describe('Config', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'debug',
+      ui: uiDefaults,
     });
 
     expect(result.restartRequired).toBeTrue();
@@ -526,6 +542,7 @@ describe('Config', () => {
           chat: {},
           database: databaseDefaults,
           logLevel,
+          ui: uiDefaults,
         }),
       ),
     );
@@ -549,6 +566,7 @@ describe('Config', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'error',
+      ui: uiDefaults,
     });
 
     expect(first.get('app').logLevel).toBe('error');

@@ -3,6 +3,7 @@ import { computed, onScopeDispose, readonly, ref } from 'vue'
 
 import { useAuthStore } from '@/app/stores/auth.store'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
+import { useI18n } from '@/shared/i18n'
 
 import { chatApi, type PermissionDecision } from '../api/chat.api'
 
@@ -156,6 +157,7 @@ type TimelineItem =
 
 const useActiveSessionStore = defineStore('active-session', () => {
   const auth = useAuthStore()
+  const { t } = useI18n()
   const catalog = ref<ChatResourceState>({ type: 'loading' })
   const commands = ref<readonly ChatCommand[]>([])
   const connection = ref<ChatConnection>({ type: 'disconnected' })
@@ -207,7 +209,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
 
     const accessToken = auth.accessToken
     if (accessToken === undefined) {
-      catalog.value = { message: 'No authenticated session is available.', type: 'failed' }
+      catalog.value = { message: t('chat.error.noAuthenticatedSession'), type: 'failed' }
       eventBuffer = undefined
       return
     }
@@ -231,7 +233,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     } catch (error) {
       eventBuffer = undefined
       catalog.value = {
-        message: resourceMessageFor(error, 'load chat conversations'),
+        message: resourceMessageFor(error, t('chat.action.loadConversations'), t),
         type: 'failed',
       }
       handleAuthorizationError(error)
@@ -259,7 +261,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
       conversations.value = withLiveTitles(await chatApi.listConversations(accessToken))
     } catch (error) {
       catalog.value = {
-        message: resourceMessageFor(error, 'refresh conversations'),
+        message: resourceMessageFor(error, t('chat.action.refreshConversations'), t),
         type: 'failed',
       }
       handleAuthorizationError(error)
@@ -313,7 +315,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     } catch (error) {
       if (version !== selectionVersion) return
       history.value = {
-        message: resourceMessageFor(error, 'load this conversation'),
+        message: resourceMessageFor(error, t('chat.action.loadConversation'), t),
         type: 'failed',
       }
       handleAuthorizationError(error)
@@ -328,7 +330,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (streamController !== undefined) return
     const accessToken = auth.accessToken
     if (accessToken === undefined) {
-      connection.value = { message: 'No authenticated session is available.', type: 'failed' }
+      connection.value = { message: t('chat.error.noAuthenticatedSession'), type: 'failed' }
       return
     }
 
@@ -356,7 +358,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     while (!isAborted(controller.signal)) {
       const accessToken = auth.accessToken
       if (accessToken === undefined) {
-        connection.value = { message: 'No authenticated session is available.', type: 'failed' }
+        connection.value = { message: t('chat.error.noAuthenticatedSession'), type: 'failed' }
         break
       }
 
@@ -370,8 +372,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
               (run.value.type === 'running' || run.value.type === 'sending')
             ) {
               run.value = { type: 'idle' }
-              sendError.value =
-                'The live stream reconnected. Output from the interrupted run may be incomplete.'
+              sendError.value = t('chat.error.reconnectedIncomplete')
             }
             attempt = 0
             connection.value = { type: 'connected' }
@@ -389,14 +390,14 @@ const useActiveSessionStore = defineStore('active-session', () => {
         }
         if (error instanceof ApiError && error.status === 401) {
           connection.value = {
-            message: 'The chat session is no longer authorized.',
+            message: t('chat.error.noLongerAuthorized'),
             type: 'failed',
           }
           auth.requireLogin()
           break
         }
         if (error instanceof ApiContractError) {
-          connection.value = { message: 'Nox sent an invalid chat event.', type: 'failed' }
+          connection.value = { message: t('chat.error.invalidEvent'), type: 'failed' }
           break
         }
 
@@ -464,7 +465,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     } catch (error) {
       items.value = items.value.filter((candidate) => candidate !== item)
       if (isSending(messageId)) run.value = { type: 'idle' }
-      sendError.value = messageFor(error)
+      sendError.value = messageFor(error, t)
       if (error instanceof ApiError && error.code === 'chat_unavailable') {
         connection.value = { type: 'unavailable' }
       }
@@ -490,7 +491,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
       })
       return true
     } catch (error) {
-      sendError.value = resourceMessageFor(error, `run /${command}`)
+      sendError.value = resourceMessageFor(error, t('chat.action.runCommand', { command }), t)
       if (error instanceof ApiError && error.code === 'chat_unavailable') {
         connection.value = { type: 'unavailable' }
       }
@@ -513,7 +514,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
         requestId,
       })
     } catch (error) {
-      item.state = { message: messageFor(error), type: 'failed' }
+      item.state = { message: messageFor(error, t), type: 'failed' }
       if (error instanceof ApiError && error.status === 401) auth.requireLogin()
     }
   }
@@ -620,7 +621,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
           if (event.status === 'failed') {
             if (run.value.type !== 'failed') {
               run.value = {
-                message: 'The run ended before Nox could complete it.',
+                message: t('chat.error.runEndedEarly'),
                 turnId: event.turnId,
                 type: 'failed',
               }
@@ -1046,39 +1047,37 @@ function eventSignature(event: ChatEvent): string | undefined {
   }
 }
 
-function messageFor(error: unknown): string {
+type Translate = (
+  key: string,
+  parameters?: Readonly<Record<string, boolean | number | string>>,
+) => string
+
+function messageFor(error: unknown, t: Translate): string {
   if (error instanceof ApiError && error.code === 'chat_unavailable') {
-    return 'The internal chat transport is temporarily unavailable.'
+    return t('chat.error.transportUnavailable')
   }
-  if (error instanceof ApiError && error.status === 401) {
-    return 'Your session is no longer authorized.'
-  }
-  if (error instanceof ApiConnectionError) {
-    return 'The Nox node did not answer.'
-  }
-  return 'The message could not be handed to Nox.'
+  if (error instanceof ApiError && error.status === 401) return t('chat.error.sessionUnauthorized')
+  if (error instanceof ApiConnectionError) return t('chat.error.nodeDidNotAnswer')
+  return t('chat.error.messageNotHandedOff')
 }
 
-function resourceMessageFor(error: unknown, action: string): string {
+function resourceMessageFor(error: unknown, action: string, t: Translate): string {
   if (error instanceof ApiError && error.code === 'chat_unavailable') {
-    return 'The internal chat transport is temporarily unavailable.'
+    return t('chat.error.transportUnavailable')
   }
   if (error instanceof ApiError && error.code === 'conversation_not_found') {
-    return 'That conversation no longer exists.'
+    return t('chat.error.conversationMissing')
   }
   if (error instanceof ApiError && error.code === 'invalid_arguments') {
-    return `Nox rejected the arguments supplied to ${action}.`
+    return t('chat.error.invalidArguments', { action })
   }
   if (error instanceof ApiError && error.code === 'unknown_command') {
-    return 'That command is no longer available.'
+    return t('chat.error.commandUnavailable')
   }
-  if (error instanceof ApiError && error.status === 401) {
-    return 'Your session is no longer authorized.'
-  }
-  if (error instanceof ApiContractError)
-    return `Nox returned invalid data while trying to ${action}.`
-  if (error instanceof ApiConnectionError) return 'The Nox node did not answer.'
-  return `Could not ${action}.`
+  if (error instanceof ApiError && error.status === 401) return t('chat.error.sessionUnauthorized')
+  if (error instanceof ApiContractError) return t('chat.error.invalidData', { action })
+  if (error instanceof ApiConnectionError) return t('chat.error.nodeDidNotAnswer')
+  return t('chat.error.couldNotAction', { action })
 }
 
 function isAborted(signal: AbortSignal): boolean {

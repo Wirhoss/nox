@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 
 import { useActiveSessionStore } from '../stores/activeSession.store'
@@ -13,6 +14,7 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 const SUPPORTED_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp'])
 
 const session = useActiveSessionStore()
+const { t } = useI18n()
 const text = ref('')
 const attachments = ref<ChatMediaPart[]>([])
 const attachmentError = ref<string>()
@@ -35,28 +37,32 @@ const canSubmit = computed(
   () => session.canSend && (text.value.trim().length > 0 || attachments.value.length > 0),
 )
 const buttonLabel = computed(() => {
-  if (attachments.value.length === 0 && text.value.trimStart().startsWith('/')) return 'Run command'
-  return session.sendMode === 'steer' ? 'Steer' : 'Execute'
+  if (attachments.value.length === 0 && text.value.trimStart().startsWith('/')) {
+    return t('chat.composer.runCommand')
+  }
+  return session.sendMode === 'steer' ? t('chat.composer.steer') : t('chat.composer.execute')
 })
 const placeholder = computed(() =>
   session.sendMode === 'steer'
-    ? 'Change direction while Nox is working...'
-    : 'Tell Nox what needs to be done...',
+    ? t('chat.composer.steerPlaceholder')
+    : t('chat.composer.placeholder'),
 )
 const status = computed(() => {
   switch (session.run.type) {
     case 'failed':
-      return 'Run failed'
+      return t('chat.run.failed')
     case 'idle':
-      return session.connection.type === 'connected' ? 'Ready' : 'Waiting for link'
+      return session.connection.type === 'connected'
+        ? t('chat.run.ready')
+        : t('chat.run.waitingLink')
     case 'running':
-      return 'Nox is working · send to steer'
+      return t('chat.run.workingSteer')
     case 'sending':
-      return session.run.mode === 'steer' ? 'Steering active run' : 'Handing message to Nox'
+      return session.run.mode === 'steer' ? t('chat.run.steering') : t('chat.run.handingMessage')
     case 'waiting-permission':
-      return 'Waiting for authorization'
+      return t('chat.run.waitingAuthorization')
   }
-  return 'Unavailable'
+  return t('common.unavailable')
 })
 
 async function submit(): Promise<void> {
@@ -93,15 +99,15 @@ async function chooseFiles(event: Event): Promise<void> {
 
   for (const file of files) {
     if (attachments.value.length >= MAX_ATTACHMENTS) {
-      attachmentError.value = `Attach at most ${String(MAX_ATTACHMENTS)} images per message.`
+      attachmentError.value = t('chat.attachment.tooMany', { count: MAX_ATTACHMENTS })
       break
     }
     if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
-      attachmentError.value = `${file.name} is not a supported image format.`
+      attachmentError.value = t('chat.attachment.unsupported', { file: file.name })
       continue
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      attachmentError.value = `${file.name} is larger than 5 MiB.`
+      attachmentError.value = t('chat.attachment.tooLarge', { file: file.name })
       continue
     }
 
@@ -114,7 +120,7 @@ async function chooseFiles(event: Event): Promise<void> {
         },
       ]
     } catch {
-      attachmentError.value = `${file.name} could not be read.`
+      attachmentError.value = t('chat.attachment.couldNotRead', { file: file.name })
     }
   }
   input.value = ''
@@ -124,12 +130,12 @@ function fileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onerror = () => {
-      reject(reader.error ?? new Error(`Could not read ${file.name}.`))
+      reject(reader.error ?? new Error(t('chat.attachment.readError', { file: file.name })))
     }
     reader.onload = () => {
       const value = reader.result
       if (typeof value !== 'string') {
-        reject(new Error(`Could not encode ${file.name}.`))
+        reject(new Error(t('chat.attachment.encodeError', { file: file.name })))
         return
       }
       resolve(value.slice(value.indexOf(',') + 1))
@@ -187,7 +193,7 @@ function parseCommand(
   const match = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]+))?$/.exec(value)
   const command = match?.[1]
   if (command === undefined || !session.commands.some((entry) => entry.name === command)) {
-    return 'Choose a command published by this Nox.'
+    return t('chat.command.choosePublished')
   }
 
   const serializedArguments = match?.[2]
@@ -196,11 +202,11 @@ function parseCommand(
   try {
     const parsed: unknown = JSON.parse(serializedArguments)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return 'Command arguments must be a JSON object.'
+      return t('chat.command.argumentsObject')
     }
     return { arguments: parsed as Readonly<Record<string, unknown>>, command }
   } catch {
-    return 'Command arguments must be valid JSON.'
+    return t('chat.command.argumentsValidJson')
   }
 }
 
@@ -220,7 +226,7 @@ function onKeydown(event: KeyboardEvent): void {
       {{ attachmentError }}
     </p>
 
-    <label class="composer__label" for="chat-message">Tell Nox what needs to be done</label>
+    <label class="composer__label" for="chat-message">{{ t('chat.composer.label') }}</label>
     <textarea
       id="chat-message"
       v-model="text"
@@ -232,15 +238,19 @@ function onKeydown(event: KeyboardEvent): void {
       @keydown="onKeydown"
     ></textarea>
 
-    <ul v-if="attachments.length > 0" class="composer__attachments" aria-label="Attachments">
+    <ul
+      v-if="attachments.length > 0"
+      class="composer__attachments"
+      :aria-label="t('chat.attachment.attachments')"
+    >
       <li v-for="(part, index) in attachments" :key="index">
-        <img :src="attachmentUrl(part)" alt="Selected image preview" />
+        <img :src="attachmentUrl(part)" :alt="t('chat.attachment.preview')" />
         <button
           type="button"
-          :aria-label="`Remove image ${String(index + 1)}`"
+          :aria-label="t('chat.attachment.removeNumber', { number: index + 1 })"
           @click="removeAttachment(index)"
         >
-          Remove
+          {{ t('common.remove') }}
         </button>
       </li>
     </ul>
@@ -260,22 +270,22 @@ function onKeydown(event: KeyboardEvent): void {
             :aria-expanded="commandsOpen"
             @click="toggleCommands()"
           >
-            Commands · {{ session.commands.length }}
+            {{ t('chat.command.commands') }} · {{ session.commands.length }}
           </button>
 
           <section
             v-if="commandsOpen"
             id="command-picker-menu"
             class="composer__command-menu"
-            aria-label="Available commands"
+            :aria-label="t('chat.command.available')"
           >
             <label class="composer__command-search">
-              <span>Find a command</span>
+              <span>{{ t('chat.command.find') }}</span>
               <input
                 ref="commandSearch"
                 v-model="commandQuery"
                 type="search"
-                placeholder="Search by name or description…"
+                :placeholder="t('chat.command.searchPlaceholder')"
               />
             </label>
 
@@ -287,15 +297,16 @@ function onKeydown(event: KeyboardEvent): void {
                 </button>
               </li>
             </ul>
-            <p v-else class="composer__command-empty">No matching commands.</p>
+            <p v-else class="composer__command-empty">{{ t('chat.command.noMatches') }}</p>
 
             <p class="composer__command-help">
-              Arguments use JSON: <code>/command {&quot;key&quot;:&quot;value&quot;}</code>
+              {{ t('chat.command.argumentsHelp') }}
+              <code>/command {&quot;key&quot;:&quot;value&quot;}</code>
             </p>
           </section>
         </div>
 
-        <span>WEB CONVERSATION</span>
+        <span>{{ t('chat.conversation.web') }}</span>
         <span>{{ status }}</span>
       </div>
       <div class="composer__actions">
@@ -313,7 +324,7 @@ function onKeydown(event: KeyboardEvent): void {
           :disabled="!session.canSend || attachments.length >= MAX_ATTACHMENTS"
           @click="fileInput?.click()"
         >
-          Attach image
+          {{ t('chat.attachment.attachImage') }}
         </button>
         <ContextGauge :usage="session.contextUsage" />
         <NoxButton :busy="session.run.type === 'sending'" :disabled="!canSubmit" @click="submit()">
@@ -364,7 +375,7 @@ function onKeydown(event: KeyboardEvent): void {
 .composer__attachments button {
   position: absolute;
   top: var(--nox-space-1);
-  right: var(--nox-space-1);
+  inset-inline-end: var(--nox-space-1);
   padding: 0.15rem 0.3rem;
   border: 1px solid var(--nox-border-strong);
   color: var(--nox-text-primary);
@@ -427,7 +438,7 @@ function onKeydown(event: KeyboardEvent): void {
   position: absolute;
   z-index: var(--nox-layer-overlay);
   bottom: calc(100% + var(--nox-space-3));
-  left: 0;
+  inset-inline-start: 0;
   display: grid;
   width: min(32rem, calc(100vw - var(--nox-space-8)));
   max-height: min(22rem, 52vh);
@@ -495,7 +506,7 @@ function onKeydown(event: KeyboardEvent): void {
   color: var(--nox-text-secondary);
   background: transparent;
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 

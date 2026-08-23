@@ -1,21 +1,23 @@
 import { AuthActionError } from '@/app/stores/auth.store'
 
-function authErrorMessage(error: unknown): string {
-  if (!(error instanceof AuthActionError)) {
-    return 'Nox rejected the request unexpectedly. Try again.'
-  }
+import type { MessageParameters } from '@/shared/i18n'
+
+type Translate = (key: string, parameters?: MessageParameters) => string
+
+function authErrorMessage(error: unknown, t: Translate): string {
+  if (!(error instanceof AuthActionError)) return t('auth.error.rejectedUnexpectedly')
 
   switch (error.code) {
     case 'already-registered':
-      return 'This Nox was claimed by another request. Sign in with the registered identity.'
+      return t('auth.error.alreadyRegistered')
     case 'invalid-code':
-      return 'The claim code is invalid or expired. Check the current Nox container logs.'
+      return t('auth.error.invalidCode')
     case 'invalid-credentials':
-      return 'Identity or password is incorrect.'
+      return t('auth.error.invalidCredentials')
     case 'unavailable':
-      return 'The Nox node stopped responding. Check the runtime and try again.'
+      return t('auth.error.unavailable')
     case 'unexpected':
-      return 'Nox returned an unexpected response. Try again or open diagnostics.'
+      return t('auth.error.unexpectedResponse')
   }
 }
 

@@ -11,15 +11,14 @@ import ProviderEditor from '@/features/settings/components/ProviderEditor.vue'
 import SecretsManager from '@/features/settings/components/SecretsManager.vue'
 import SettingsNavigation from '@/features/settings/components/SettingsNavigation.vue'
 import ToolSetEditor from '@/features/settings/components/ToolSetEditor.vue'
-import {
-  SETTINGS_SECTIONS,
-  settingsSection,
-} from '@/features/settings/model/sections'
+import { SETTINGS_SECTIONS, settingsSection } from '@/features/settings/model/sections'
 import { useSettingsStore } from '@/features/settings/stores/settings.store'
+import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 
 const route = useRoute()
+const { t } = useI18n()
 const router = useRouter()
 const settings = useSettingsStore()
 const slug = computed(() => routeParam('section') ?? 'general')
@@ -90,28 +89,30 @@ function routeParam(name: string): string | undefined {
       <div v-if="settings.resource.type === 'loading'" class="settings__loading">
         <span aria-hidden="true"></span>
         <div>
-          <p>CONFIG LINK // READING</p>
-          <h2>Loading {{ definition?.plural.toLowerCase() }}</h2>
+          <p>{{ t('settings.loading.link') }}</p>
+          <h2>{{ t('settings.loading.section', { section: t(definition?.plural ?? '') }) }}</h2>
         </div>
       </div>
 
       <div v-else-if="settings.resource.type === 'failed'" class="settings__failure">
-        <NoxNotice title="Settings surface unavailable" tone="danger">
+        <NoxNotice :title="t('settings.error.surfaceUnavailable')" tone="danger">
           <div class="settings__failure-body">
             <p>{{ settings.resource.message }}</p>
-            <NoxButton variant="secondary" @click="retry()">Retry configuration link</NoxButton>
+            <NoxButton variant="secondary" @click="retry()">{{
+              t('settings.error.retryLink')
+            }}</NoxButton>
           </div>
         </NoxNotice>
       </div>
 
       <div v-else-if="!targetExists" class="settings__failure">
-        <NoxNotice title="Configuration entry not found" tone="danger">
+        <NoxNotice :title="t('settings.error.entryNotFound')" tone="danger">
           <div class="settings__failure-body">
             <p>
-              <code>{{ entryId }}</code> is not present in this section.
+              {{ t('settings.error.entryAbsent', { entry: entryId ?? '' }) }}
             </p>
             <NoxButton variant="secondary" @click="openSection()">
-              Return to {{ definition?.plural }}
+              {{ t('settings.error.returnTo', { section: t(definition?.plural ?? '') }) }}
             </NoxButton>
           </div>
         </NoxNotice>
@@ -134,9 +135,7 @@ function routeParam(name: string): string | undefined {
       />
 
       <AgentEditor
-        v-else-if="
-          section?.key === 'blueprints' && (creating || entryId !== undefined)
-        "
+        v-else-if="section?.key === 'blueprints' && (creating || entryId !== undefined)"
         :creating="creating"
         :definition="definition"
         :entry-id="entryId"

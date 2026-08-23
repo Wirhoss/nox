@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../../../../application';
+import { translationFragments } from '../../../contribution-points/languages';
 import { providers } from '../../../contribution-points/providers';
 import { openAIExtension } from './extension';
 import { OpenAICompletions } from './openAICompletions';
@@ -18,6 +19,24 @@ describe('openAIExtension', () => {
     const contribution = app.contributions.get(providers, 'openai_completions');
 
     expect(contribution?.extensionId).toBe('nox.provider.openai');
+    await app.stop();
+  });
+
+  test('owns every locale for its own UI namespace', async () => {
+    const app = await started();
+
+    const english = app.contributions.get(translationFragments, 'nox.provider.openai.en');
+    const spanish = app.contributions.get(translationFragments, 'nox.provider.openai.es');
+
+    expect(english?.extensionId).toBe('nox.provider.openai');
+    expect(english?.value.namespace).toBe('nox.provider.openai');
+    expect(english?.value.messages['ui.baseUrl']).toBe('Base URL');
+    expect(spanish?.extensionId).toBe('nox.provider.openai');
+    expect(spanish?.value.namespace).toBe('nox.provider.openai');
+    expect(spanish?.value.messages['ui.baseUrl']).toBe('URL base');
+    expect(Object.keys(spanish?.value.messages ?? {}).sort()).toEqual(
+      Object.keys(english?.value.messages ?? {}).sort(),
+    );
     await app.stop();
   });
 
