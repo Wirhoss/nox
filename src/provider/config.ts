@@ -4,6 +4,8 @@ import { SecretHandle, secretRefSchema } from '../config/secrets';
 import { httpUrlSchema } from '../config/url';
 import { CONTENT_MODALITIES, type ContentModality } from '../content/content';
 
+import type { ArtifactOutputPublisher } from '../artifact/output';
+
 const samplingParametersConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
   maxTokens: z.number().int().positive().optional(),
@@ -98,7 +100,10 @@ const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
   signal: z.instanceof(AbortSignal).optional(),
 });
 
-type TextGenerateOptions = z.infer<typeof textGenerateOptionsSchema>;
+interface TextGenerateOptions extends z.infer<typeof textGenerateOptionsSchema> {
+  /** Present only for a user-facing run; internal title and compaction calls cannot publish files. */
+  readonly artifactOutput?: ArtifactOutputPublisher;
+}
 
 export {
   chatModelConfigSchema,

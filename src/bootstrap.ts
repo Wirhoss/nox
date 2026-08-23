@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path';
 import { Agent } from './agent/agent';
 import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
+import { WEB_BROKER_ID } from './api/chat/id';
 import { ChatHub } from './api/chat/transport';
 import { ConfigStore } from './api/config/store';
 import { type ApiAuth, ApiServer } from './api/server';
@@ -19,6 +20,7 @@ import { Database } from './database/database';
 import { WebBroker } from './extensions/builtin/brokers/web/webBroker';
 import { englishLanguageExtension } from './extensions/builtin/languages/en/extension';
 import { spanishLanguageExtension } from './extensions/builtin/languages/es/extension';
+import { sharpImageExtension } from './extensions/builtin/processors/sharp/extension';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { authorities } from './extensions/contribution-points/authorities';
@@ -41,8 +43,6 @@ import type { ApiConfig } from './api/serverConfig';
 import type { Blueprint, TaskModelConfig } from './config/blueprint';
 import type { ModelConfig } from './provider/config';
 import type { ChatProvider } from './provider/provider';
-
-const WEB_BROKER_ID = 'web';
 
 interface BootstrapOptions {
   env?: EnvSource;
@@ -106,6 +106,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     extensions: [
       englishLanguageExtension,
       spanishLanguageExtension,
+      sharpImageExtension,
       openAIExtension,
       webToolsExtension,
     ],
@@ -156,6 +157,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   try {
     const catalog = await composeAgents(
       application,
+      artifactPipeline,
       config,
       database,
       env.configDir,
@@ -269,6 +271,7 @@ function buildAuthorityCatalog(application: NoxApplication): AuthorityCatalog {
 /** Activates the extensions and registers one agent per blueprint on disk. */
 async function composeAgents(
   application: NoxApplication,
+  artifacts: ArtifactPipeline,
   config: Config,
   database: Database,
   configDir: string,
@@ -315,6 +318,7 @@ async function composeAgents(
     application.addAgent(
       new Agent(database, provider, model, {
         agentId,
+        artifacts,
         authorities: catalog,
         compactionModel: compactionModel.model,
         compactionProvider: compactionModel.provider,

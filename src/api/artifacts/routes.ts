@@ -2,16 +2,24 @@ import { Elysia } from 'elysia';
 import { z } from 'zod';
 
 import {
+  artifactConversationScope,
   artifactIdSchema,
   type ArtifactPipeline,
   artifactRef,
   ArtifactTooLargeError,
 } from '../../artifact';
 import { authGuard } from '../auth/guard';
+import { WEB_BROKER_ID } from '../chat/id';
 
 import type { AuthStore } from '../auth/store';
 
 const artifactParamsSchema = z.object({ artifactId: artifactIdSchema });
+const artifactQuerySchema = z.object({
+  conversationId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional(),
+});
 const INVALID_UPLOAD = { error: 'invalid_artifact_upload' } as const;
 const ARTIFACT_NOT_FOUND = { error: 'artifact_not_found' } as const;
 
@@ -70,12 +78,18 @@ function createArtifactRoutes(options: ArtifactRoutesOptions) {
     )
     .get(
       '/artifacts/:artifactId/content',
-      async ({ account, params, status }) => {
-        const scope = { id: account.accountId, type: 'account' as const };
-        const record = await artifacts.find(params.artifactId, scope);
+      async ({ account, params, query, status }) => {
+        const accountScope = { id: account.accountId, type: 'account' as const };
+        let record = await artifacts.find(params.artifactId, accountScope);
+        if (record === undefined && query.conversationId !== undefined) {
+          record = await artifacts.find(
+            params.artifactId,
+            artifactConversationScope(WEB_BROKER_ID, query.conversationId),
+          );
+        }
         if (record === undefined) return status(404, ARTIFACT_NOT_FOUND);
 
-        const payload = await artifacts.open(record.artifactId, scope);
+        const payload = await artifacts.open(record.artifactId, record.scope);
         return new Response(payload.stream, {
           headers: {
             'cache-control': 'private, max-age=31536000, immutable',
@@ -87,7 +101,11 @@ function createArtifactRoutes(options: ArtifactRoutesOptions) {
           },
         });
       },
-      { authenticated: true, params: artifactParamsSchema },
+      {
+        authenticated: true,
+        params: artifactParamsSchema,
+        query: artifactQuerySchema,
+      },
     );
 }
 

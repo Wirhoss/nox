@@ -58,6 +58,22 @@ async function* succeeds(text: string) {
 }
 
 // eslint-disable-next-line @typescript-eslint/require-await
+async function* artifactBetweenText() {
+  yield { text: 'download ', type: 'textFragment' as const };
+  yield {
+    artifact: {
+      artifactId: 'art_12345678',
+      filename: 'answer.txt',
+      mediaType: 'text/plain',
+      size: 6,
+    },
+    type: 'artifact' as const,
+  };
+  yield { text: 'ready', type: 'textFragment' as const };
+  yield { type: 'end' as const };
+}
+
+// eslint-disable-next-line @typescript-eslint/require-await
 async function* reasonsThenCallsTool() {
   yield { text: 'thinking', type: 'reasoningFragment' as const };
   yield {
@@ -79,6 +95,28 @@ async function collect(provider: ChatProvider): Promise<ProviderStreamEvent[]> {
 }
 
 describe('ChatProvider output normalization', () => {
+  test('materializes text and durable artifact references in provider order', async () => {
+    const provider = new ScriptedProvider([artifactBetweenText]);
+    const stream = provider.getMessageStream('system', [], []);
+    for await (const _event of stream) {
+      // Artifact output is discrete and appears in the settled assistant message.
+    }
+
+    expect(await stream.completed).toMatchObject([
+      {
+        content: [
+          { text: 'download ', type: 'text' },
+          {
+            artifact: { artifactId: 'art_12345678', filename: 'answer.txt' },
+            type: 'artifact',
+          },
+          { text: 'ready', type: 'text' },
+        ],
+        role: 'assistant',
+      },
+    ]);
+  });
+
   test('materializes an assistant anchor for reasoning followed by tool calls', async () => {
     const provider = new ScriptedProvider([reasonsThenCallsTool]);
     const stream = provider.getMessageStream('system', [], []);

@@ -119,13 +119,38 @@ X-Artifact-Filename: diagram.webp
 Messages carry `{ "type": "artifact", "artifact": { … } }`. The chat ingress resolves that ID again
 under the authenticated account and replaces every client-supplied metadata field with the canonical
 record before it reaches the transcript. Bytes are read back through the authenticated
-`GET /api/artifacts/:artifactId/content` route. The web client fetches that content as a blob; it never
-turns a file into base64 JSON.
+`GET /api/artifacts/:artifactId/content` route. Conversation-owned output includes its conversation ID
+in that authenticated request. The web client fetches the response as a blob; it never turns a file
+into base64 JSON.
 
-Artifact and model modality are intentionally different concepts. Every model receives an explicit
-textual artifact reference. When an artifact is an image and the selected model declares image input,
-the OpenAI adapter additionally materializes its stored bytes as visual input. A text-only model keeps
-the reference instead of failing before it can choose a future file tool.
+The path is bidirectional. Every user-facing run receives a host-owned `ArtifactOutputSink`, exposed to
+a provider as `TextGenerateOptions.artifactOutput` and to an executing tool as
+`ToolContext.artifacts`. A producer streams bytes into `publish(...)`; Nox, not the producer, assigns
+the conversation scope and provider/tool provenance, and returns a `ContentArtifact` containing only
+the canonical reference. Native provider output enters the normalized stream as an `artifact` event.
+Artifacts returned by successful tools are promoted onto the final assistant reply, so they remain
+visible outside collapsed tool activity. Assistant messages, the transcript, brokers and the UI all
+carry the same reference, and later model calls replay it as a stable descriptor.
+
+Artifact and model modality are intentionally different concepts. Consumers resolve bytes through a
+versioned representation profile: accepted media types, an optional size ceiling, and deterministic
+transform parameters. A compatible original is returned unchanged. Otherwise the pipeline chooses a
+registered processor by explicit priority and stable ID, writes its output through the same streaming
+content-addressed store, and caches the rendition by source hash, source media type, complete profile,
+and processor version. Concurrent requests share the cache entry, while conflicting output under one
+processor version is rejected as a determinism violation. SQLite still contains metadata only.
+
+Every model receives an explicit textual artifact reference. When the selected model declares image
+input, the OpenAI adapter asks for its concrete image profile and materializes the resolved bytes as
+visual input. If no compatible rendition exists, it keeps the descriptor instead of discarding the
+attachment or sending an unsupported encoding. A text-only model never materializes it.
+
+The first concrete processor is the builtin `nox.processor.sharp` extension. It registers Sharp through
+the same public processor registry available to future implementations; neither the artifact pipeline
+nor OpenAI imports it. It can normalize SVG, AVIF, GIF, JPEG, PNG, TIFF and WebP into a profile's
+preferred PNG, JPEG, WebP, GIF or AVIF representation, with bounded resize, fit, position, background,
+quality and orientation parameters. Processing is streamed, timed out, pixel-limited, metadata-stripped
+and cache-versioned with both the Sharp and libvips versions.
 
 ### Models for internal tasks
 
@@ -393,7 +418,7 @@ repo or fail without taking the process down.
 | Configurable tool-set contributions and blueprint grants | Ported and tested |
 | SearXNG search and Crawl4AI extraction builtin tool set | Ported and tested |
 | Message gateway, and the `web` broker over the HTTP surface | Built and tested |
-| Artifact pipeline — streamed ingestion, SHA-256 blob deduplication, scoped references and authenticated delivery | Built and tested |
+| Artifact pipeline — bidirectional streamed ingestion/output, SHA-256 blob deduplication, conversation-scoped references, deterministic rendition cache, Sharp image processing and authenticated delivery | Built and tested |
 
 Deferred, each with the trigger that un-defers it, in
 [NOX.md](NOX.md#v1-scope): extension machinery, memory, web UI, message brokers,

@@ -1,3 +1,4 @@
+import { CORE_OWNER_ID } from '../auth/authority';
 import { ROUTER_TOOL_NAMES, ToolRouter } from '../tool/router';
 import { bindTool, type Tool, type ToolSetGrant } from '../tool/tool';
 
@@ -55,6 +56,21 @@ function snapshotToolSets(
         throw new Error(`${kind} tool ${name} is granted by more than one tool set.`);
       }
       authorities.assertKnown(source.authority, `${kind} tool "${name}" in set "${toolSetId}"`);
+
+      // Trust is a claim about whose writing the output is, so an extension
+      // declaring its own output trusted is the whole attack in one line. The
+      // catalog already knows who owns an authority, and only the core owns
+      // tools whose output the core itself composed.
+      if (
+        source.trust === 'trusted' &&
+        authorities.get(source.authority)?.ownerExtensionId !== CORE_OWNER_ID
+      ) {
+        throw new Error(
+          `${kind} tool ${name} in set ${toolSetId} declares trusted output, which only ` +
+            'tools under a core-owned authority may do.',
+        );
+      }
+
       tools.set(name, bindTool(source, toolSetId));
     }
   }

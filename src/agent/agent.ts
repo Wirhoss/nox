@@ -1,6 +1,8 @@
 import { Session } from './session';
 import { composeSessionTools } from './tools';
 
+import type { ArtifactPipeline } from '../artifact/pipeline';
+import type { ArtifactScope } from '../artifact/types';
 import type { AuthorityCatalog } from '../auth/authority';
 import type { AuthorizationProvider } from '../auth/authorization';
 import type { Database } from '../database/database';
@@ -19,6 +21,8 @@ interface AgentOptions extends RunnerOptions {
    * when somebody eventually calls it.
    */
   authorities: AuthorityCatalog;
+  /** Durable storage used only when a session also receives an explicit output scope. */
+  artifacts?: ArtifactPipeline;
   /**
    * Who this agent is. Every session it opens is stored under it, so a
    * transcript stays attributable to the prompt and tools that produced it.
@@ -44,6 +48,8 @@ interface AgentOptions extends RunnerOptions {
 }
 
 interface OpenSessionOptions {
+  /** Ownership assigned to files generated in this concrete conversation. */
+  artifactScope?: ArtifactScope;
   /**
    * Where this conversation's authority comes from. It belongs to the surface
    * that opened the session — a broker knows its own issuer and its own people —
@@ -63,6 +69,7 @@ interface OpenSessionOptions {
  */
 class Agent {
   readonly #agentId: string;
+  readonly #artifacts?: ArtifactPipeline;
   readonly #authorities: AuthorityCatalog;
   readonly #compactionModel: ModelConfig;
   readonly #compactionProvider: ChatProvider;
@@ -90,6 +97,7 @@ class Agent {
     options: AgentOptions,
   ) {
     this.#agentId = options.agentId;
+    this.#artifacts = options.artifacts;
     this.#authorities = options.authorities;
     this.#compactionModel = options.compactionModel ?? model;
     this.#compactionProvider = options.compactionProvider ?? provider;
@@ -133,6 +141,7 @@ class Agent {
     return Session.open(this.#database, this.#provider, this.#model, {
       ...options,
       agentId: this.#agentId,
+      ...(this.#artifacts === undefined ? {} : { artifacts: this.#artifacts }),
       authorities: this.#authorities,
       // The model's own window is the budget unless the agent overrode it.
       compactionProvider: this.#compactionProvider,

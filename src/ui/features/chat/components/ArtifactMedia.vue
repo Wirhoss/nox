@@ -5,6 +5,7 @@ import { useAuthStore } from '@/app/stores/auth.store'
 import { useI18n } from '@/shared/i18n'
 
 import { readArtifact } from '../api/artifact.api'
+import { useActiveSessionStore } from '../stores/activeSession.store'
 
 import type { ChatMediaPart } from '../api/chat.schemas'
 
@@ -14,6 +15,7 @@ interface Props {
 
 const props = defineProps<Props>()
 const auth = props.part.type === 'artifact' ? useAuthStore() : undefined
+const session = props.part.type === 'artifact' ? useActiveSessionStore() : undefined
 const { t } = useI18n()
 const loadedUrl = ref<string>()
 const failed = ref(false)
@@ -44,8 +46,8 @@ function revoke(): void {
 }
 
 watch(
-  () => artifact.value?.artifactId,
-  async (artifactId) => {
+  () => [artifact.value?.artifactId, session?.conversationId] as const,
+  async ([artifactId, conversationId]) => {
     version += 1
     const loading = version
     revoke()
@@ -60,7 +62,7 @@ watch(
     }
 
     try {
-      const blob = await readArtifact(artifactId, accessToken)
+      const blob = await readArtifact(artifactId, accessToken, conversationId)
       if (loading !== version) return
       objectUrl = URL.createObjectURL(blob)
       loadedUrl.value = objectUrl

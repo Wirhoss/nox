@@ -6,6 +6,13 @@ import {
   type ToolCallMessage,
   userContentForModel,
 } from '../../../../agent/context/message';
+import {
+  type ArtifactPipeline,
+  ArtifactProcessorOutputError,
+  type ArtifactRef,
+  ArtifactRepresentationUnavailableError,
+  type RepresentationProfile,
+} from '../../../../artifact';
 import { modalitiesIn } from '../../../../content/content';
 import { type Logger, silentLogger } from '../../../../logger/logger';
 import {
@@ -19,7 +26,6 @@ import { ProviderError, type ProviderErrorCode } from '../../../../provider/erro
 import { ChatProvider } from '../../../../provider/provider';
 import { toolParametersSchema } from '../../../../tool/render';
 
-import type { ArtifactPipeline, ArtifactRef } from '../../../../artifact';
 import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
 import type { Tool } from '../../../../tool/tool';
 
@@ -107,6 +113,13 @@ interface OpenAIErrorDetails {
 }
 
 const OPENAI_PROVIDER = 'openai_completions';
+
+const OPENAI_IMAGE_PROFILE = Object.freeze({
+  id: 'openai.chat.image-input',
+  maxBytes: 20 * 1024 * 1024,
+  mediaTypes: Object.freeze(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+  version: 1,
+}) satisfies RepresentationProfile;
 
 const MAX_ERROR_DETAIL_LENGTH = 500;
 
@@ -579,10 +592,10 @@ class OpenAICompletions extends ChatProvider {
           part.artifact.mediaType.startsWith('image/') &&
           (model === undefined || modelAcceptsInput(model, 'image'))
         ) {
-          parts.push({
-            image_url: { url: await this.artifactDataUrl(part.artifact) },
-            type: 'image_url',
-          });
+          const imageUrl = await this.artifactDataUrl(part.artifact);
+          if (imageUrl !== undefined) {
+            parts.push({ image_url: { url: imageUrl }, type: 'image_url' });
+          }
         }
         continue;
       }
@@ -611,7 +624,7 @@ class OpenAICompletions extends ChatProvider {
     );
   }
 
-  private async artifactDataUrl(reference: ArtifactRef): Promise<string> {
+  private async artifactDataUrl(reference: ArtifactRef): Promise<string | undefined> {
     if (this.artifacts === undefined) {
       throw new ProviderError(
         'invalid_request',
@@ -620,9 +633,32 @@ class OpenAICompletions extends ChatProvider {
       );
     }
 
-    const payload = await this.artifacts.open(reference.artifactId);
-    const bytes = Buffer.from(await new Response(payload.stream).arrayBuffer());
-    return `data:${payload.artifact.mediaType};base64,${bytes.toString('base64')}`;
+    try {
+      const payload = await this.artifacts.resolve(reference.artifactId, OPENAI_IMAGE_PROFILE);
+      const bytes = Buffer.from(await new Response(payload.stream).arrayBuffer());
+      return `data:${payload.representation.mediaType};base64,${bytes.toString('base64')}`;
+    } catch (error) {
+      const fields = {
+        artifactId: reference.artifactId,
+        mediaType: reference.mediaType,
+        profileId: OPENAI_IMAGE_PROFILE.id,
+      };
+      if (error instanceof ArtifactRepresentationUnavailableError) {
+        this.logger.debug(
+          fields,
+          'No compatible visual rendition is available; sending the artifact descriptor only.',
+        );
+        return undefined;
+      }
+      if (error instanceof ArtifactProcessorOutputError) {
+        this.logger.warn(
+          { ...fields, err: error },
+          'Visual rendition failed; sending the artifact descriptor only.',
+        );
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private assertInputModalities(model: ModelConfig, history: readonly Message[]): void {
@@ -648,8 +684,11 @@ class OpenAICompletions extends ChatProvider {
 
   private toAssistantText(content: readonly MessageContent[]): null | string {
     const text = content
-      .filter((part) => part.type === 'text')
-      .map((part) => part.text)
+      .map((part) => {
+        if (part.type === 'text') return part.text;
+        if (part.type === 'artifact') return this.artifactDescriptor(part.artifact);
+        return `[${part.type} output: ${part.source.url}]\n`;
+      })
       .join('');
     return text.length > 0 ? text : null;
   }

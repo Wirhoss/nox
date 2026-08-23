@@ -16,6 +16,8 @@ import {
 import { prepareToolCall, type ToolExecution, type ToolExecutionSubject } from '../tool/tool';
 import { freezeMessage, freezeValue } from './context/immutable';
 
+import type { ArtifactOutputHost } from '../artifact/output';
+import type { ArtifactRef } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
 import type { Logger } from '../logger/logger';
@@ -52,6 +54,8 @@ interface RunnerOptions {
 }
 
 interface RunnerConstructionOptions extends RunnerOptions {
+  /** Host-bound file output. Absent for internal or deliberately text-only sessions. */
+  artifactOutputs?: ArtifactOutputHost;
   /** Where both halves of the decision pipeline write their one timeline. */
   audit?: DecisionAuditSink;
   /** Every authority this Nox knows. Absent means nothing can be authorized. */
@@ -125,6 +129,7 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
  * wake anything.
  */
 class Runner {
+  readonly #artifactOutputs?: ArtifactOutputHost;
   readonly #audit?: DecisionAuditSink;
   readonly #authorities?: AuthorityCatalog;
   readonly #authorization?: AuthorizationProvider;
@@ -137,6 +142,7 @@ class Runner {
   readonly #participants: ConversationParticipants;
   readonly #pendingOperations = new Map<string, PendingOwnedOperation>();
   readonly #provider: ChatProvider;
+  readonly #publishedArtifacts = new Map<string, ArtifactRef>();
   readonly #sessionId: string;
 
   /** Waiting to enter the context: user messages and deferred results alike. */
@@ -159,6 +165,7 @@ class Runner {
     model: ModelConfig,
     options: RunnerConstructionOptions,
   ) {
+    this.#artifactOutputs = options.artifactOutputs;
     this.#audit = options.audit;
     this.#authorities = options.authorities;
     this.#authorization = options.authorization;
@@ -266,6 +273,9 @@ class Runner {
     }
 
     for (const { message } of this.#queue.splice(0, owned)) {
+      if (message.role === 'toolResponse' && message.isError !== true) {
+        this.#collectPublishedArtifacts(message.response);
+      }
       this.#context.addMessage(message);
     }
   }
@@ -346,6 +356,7 @@ class Runner {
   /** One run, under one authority, from one entry on the queue. */
   async #runTurn(authority: RunAuthority, trigger: RunTrigger): Promise<RunStatus> {
     this.#run = new AbortController();
+    this.#publishedArtifacts.clear();
 
     const runId = nanoid();
     // Fixed here and read by every tool call this run makes. Nothing that lands
@@ -374,11 +385,13 @@ class Runner {
       // that uncommitted call can ever execute.
       this.#run.abort(failure);
       this.#discardUnpublishedOperations(runId);
+      this.#flushPublishedArtifacts();
       this.#logger?.error({ err: failure, modelId: this.#model.modelId }, 'Agent run failed.');
       this.#events.push({ error: failure, type: 'error' });
       this.#finish(runId, 'failed', startedAt, usage);
       return 'failed';
     } finally {
+      this.#publishedArtifacts.clear();
       this.#run = undefined;
     }
   }
@@ -401,11 +414,27 @@ class Runner {
     // Usage reported at the end belongs to this exact input snapshot, not to
     // the assistant output or tool results appended while the call is running.
     const requestTokenEstimate = this.#context.getTokenEstimate();
+    const signal = this.#runSignal();
+    const artifactOutput = this.#artifactOutputs?.publisher(
+      {
+        details: {
+          modelId: this.#model.modelId,
+          runId: this.#currentRunId(),
+          sessionId: this.#sessionId,
+        },
+        type: 'provider',
+      },
+      signal,
+    );
     const stream = this.#provider.getMessageStream(
       this.#context.getSystemPrompt(),
       [...this.#context.getHistory()],
       Object.values(this.#context.getTools()),
-      { model: this.#model, signal: this.#runSignal() },
+      {
+        ...(artifactOutput === undefined ? {} : { artifactOutput }),
+        model: this.#model,
+        signal,
+      },
     );
 
     const responses: Promise<ToolResponseMessage>[] = [];
@@ -418,7 +447,9 @@ class Runner {
             this.#context.recordInputUsage(event.usage.inputTokens, requestTokenEstimate);
             this.#recordUsage(usage, event.usage);
           }
-          for (const message of event.messages) this.#context.addMessage(message);
+          const messages =
+            responses.length === 0 ? this.#withPublishedArtifacts(event.messages) : event.messages;
+          for (const message of messages) this.#context.addMessage(message);
           break;
         }
         case 'error': {
@@ -463,6 +494,53 @@ class Runner {
     this.#events.push({ type: 'usage', usage: call });
   }
 
+  #collectPublishedArtifacts(content: readonly MessageContent[]): void {
+    for (const part of content) {
+      if (part.type === 'artifact') {
+        this.#publishedArtifacts.set(part.artifact.artifactId, part.artifact);
+      }
+    }
+  }
+
+  #withPublishedArtifacts(messages: readonly Message[]): Message[] {
+    if (this.#publishedArtifacts.size === 0) return [...messages];
+
+    const attached = new Set(
+      messages.flatMap((message) =>
+        message.role === 'assistant'
+          ? message.content.flatMap((part) =>
+              part.type === 'artifact' ? [part.artifact.artifactId] : [],
+            )
+          : [],
+      ),
+    );
+    const output = [...this.#publishedArtifacts.values()].filter(
+      (artifact) => !attached.has(artifact.artifactId),
+    );
+    this.#publishedArtifacts.clear();
+    if (output.length === 0) return [...messages];
+
+    const result = [...messages];
+    const target = result.findLastIndex((message) => message.role === 'assistant');
+    const parts = output.map((artifact) => ({ artifact, type: 'artifact' as const }));
+    const assistant = result[target];
+    if (assistant?.role === 'assistant') {
+      result[target] = { ...assistant, content: [...assistant.content, ...parts] };
+    } else {
+      result.push({
+        content: parts,
+        createdAt: new Date(),
+        messageId: nanoid(),
+        role: 'assistant',
+      });
+    }
+    return result;
+  }
+
+  #flushPublishedArtifacts(): void {
+    for (const message of this.#withPublishedArtifacts([])) this.#context.addMessage(message);
+  }
+
   async #runLoop(usage: Usage): Promise<RunStatus> {
     const { principal } = this.#authority();
 
@@ -472,11 +550,15 @@ class Runner {
 
       const responses = await this.#request(usage);
       for (const response of responses) {
+        if (response.isError !== true) this.#collectPublishedArtifacts(response.response);
         this.#context.addMessage(response);
         this.#publishPendingOperation(response.messageId);
       }
 
-      if (this.#runSignal().aborted) return 'aborted';
+      if (this.#runSignal().aborted) {
+        this.#flushPublishedArtifacts();
+        return 'aborted';
+      }
 
       if (responses.length === 0) {
         // The model answered instead of asking for another tool, so it has
@@ -488,6 +570,10 @@ class Runner {
         if (!this.#hasOwnQueued(principal)) return 'completed';
       }
     }
+
+    // Published output is durable even when the model never got one final turn
+    // to mention it; the iteration ceiling must not make a completed file vanish.
+    this.#flushPublishedArtifacts();
 
     // Not a failure, but the reply is probably cut off mid-thought.
     this.#logger?.warn(
@@ -507,7 +593,7 @@ class Runner {
     if (tool === undefined) {
       // The model asked for something it was never given: a wiring problem.
       this.#logger?.warn({ toolName: call.name }, 'Tool call requested an unknown tool.');
-      return this.#toolResponse(call, 'immediate', `Tool ${call.name} not found.`, true);
+      return this.#failureResponse(call, 'immediate', `Tool ${call.name} not found.`);
     }
 
     const startedAt = Date.now();
@@ -526,11 +612,10 @@ class Runner {
           { toolName: call.name },
           'Refused a tool call that carries no execution subject.',
         );
-        return this.#toolResponse(
+        return this.#failureResponse(
           call,
           'immediate',
           `Tool ${call.name} is not bound to a tool set, so it cannot be authorized.`,
-          true,
         );
       }
 
@@ -549,25 +634,43 @@ class Runner {
       // run would still start background work, and the abort would be a lie.
       if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
 
+      const outputSignal = execution.type === 'deferred' ? this.#session.signal : this.#runSignal();
+      const artifacts = this.#artifactOutputs?.publisher(
+        {
+          details: {
+            runId: this.#currentRunId(),
+            sessionId: this.#sessionId,
+            toolName: call.name,
+            trackId: call.trackId,
+          },
+          type: 'tool',
+        },
+        outputSignal,
+      );
+      const toolContext = {
+        abortSignal: outputSignal,
+        ...(artifacts === undefined ? {} : { artifacts }),
+      };
+
       if (execution.type === 'deferred') {
         // Authorization and the Gate are behind us, so the whole deferred
         // operation is approved. The ack and the result that follow are not new
         // executions and are never authorized again.
-        const { ack, result } = await execution.run({ abortSignal: this.#session.signal });
+        const { ack, result } = await execution.run(toolContext);
         this.#trackDeferred(call, result, this.#authority());
         this.#logger?.debug(
           { durationMs: Date.now() - startedAt, toolName: call.name },
           'Deferred tool acknowledged.',
         );
-        return this.#toolResponse(call, 'deferredAck', ack, false);
+        return this.#toolOutputResponse(call, 'deferredAck', ack, subject);
       }
 
-      const response = await execution.run({ abortSignal: this.#runSignal() });
+      const response = await execution.run(toolContext);
       this.#logger?.debug(
         { durationMs: Date.now() - startedAt, toolName: call.name },
         'Tool call completed.',
       );
-      return this.#toolResponse(call, 'immediate', response, false);
+      return this.#toolOutputResponse(call, 'immediate', response, subject);
     } catch (error) {
       if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
 
@@ -577,11 +680,10 @@ class Runner {
         { durationMs: Date.now() - startedAt, err: error, toolName: call.name },
         'Tool call failed.',
       );
-      return this.#toolResponse(
+      return this.#failureResponse(
         call,
         'immediate',
         `Error executing tool ${call.name}: ${toError(error).message}`,
-        true,
       );
     }
   }
@@ -615,12 +717,11 @@ class Runner {
 
     // No permission request follows. Someone without `use` has not asked a
     // question a human could answer; there is nothing to put a button on.
-    return this.#toolResponse(
+    return this.#failureResponse(
       call,
       'immediate',
       `Tool call not authorized: ${decision.reason} ` +
         'Do not retry; this needs a change of permissions, not a different attempt.',
-      true,
     );
   }
 
@@ -703,11 +804,10 @@ class Runner {
     if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
     if (decision.verdict === 'allow') return undefined;
     if (decision.verdict === 'deny') {
-      return this.#toolResponse(
+      return this.#failureResponse(
         call,
         'immediate',
         `Tool call denied by policy: ${decision.reason} Do not retry unless the user changes the request.`,
-        true,
       );
     }
 
@@ -719,23 +819,21 @@ class Runner {
         { authority: subject.authority, toolName: subject.toolName },
         'Denied an escalation on a system run: there is no originator to ask.',
       );
-      return this.#toolResponse(
+      return this.#failureResponse(
         call,
         'immediate',
         `Tool call not executed: ${decision.reason} ` +
           'This run has no human originator, and approval cannot be delegated.',
-        true,
       );
     }
 
     const pending = this.#gate.requestPermission(request, decision, this.#runSignal());
     if (!pending.accepted) {
-      return this.#toolResponse(
+      return this.#failureResponse(
         call,
         'immediate',
         'Tool call not executed: this principal already has the maximum number of pending ' +
           'permission requests in this session.',
-        true,
       );
     }
 
@@ -758,11 +856,10 @@ class Runner {
     this.#emitPermissionResolved(pending, waited.resolution, request.runId);
     if (waited.resolution.resolution === 'approved') return undefined;
 
-    return this.#toolResponse(
+    return this.#failureResponse(
       call,
       'immediate',
       Runner.#permissionFailure(decision.reason, waited.resolution),
-      true,
     );
   }
 
@@ -1007,18 +1104,50 @@ class Runner {
       { toolName: call.name },
       'Skipped a tool call whose run was aborted before it could settle.',
     );
-    return this.#toolResponse(
+    return this.#failureResponse(
       call,
       'immediate',
       `Tool ${call.name} was not executed: the run was aborted before it settled.`,
-      true,
     );
   }
 
-  #toolResponse(
+  /**
+   * Nox saying why a call did not produce output: unknown tool, refused
+   * authority, policy denial, timeout, abort, thrown error. Trusted, because
+   * this is the system speaking — fencing these as untrusted data would tell the
+   * model to disregard the very messages it most needs to act on.
+   *
+   * Every response Nox writes itself is one of these, which is why it does not
+   * take an `isError`: if Nox is the author, something went wrong.
+   */
+  #failureResponse(
     call: ToolCallMessage,
     execution: ToolResponseExecution,
-    response: readonly MessageContent[] | string,
+    message: string,
+  ): ToolResponseMessage {
+    return this.#response(call, execution, [{ text: message, type: 'text' }], 'trusted', true);
+  }
+
+  /**
+   * A response carrying what a tool returned. It reads trust off the execution's
+   * own subject rather than off an argument, so tool output cannot be recorded
+   * without the verdict the tool declared — and on a routed call that subject is
+   * the routed tool's, not `call_tool`'s.
+   */
+  #toolOutputResponse(
+    call: ToolCallMessage,
+    execution: ToolResponseExecution,
+    response: readonly MessageContent[],
+    subject: ToolExecutionSubject,
+  ): ToolResponseMessage {
+    return this.#response(call, execution, response, subject.trust, false);
+  }
+
+  #response(
+    call: ToolCallMessage,
+    execution: ToolResponseExecution,
+    response: readonly MessageContent[],
+    trust: ToolOutputTrust,
     isError: boolean,
   ): ToolResponseMessage {
     return {
@@ -1027,9 +1156,10 @@ class Runner {
       isError,
       messageId: nanoid(),
       name: call.name,
-      response: typeof response === 'string' ? [{ text: response, type: 'text' }] : response,
+      response,
       role: 'toolResponse',
       trackId: call.trackId,
+      trust,
     };
   }
 

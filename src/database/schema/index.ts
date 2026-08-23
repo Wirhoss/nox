@@ -1,5 +1,6 @@
 import { accounts } from './accounts';
 import { artifactBlobs } from './artifactBlobs';
+import { artifactRenditions } from './artifactRenditions';
 import { artifacts } from './artifacts';
 import { authSessions } from './authSessions';
 import { conversations } from './conversations';
@@ -13,6 +14,7 @@ import { sessions } from './sessions';
 const schema = {
   accounts,
   artifactBlobs,
+  artifactRenditions,
   artifacts,
   authSessions,
   conversations,
@@ -24,6 +26,7 @@ const schema = {
 
 export { accounts } from './accounts';
 export { artifactBlobs } from './artifactBlobs';
+export { artifactRenditions } from './artifactRenditions';
 export { artifacts } from './artifacts';
 export { authSessions } from './authSessions';
 export { conversations } from './conversations';
@@ -35,6 +38,7 @@ export { sessions } from './sessions';
 
 export type { AccountRow, AccountRowInsert } from './accounts';
 export type { ArtifactBlobRow, ArtifactBlobRowInsert } from './artifactBlobs';
+export type { ArtifactRenditionRow, ArtifactRenditionRowInsert } from './artifactRenditions';
 export type { ArtifactRow, ArtifactRowInsert } from './artifacts';
 export type { AuthSessionRow, AuthSessionRowInsert } from './authSessions';
 export type { ConversationRow, ConversationRowInsert } from './conversations';

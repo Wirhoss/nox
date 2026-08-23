@@ -1,8 +1,9 @@
 import { nanoid } from 'nanoid';
 
+import { type ArtifactRef, artifactRefSchema } from '../artifact/types';
 import { type ProviderError, toProviderError } from './error';
 
-import type { Message, ToolCallMessage } from '../agent/context/message';
+import type { Message, MessageContent, ToolCallMessage } from '../agent/context/message';
 
 interface Usage {
   cacheReadTokens?: number;
@@ -13,6 +14,7 @@ interface Usage {
 type ToolCallDraft = Omit<ToolCallMessage, 'createdAt' | 'messageId'>;
 
 type ProviderSourceEvent =
+  | { type: 'artifact'; artifact: ArtifactRef }
   | { type: 'end'; usage?: Usage }
   | { type: 'error'; error: ProviderError }
   | { type: 'reasoningFragment'; text: string }
@@ -106,35 +108,45 @@ class ProviderStream {
     const messages: Message[] = [];
     const iterator = this.source[Symbol.asyncIterator]();
 
+    const assistantContent: MessageContent[] = [];
+    let assistantStartedAt: number | undefined;
     let reasoningAccumulated = '';
     let reasoningStartedAt: number | undefined;
     let textAccumulated = '';
     let textStartedAt: number | undefined;
     let assistantMaterialized = false;
 
-    /** Materializes buffered fragments so order matches arrival order. */
+    const flushReasoning = (): void => {
+      if (reasoningAccumulated.length === 0) return;
+      messages.push({
+        content: [{ text: reasoningAccumulated, type: 'text' }],
+        createdAt: this.stamp(reasoningStartedAt),
+        messageId: nanoid(),
+        role: 'reasoning',
+      });
+      reasoningAccumulated = '';
+      reasoningStartedAt = undefined;
+    };
+    const flushText = (): void => {
+      if (textAccumulated.length === 0) return;
+      assistantStartedAt ??= textStartedAt;
+      assistantContent.push({ text: textAccumulated, type: 'text' });
+      textAccumulated = '';
+      textStartedAt = undefined;
+    };
+    /** Materializes buffered fragments and discrete outputs as one assistant turn. */
     const flush = (): void => {
-      if (reasoningAccumulated.length > 0) {
-        messages.push({
-          content: [{ text: reasoningAccumulated, type: 'text' }],
-          createdAt: this.stamp(reasoningStartedAt),
-          messageId: nanoid(),
-          role: 'reasoning',
-        });
-        reasoningAccumulated = '';
-        reasoningStartedAt = undefined;
-      }
-      if (textAccumulated.length > 0) {
-        messages.push({
-          content: [{ text: textAccumulated, type: 'text' }],
-          createdAt: this.stamp(textStartedAt),
-          messageId: nanoid(),
-          role: 'assistant',
-        });
-        assistantMaterialized = true;
-        textAccumulated = '';
-        textStartedAt = undefined;
-      }
+      flushReasoning();
+      flushText();
+      if (assistantContent.length === 0) return;
+      messages.push({
+        content: assistantContent.splice(0),
+        createdAt: this.stamp(assistantStartedAt),
+        messageId: nanoid(),
+        role: 'assistant',
+      });
+      assistantMaterialized = true;
+      assistantStartedAt = undefined;
     };
 
     let onAbort: (() => void) | undefined;
@@ -168,6 +180,18 @@ class ProviderStream {
         const event = result.value;
 
         switch (event.type) {
+          case 'artifact': {
+            // Bytes were already committed through the run-bound output sink. Only
+            // their durable reference enters the provider-independent transcript.
+            flushReasoning();
+            flushText();
+            assistantStartedAt ??= Date.now();
+            assistantContent.push({
+              artifact: artifactRefSchema.parse(event.artifact),
+              type: 'artifact',
+            });
+            break;
+          }
           case 'end': {
             await iterator.return?.();
             flush();
@@ -185,6 +209,8 @@ class ProviderStream {
             break;
           }
           case 'retry': {
+            assistantContent.length = 0;
+            assistantStartedAt = undefined;
             reasoningAccumulated = '';
             reasoningStartedAt = undefined;
             textAccumulated = '';

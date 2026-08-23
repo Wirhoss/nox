@@ -1,10 +1,13 @@
 import { InvalidToolParamsError, UnknownToolError } from './error';
 
 import type { MessageContent } from '../agent/context/message';
+import type { ArtifactOutputPublisher } from '../artifact/output';
 import type { z } from 'zod';
 
 interface ToolContext {
   abortSignal: AbortSignal;
+  /** A host-scoped path for durable, user-facing file output. */
+  artifacts?: ArtifactOutputPublisher;
 }
 
 type ToolEffect =
@@ -20,6 +23,17 @@ type ToolEffect =
   | 'write';
 
 type ToolResourceKind = 'account' | 'command' | 'file' | 'payment' | 'url';
+
+/**
+ * Whether what a tool returns may be read as instructions.
+ *
+ * `untrusted` is the answer for anything a tool fetched, scraped, received or
+ * read back — which is almost everything, and is why it is what a tool that says
+ * nothing gets. `trusted` is for the few core tools whose output Nox composes
+ * itself out of its own state, and it is not something an extension may claim:
+ * see `snapshotToolSets`.
+ */
+type ToolOutputTrust = 'trusted' | 'untrusted';
 
 interface ToolResource {
   readonly kind: ToolResourceKind;
@@ -47,6 +61,12 @@ interface Tool<T extends z.ZodObject = z.ZodObject> {
   parameters: T;
   prepare(params: z.infer<T>): ToolExecution;
   risk?: ToolRisk;
+  /**
+   * Declared only to claim `trusted`, because that is the only claim worth
+   * making explicitly. Absent means untrusted, so a tool cannot end up trusted
+   * by forgetting to say anything.
+   */
+  trust?: 'trusted';
 }
 
 /**
@@ -60,6 +80,7 @@ interface ToolExecutionSubject {
   readonly params: Readonly<Record<string, unknown>>;
   readonly toolName: string;
   readonly toolSetId: string;
+  readonly trust: ToolOutputTrust;
 }
 
 interface ExecutionBase {
@@ -122,11 +143,15 @@ function mergeRisk(
  * optimization — it is where the authority of a call becomes a fact rather than
  * a lookup.
  *
+ * The subject also carries the tool's output trust, and for the same reason as
+ * its authority: on a routed call the tool the runner is holding is `call_tool`,
+ * so the only place the real tool's answer survives is the subject it stamped.
+ *
  * An execution that already has a subject is left exactly as it is. That is what
  * makes routing work — a routed tool prepared through the router has already
- * stamped its own name and authority, and the router must not overwrite them
- * with its own — and it is what makes binding idempotent, so a tool that passes
- * through two binders does not have its declared risk merged in twice.
+ * stamped its own name, authority and trust, and the router must not overwrite
+ * them with its own — and it is what makes binding idempotent, so a tool that
+ * passes through two binders does not have its declared risk merged in twice.
  */
 function bindTool(source: Tool, toolSetId: string): Tool {
   return Object.freeze({
@@ -142,6 +167,7 @@ function bindTool(source: Tool, toolSetId: string): Tool {
           params,
           toolName: source.name,
           toolSetId,
+          trust: source.trust ?? 'untrusted',
         },
         risk: mergeRisk(source.risk, execution.risk),
       };
@@ -230,6 +256,7 @@ export type {
   ToolEffect,
   ToolExecution,
   ToolExecutionSubject,
+  ToolOutputTrust,
   ToolResource,
   ToolResourceKind,
   ToolRisk,

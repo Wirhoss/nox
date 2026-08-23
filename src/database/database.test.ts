@@ -108,6 +108,7 @@ describe('Database.open', () => {
       .map((row) => row.name);
 
     expect(tables).toContain('artifact_blobs');
+    expect(tables).toContain('artifact_renditions');
     expect(tables).toContain('artifacts');
     expect(tables).toContain('decisions');
     expect(tables).toContain('messages');

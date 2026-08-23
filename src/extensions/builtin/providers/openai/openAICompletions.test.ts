@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { Session } from '../../../../agent/session';
 import { ArtifactPipeline, artifactRef } from '../../../../artifact/pipeline';
+import { ArtifactProcessorRegistry } from '../../../../artifact/processor';
 import { SecretHandle } from '../../../../config/secrets';
 import { Database } from '../../../../database/database';
 import { isProviderError, type ProviderErrorCode } from '../../../../provider/error';
@@ -212,6 +213,35 @@ describe('OpenAICompletions message mapping', () => {
     });
   });
 
+  test('replays assistant artifact output as a stable descriptor', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(provider(), [
+      message({
+        content: [
+          { text: 'Created it.\n', type: 'text' },
+          {
+            artifact: {
+              artifactId: 'art_generated1',
+              filename: 'report.pdf',
+              mediaType: 'application/pdf',
+              size: 42,
+            },
+            type: 'artifact',
+          },
+        ],
+        role: 'assistant',
+      }),
+    ]);
+
+    expect((requests[0]?.body.messages as unknown[])[1]).toEqual({
+      content:
+        'Created it.\n' +
+        '[artifact id="art_generated1" name="report.pdf" media_type="application/pdf" bytes=42]\n',
+      role: 'assistant',
+    });
+  });
+
   test('materializes stored image artifacts only for a model that accepts image input', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nox-openai-artifact-'));
     const database = await Database.open({ path: join(directory, 'nox.db') });
@@ -255,6 +285,165 @@ describe('OpenAICompletions message mapping', () => {
         '[from test-broker:alice]\n' +
           `[artifact id=${JSON.stringify(stored.artifactId)} name="pixel.png" ` +
           'media_type="image/png" bytes=8]\n',
+      );
+    } finally {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may briefly retain a SQLite handle.
+      }
+    }
+  });
+
+  test('resolves an incompatible stored image through the OpenAI image profile', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-openai-rendition-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    try {
+      const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const artifacts = await ArtifactPipeline.open({
+        dataDirectory: directory,
+        database,
+        processorRegistry: new ArtifactProcessorRegistry([
+          {
+            id: 'test.svg-to-png',
+            process: () => ({ data: new Blob([png]), mediaType: 'image/png' }),
+            supports: (source, profile) =>
+              source.mediaType === 'image/svg+xml' && profile.mediaTypes.includes('image/png'),
+            version: '1',
+          },
+        ]),
+      });
+      const stored = await artifacts.ingest({
+        data: new Blob(['<svg xmlns="http://www.w3.org/2000/svg"/>']),
+        declaredMediaType: 'image/svg+xml',
+        filename: 'vector.svg',
+        provenance: { type: 'upload' },
+        scope: { id: 'account-1', type: 'account' },
+      });
+      stubFetch(() => sse(textDelta('hi')));
+
+      await run(
+        provider({}, { artifacts }),
+        [
+          message({
+            content: [{ artifact: artifactRef(stored), type: 'artifact' }],
+            role: 'user',
+          }),
+        ],
+        [],
+        { inputModalities: ['text', 'image'], modelId: 'vision', outputModalities: ['text'] },
+      );
+
+      expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toEqual([
+        { text: '[from test-broker:alice]\n', type: 'text' },
+        {
+          text:
+            `[artifact id=${JSON.stringify(stored.artifactId)} name="vector.svg" ` +
+            `media_type="image/svg+xml" bytes=${String(stored.size)}]\n`,
+          type: 'text',
+        },
+        { image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' }, type: 'image_url' },
+      ]);
+    } finally {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may briefly retain a SQLite handle.
+      }
+    }
+  });
+
+  test('keeps the descriptor when no compatible visual rendition exists', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-openai-unsupported-image-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    try {
+      const artifacts = await ArtifactPipeline.open({ dataDirectory: directory, database });
+      const stored = await artifacts.ingest({
+        data: new Blob(['<svg/>']),
+        declaredMediaType: 'image/svg+xml',
+        filename: 'vector.svg',
+        provenance: { type: 'upload' },
+        scope: { id: 'account-1', type: 'account' },
+      });
+      stubFetch(() => sse(textDelta('hi')));
+
+      await run(
+        provider({}, { artifacts }),
+        [
+          message({
+            content: [{ artifact: artifactRef(stored), type: 'artifact' }],
+            role: 'user',
+          }),
+        ],
+        [],
+        { inputModalities: ['text', 'image'], modelId: 'vision', outputModalities: ['text'] },
+      );
+
+      expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toBe(
+        '[from test-broker:alice]\n' +
+          `[artifact id=${JSON.stringify(stored.artifactId)} name="vector.svg" ` +
+          `media_type="image/svg+xml" bytes=${String(stored.size)}]\n`,
+      );
+    } finally {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may briefly retain a SQLite handle.
+      }
+    }
+  });
+
+  test('keeps the descriptor when image processing fails', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-openai-broken-image-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    try {
+      const artifacts = await ArtifactPipeline.open({
+        dataDirectory: directory,
+        database,
+        processorRegistry: new ArtifactProcessorRegistry([
+          {
+            id: 'test.broken-image',
+            process: () => ({
+              data: (async function* brokenImage() {
+                await Promise.resolve();
+                yield Uint8Array.of(0x01);
+                throw new Error('decode failed');
+              })(),
+              mediaType: 'image/png',
+            }),
+            supports: () => true,
+            version: '1',
+          },
+        ]),
+      });
+      const stored = await artifacts.ingest({
+        data: new Blob(['<svg/>']),
+        declaredMediaType: 'image/svg+xml',
+        filename: 'broken.svg',
+        provenance: { type: 'upload' },
+        scope: { id: 'account-1', type: 'account' },
+      });
+      stubFetch(() => sse(textDelta('hi')));
+
+      await run(
+        provider({}, { artifacts }),
+        [
+          message({
+            content: [{ artifact: artifactRef(stored), type: 'artifact' }],
+            role: 'user',
+          }),
+        ],
+        [],
+        { inputModalities: ['text', 'image'], modelId: 'vision', outputModalities: ['text'] },
+      );
+
+      expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toBe(
+        '[from test-broker:alice]\n' +
+          `[artifact id=${JSON.stringify(stored.artifactId)} name="broken.svg" ` +
+          `media_type="image/svg+xml" bytes=${String(stored.size)}]\n`,
       );
     } finally {
       await database.close();

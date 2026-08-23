@@ -18,15 +18,26 @@ const ZIP_CONTAINER_TYPES = new Set([
 ]);
 
 const EXTENSION_MEDIA_TYPES: Readonly<Record<string, string>> = {
+  '.avif': 'image/avif',
   '.csv': 'text/csv',
   '.epub': 'application/epub+zip',
+  '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
   '.json': 'application/json',
   '.md': 'text/markdown',
+  '.png': 'image/png',
   '.odp': 'application/vnd.oasis.opendocument.presentation',
   '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
   '.odt': 'application/vnd.oasis.opendocument.text',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.svg': 'image/svg+xml',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
   '.txt': 'text/plain',
+  '.webp': 'image/webp',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
@@ -46,6 +57,20 @@ function ascii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
 }
 
+function isoBaseMediaBrands(bytes: Uint8Array): readonly string[] {
+  if (bytes.byteLength < 12 || ascii(bytes, 4, 4) !== 'ftyp') return [];
+  const brands = [ascii(bytes, 8, 4)];
+  for (let offset = 16; offset + 4 <= bytes.byteLength; offset += 4) {
+    brands.push(ascii(bytes, offset, 4));
+  }
+  return brands;
+}
+
+function looksLikeSvg(bytes: Uint8Array): boolean {
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  return /^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg(?:\s|>)/iu.test(text);
+}
+
 /**
  * Deliberately small and deterministic. A richer detector can replace this probe
  * without changing storage; an unrecognised file is still a valid artifact.
@@ -53,6 +78,10 @@ function ascii(bytes: Uint8Array, offset: number, length: number): string {
 function detectMediaType(bytes: Uint8Array): string | undefined {
   if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
   if (startsWith(bytes, [0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (startsWith(bytes, [0x49, 0x49, 0x2a, 0x00]) || startsWith(bytes, [0x4d, 0x4d, 0x00, 0x2a])) {
+    return 'image/tiff';
+  }
+  if (ascii(bytes, 0, 2) === 'BM') return 'image/bmp';
   if (ascii(bytes, 0, 6) === 'GIF87a' || ascii(bytes, 0, 6) === 'GIF89a') return 'image/gif';
   if (ascii(bytes, 0, 4) === 'RIFF' && ascii(bytes, 8, 4) === 'WEBP') return 'image/webp';
   if (ascii(bytes, 0, 4) === 'RIFF' && ascii(bytes, 8, 4) === 'WAVE') return 'audio/wav';
@@ -67,7 +96,13 @@ function detectMediaType(bytes: Uint8Array): string | undefined {
   ) {
     return 'application/zip';
   }
-  if (bytes.byteLength >= 12 && ascii(bytes, 4, 4) === 'ftyp') return 'video/mp4';
+  const brands = isoBaseMediaBrands(bytes);
+  if (brands.some((brand) => brand === 'avif' || brand === 'avis')) return 'image/avif';
+  if (brands.some((brand) => ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand))) {
+    return 'image/heif';
+  }
+  if (brands.length > 0) return 'video/mp4';
+  if (looksLikeSvg(bytes)) return 'image/svg+xml';
   if (startsWith(bytes, [0x4d, 0x5a])) return 'application/vnd.microsoft.portable-executable';
   return undefined;
 }

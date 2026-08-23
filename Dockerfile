@@ -19,6 +19,18 @@ COPY package.json bun.lock ./
 COPY src/ui/package.json ./src/ui/package.json
 RUN bun install --frozen-lockfile --ignore-scripts
 
+# --- runtime deps ----------------------------------------------------------
+# Sharp is a native Node-API module and cannot live inside the Bun bundle. Keep
+# only production dependencies for the root workspace, installed for the target
+# image platform so its matching libvips binary is present at runtime.
+FROM ${BUN_IMAGE} AS runtime-deps
+
+WORKDIR /build
+
+COPY package.json bun.lock ./
+COPY src/ui/package.json ./src/ui/package.json
+RUN bun install --frozen-lockfile --ignore-scripts --linker=hoisted --omit peer --production --filter nox
+
 # --- build -----------------------------------------------------------------
 FROM ${BUN_IMAGE} AS build
 
@@ -32,6 +44,7 @@ COPY --from=deps /build/src/ui/node_modules ./src/ui/node_modules
 RUN bun build ./index.ts \
       --target=bun \
       --outfile ./dist/nox.js \
+      --external sharp \
       --minify-whitespace \
       --minify-syntax \
  && bun --cwd=src/ui run build-only \
@@ -56,6 +69,7 @@ RUN addgroup -g 10001 nox \
  && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
 
 COPY --from=build --chown=root:root /build/dist/nox.js /app/nox.js
+COPY --from=runtime-deps --chown=root:root /build/node_modules /app/node_modules
 COPY --from=build --chown=root:root /build/dist/migrations /app/migrations
 COPY --from=build --chown=root:root /build/src/ui/dist /app/ui
 

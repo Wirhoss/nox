@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 const ARTIFACT_SCOPE_TYPES = ['account', 'conversation', 'session', 'system'] as const;
-const ARTIFACT_PROVENANCE_TYPES = ['broker', 'derived', 'tool', 'upload'] as const;
+const ARTIFACT_PROVENANCE_TYPES = ['broker', 'derived', 'provider', 'tool', 'upload'] as const;
 
 const mediaTypeSchema = z
   .string()

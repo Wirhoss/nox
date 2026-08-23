@@ -10,6 +10,8 @@ import {
   type ContentVideo,
 } from '../../content/content';
 
+import type { ToolOutputTrust } from '../../tool/tool';
+
 interface MessageBase {
   readonly createdAt: Date;
   readonly messageId: string;
@@ -76,12 +78,20 @@ const TOOL_RESPONSE_EXECUTIONS = [
 
 type ToolResponseExecution = (typeof TOOL_RESPONSE_EXECUTIONS)[number];
 
+/**
+ * `trust` says whose writing `response` is, and it is not optional: it is fixed
+ * when the response is recorded, from the subject of the execution that produced
+ * it, and it is what decides whether the content is fenced on its way to a model
+ * — see `toolResponseContentForModel`. A response Nox wrote itself is trusted; a
+ * response a tool returned is whatever that tool declared.
+ */
 interface ToolResponseMessage extends MessageBase {
   readonly role: 'toolResponse';
   readonly name: string;
   readonly trackId: string;
   readonly execution: ToolResponseExecution;
   readonly response: readonly MessageContent[];
+  readonly trust: ToolOutputTrust;
   readonly isError?: boolean;
 }
 

@@ -3,18 +3,13 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { stableStringify } from '../utils/json';
-import { mediaTypeSchema } from './types';
-
-import type { ArtifactPayload, ArtifactRecord } from './types';
+import { type ArtifactRecord, mediaTypeSchema } from './types';
 
 const representationProfileIdSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(
-    /^[a-z0-9][a-z0-9._/-]{0,127}$/u,
-    'Use a stable lowercase representation profile ID.',
-  );
+  .regex(/^[a-z0-9][a-z0-9._/-]{0,127}$/u, 'Use a stable lowercase representation profile ID.');
 
 const mediaRangeSchema = z
   .string()
@@ -31,7 +26,7 @@ const mediaRangeSchema = z
 
 const representationParameterSchema = z.union([
   z.boolean(),
-  z.number().finite(),
+  z.number(),
   z.string().max(4_096),
   z.null(),
 ]);
@@ -39,18 +34,25 @@ const representationParameterSchema = z.union([
 const representationProfileSchema = z
   .object({
     id: representationProfileIdSchema,
-    maxBytes: z.number().int().positive().safe().optional(),
+    maxBytes: z.number().int().positive().optional(),
     mediaTypes: z.array(mediaRangeSchema).min(1).max(32),
     transform: z
       .record(z.string().trim().min(1).max(64), representationParameterSchema)
       .refine((value) => Object.keys(value).length <= 64, 'Use at most 64 transform parameters.')
       .optional(),
-    version: z.number().int().positive().safe(),
+    version: z.number().int().positive(),
   })
   .strict();
 
-type RepresentationParameter = z.infer<typeof representationParameterSchema>;
-type RepresentationProfile = z.infer<typeof representationProfileSchema>;
+type RepresentationParameter = boolean | null | number | string;
+
+interface RepresentationProfile {
+  readonly id: string;
+  readonly maxBytes?: number;
+  readonly mediaTypes: readonly string[];
+  readonly transform?: Readonly<Record<string, RepresentationParameter>>;
+  readonly version: number;
+}
 
 interface ArtifactOriginalRepresentation {
   readonly blobHash: string;
@@ -79,7 +81,7 @@ interface ArtifactRenditionRepresentation {
 
 type ArtifactRepresentation = ArtifactOriginalRepresentation | ArtifactRenditionRepresentation;
 
-interface ArtifactResolvedPayload extends Omit<ArtifactPayload, 'stream'> {
+interface ArtifactResolvedPayload {
   readonly artifact: ArtifactRecord;
   readonly representation: ArtifactRepresentation;
   readonly stream: ReadableStream<Uint8Array>;

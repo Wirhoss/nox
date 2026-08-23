@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 
+import { ArtifactOutputSink } from '../artifact/output';
 import { ConversationParticipants } from '../auth/conversation';
 import { type DecisionRecord, SessionStore } from '../database/sessionStore';
 import {
@@ -14,6 +15,8 @@ import { Context } from './context/context';
 import { Runner, type RunnerOptions, type RunnerState } from './runner';
 import { generateTitle } from './title';
 
+import type { ArtifactPipeline } from '../artifact/pipeline';
+import type { ArtifactScope } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
 import type { AuthorizationProvider } from '../auth/authorization';
@@ -29,6 +32,9 @@ import type { AgentEvent } from './events';
 interface SessionOptions extends RunnerOptions {
   /** The agent holding the conversation, stored so the transcript stays attributable. */
   agentId: string;
+  /** Host storage and ownership for user-facing files produced during this session. */
+  artifacts?: ArtifactPipeline;
+  artifactScope?: ArtifactScope;
   /** Every authority this Nox knows. Absent means nothing can be authorized. */
   authorities?: AuthorityCatalog;
   /** Held as a reference and consulted per call, never snapshotted here. */
@@ -155,7 +161,12 @@ class Session {
         passthrough: options.gate === undefined,
       },
     );
+    const artifactOutputs =
+      options.artifacts === undefined || options.artifactScope === undefined
+        ? undefined
+        : new ArtifactOutputSink(options.artifacts, options.artifactScope);
     this.#runner = new Runner(this.#context, this.#events, provider, model, {
+      ...(artifactOutputs === undefined ? {} : { artifactOutputs }),
       audit,
       authorities: options.authorities,
       authorization: options.authorization,

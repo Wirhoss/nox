@@ -18,10 +18,21 @@ async function uploadArtifact(file: File, accessToken: string): Promise<Artifact
   })
 }
 
-async function readArtifact(artifactId: string, accessToken: string): Promise<Blob> {
-  const response = await requestStream(`/artifacts/${encodeURIComponent(artifactId)}/content`, {
-    headers: authorization(accessToken),
-  })
+async function readArtifact(
+  artifactId: string,
+  accessToken: string,
+  conversationId?: string,
+): Promise<Blob> {
+  const query =
+    conversationId === undefined
+      ? ''
+      : `?conversationId=${encodeURIComponent(conversationId)}`
+  const response = await requestStream(
+    `/artifacts/${encodeURIComponent(artifactId)}/content${query}`,
+    {
+      headers: authorization(accessToken),
+    },
+  )
   return response.blob()
 }
 

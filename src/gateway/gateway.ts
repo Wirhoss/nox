@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 
+import { artifactConversationScope } from '../artifact/output';
 import { hasUsableContent, textFromContent } from '../content/content';
 import { type ConversationKey, ConversationStore } from '../database/conversationStore';
 import { SessionStore } from '../database/sessionStore';
@@ -603,6 +604,7 @@ class Gateway implements MessageGateway {
     }
 
     const session = await this.#application.openSession(binding.agentId, {
+      artifactScope: artifactConversationScope(grant.brokerId, conversationId),
       authorization: binding.authorization,
       metadata: { brokerId: grant.brokerId, conversationId },
       sessionId: bound?.sessionId,

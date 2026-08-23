@@ -127,6 +127,11 @@ class ToolRouter extends ToolSet {
         title: `Search tools — ${query}`,
         type: 'immediate',
       }),
+      // The rendered catalog is Nox describing its own tool table. It is the
+      // same text that already sits unfenced in the request head for direct
+      // tools, so fencing it here would only make one half of the tool table
+      // look like somebody else's writing.
+      trust: 'trusted',
     };
 
     this.registerTool(callTool);

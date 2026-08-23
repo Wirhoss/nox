@@ -130,6 +130,42 @@ describe('bootstrap', () => {
     expect(application.getAgent('nox')?.systemPrompt).toBe('be exact');
   });
 
+  test('registers Sharp as the first concrete artifact processor', async () => {
+    const application = await boot();
+    const artifacts = application.services.get(artifactPipelineService);
+    const stored = await artifacts.ingest({
+      data: new Blob([
+        '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2"/></svg>',
+      ]),
+      declaredMediaType: 'image/svg+xml',
+      provenance: { type: 'upload' },
+      scope: { id: 'bootstrap-test', type: 'system' },
+    });
+
+    const imageProfile = {
+      id: 'test.bootstrap.image',
+      mediaTypes: ['image/png'],
+      version: 1,
+    } as const;
+    const resolved = await artifacts.resolve(stored.artifactId, imageProfile);
+    const bytes = new Uint8Array(await new Response(resolved.stream).arrayBuffer());
+
+    expect(resolved.representation.type).toBe('rendition');
+    if (resolved.representation.type !== 'rendition') throw new Error('Expected a rendition.');
+    expect(resolved.representation.processor.id).toBe('nox.image.sharp');
+    expect(resolved.representation.mediaType).toBe('image/png');
+    expect([...bytes.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    await application.stop();
+    booted = undefined;
+    expect(
+      artifacts.processors.select(
+        { blobHash: stored.blobHash, mediaType: stored.mediaType, size: stored.size },
+        imageProfile,
+      ),
+    ).toBeUndefined();
+  });
+
   test('wires a contributed tool-set instance into a blueprint', async () => {
     const application = await boot({
       blueprints: {

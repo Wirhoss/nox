@@ -106,9 +106,21 @@ class ApiServer implements Disposable {
     });
     const logger = options.logger ?? silentLogger;
 
-    const api = new Elysia({ name: 'nox.api', prefix: API_PREFIX }).use(
-      health({ checks: options.checks, version: options.version }),
-    );
+    const api = new Elysia({ name: 'nox.api', prefix: API_PREFIX })
+      .onError({ as: 'global' }, ({ code, error, request }) => {
+        if (code !== 'UNKNOWN' && code !== 'INTERNAL_SERVER_ERROR') return;
+        logger.error(
+          {
+            code,
+            err: error,
+            method: request.method,
+            path: new URL(request.url).pathname,
+            stack: error.stack,
+          },
+          'Unhandled API request error.',
+        );
+      })
+      .use(health({ checks: options.checks, version: options.version }));
     if (options.languages !== undefined) {
       api.use(
         languageRoutes({ configuredLocale: options.locale, contributions: options.languages }),

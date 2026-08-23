@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import type { ArtifactByteSource } from './types';
 import type { RepresentationProfile } from './representation';
+import type { ArtifactByteSource } from './types';
 
 const artifactProcessorIdSchema = z
   .string()
@@ -45,7 +45,13 @@ interface ArtifactProcessor {
    * Mechanically transforms bytes. For one source, profile, processor ID and
    * version this must always produce the same bytes and media type.
    */
-  process(input: ArtifactProcessorInput): ArtifactProcessorOutput | Promise<ArtifactProcessorOutput>;
+  process(
+    input: ArtifactProcessorInput,
+  ): ArtifactProcessorOutput | Promise<ArtifactProcessorOutput>;
+}
+
+interface ArtifactProcessorRegistration {
+  dispose(): void;
 }
 
 interface RegisteredProcessor {
@@ -61,9 +67,12 @@ class ArtifactProcessorRegistry {
     for (const processor of processors) this.register(processor);
   }
 
-  public register(processor: ArtifactProcessor): () => void {
+  public register(processor: ArtifactProcessor): ArtifactProcessorRegistration {
     const id = artifactProcessorIdSchema.parse(processor.id);
-    artifactProcessorVersionSchema.parse(processor.version);
+    const version = artifactProcessorVersionSchema.parse(processor.version);
+    if (processor.id !== id || processor.version !== version) {
+      throw new Error('Artifact processor IDs and versions must already be in canonical form.');
+    }
     const priority = processor.priority ?? 0;
     if (!Number.isSafeInteger(priority)) {
       throw new RangeError(`Artifact processor "${id}" priority must be a safe integer.`);
@@ -72,14 +81,23 @@ class ArtifactProcessorRegistry {
       throw new Error(`Artifact processor "${id}" is already registered.`);
     }
 
-    const registered = Object.freeze({ priority, processor });
+    const stableProcessor: ArtifactProcessor = Object.freeze({
+      id,
+      priority,
+      process: processor.process.bind(processor),
+      supports: processor.supports.bind(processor),
+      version,
+    });
+    const registered = Object.freeze({ priority, processor: stableProcessor });
     this.#processors.set(id, registered);
     let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      if (this.#processors.get(id) === registered) this.#processors.delete(id);
-    };
+    return Object.freeze({
+      dispose: () => {
+        if (!active) return;
+        active = false;
+        if (this.#processors.get(id) === registered) this.#processors.delete(id);
+      },
+    });
   }
 
   public select(
@@ -88,22 +106,21 @@ class ArtifactProcessorRegistry {
   ): ArtifactProcessor | undefined {
     return [...this.#processors.values()]
       .filter(({ processor }) => processor.supports(source, profile))
-      .sort(
-        (left, right) =>
-          right.priority - left.priority || left.processor.id.localeCompare(right.processor.id),
-      )[0]?.processor;
+      .sort((left, right) => {
+        const priorityDifference = right.priority - left.priority;
+        return priorityDifference === 0
+          ? left.processor.id.localeCompare(right.processor.id)
+          : priorityDifference;
+      })[0]?.processor;
   }
 }
 
-export {
-  ArtifactProcessorRegistry,
-  artifactProcessorIdSchema,
-  artifactProcessorVersionSchema,
-};
+export { artifactProcessorIdSchema, ArtifactProcessorRegistry, artifactProcessorVersionSchema };
 
 export type {
   ArtifactProcessor,
   ArtifactProcessorInput,
   ArtifactProcessorOutput,
+  ArtifactProcessorRegistration,
   ArtifactProcessorSource,
 };

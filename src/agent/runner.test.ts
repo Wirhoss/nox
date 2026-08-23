@@ -7,6 +7,7 @@ import { EventLog } from '../utils/eventLog';
 import { Context } from './context/context';
 import { Runner } from './runner';
 
+import type { ArtifactOutputHost, ArtifactOutputProvenance } from '../artifact/output';
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
 import type { Tool, ToolContext } from '../tool/tool';
@@ -19,7 +20,10 @@ const MODEL: ModelConfig = {
   outputModalities: ['text'],
 };
 
-type Script = (signal: AbortSignal) => AsyncIterable<ProviderSourceEvent>;
+type Script = (
+  signal: AbortSignal,
+  options?: TextGenerateOptions,
+) => AsyncIterable<ProviderSourceEvent>;
 
 interface Gate<T> {
   promise: Promise<T>;
@@ -66,7 +70,7 @@ class ScriptedProvider extends ChatProvider {
     this.requests.push([...messageHistory]);
     const script = this.#scripts.shift();
     if (script === undefined) throw new Error('Provider ran out of scripted responses.');
-    yield* script(signal);
+    yield* script(signal, _opts);
   }
 }
 
@@ -128,6 +132,7 @@ function setup(
   tools: Tool[] = [],
   maxIterations?: 'unlimited' | number,
   contextWindow?: number,
+  artifactOutputs?: ArtifactOutputHost,
 ): {
   context: Context;
   events: EventLog<AgentEvent>;
@@ -141,6 +146,7 @@ function setup(
   });
   const events = new EventLog<AgentEvent>();
   const runner = new Runner(context, events, provider, MODEL, {
+    ...(artifactOutputs === undefined ? {} : { artifactOutputs }),
     authorities: testCatalog(),
     authorization: permissiveAuthorization,
     maxIterations,
@@ -189,6 +195,127 @@ describe('Runner', () => {
       'toolResponse',
       'assistant',
     ]);
+  });
+
+  test('gives a provider a scoped sink for native artifact output', async () => {
+    const artifactOutputs: ArtifactOutputHost = {
+      publisher: () => ({
+        publish: () =>
+          Promise.resolve({
+            artifact: {
+              artifactId: 'art_native001',
+              filename: 'generated.png',
+              mediaType: 'image/png',
+              size: 8,
+            },
+            type: 'artifact',
+          }),
+      }),
+    };
+    const nativeOutput: Script = async function* (_signal, options) {
+      if (options?.artifactOutput === undefined) throw new Error('missing artifact output');
+      const part = await options.artifactOutput.publish({
+        data: new Blob(['native']),
+        declaredMediaType: 'image/png',
+        filename: 'generated.png',
+      });
+      yield { artifact: part.artifact, type: 'artifact' };
+      yield { type: 'end' };
+    };
+    const { context, runner } = setup([nativeOutput], [], undefined, undefined, artifactOutputs);
+
+    runner.send(user('generate an image'));
+    await runner.idle;
+
+    const assistant = context.getFullHistory().find((message) => message.role === 'assistant');
+    expect(assistant?.role === 'assistant' ? assistant.content : []).toEqual([
+      {
+        artifact: {
+          artifactId: 'art_native001',
+          filename: 'generated.png',
+          mediaType: 'image/png',
+          size: 8,
+        },
+        type: 'artifact',
+      },
+    ]);
+  });
+
+  test('promotes a tool-published artifact into the final assistant reply', async () => {
+    const provenance: ArtifactOutputProvenance[] = [];
+    const artifactOutputs: ArtifactOutputHost = {
+      publisher: (entry) => {
+        provenance.push(entry);
+        return {
+          publish: () =>
+            Promise.resolve({
+              artifact: {
+                artifactId: 'art_generated1',
+                filename: 'report.txt',
+                mediaType: 'text/plain',
+                size: 6,
+              },
+              type: 'artifact',
+            }),
+        };
+      },
+    };
+    const publish = immediateTool('publish', async (ctx) => {
+      if (ctx.artifacts === undefined) throw new Error('missing artifact output');
+      return [
+        { text: 'created', type: 'text' },
+        await ctx.artifacts.publish({
+          data: new Blob(['report']),
+          declaredMediaType: 'text/plain',
+          filename: 'report.txt',
+        }),
+      ];
+    });
+    const { context, runner } = setup(
+      [calls('publish', 'track-output'), says('ready')],
+      [publish],
+      undefined,
+      undefined,
+      artifactOutputs,
+    );
+
+    runner.send(user('make a report'));
+    await runner.idle;
+
+    const toolResponse = context
+      .getFullHistory()
+      .find((message) => message.role === 'toolResponse');
+    const final = context.getFullHistory().findLast((message) => message.role === 'assistant');
+    const toolArtifact =
+      toolResponse?.role === 'toolResponse'
+        ? toolResponse.response.find((part) => part.type === 'artifact')
+        : undefined;
+    expect(toolArtifact?.type === 'artifact' ? toolArtifact.artifact.artifactId : undefined).toBe(
+      'art_generated1',
+    );
+    expect(final?.role).toBe('assistant');
+    expect(final?.role === 'assistant' ? final.content : []).toEqual([
+      { text: 'ready', type: 'text' },
+      {
+        artifact: {
+          artifactId: 'art_generated1',
+          filename: 'report.txt',
+          mediaType: 'text/plain',
+          size: 6,
+        },
+        type: 'artifact',
+      },
+    ]);
+    const toolProvenance = provenance.find((entry) => entry.type === 'tool');
+    expect(toolProvenance).toMatchObject({
+      details: {
+        sessionId: 'session-1',
+        toolName: 'publish',
+        trackId: 'track-output',
+      },
+      type: 'tool',
+    });
+    expect(typeof toolProvenance?.details?.runId).toBe('string');
   });
 
   test('tool calls in one reply run concurrently', async () => {
