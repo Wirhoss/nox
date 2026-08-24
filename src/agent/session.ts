@@ -59,6 +59,8 @@ interface SessionOptions extends RunnerOptions {
   /** Model used for the internal titling request; defaults to the main model. */
   titleModel?: ModelConfig;
   /** Provider used for internal titling requests; defaults to the main provider. */
+  /** The zone timestamps are written in when a model is shown this conversation. */
+  timeZone?: string;
   titleProvider?: ChatProvider;
 }
 
@@ -173,6 +175,7 @@ class Session {
       gate: this.#gate,
       logger: options.logger,
       maxIterations: options.maxIterations,
+      ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
       participants,
       sessionId,
     });

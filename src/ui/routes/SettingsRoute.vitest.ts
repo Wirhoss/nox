@@ -81,6 +81,7 @@ describe('Settings route', () => {
     await fireEvent.update(screen.getByLabelText(/^Default agent/), 'support')
     await fireEvent.update(screen.getByLabelText(/^Default language/), 'es')
     await fireEvent.update(screen.getByLabelText(/^Log level/), 'debug')
+    await fireEvent.update(screen.getByLabelText(/^Time zone/), 'America/Mexico_City')
     await fireEvent.click(screen.getByRole('checkbox', { name: /Secure refresh cookies/ }))
     await fireEvent.click(screen.getByRole('button', { name: 'Save general settings' }))
 
@@ -95,8 +96,54 @@ describe('Settings route', () => {
       chat: { defaultAgent: 'support' },
       database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
       logLevel: 'debug',
+      timezone: 'America/Mexico_City',
       ui: { locale: 'es' },
     })
+  })
+
+  it('refuses a time zone nothing can read a clock in', async () => {
+    server.use(
+      ...authenticatedOperator(),
+      http.get('*/api/config', () =>
+        HttpResponse.json({
+          defaultAgent: 'nox',
+          sections: [sectionSummary('app', 'file', false, 'app.json', true)],
+        }),
+      ),
+      http.get('*/api/config/app', () =>
+        HttpResponse.json({
+          ...sectionSummary('app', 'file', false, 'app.json', true),
+          value: {
+            api: { host: '127.0.0.1', port: 8080 },
+            auth: { accessTtlSeconds: 900, refreshTtlSeconds: 2_592_000, secureCookies: false },
+            chat: { defaultAgent: 'nox' },
+            database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
+            logLevel: 'info',
+            timezone: 'UTC',
+            ui: { locale: 'en' },
+          },
+        }),
+      ),
+      http.get('*/api/config/blueprints', () =>
+        HttpResponse.json({
+          ...sectionSummary('blueprints', 'directory', true, 'blueprints', false),
+          value: { nox: {} },
+        }),
+      ),
+      http.put('*/api/config/app', () => HttpResponse.error()),
+    )
+
+    await renderAt('/settings/general')
+
+    expect(await screen.findByRole('heading', { name: 'General' })).toBeTruthy()
+    await fireEvent.update(screen.getByLabelText(/^Time zone/), 'Mars/Olympus')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save general settings' }))
+
+    // Answered in the browser, so a typo never becomes a round trip that the
+    // loader refuses after the fact.
+    expect(
+      await screen.findByText('Use an IANA time zone name, such as UTC or America/Mexico_City.'),
+    ).toBeTruthy()
   })
 
   it('validates General numeric limits before writing app.json', async () => {
@@ -509,6 +556,8 @@ describe('Settings route', () => {
           value: {},
         }),
       ),
+      http.get('*/api/capabilities/tool-set-types', () => HttpResponse.json({ toolSetTypes: [] })),
+      http.get('*/api/capabilities/tool-sets', () => HttpResponse.json({ toolSets: [] })),
       http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
     )
 
@@ -533,22 +582,20 @@ describe('Settings route', () => {
     expect(screen.queryByRole('link', { name: /New broker/ })).toBeNull()
   })
 
-  it('edits web tools, preserves contributed fields and writes endpoint secrets separately', async () => {
+  it('builds the tool-set form from the contributed schema and writes secrets separately', async () => {
     const writes: string[] = []
     let toolSetBody: unknown
     const toolSet = {
       extract: {
         customResponseMode: 'markdown',
-        defaultMaxCharactersPerPage: 30_000,
-        maxCharactersPerPage: 100_000,
         maxUrls: 5,
+        module: 'crawl4ai',
         url: 'https://crawl.example',
       },
       search: {
         apiKey: { $secret: 'SEARCH_API_KEY' },
-        defaultLanguage: 'all',
         defaultMaxResults: 8,
-        maxResults: 20,
+        module: 'searxng',
         url: 'https://search.example',
       },
       type: 'web',
@@ -565,6 +612,35 @@ describe('Settings route', () => {
         HttpResponse.json({
           ...sectionSummary('toolSets', 'contribution', true, 'toolsets.json', true),
           value: { internet: toolSet },
+        }),
+      ),
+      http.get('*/api/capabilities/tool-set-types', () =>
+        HttpResponse.json({ toolSetTypes: [webToolSetType()] }),
+      ),
+      http.get('*/api/capabilities/tool-sets', () =>
+        HttpResponse.json({
+          toolSets: [
+            {
+              available: true,
+              description: 'Search and extract public web pages.',
+              extensionId: 'nox.toolset.web',
+              id: 'internet',
+              name: 'Web tools',
+              tools: [
+                {
+                  authority: 'nox.toolset.web.extract',
+                  description: 'Extract public web pages.',
+                  name: 'web_extract',
+                },
+                {
+                  authority: 'nox.toolset.web.search',
+                  description: 'Search the public web.',
+                  name: 'web_search',
+                },
+              ],
+              type: 'web',
+            },
+          ],
         }),
       ),
       http.get('*/api/secrets', () =>
@@ -586,19 +662,6 @@ describe('Settings route', () => {
           ],
         }),
       ),
-      http.put('*/api/secrets/SEARCH_API_KEY', async ({ request }) => {
-        writes.push('search-secret')
-        expect(await request.json()).toEqual({ value: 'search-key-v2' })
-        return HttpResponse.json({
-          consumers: [],
-          createdAt: 10,
-          references: [],
-          restartRequired: true,
-          secretId: 'SEARCH_API_KEY',
-          stored: true,
-          updatedAt: 30,
-        })
-      }),
       http.put('*/api/secrets/EXTRACT_API_KEY', async ({ request }) => {
         writes.push('extract-secret')
         expect(await request.json()).toEqual({ value: 'extract-key' })
@@ -627,51 +690,55 @@ describe('Settings route', () => {
     await renderAt('/settings/tool-sets/internet')
 
     expect(await screen.findByRole('heading', { name: 'internet' })).toBeTruthy()
-    expect(screen.getByPlaceholderText('https://search.example')).toHaveProperty(
-      'value',
-      'https://search.example',
-    )
-    expect(screen.getByPlaceholderText('https://crawl.example')).toHaveProperty(
-      'value',
+
+    // Every field on screen came from the schema the server validates against,
+    // in the order that schema declares its slots.
+    const urls = screen.getAllByLabelText(/^Service URL/)
+    expect(urls.map((field) => (field as HTMLInputElement).value)).toEqual([
       'https://crawl.example',
-    )
-    expect(screen.getByLabelText('Search credential')).toHaveProperty('value', 'SEARCH_API_KEY')
+      'https://search.example',
+    ])
+    expect(screen.getByLabelText(/^Search REQ$/)).toHaveProperty('value', 'searxng')
+    expect(screen.getByLabelText(/^Extraction REQ$/)).toHaveProperty('value', 'crawl4ai')
+    // A slot nobody filled offers itself rather than pretending to be configured.
+    expect(screen.getByText('NOT CONFIGURED')).toBeTruthy()
     expect(screen.getByRole('checkbox', { name: /web_extract/ })).toHaveProperty('checked', true)
 
     await fireEvent.update(screen.getByLabelText(/^Default results/), '10')
-    await fireEvent.update(screen.getByPlaceholderText('Search credential value'), 'search-key-v2')
-    await fireEvent.update(screen.getByLabelText('Extraction credential'), '__new_secret__')
-    await fireEvent.update(screen.getByPlaceholderText('CRAWL4AI_API_KEY'), 'EXTRACT_API_KEY')
-    await fireEvent.update(
-      screen.getByPlaceholderText('Extraction credential value'),
-      'extract-key',
-    )
+    const [extractCredential] = screen.getAllByLabelText(/^Credential$/)
+    if (extractCredential === undefined) throw new Error('Expected a credential control.')
+    await fireEvent.update(extractCredential, '__new_secret__')
+    await fireEvent.update(screen.getByLabelText(/^New secret ID/), 'EXTRACT_API_KEY')
+    const [extractValue] = screen.getAllByLabelText(/^Credential value/)
+    if (extractValue === undefined) throw new Error('Expected a credential value field.')
+    await fireEvent.update(extractValue, 'extract-key')
     await fireEvent.click(screen.getByRole('checkbox', { name: /web_extract/ }))
     await fireEvent.click(screen.getByRole('button', { name: 'Save tool set' }))
 
     await waitFor(() => {
-      expect(writes).toEqual(['search-secret', 'extract-secret', 'tool-set'])
+      expect(writes).toEqual(['extract-secret', 'tool-set'])
     })
     expect(await screen.findByText('Tool-set configuration saved')).toBeTruthy()
     expect(toolSetBody).toMatchObject({
       enabledTools: ['web_search'],
-      // Each endpoint carries its own ID, and contributed fields the curated
-      // form never rendered survive the round trip.
+      // Each position carries its own ID, and a contributed field the form never
+      // rendered survives the round trip.
       extract: {
         apiKey: { $secret: 'EXTRACT_API_KEY' },
         customResponseMode: 'markdown',
+        module: 'crawl4ai',
       },
       search: {
         apiKey: { $secret: 'SEARCH_API_KEY' },
         defaultMaxResults: 10,
+        module: 'searxng',
       },
       type: 'web',
     })
-    expect(JSON.stringify(toolSetBody)).not.toContain('search-key-v2')
     expect(JSON.stringify(toolSetBody)).not.toContain('extract-key')
   })
 
-  it('keeps contributed tool-set types on the full-fidelity JSON surface', async () => {
+  it('keeps a tool-set kind no extension contributes on the JSON surface', async () => {
     server.use(
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
@@ -685,6 +752,10 @@ describe('Settings route', () => {
           value: { files: { root: '/srv/shared', type: 'filesystem' } },
         }),
       ),
+      http.get('*/api/capabilities/tool-set-types', () =>
+        HttpResponse.json({ toolSetTypes: [webToolSetType()] }),
+      ),
+      http.get('*/api/capabilities/tool-sets', () => HttpResponse.json({ toolSets: [] })),
       http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
     )
 
@@ -696,7 +767,7 @@ describe('Settings route', () => {
       'value',
       '{\n  "root": "/srv/shared",\n  "type": "filesystem"\n}',
     )
-    expect(screen.queryByPlaceholderText('https://search.example')).toBeNull()
+    expect(screen.queryByLabelText(/^Service URL/)).toBeNull()
   })
 
   it('edits broker routing and grants while keeping contributed credentials write-only', async () => {
@@ -895,6 +966,67 @@ function sectionSummary(
   writable: boolean,
 ) {
   return { applies: 'restart', entries, key, kind, loaded: true, name, writable }
+}
+
+/**
+ * The web tool set as its contribution publishes it: three optional slots, each
+ * a choice between the modules that can fill it. Kept here as data rather than
+ * imported so the editor is tested against a schema, not against one build of
+ * one extension.
+ */
+function webToolSetType() {
+  const endpoint = (module: string, extra: Record<string, unknown> = {}) => ({
+    properties: {
+      apiKey: {
+        nox: { label: 'ui.credential', secret: true },
+        properties: { $secret: { type: 'string' } },
+        required: ['$secret'],
+        type: 'object',
+      },
+      module: { const: module, type: 'string' },
+      url: { format: 'uri', nox: { label: 'ui.serviceUrl' }, type: 'string' },
+      ...extra,
+    },
+    required: ['url', 'module'],
+    type: 'object',
+  })
+
+  return {
+    extensionId: 'nox.toolset.web',
+    schema: {
+      properties: {
+        browser: {
+          nox: { label: 'ui.slot.browser' },
+          oneOf: [endpoint('camoufox')],
+        },
+        enabledTools: { items: { type: 'string' }, type: 'array' },
+        extract: {
+          nox: { label: 'ui.slot.extract' },
+          oneOf: [
+            endpoint('crawl4ai', {
+              maxUrls: { default: 5, nox: { label: 'ui.maximumUrls' }, type: 'integer' },
+            }),
+          ],
+        },
+        search: {
+          nox: { label: 'ui.slot.search' },
+          oneOf: [
+            endpoint('searxng', {
+              defaultMaxResults: {
+                default: 8,
+                nox: { label: 'ui.defaultResults' },
+                type: 'integer',
+              },
+            }),
+          ],
+        },
+        type: { const: 'web', type: 'string' },
+      },
+      required: ['type'],
+      type: 'object',
+    },
+    type: 'web',
+  }
 }
 
 async function renderAt(path: string): Promise<void> {

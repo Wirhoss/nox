@@ -145,6 +145,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       new ConfigStore({
         authorities: () => buildAuthorityCatalog(application),
         config,
+        contributions: application.contributions,
         toolSets: toolSetCatalog,
       }),
       database,
@@ -329,6 +330,7 @@ async function composeAgents(
         maxIterations: blueprint.maxIterations,
         routedToolSets,
         systemPrompt: blueprint.systemPrompt,
+        timeZone: config.get('app').timezone,
         titleModel: titleModel.model,
         titleProvider: titleModel.provider,
       }),

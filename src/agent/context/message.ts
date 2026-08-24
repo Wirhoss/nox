@@ -172,6 +172,30 @@ function toolResponseMessageToString(message: ToolResponseMessage): string {
 }
 
 /**
+ * When something was said, in the zone the installation reads clocks in.
+ *
+ * Derived from the message's stored `createdAt` and never from the clock at
+ * render time. That is what keeps a replayed request byte-identical to the one
+ * it replays, and it is why a live "now" has no business in the head: the newest
+ * message in the history already is the current time, so the model can read the
+ * clock without anything in the cached prefix having to change.
+ */
+function timestampForModel(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+    minute: '2-digit',
+    month: '2-digit',
+    timeZone,
+    timeZoneName: 'shortOffset',
+    year: 'numeric',
+  })
+    .format(at)
+    .replace(',', '');
+}
+
+/**
  * What a provider should send for a user message.
  *
  * A shared conversation is not one voice, and a model handed every participant
@@ -185,9 +209,10 @@ function toolResponseMessageToString(message: ToolResponseMessage): string {
  * by several OpenAI-compatible gateways, which would silently drop the
  * attribution on exactly the deployments most likely to be multiuser.
  */
-function userContentForModel(message: UserMessage): readonly MessageContent[] {
+function userContentForModel(message: UserMessage, timeZone = 'UTC'): readonly MessageContent[] {
+  const said = timestampForModel(message.createdAt, timeZone);
   return [
-    { text: `[from ${principalToString(message.origin.principal)}]\n`, type: 'text' },
+    { text: `[from ${principalToString(message.origin.principal)} · ${said}]\n`, type: 'text' },
     ...message.content,
   ];
 }
@@ -237,6 +262,7 @@ export {
   MESSAGE_ROLES,
   messageIdentityToString,
   messageToString,
+  timestampForModel,
   TOOL_RESPONSE_EXECUTIONS,
   trackedHeaderToString,
   userContentForModel,

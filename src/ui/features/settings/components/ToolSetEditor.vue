@@ -7,29 +7,28 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
+import {
+  activeFields,
+  type ConfigLike,
+  defaultsFor,
+  type FieldNode,
+  type FormNode,
+  formNodes,
+  isObject,
+  seedNode,
+  valueAt,
+  variantAt,
+  withValueAt,
+} from '../model/schemaForm'
 import { useSettingsStore } from '../stores/settings.store'
+import SchemaFieldGroup from './SchemaFieldGroup.vue'
 
-import type { ConfigSection, ConfigValue } from '../api/settings.api'
+import type { ConfigSection } from '../api/settings.api'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'
-type EndpointKey = 'extract' | 'search'
-type NumericInputKey =
-  | 'extractDefaultMaxCharactersPerPage'
-  | 'extractMaxCharactersPerPage'
-  | 'extractMaxUrls'
-  | 'extractTimeoutMs'
-  | 'searchDefaultMaxResults'
-  | 'searchMaxResults'
-  | 'searchTimeoutMs'
 
-interface ToolSetDraft extends ConfigValue {
-  extract?: ConfigValue
-  search?: ConfigValue
-  type: string
-}
-
-/** One endpoint's credential inputs, which live beside the draft rather than in it. */
+/** One credential input, which lives beside the entry rather than inside it. */
 interface CredentialState {
   newId: string
   selection: string
@@ -43,41 +42,28 @@ interface Props {
   section: ConfigSection
 }
 
-const TOOL_NAMES: Readonly<Record<EndpointKey, string>> = {
-  extract: 'web_extract',
-  search: 'web_search',
-}
+/**
+ * What every tool set has, whatever kind it is: the kind itself, and the cut of
+ * its tools this instance exposes. The editor frames these rather than treating
+ * them as two more schema fields, because they mean the same thing for every
+ * contribution — and everything else on screen comes from the kind's own schema.
+ */
+const FRAMED = ['enabledTools', 'type']
 const NEW_SECRET = '__new_secret__'
+
 const props = withDefaults(defineProps<Props>(), {
   creating: false,
   entryId: undefined,
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
-const { t } = useI18n()
-const coreCopyKeys: ReadonlySet<string> = new Set([
-  'changeRefused',
-  'confirmDiscard',
-  'header',
-  'id',
-  'idHint',
-  'remove',
-  'removeQuestion',
-  'removeWarning',
-  'save',
-  'saved',
-  'savedBody',
-  'titleFallback',
-  'titleNew',
-  'toolSetJson',
-  'toolSetJsonHelp',
-  'validation.configurationObject',
-  'validation.curatedFormUnavailable',
-])
+const { hasMessage, t } = useI18n()
+
 const copy = (key: string, parameters: Readonly<Record<string, boolean | number | string>> = {}) =>
-  t(coreCopyKeys.has(key) ? `settings.toolSet.${key}` : `nox.toolset.web.ui.${key}`, parameters)
+  t(`settings.toolSet.${key}`, parameters)
+
 const mode = ref<EditorMode>('form')
-const draft = ref<ToolSetDraft>(newToolSetTemplate())
+const draft = ref<ConfigLike>({})
 const jsonSource = ref('')
 const originalJsonSignature = ref('')
 const originalSignature = ref('')
@@ -85,24 +71,33 @@ const entryIdInput = ref('')
 const fieldErrors = ref<Readonly<Record<string, string>>>({})
 const jsonError = ref<string>()
 const confirmingDelete = ref(false)
-const disabledEndpoints = ref<Partial<Record<EndpointKey, ConfigValue>>>({})
-const credentials = reactive<Record<EndpointKey, CredentialState>>({
-  extract: { newId: '', selection: '', value: '' },
-  search: { newId: '', selection: '', value: '' },
-})
-const numericInputs = reactive<Record<NumericInputKey, string>>({
-  extractDefaultMaxCharactersPerPage: '30000',
-  extractMaxCharactersPerPage: '100000',
-  extractMaxUrls: '5',
-  extractTimeoutMs: '',
-  searchDefaultMaxResults: '8',
-  searchMaxResults: '20',
-  searchTimeoutMs: '',
-})
-const selectedValue = computed<ConfigValue>(() => {
+/** Slots the operator switched off, kept so switching one back on restores it. */
+const parked = ref<Record<string, unknown>>({})
+const credentials = reactive<Record<string, CredentialState>>({})
+
+const types = computed(() => settings.toolSetTypes)
+const descriptor = computed(() =>
+  types.value.find((candidate) => candidate.type === draft.value.type),
+)
+const nodes = computed<readonly FormNode[]>(() =>
+  descriptor.value === undefined ? [] : formNodes(descriptor.value.schema, FRAMED),
+)
+const sections = computed(() => nodes.value.filter((node) => node.kind !== 'field'))
+const plainFields = computed(() => nodes.value.filter((node) => node.kind === 'field'))
+/** The tools this instance actually exposes, which only a composed instance knows. */
+const inventory = computed(() =>
+  settings.toolSetInventory.find((entry) => entry.id === props.entryId),
+)
+const enabledTools = computed(() =>
+  Array.isArray(draft.value.enabledTools)
+    ? draft.value.enabledTools.filter((name): name is string => typeof name === 'string')
+    : [],
+)
+
+const selectedValue = computed<ConfigLike>(() => {
   if (props.creating || props.entryId === undefined) return newToolSetTemplate()
   const value = props.section.value[props.entryId]
-  return isConfigValue(value) ? value : newToolSetTemplate()
+  return isObject(value) ? value : newToolSetTemplate()
 })
 const title = computed(() =>
   props.creating ? copy('titleNew') : (props.entryId ?? copy('titleFallback')),
@@ -112,13 +107,13 @@ const dirty = computed(() => {
   if (mode.value === 'json') {
     const parsed = parseJson(false)
     if (parsed === undefined) return true
-    return JSON.stringify(parsed) !== originalJsonSignature.value || credentialInputsDirty(parsed)
+    return JSON.stringify(parsed) !== originalJsonSignature.value || credentialInputsDirty()
   }
   return formSignature() !== originalSignature.value
 })
 
 watch(
-  [() => props.creating, () => props.entryId, selectedValue],
+  [() => props.creating, () => props.entryId, selectedValue, types],
   () => {
     resetEditor()
   },
@@ -126,14 +121,13 @@ watch(
 )
 
 function resetEditor(): void {
-  draft.value = asToolSetDraft(selectedValue.value)
-  mode.value = draft.value.type === 'web' ? 'form' : 'json'
+  draft.value = clone(selectedValue.value)
+  mode.value = descriptor.value === undefined ? 'json' : 'form'
   entryIdInput.value = ''
   fieldErrors.value = {}
   jsonError.value = undefined
   confirmingDelete.value = false
-  disabledEndpoints.value = {}
-  syncNumericInputs()
+  parked.value = {}
   syncCredentials()
   jsonSource.value = JSON.stringify(draft.value, undefined, 2)
   originalJsonSignature.value = JSON.stringify(draft.value)
@@ -145,252 +139,138 @@ function formSignature(): string {
     credentials,
     draft: draft.value,
     entryId: entryIdInput.value,
-    numeric: numericInputs,
   })
 }
 
-function syncNumericInputs(): void {
-  numericInputs.searchDefaultMaxResults = endpointNumberString('search', 'defaultMaxResults', 8)
-  numericInputs.searchMaxResults = endpointNumberString('search', 'maxResults', 20)
-  numericInputs.searchTimeoutMs = endpointOptionalNumberString('search', 'timeoutMs')
-  numericInputs.extractDefaultMaxCharactersPerPage = endpointNumberString(
-    'extract',
-    'defaultMaxCharactersPerPage',
-    30_000,
-  )
-  numericInputs.extractMaxCharactersPerPage = endpointNumberString(
-    'extract',
-    'maxCharactersPerPage',
-    100_000,
-  )
-  numericInputs.extractMaxUrls = endpointNumberString('extract', 'maxUrls', 5)
-  numericInputs.extractTimeoutMs = endpointOptionalNumberString('extract', 'timeoutMs')
-}
-
-function syncNumericEndpoint(key: EndpointKey): void {
-  if (key === 'search') {
-    numericInputs.searchDefaultMaxResults = endpointNumberString('search', 'defaultMaxResults', 8)
-    numericInputs.searchMaxResults = endpointNumberString('search', 'maxResults', 20)
-    numericInputs.searchTimeoutMs = endpointOptionalNumberString('search', 'timeoutMs')
-  } else {
-    numericInputs.extractDefaultMaxCharactersPerPage = endpointNumberString(
-      'extract',
-      'defaultMaxCharactersPerPage',
-      30_000,
-    )
-    numericInputs.extractMaxCharactersPerPage = endpointNumberString(
-      'extract',
-      'maxCharactersPerPage',
-      100_000,
-    )
-    numericInputs.extractMaxUrls = endpointNumberString('extract', 'maxUrls', 5)
-    numericInputs.extractTimeoutMs = endpointOptionalNumberString('extract', 'timeoutMs')
+/** Rebuilds the credential inputs from what the entry names right now. */
+function syncCredentials(): void {
+  for (const name of Object.keys(credentials)) {
+    credentials[name] = { newId: '', selection: '', value: '' }
+    Reflect.deleteProperty(credentials, name)
+  }
+  for (const node of activeFields(nodes.value, draft.value)) {
+    if (node.control !== 'secret') continue
+    credentials[node.path.join('.')] = { newId: '', selection: secretIdAt(node), value: '' }
   }
 }
 
-function syncCredentials(): void {
-  syncCredential('search')
-  syncCredential('extract')
+function secretIdAt(node: FieldNode): string {
+  const current = valueAt(draft.value, node.path)
+  if (!isObject(current)) return ''
+  return typeof current.$secret === 'string' ? current.$secret : ''
 }
 
-function syncCredential(key: EndpointKey): void {
-  const state = credentials[key]
-  state.selection = endpointSecretId(draft.value, key)
-  state.newId = ''
-  state.value = ''
-}
-
-/**
- * Realigns the inputs after the JSON surface rewrote the draft. Only when the ID
- * actually changed: a pending value the operator already typed for the same
- * secret should survive switching back to the form.
- */
-function reconcileCredential(key: EndpointKey): void {
-  const state = credentials[key]
-  const nextId = endpointSecretId(draft.value, key)
-  const currentId = state.selection === NEW_SECRET ? state.newId.trim() : state.selection
-  if (currentId === nextId) return
-  state.selection = nextId
-  state.newId = ''
-  state.value = ''
-}
-
-function endpoint(key: EndpointKey): ConfigValue | undefined {
-  const value = draft.value[key]
-  return isConfigValue(value) ? value : undefined
-}
-
-function endpointString(key: EndpointKey, property: string): string {
-  return stringValue(endpoint(key)?.[property])
-}
-
-function endpointNumberString(key: EndpointKey, property: string, fallback: number): string {
-  const value = endpoint(key)?.[property]
-  return String(typeof value === 'number' ? value : fallback)
-}
-
-function endpointOptionalNumberString(key: EndpointKey, property: string): string {
-  const value = endpoint(key)?.[property]
-  return typeof value === 'number' ? String(value) : ''
-}
-
-function endpointConfigured(key: EndpointKey): boolean {
-  return endpoint(key) !== undefined
+function newToolSetTemplate(): ConfigLike {
+  const first = types.value[0]
+  if (first === undefined) return { type: '' }
+  return { ...defaultsFor(formNodes(first.schema, FRAMED)), type: first.type }
 }
 
 function setType(value: string): void {
-  draft.value = { ...draft.value, type: value }
+  const chosen = types.value.find((candidate) => candidate.type === value)
+  draft.value =
+    chosen === undefined
+      ? { ...draft.value, type: value }
+      : { ...defaultsFor(formNodes(chosen.schema, FRAMED)), type: value }
+  parked.value = {}
+  syncCredentials()
   clearFeedback('type')
 }
 
-function setEndpointString(key: EndpointKey, property: string, value: string): void {
-  updateEndpoint(key, (current) => ({ ...current, [property]: value }))
-  clearFeedback(`${key}.${property}`)
-}
-
-function setEndpointNumber(
-  key: EndpointKey,
-  property: string,
-  inputKey: NumericInputKey,
-  value: string,
-  optional = false,
-): void {
-  numericInputs[inputKey] = value
-  if (optional && value.trim().length === 0) {
-    updateEndpoint(key, (current) => withoutProperty(current, property))
-  } else {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) {
-      updateEndpoint(key, (current) => ({ ...current, [property]: parsed }))
-    }
-  }
-  clearFeedback(`${key}.${property}`)
-}
-
-function updateEndpoint(key: EndpointKey, update: (value: ConfigValue) => ConfigValue): void {
-  const current = endpoint(key)
-  if (current === undefined) return
-  draft.value = { ...draft.value, [key]: update(current) }
-}
-
-function toggleEndpoint(key: EndpointKey, enabled: boolean): void {
-  if (enabled) {
-    const restored = disabledEndpoints.value[key] ?? newEndpointTemplate(key)
-    draft.value = { ...draft.value, [key]: cloneValue(restored) }
-    disabledEndpoints.value = withoutProperty(disabledEndpoints.value, key)
-    syncNumericEndpoint(key)
-    syncCredential(key)
-  } else {
-    const current = endpoint(key)
-    if (current !== undefined) {
-      disabledEndpoints.value = { ...disabledEndpoints.value, [key]: cloneValue(current) }
-    }
-    draft.value = withoutProperty(draft.value, key) as ToolSetDraft
-    credentials[key].selection = ''
-    credentials[key].newId = ''
-    credentials[key].value = ''
-    normalizeEnabledTools()
-  }
-  clearFeedback('endpoints')
-}
-
-/** Every stored ID, plus whatever this endpoint already names. */
-function credentialOptions(key: EndpointKey): readonly string[] {
-  const ids = settings.secrets.map((secret) => secret.secretId)
-  const current = endpointSecretId(draft.value, key)
-  return current.length > 0 && !ids.includes(current) ? [current, ...ids] : ids
-}
-
-function selectCredential(key: EndpointKey, value: string): void {
-  const state = credentials[key]
-  state.selection = value
-  state.newId = ''
-  state.value = ''
-  if (value.length === 0 || value === NEW_SECRET) {
-    updateEndpoint(key, (current) => withoutProperty(current, 'apiKey'))
-  } else {
-    updateEndpoint(key, (current) => ({ ...current, apiKey: { $secret: value } }))
-  }
-  clearFeedback(`${key}.secretId`)
-  clearFeedback(`${key}.secretValue`)
-}
-
-function setNewSecretId(key: EndpointKey, value: string): void {
-  const state = credentials[key]
-  state.newId = value
-  const id = value.trim()
-  updateEndpoint(key, (current) =>
-    id.length === 0 ? withoutProperty(current, 'apiKey') : { ...current, apiKey: { $secret: id } },
-  )
-  clearFeedback(`${key}.secretId`)
-}
-
-function setSecretValue(key: EndpointKey, value: string): void {
-  credentials[key].value = value
-  clearFeedback(`${key}.secretValue`)
-}
-
 /**
- * Whether a value exists, not whether the ID is known: the list includes IDs
- * configuration names that nobody has filled in.
+ * One field changed. A change of a variant's discriminator is the exception
+ * worth naming: switching implementations reseeds that slot, because the
+ * settings of the module being left are not settings of the one arriving.
  */
-function secretStored(key: EndpointKey): boolean {
-  const id = endpointSecretId(draft.value, key)
-  return settings.secrets.some((secret) => secret.secretId === id && secret.stored)
-}
-
-function isToolEnabled(key: EndpointKey): boolean {
-  if (!endpointConfigured(key)) return false
-  const enabledTools = stringArray(draft.value.enabledTools)
-  return enabledTools.length === 0 || enabledTools.includes(TOOL_NAMES[key])
-}
-
-function setToolEnabled(key: EndpointKey, enabled: boolean): void {
-  const configured = configuredEndpoints()
-  const selected = configured.filter((candidate) => isToolEnabled(candidate))
-  const next = enabled
-    ? [...new Set([...selected, key])]
-    : selected.filter((candidate) => candidate !== key)
-  if (next.length === 0) {
-    fieldErrors.value = {
-      ...fieldErrors.value,
-      enabledTools: copy('validation.oneToolExposed'),
-    }
+function applyUpdate(path: readonly string[], value: unknown): void {
+  const variant = variantAt(nodes.value, path)
+  if (variant !== undefined && typeof value === 'string') {
+    draft.value = withValueAt(draft.value, variant.path, seedNode(variant, value))
+    syncCredentials()
+    clearFeedback()
     return
   }
 
-  const unknown = stringArray(draft.value.enabledTools).filter(
-    (toolName) => !Object.values(TOOL_NAMES).includes(toolName),
-  )
+  draft.value = withValueAt(draft.value, path, value)
+  clearFeedback(path.join('.'))
+}
+
+function applyCredential(path: readonly string[], state: Partial<CredentialState>): void {
+  const key = path.join('.')
+  const current = credentials[key] ?? { newId: '', selection: '', value: '' }
+  credentials[key] = { ...current, ...state }
+  clearFeedback(`${key}.secretId`)
+  clearFeedback(`${key}.secretValue`)
+}
+
+function slotFilled(node: FormNode): boolean {
+  return isObject(valueAt(draft.value, node.path))
+}
+
+function toggleSlot(node: FormNode, enabled: boolean): void {
+  if (node.kind === 'field') return
+  const key = node.path.join('.')
+
+  if (enabled) {
+    const restored = parked.value[key] ?? seedNode(node)
+    draft.value = withValueAt(draft.value, node.path, restored)
+    parked.value = Object.fromEntries(
+      Object.entries(parked.value).filter(([name]) => name !== key),
+    )
+  } else {
+    const current = valueAt(draft.value, node.path)
+    if (current !== undefined) parked.value = { ...parked.value, [key]: clone(current) }
+    draft.value = withValueAt(draft.value, node.path, undefined)
+  }
+
+  syncCredentials()
+  clearFeedback('slots')
+}
+
+function toolEnabled(name: string): boolean {
+  return enabledTools.value.length === 0 || enabledTools.value.includes(name)
+}
+
+/**
+ * An empty list means every tool, so the enabled set is only written down once
+ * it is a real cut. Removing the last one is refused here rather than at the
+ * loader, where an instance exposing nothing is simply a set nobody can use.
+ */
+function setToolEnabled(name: string, enabled: boolean): void {
+  const known = inventory.value?.tools.map((tool) => tool.name) ?? []
+  const selected = known.filter((candidate) => toolEnabled(candidate))
+  const next = enabled
+    ? [...new Set([...selected, name])]
+    : selected.filter((candidate) => candidate !== name)
+
+  if (next.length === 0) {
+    fieldErrors.value = { ...fieldErrors.value, enabledTools: copy('validation.oneToolExposed') }
+    return
+  }
+
   draft.value =
-    next.length === configured.length && unknown.length === 0
-      ? (withoutProperty(draft.value, 'enabledTools') as ToolSetDraft)
-      : {
-          ...draft.value,
-          enabledTools: [...unknown, ...next.map((candidate) => TOOL_NAMES[candidate])],
-        }
+    next.length === known.length
+      ? withValueAt(draft.value, ['enabledTools'], undefined)
+      : withValueAt(draft.value, ['enabledTools'], next)
   clearFeedback('enabledTools')
 }
 
-function configuredEndpoints(): EndpointKey[] {
-  return (['search', 'extract'] as const).filter((key) => endpointConfigured(key))
+function label(node: FormNode): string {
+  const key = node.label
+  const message = key === undefined ? undefined : `${descriptor.value?.extensionId ?? ''}.${key}`
+  if (message !== undefined && hasMessage(message)) return t(message)
+  return humanize(node.name)
 }
 
-function normalizeEnabledTools(): void {
-  const existing = stringArray(draft.value.enabledTools)
-  if (existing.length === 0) return
-  const configured = configuredEndpoints()
-  const configuredNames = configured.map((key) => TOOL_NAMES[key])
-  const filtered = existing.filter(
-    (toolName) =>
-      !Object.values(TOOL_NAMES).includes(toolName) || configuredNames.includes(toolName),
-  )
-  const enabledKnown = filtered.filter((toolName) => configuredNames.includes(toolName))
-  const unknown = filtered.filter((toolName) => !Object.values(TOOL_NAMES).includes(toolName))
-  draft.value =
-    configured.length > 0 && enabledKnown.length === configured.length && unknown.length === 0
-      ? (withoutProperty(draft.value, 'enabledTools') as ToolSetDraft)
-      : { ...draft.value, enabledTools: filtered }
+function help(node: FormNode): string | undefined {
+  const key = node.help
+  const message = key === undefined ? undefined : `${descriptor.value?.extensionId ?? ''}.${key}`
+  return message !== undefined && hasMessage(message) ? t(message) : undefined
+}
+
+function humanize(name: string): string {
+  const spaced = name.replace(/([a-z0-9])([A-Z])/gu, '$1 $2').replace(/[._-]+/gu, ' ')
+  return `${spaced.charAt(0).toUpperCase()}${spaced.slice(1)}`
 }
 
 function switchMode(nextMode: EditorMode): void {
@@ -404,14 +284,12 @@ function switchMode(nextMode: EditorMode): void {
 
   const parsed = parseJson(true)
   if (parsed === undefined) return
-  if (stringValue(parsed.type) !== 'web') {
+  if (!types.value.some((candidate) => candidate.type === parsed.type)) {
     jsonError.value = copy('validation.curatedFormUnavailable')
     return
   }
-  draft.value = asToolSetDraft(parsed)
-  syncNumericInputs()
-  reconcileCredential('search')
-  reconcileCredential('extract')
+  draft.value = parsed
+  syncCredentials()
   mode.value = nextMode
 }
 
@@ -423,26 +301,24 @@ function formatJson(): void {
 async function save(): Promise<void> {
   fieldErrors.value = {}
   jsonError.value = undefined
-  let value: ConfigValue
+
+  let value: ConfigLike
   if (mode.value === 'json') {
     const parsed = parseJson(true)
     if (parsed === undefined) return
     value = parsed
   } else {
     if (!validateForm()) return
-    value = cloneValue(draft.value)
+    value = clone(draft.value)
   }
 
   const nextEntryId = props.creating ? entryIdInput.value.trim() : props.entryId
   if (nextEntryId === undefined || !validEntryId(nextEntryId)) {
-    fieldErrors.value = {
-      ...fieldErrors.value,
-      entryId: t('settings.validation.entryId'),
-    }
+    fieldErrors.value = { ...fieldErrors.value, entryId: t('settings.validation.entryId') }
     return
   }
 
-  const secretWrites = collectSecretWrites(value)
+  const secretWrites = collectSecretWrites()
   if (secretWrites === undefined) return
   const saved = await settings.saveEntryWithSecrets(
     props.section.key,
@@ -456,37 +332,35 @@ async function save(): Promise<void> {
 }
 
 /**
- * The credential values to write alongside this entry, or `undefined` when the
- * inputs cannot be honoured. Both endpoints may name one ID, so a value is
- * written once — and two different values for the same ID is a contradiction the
+ * The credential values to write alongside this entry, or nothing when the
+ * inputs cannot be honoured. Two positions may name one ID, so a value is
+ * written once — and two different values for one ID is a contradiction the
  * operator has to resolve rather than a race to whichever runs last.
  */
-function collectSecretWrites(
-  value: ConfigValue,
-): readonly { readonly secretId: string; readonly value: string }[] | undefined {
+function collectSecretWrites():
+  | readonly { readonly secretId: string; readonly value: string }[]
+  | undefined {
   const writes = new Map<string, string>()
-  for (const key of ['search', 'extract'] as const) {
-    const pendingValue = credentials[key].value
-    if (pendingValue.length === 0) continue
-    const secretId = endpointSecretId(value, key)
+
+  for (const [key, state] of Object.entries(credentials)) {
+    if (state.value.length === 0) continue
+    const secretId = state.selection === NEW_SECRET ? state.newId.trim() : state.selection
     if (!validSecretId(secretId)) {
-      fieldErrors.value = {
-        ...fieldErrors.value,
-        [`${key}.secretId`]: copy('validation.chooseSecretId'),
-      }
+      fieldErrors.value = { ...fieldErrors.value, [`${key}.secretId`]: copy('validation.chooseSecretId') }
       return undefined
     }
     const duplicate = writes.get(secretId)
-    if (duplicate !== undefined && duplicate !== pendingValue) {
+    if (duplicate !== undefined && duplicate !== state.value) {
       fieldErrors.value = {
         ...fieldErrors.value,
         [`${key}.secretValue`]: copy('validation.conflictingSecretValues'),
       }
       return undefined
     }
-    writes.set(secretId, pendingValue)
+    writes.set(secretId, state.value)
   }
-  return [...writes].map(([secretId, secretValue]) => ({ secretId, value: secretValue }))
+
+  return [...writes].map(([secretId, value]) => ({ secretId, value }))
 }
 
 async function remove(): Promise<void> {
@@ -494,99 +368,85 @@ async function remove(): Promise<void> {
   if (await settings.deleteEntry(props.section.key, props.entryId)) emit('deleted')
 }
 
+/**
+ * What the operator can be told here rather than by a refused save: a field the
+ * schema requires, a URL that is not one, a number outside the bounds the
+ * contribution declared. The loader still has the last word — this only keeps
+ * the obvious mistakes from becoming a round trip.
+ */
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (draft.value.type !== 'web') errors.type = copy('validation.useJson')
+  if (descriptor.value === undefined) errors.type = copy('validation.useJson')
   if (props.creating && !validEntryId(entryIdInput.value.trim())) {
     errors.entryId = t('settings.validation.entryId')
   }
 
-  const configured = configuredEndpoints()
-  if (configured.length === 0) errors.endpoints = copy('validation.configureEndpoint')
-  if (configured.length > 0 && !configured.some((key) => isToolEnabled(key))) {
-    errors.enabledTools = copy('validation.oneToolExposed')
+  for (const node of activeFields(nodes.value, draft.value)) {
+    validateField(node, errors)
   }
-  for (const key of configured) validateEndpoint(key, errors)
 
   fieldErrors.value = errors
   return Object.keys(errors).length === 0
 }
 
-function validateEndpoint(key: EndpointKey, errors: Record<string, string>): void {
-  const url = endpointString(key, 'url')
-  if (!validHttpUrl(url)) errors[`${key}.url`] = copy('validation.httpUrl')
-  validatePositiveInteger(errors, key, 'timeoutMs', true)
+function validateField(node: FieldNode, errors: Record<string, string>): void {
+  const key = node.path.join('.')
+  const value = valueAt(draft.value, node.path)
 
-  if (key === 'search') {
-    if (endpointString(key, 'defaultLanguage').trim().length === 0) {
-      errors['search.defaultLanguage'] = copy('validation.defaultLanguageRequired')
+  if (node.control === 'secret') {
+    const state = credentials[key]
+    if (state?.selection === NEW_SECRET) {
+      if (!validSecretId(state.newId.trim())) errors[`${key}.secretId`] = t('settings.validation.secretId')
+      if (state.value.length === 0) errors[`${key}.secretValue`] = copy('validation.secretValueRequired')
     }
-    const defaultMax = validatePositiveInteger(errors, key, 'defaultMaxResults')
-    const maximum = validatePositiveInteger(errors, key, 'maxResults')
-    if (defaultMax !== undefined && maximum !== undefined && defaultMax > maximum) {
-      errors['search.defaultMaxResults'] = copy('validation.defaultExceedsMaximum')
-    }
-  } else {
-    const defaultMax = validatePositiveInteger(errors, key, 'defaultMaxCharactersPerPage')
-    const maximum = validatePositiveInteger(errors, key, 'maxCharactersPerPage')
-    validatePositiveInteger(errors, key, 'maxUrls')
-    if (defaultMax !== undefined && maximum !== undefined && defaultMax > maximum) {
-      errors['extract.defaultMaxCharactersPerPage'] = copy('validation.defaultExceedsMaximum')
-    }
+    if (node.required && value === undefined) errors[key] = copy('validation.required')
+    return
   }
 
-  const state = credentials[key]
-  if (state.selection === NEW_SECRET) {
-    if (!validSecretId(state.newId.trim())) {
-      errors[`${key}.secretId`] = t('settings.validation.secretId')
+  if (value === undefined || (typeof value === 'string' && value.trim().length === 0)) {
+    if (node.required) errors[key] = copy('validation.required')
+    return
+  }
+
+  if (node.url && !(typeof value === 'string' && validHttpUrl(value))) {
+    errors[key] = copy('validation.httpUrl')
+    return
+  }
+
+  if (node.control === 'number') {
+    if (typeof value !== 'number' || (node.integer && !Number.isInteger(value))) {
+      errors[key] = t(
+        node.integer ? 'settings.validation.integer' : 'settings.validation.number',
+      )
+      return
     }
-    if (state.value.length === 0) {
-      errors[`${key}.secretValue`] = copy('validation.secretValueRequired')
+    if (node.minimum !== undefined && value < node.minimum) {
+      errors[key] = t('settings.validation.numberMinimum', { minimum: node.minimum })
+      return
+    }
+    if (node.maximum !== undefined && value > node.maximum) {
+      errors[key] = t('settings.validation.numberRange', {
+        maximum: node.maximum,
+        minimum: node.minimum ?? 0,
+      })
     }
   }
-}
-
-function validatePositiveInteger(
-  errors: Record<string, string>,
-  key: EndpointKey,
-  property: string,
-  optional = false,
-): number | undefined {
-  const value = numericInput(key, property).trim()
-  if (optional && value.length === 0) return undefined
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    errors[`${key}.${property}`] = t('settings.validation.positiveInteger')
-    return undefined
-  }
-  return parsed
-}
-
-function numericInput(key: EndpointKey, property: string): string {
-  const inputKey =
-    `${key}${property.charAt(0).toUpperCase()}${property.slice(1)}` as NumericInputKey
-  return numericInputs[inputKey]
 }
 
 /**
- * The credential inputs sit outside the draft, so the JSON surface would
+ * The credential inputs sit outside the entry, so the JSON surface would
  * otherwise look unchanged while a pending value waits to be written.
  */
-function credentialInputsDirty(value: ConfigValue): boolean {
-  return (['search', 'extract'] as const).some((key) => {
-    const state = credentials[key]
-    return (
-      state.value.length > 0 ||
-      state.newId.length > 0 ||
-      state.selection !== endpointSecretId(value, key)
-    )
-  })
+function credentialInputsDirty(): boolean {
+  return Object.values(credentials).some(
+    (state) => state.value.length > 0 || state.newId.length > 0,
+  )
 }
 
-function parseJson(report: boolean): ConfigValue | undefined {
+function parseJson(report: boolean): ConfigLike | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
-    if (!isConfigValue(parsed)) {
+    if (!isObject(parsed)) {
       if (report) jsonError.value = copy('validation.configurationObject')
       return undefined
     }
@@ -607,9 +467,9 @@ function setEntryId(value: string): void {
 
 function clearFeedback(field?: string): void {
   if (field !== undefined && field in fieldErrors.value) {
-    fieldErrors.value = withoutProperty(fieldErrors.value, field) as Readonly<
-      Record<string, string>
-    >
+    fieldErrors.value = Object.fromEntries(
+      Object.entries(fieldErrors.value).filter(([key]) => key !== field),
+    )
   }
   settings.clearMutation()
 }
@@ -621,69 +481,16 @@ function canLeave(): boolean {
 onBeforeRouteLeave(canLeave)
 onBeforeRouteUpdate(canLeave)
 
-function asToolSetDraft(value: ConfigValue): ToolSetDraft {
-  const cloned = cloneValue(value)
-  const type = stringValue(cloned.type)
-  if (type !== 'web') return { ...cloned, type }
-  const search = isConfigValue(cloned.search) ? withSearchDefaults(cloned.search) : undefined
-  const extract = isConfigValue(cloned.extract) ? withExtractDefaults(cloned.extract) : undefined
-  return {
-    ...cloned,
-    ...(extract === undefined ? {} : { extract }),
-    ...(search === undefined ? {} : { search }),
-    type,
-  }
-}
-
-function withSearchDefaults(value: ConfigValue): ConfigValue {
-  return {
-    ...value,
-    defaultLanguage:
-      stringValue(value.defaultLanguage).length > 0 ? stringValue(value.defaultLanguage) : 'all',
-    defaultMaxResults: numberValue(value.defaultMaxResults, 8),
-    maxResults: numberValue(value.maxResults, 20),
-    url: stringValue(value.url),
-  }
-}
-
-function withExtractDefaults(value: ConfigValue): ConfigValue {
-  return {
-    ...value,
-    defaultMaxCharactersPerPage: numberValue(value.defaultMaxCharactersPerPage, 30_000),
-    maxCharactersPerPage: numberValue(value.maxCharactersPerPage, 100_000),
-    maxUrls: numberValue(value.maxUrls, 5),
-    url: stringValue(value.url),
-  }
-}
-
-function newToolSetTemplate(): ToolSetDraft {
-  return { search: newEndpointTemplate('search'), type: 'web' }
-}
-
-function newEndpointTemplate(key: EndpointKey): ConfigValue {
-  return key === 'search'
-    ? { defaultLanguage: 'all', defaultMaxResults: 8, maxResults: 20, url: '' }
-    : {
-        defaultMaxCharactersPerPage: 30_000,
-        maxCharactersPerPage: 100_000,
-        maxUrls: 5,
-        url: '',
-      }
-}
-
-/** The ID this endpoint's `apiKey` names, or empty when it names none. */
-function endpointSecretId(value: ConfigValue, key: EndpointKey): string {
-  const candidate = value[key]
-  if (!isConfigValue(candidate) || !isConfigValue(candidate.apiKey)) return ''
-  return stringValue(candidate.apiKey.$secret)
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function validEntryId(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(value)
 }
 
 function validSecretId(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value)
 }
 
 function validHttpUrl(value: string): boolean {
@@ -692,32 +499,6 @@ function validHttpUrl(value: string): boolean {
   } catch {
     return false
   }
-}
-
-function isConfigValue(value: unknown): value is ConfigValue {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((candidate): candidate is string => typeof candidate === 'string')
-    : []
-}
-
-function numberValue(value: unknown, fallback: number): number {
-  return typeof value === 'number' ? value : fallback
-}
-
-function cloneValue<T extends ConfigValue>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
-}
-
-function withoutProperty(value: ConfigValue, property: string): ConfigValue {
-  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== property))
 }
 </script>
 
@@ -801,322 +582,90 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 :aria-invalid="fieldErrors.type !== undefined"
                 @change="setType(($event.target as HTMLSelectElement).value)"
               >
-                <option value="web">{{ copy('webTools') }}</option>
-                <option v-if="draft.type !== 'web'" :value="draft.type">
+                <option v-for="kind in types" :key="kind.type" :value="kind.type">
+                  {{ kind.type }} · {{ kind.extensionId }}
+                </option>
+                <option v-if="descriptor === undefined" :value="draft.type">
                   {{ draft.type }} · {{ t('common.contributed') }}
                 </option>
               </select>
               <p v-if="fieldErrors.type" class="tool-set-editor__error">{{ fieldErrors.type }}</p>
             </div>
 
-            <div class="tool-set-editor__tool-grid">
-              <label v-for="key in configuredEndpoints()" :key="key" class="tool-set-editor__tool">
+            <div v-if="inventory" class="tool-set-editor__tool-grid">
+              <label
+                v-for="tool in inventory.tools"
+                :key="tool.name"
+                class="tool-set-editor__tool"
+              >
                 <input
                   type="checkbox"
-                  :checked="isToolEnabled(key)"
-                  @change="setToolEnabled(key, ($event.target as HTMLInputElement).checked)"
+                  :checked="toolEnabled(tool.name)"
+                  @change="setToolEnabled(tool.name, ($event.target as HTMLInputElement).checked)"
                 />
                 <span>
-                  <strong>{{ TOOL_NAMES[key] }}</strong>
-                  <small>{{
-                    key === 'search' ? copy('searchAuthority') : copy('extractAuthority')
-                  }}</small>
+                  <strong>{{ tool.name }}</strong>
+                  <small>{{ tool.authority }}</small>
                 </span>
-                <em>{{ isToolEnabled(key) ? copy('exposed') : copy('held') }}</em>
+                <em>{{ toolEnabled(tool.name) ? copy('exposed') : copy('held') }}</em>
               </label>
             </div>
             <p v-if="fieldErrors.enabledTools" class="tool-set-editor__error">
               {{ fieldErrors.enabledTools }}
             </p>
+
+            <SchemaFieldGroup
+              v-if="plainFields.length > 0 && descriptor"
+              :credentials="credentials"
+              :errors="fieldErrors"
+              :extension-id="descriptor.extensionId"
+              :nodes="plainFields"
+              :secrets="settings.secrets"
+              :value="draft"
+              @credential="applyCredential"
+              @update="applyUpdate"
+            />
           </div>
         </section>
 
-        <section class="tool-set-editor__section" aria-labelledby="tool-set-search-title">
+        <section
+          v-for="(node, index) in sections"
+          :key="node.path.join('.')"
+          class="tool-set-editor__section"
+        >
           <div class="tool-set-editor__section-copy">
-            <p>02 // {{ copy('search') }}</p>
-            <h3 id="tool-set-search-title">{{ copy('searchEndpoint') }}</h3>
-            <span>{{ copy('searchEndpointHelp') }}</span>
-            <label class="tool-set-editor__endpoint-toggle">
+            <p>{{ String(index + 2).padStart(2, '0') }} // {{ node.name.toUpperCase() }}</p>
+            <h3>{{ label(node) }}</h3>
+            <span v-if="help(node)">{{ help(node) }}</span>
+            <label v-if="node.optional" class="tool-set-editor__endpoint-toggle">
               <input
                 type="checkbox"
-                :checked="endpointConfigured('search')"
-                @change="toggleEndpoint('search', ($event.target as HTMLInputElement).checked)"
+                :checked="slotFilled(node)"
+                @change="toggleSlot(node, ($event.target as HTMLInputElement).checked)"
               />
-              <span>{{
-                endpointConfigured('search') ? copy('configured') : copy('disabled')
-              }}</span>
+              <span>{{ slotFilled(node) ? copy('configured') : copy('disabled') }}</span>
             </label>
           </div>
-          <div v-if="endpointConfigured('search')" class="tool-set-editor__endpoint">
-            <NoxTextField
-              id="tool-set-search-url"
-              :model-value="endpointString('search', 'url')"
-              :error="fieldErrors['search.url']"
-              :hint="copy('searchUrlHint')"
-              :label="copy('searchUrl')"
-              placeholder="https://search.example"
-              required
-              @update:model-value="setEndpointString('search', 'url', $event)"
+
+          <div v-if="slotFilled(node) && descriptor" class="tool-set-editor__endpoint">
+            <SchemaFieldGroup
+              :credentials="credentials"
+              :errors="fieldErrors"
+              :extension-id="descriptor.extensionId"
+              :nodes="[node]"
+              :secrets="settings.secrets"
+              :value="draft"
+              @credential="applyCredential"
+              @update="applyUpdate"
             />
-            <div class="tool-set-editor__credential">
-              <div class="tool-set-editor__field">
-                <label for="tool-set-search-secret">{{ copy('searchCredential') }}</label>
-                <select
-                  id="tool-set-search-secret"
-                  :value="credentials.search.selection"
-                  @change="selectCredential('search', ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">{{ copy('noCredential') }}</option>
-                  <option
-                    v-for="secretId in credentialOptions('search')"
-                    :key="secretId"
-                    :value="secretId"
-                  >
-                    {{ secretId }}
-                  </option>
-                  <option :value="NEW_SECRET">+ {{ copy('newManagedSecret') }}</option>
-                </select>
-              </div>
-              <div
-                v-if="credentials.search.selection && credentials.search.selection !== NEW_SECRET"
-                class="tool-set-editor__secret-status"
-              >
-                <span>{{ credentials.search.selection }}</span>
-                <strong :class="{ 'tool-set-editor__secret-missing': !secretStored('search') }">
-                  {{
-                    secretStored('search')
-                      ? t('settings.secrets.stored')
-                      : t('common.missing').toUpperCase()
-                  }}
-                </strong>
-              </div>
-              <NoxTextField
-                v-if="credentials.search.selection === NEW_SECRET"
-                id="tool-set-search-secret-id"
-                :model-value="credentials.search.newId"
-                :error="fieldErrors['search.secretId']"
-                :hint="copy('secretIdHint')"
-                :label="copy('newSearchSecretId')"
-                placeholder="SEARXNG_API_KEY"
-                required
-                @update:model-value="setNewSecretId('search', $event)"
-              />
-              <NoxTextField
-                v-if="credentials.search.selection"
-                id="tool-set-search-secret-value"
-                :model-value="credentials.search.value"
-                autocomplete="new-password"
-                :error="fieldErrors['search.secretValue']"
-                :hint="copy('credentialValueHint')"
-                :label="copy('searchCredentialValue')"
-                :placeholder="copy('searchCredentialValue')"
-                :required="credentials.search.selection === NEW_SECRET"
-                type="password"
-                @update:model-value="setSecretValue('search', $event)"
-              />
-            </div>
-            <div class="tool-set-editor__field-grid">
-              <NoxTextField
-                id="tool-set-search-language"
-                :model-value="endpointString('search', 'defaultLanguage')"
-                :error="fieldErrors['search.defaultLanguage']"
-                :hint="copy('defaultLanguageHint')"
-                :label="copy('defaultLanguage')"
-                placeholder="all"
-                required
-                @update:model-value="setEndpointString('search', 'defaultLanguage', $event)"
-              />
-              <NoxTextField
-                id="tool-set-search-timeout"
-                :model-value="numericInputs.searchTimeoutMs"
-                :error="fieldErrors['search.timeoutMs']"
-                :hint="copy('timeoutHint')"
-                :label="copy('timeout')"
-                placeholder="30000"
-                @update:model-value="
-                  setEndpointNumber('search', 'timeoutMs', 'searchTimeoutMs', $event, true)
-                "
-              />
-              <NoxTextField
-                id="tool-set-search-default-max"
-                :model-value="numericInputs.searchDefaultMaxResults"
-                :error="fieldErrors['search.defaultMaxResults']"
-                :label="copy('defaultResults')"
-                required
-                @update:model-value="
-                  setEndpointNumber(
-                    'search',
-                    'defaultMaxResults',
-                    'searchDefaultMaxResults',
-                    $event,
-                  )
-                "
-              />
-              <NoxTextField
-                id="tool-set-search-max"
-                :model-value="numericInputs.searchMaxResults"
-                :error="fieldErrors['search.maxResults']"
-                :label="copy('maximumResults')"
-                required
-                @update:model-value="
-                  setEndpointNumber('search', 'maxResults', 'searchMaxResults', $event)
-                "
-              />
-            </div>
           </div>
           <div v-else class="tool-set-editor__disabled-endpoint">
-            <strong>{{ copy('searchOffline') }}</strong>
-            <span>{{ copy('enableSearch') }}</span>
+            <strong>{{ copy('slotOffline') }}</strong>
+            <span>{{ copy('enableSlot') }}</span>
           </div>
         </section>
 
-        <section class="tool-set-editor__section" aria-labelledby="tool-set-extract-title">
-          <div class="tool-set-editor__section-copy">
-            <p>03 // {{ copy('extract') }}</p>
-            <h3 id="tool-set-extract-title">{{ copy('extractEndpoint') }}</h3>
-            <span>{{ copy('extractEndpointHelp') }}</span>
-            <label class="tool-set-editor__endpoint-toggle">
-              <input
-                type="checkbox"
-                :checked="endpointConfigured('extract')"
-                @change="toggleEndpoint('extract', ($event.target as HTMLInputElement).checked)"
-              />
-              <span>{{
-                endpointConfigured('extract') ? copy('configured') : copy('disabled')
-              }}</span>
-            </label>
-          </div>
-          <div v-if="endpointConfigured('extract')" class="tool-set-editor__endpoint">
-            <NoxTextField
-              id="tool-set-extract-url"
-              :model-value="endpointString('extract', 'url')"
-              :error="fieldErrors['extract.url']"
-              :hint="copy('extractUrlHint')"
-              :label="copy('extractUrl')"
-              placeholder="https://crawl.example"
-              required
-              @update:model-value="setEndpointString('extract', 'url', $event)"
-            />
-            <div class="tool-set-editor__credential">
-              <div class="tool-set-editor__field">
-                <label for="tool-set-extract-secret">{{ copy('extractCredential') }}</label>
-                <select
-                  id="tool-set-extract-secret"
-                  :value="credentials.extract.selection"
-                  @change="selectCredential('extract', ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">{{ copy('noCredential') }}</option>
-                  <option
-                    v-for="secretId in credentialOptions('extract')"
-                    :key="secretId"
-                    :value="secretId"
-                  >
-                    {{ secretId }}
-                  </option>
-                  <option :value="NEW_SECRET">+ {{ copy('newManagedSecret') }}</option>
-                </select>
-              </div>
-              <div
-                v-if="credentials.extract.selection && credentials.extract.selection !== NEW_SECRET"
-                class="tool-set-editor__secret-status"
-              >
-                <span>{{ credentials.extract.selection }}</span>
-                <strong :class="{ 'tool-set-editor__secret-missing': !secretStored('extract') }">
-                  {{
-                    secretStored('extract')
-                      ? t('settings.secrets.stored')
-                      : t('common.missing').toUpperCase()
-                  }}
-                </strong>
-              </div>
-              <NoxTextField
-                v-if="credentials.extract.selection === NEW_SECRET"
-                id="tool-set-extract-secret-id"
-                :model-value="credentials.extract.newId"
-                :error="fieldErrors['extract.secretId']"
-                :hint="copy('secretIdHint')"
-                :label="copy('newExtractSecretId')"
-                placeholder="CRAWL4AI_API_KEY"
-                required
-                @update:model-value="setNewSecretId('extract', $event)"
-              />
-              <NoxTextField
-                v-if="credentials.extract.selection"
-                id="tool-set-extract-secret-value"
-                :model-value="credentials.extract.value"
-                autocomplete="new-password"
-                :error="fieldErrors['extract.secretValue']"
-                :hint="copy('credentialValueHint')"
-                :label="copy('extractCredentialValue')"
-                :placeholder="copy('extractCredentialValue')"
-                :required="credentials.extract.selection === NEW_SECRET"
-                type="password"
-                @update:model-value="setSecretValue('extract', $event)"
-              />
-            </div>
-            <div class="tool-set-editor__field-grid">
-              <NoxTextField
-                id="tool-set-extract-timeout"
-                :model-value="numericInputs.extractTimeoutMs"
-                :error="fieldErrors['extract.timeoutMs']"
-                :hint="copy('timeoutHint')"
-                :label="copy('timeout')"
-                placeholder="30000"
-                @update:model-value="
-                  setEndpointNumber('extract', 'timeoutMs', 'extractTimeoutMs', $event, true)
-                "
-              />
-              <NoxTextField
-                id="tool-set-extract-max-urls"
-                :model-value="numericInputs.extractMaxUrls"
-                :error="fieldErrors['extract.maxUrls']"
-                :label="copy('maximumUrls')"
-                required
-                @update:model-value="
-                  setEndpointNumber('extract', 'maxUrls', 'extractMaxUrls', $event)
-                "
-              />
-              <NoxTextField
-                id="tool-set-extract-default-max"
-                :model-value="numericInputs.extractDefaultMaxCharactersPerPage"
-                :error="fieldErrors['extract.defaultMaxCharactersPerPage']"
-                :label="copy('defaultCharacters')"
-                required
-                @update:model-value="
-                  setEndpointNumber(
-                    'extract',
-                    'defaultMaxCharactersPerPage',
-                    'extractDefaultMaxCharactersPerPage',
-                    $event,
-                  )
-                "
-              />
-              <NoxTextField
-                id="tool-set-extract-max"
-                :model-value="numericInputs.extractMaxCharactersPerPage"
-                :error="fieldErrors['extract.maxCharactersPerPage']"
-                :label="copy('maximumCharacters')"
-                required
-                @update:model-value="
-                  setEndpointNumber(
-                    'extract',
-                    'maxCharactersPerPage',
-                    'extractMaxCharactersPerPage',
-                    $event,
-                  )
-                "
-              />
-            </div>
-          </div>
-          <div v-else class="tool-set-editor__disabled-endpoint">
-            <strong>{{ copy('extractOffline') }}</strong>
-            <span>{{ copy('enableExtract') }}</span>
-          </div>
-        </section>
-
-        <NoxNotice v-if="fieldErrors.endpoints" :title="copy('noEndpoint')" tone="danger">
-          <p>{{ fieldErrors.endpoints }}</p>
-        </NoxNotice>
+        <p v-if="fieldErrors.slots" class="tool-set-editor__error">{{ fieldErrors.slots }}</p>
       </template>
 
       <section v-else class="tool-set-editor__json" aria-labelledby="tool-set-json-title">
@@ -1304,23 +853,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   line-height: 1.65;
 }
 
-.tool-set-editor__section-copy code,
-.tool-set-editor__disabled-endpoint code {
-  color: var(--nox-code-inline);
-}
-
 .tool-set-editor__fields,
-.tool-set-editor__endpoint,
-.tool-set-editor__credential {
+.tool-set-editor__endpoint {
   display: grid;
   align-content: start;
   gap: var(--nox-space-5);
-}
-
-.tool-set-editor__field-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--nox-space-4);
 }
 
 .tool-set-editor__field {
@@ -1416,6 +953,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
 .tool-set-editor__tool small {
   color: var(--nox-text-muted);
+  overflow-wrap: anywhere;
 }
 
 .tool-set-editor__tool em {
@@ -1433,41 +971,6 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-xs);
   cursor: pointer;
-}
-
-.tool-set-editor__credential {
-  padding: var(--nox-space-4);
-  border: 1px dashed var(--nox-border-strong);
-  background: color-mix(in srgb, var(--nox-surface-1) 80%, transparent);
-}
-
-.tool-set-editor__secret-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--nox-space-4);
-  padding: var(--nox-space-3) var(--nox-space-4);
-  border: 1px solid var(--nox-border-subtle);
-  background: var(--nox-surface-1);
-}
-
-.tool-set-editor__secret-status span,
-.tool-set-editor__secret-status strong {
-  font-family: var(--nox-font-mono);
-  font-size: var(--nox-text-xs);
-}
-
-.tool-set-editor__secret-status span {
-  color: var(--nox-text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.tool-set-editor__secret-status strong {
-  color: var(--nox-status-success);
-}
-
-.tool-set-editor__secret-status .tool-set-editor__secret-missing {
-  color: var(--nox-status-danger);
 }
 
 .tool-set-editor__disabled-endpoint {
@@ -1601,7 +1104,6 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
     justify-content: flex-start;
   }
 
-  .tool-set-editor__field-grid,
   .tool-set-editor__tool-grid {
     grid-template-columns: 1fr;
   }

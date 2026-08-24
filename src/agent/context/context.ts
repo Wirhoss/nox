@@ -65,6 +65,7 @@ class Context {
   readonly #compactGuardEndTokens: number;
   readonly #compactMinTokens: number;
   readonly #compactionModel?: ModelConfig;
+  readonly #timeZone?: string;
   readonly #compactProvider: ChatProvider;
   readonly #contextWindow?: number;
   readonly #foldMinReductionRatio: number;
@@ -90,6 +91,7 @@ class Context {
     this.#systemPrompt = systemPrompt;
     this.#compactProvider = compactProvider;
     this.#compactionModel = options.compactionModel;
+    this.#timeZone = options.timeZone;
     this.#compactGuardBeginningTokens = options.compactGuardBeginningTokens;
     this.#compactGuardEndTokens = options.compactGuardEndTokens;
     this.#compactMinTokens = options.compactMinTokens;
@@ -342,7 +344,10 @@ class Context {
       COMPACT_PROMPT,
       [...middle, createHandoffRequest()],
       [],
-      { model: this.#compactionModel },
+      {
+        model: this.#compactionModel,
+        ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
+      },
     );
     const summary = (await stream.completed).filter(hasUsableText);
 

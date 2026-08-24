@@ -3,6 +3,7 @@ import { composeSessionTools } from '../../agent/tools';
 import type { AuthorityCatalog } from '../../auth/authority';
 import type { Blueprint, ToolSetGrantConfig } from '../../config/blueprint';
 import type { Config } from '../../config/config';
+import type { ContributionReader } from '../../extensions/contribution';
 import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
 
 /**
@@ -29,6 +30,8 @@ interface BlueprintContext {
    */
   readonly authorities: () => AuthorityCatalog;
   readonly config: Config;
+  /** Read for what extensions declared, such as the schema of a tool-set kind. */
+  readonly contributions: ContributionReader;
   readonly toolSets: ToolSetCatalog;
 }
 

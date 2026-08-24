@@ -62,6 +62,8 @@ interface ContextOptions extends ContextPolicy {
   logger?: Logger;
   /** Handed to the transcript: one call per live append, whoever wrote it. */
   onAppend?: (message: Message) => void;
+  /** The zone the history is timestamped in when a model is shown it. */
+  timeZone?: string;
   tokenCounter?: (text: string) => number;
   tools?: Readonly<Record<string, Tool>>;
 }
@@ -86,6 +88,7 @@ interface ResolvedContextOptions {
   logger?: Logger;
   onAppend?: (message: Message) => void;
   pressureTokenLimit?: number;
+  timeZone?: string;
   tokenCounter?: (text: string) => number;
   tools: Readonly<Record<string, Tool>>;
 }
@@ -159,6 +162,7 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
     logger: options.logger,
     onAppend: options.onAppend,
     pressureTokenLimit,
+    timeZone: options.timeZone,
     tokenCounter: options.tokenCounter,
     tools: resolveTools(options.tools),
   };

@@ -43,6 +43,13 @@ interface AgentOptions extends RunnerOptions {
   logger?: Logger;
   routedToolSets?: readonly ToolSetGrant[];
   systemPrompt: string;
+  /**
+   * The zone this installation reads clocks in. It reaches the model as the
+   * timestamp on every message it is shown, which is how an agent knows what day
+   * it is at all — a model with no clock in its context answers from whenever it
+   * was trained.
+   */
+  timeZone?: string;
   /** Provider and model used to name sessions; each defaults to the agent's main one. */
   titleModel?: ModelConfig;
   titleProvider?: ChatProvider;
@@ -61,6 +68,34 @@ interface OpenSessionOptions {
   /** Omit for a new session; pass one to resume it, or to name a new one. */
   sessionId?: string;
   title?: string;
+}
+
+/** Adds the small capability map that makes the routed catalog discoverable. */
+function withRoutedToolSetCatalog(systemPrompt: string, grants: readonly ToolSetGrant[]): string {
+  const summaries = new Set<string>();
+
+  for (const grant of grants) {
+    const allowed = grant.tools === undefined ? undefined : new Set(grant.tools);
+    const contributesTool = Object.keys(grant.toolSet.tools).some(
+      (name) => allowed === undefined || allowed.has(name),
+    );
+    if (!contributesTool) continue;
+
+    const name = grant.toolSet.name.replace(/\s+/gu, ' ').trim();
+    const description = grant.toolSet.description.replace(/\s+/gu, ' ').trim();
+    summaries.add(`- ${name}: ${description}`);
+  }
+
+  if (summaries.size === 0) return systemPrompt;
+
+  const catalog = [
+    'Routed tool sets available through search_tool:',
+    ...[...summaries].sort((a, b) => a.localeCompare(b)),
+    '',
+    'Use these descriptions to decide when to call search_tool and which capability keywords to ' +
+      'search. Its results are authoritative for exact tool names and parameter schemas.',
+  ].join('\n');
+  return `${systemPrompt}\n\n${catalog}`;
 }
 
 /**
@@ -88,6 +123,7 @@ class Agent {
   readonly #provider: ChatProvider;
   readonly #routedToolSets: readonly ToolSetGrant[];
   readonly #systemPrompt: string;
+  readonly #timeZone?: string;
   readonly #titleModel: ModelConfig;
   readonly #titleProvider: ChatProvider;
 
@@ -113,6 +149,7 @@ class Agent {
     this.#maxIterations = options.maxIterations;
     this.#routedToolSets = options.routedToolSets ?? [];
     this.#systemPrompt = options.systemPrompt;
+    this.#timeZone = options.timeZone;
     this.#titleModel = options.titleModel ?? model;
     this.#titleProvider = options.titleProvider ?? provider;
   }
@@ -150,6 +187,7 @@ class Agent {
           [PRESENT_ARTIFACT_TOOL_NAME]: presentArtifactTool(),
         })
       : configuredTools;
+    const systemPrompt = withRoutedToolSetCatalog(this.#systemPrompt, this.#routedToolSets);
 
     return Session.open(this.#database, this.#provider, this.#model, {
       ...options,
@@ -162,13 +200,15 @@ class Agent {
         contextWindow: this.#model.contextWindow,
         ...this.#context,
         compactionModel: this.#compactionModel,
+        ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
         tools,
       },
       gate: this.#gate,
       gateEvaluators: this.#gateEvaluators,
       logger: this.#logger,
       maxIterations: this.#maxIterations,
-      systemPrompt: this.#systemPrompt,
+      systemPrompt,
+      ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
       titleModel: this.#titleModel,
       titleProvider: this.#titleProvider,
     });

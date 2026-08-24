@@ -44,6 +44,18 @@ const toolSetInventorySchema = z.object({
 })
 const toolSetInventoriesSchema = z.object({ toolSets: z.array(toolSetInventorySchema) })
 
+/**
+ * One configurable kind and the schema its entries must satisfy. The schema is
+ * carried as it arrived: the editor reads it, and everything it does not
+ * understand stays legible in the JSON surface rather than being dropped here.
+ */
+const toolSetTypeSchema = z.object({
+  extensionId: z.string().min(1),
+  schema: z.record(z.string(), z.unknown()),
+  type: z.string().min(1),
+})
+const toolSetTypesSchema = z.object({ toolSetTypes: z.array(toolSetTypeSchema) })
+
 const savedSectionSchema = configSectionSchema.extend({ restartRequired: z.boolean() })
 const savedEntrySchema = configEntrySchema.extend({ restartRequired: z.boolean() })
 const removedEntrySchema = z.object({
@@ -100,6 +112,7 @@ type SecretReference = z.infer<typeof secretReferenceSchema>
 type SectionSummary = z.infer<typeof sectionSummarySchema>
 type ToolInventory = z.infer<typeof toolInventorySchema>
 type ToolSetInventory = z.infer<typeof toolSetInventorySchema>
+type ToolSetType = z.infer<typeof toolSetTypeSchema>
 
 interface EntryInput {
   readonly accessToken: string
@@ -133,6 +146,7 @@ interface SettingsApi {
   listConfig(accessToken: string): Promise<ConfigCatalog>
   listSecrets(accessToken: string): Promise<readonly Secret[]>
   listToolSetInventory(accessToken: string): Promise<readonly ToolSetInventory[]>
+  listToolSetTypes(accessToken: string): Promise<readonly ToolSetType[]>
   readEntry(input: EntryInput): Promise<ConfigEntry>
   readSection(accessToken: string, section: string): Promise<ConfigSection>
   replaceEntry(input: SaveEntryInput): Promise<SavedEntry>
@@ -201,6 +215,13 @@ const settingsApi: SettingsApi = {
     return response.toolSets
   },
 
+  async listToolSetTypes(accessToken) {
+    const response = await requestJson('/capabilities/tool-set-types', toolSetTypesSchema, {
+      headers: authorization(accessToken),
+    })
+    return response.toolSetTypes
+  },
+
   readEntry({ accessToken, entryId, section }) {
     return requestJson(entryPath(section, entryId), configEntrySchema, {
       headers: authorization(accessToken),
@@ -255,4 +276,5 @@ export type {
   SettingsApi,
   ToolInventory,
   ToolSetInventory,
+  ToolSetType,
 }

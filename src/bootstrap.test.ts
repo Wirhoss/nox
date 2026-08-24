@@ -176,6 +176,7 @@ describe('bootstrap', () => {
         internet: {
           search: {
             apiKey: { $secret: 'SEARXNG_API_KEY' },
+            module: 'searxng',
             url: 'https://search.example.test',
           },
           type: 'web',
@@ -195,8 +196,8 @@ describe('bootstrap', () => {
 
   test('carries a blueprint allowlist through to the tools a session opens with', async () => {
     const internet = {
-      extract: { url: 'https://crawl.example.test' },
-      search: { url: 'https://search.example.test' },
+      extract: { module: 'crawl4ai', url: 'https://crawl.example.test' },
+      search: { module: 'searxng', url: 'https://search.example.test' },
       type: 'web',
     };
 

@@ -180,6 +180,7 @@ async function blueprintNox(options: NoxOptions = {}): Promise<BlueprintNox> {
     config: new ConfigStore({
       authorities: () => authorityCatalog(contributions),
       config,
+      contributions,
       toolSets: new ToolSetCatalog({
         configured: () => config.get('toolSets'),
         contributions,

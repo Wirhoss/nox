@@ -1228,8 +1228,51 @@ describe('provenance', () => {
 
     // Without this every participant of a shared channel reaches the model as
     // the same anonymous `user`, and it cannot tell who asked for what.
-    expect(rendered[0]).toEqual({ text: '[from test-broker:alice]\n', type: 'text' });
+    expect(rendered[0]).toEqual({
+      text: '[from test-broker:alice · 1970-01-01 00:00 GMT]\n',
+      type: 'text',
+    });
     expect(rendered.slice(1)).toEqual([{ text: 'hola', type: 'text' }]);
+  });
+
+  test('the model is told when it was said, in the installation’s own zone', () => {
+    const message = {
+      content: [{ text: 'hola', type: 'text' as const }],
+      createdAt: new Date('2026-08-23T20:14:07Z'),
+      messageId: 'u1',
+      origin: { principal: testPrincipal('alice'), transportMessageId: 't1' },
+      role: 'user' as const,
+    };
+
+    // Same instant, two installations: an agent answering "tomorrow" is
+    // answering about a different day in each.
+    expect(userContentForModel(message, 'America/Mexico_City')[0]).toEqual({
+      text: '[from test-broker:alice · 2026-08-23 14:14 GMT-6]\n',
+      type: 'text',
+    });
+    expect(userContentForModel(message, 'Asia/Tokyo')[0]).toEqual({
+      text: '[from test-broker:alice · 2026-08-24 05:14 GMT+9]\n',
+      type: 'text',
+    });
+  });
+
+  test('renders the same message the same way however often it is replayed', () => {
+    const message = {
+      content: [{ text: 'hola', type: 'text' as const }],
+      createdAt: new Date('2026-08-23T20:14:07Z'),
+      messageId: 'u1',
+      origin: { principal: testPrincipal('alice'), transportMessageId: 't1' },
+      role: 'user' as const,
+    };
+
+    // The stamp comes from the message, never from the clock at render time.
+    // A request that re-rendered its own history differently on the second pass
+    // would invalidate every cached byte behind it.
+    expect(userContentForModel(message, 'UTC')).toEqual(userContentForModel(message, 'UTC'));
+    expect(userContentForModel(message, 'UTC')[0]).toEqual({
+      text: '[from test-broker:alice · 2026-08-23 20:14 GMT]\n',
+      type: 'text',
+    });
   });
 
   test('the principal and transport ID survive storage and a reopen', async () => {

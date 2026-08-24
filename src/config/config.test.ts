@@ -210,6 +210,7 @@ describe('config files', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'info',
+      timezone: 'UTC',
       ui: uiDefaults,
     });
     expect(await read(dir, 'app.json')).toEqual(value);
@@ -228,7 +229,26 @@ describe('config files', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
+      timezone: 'UTC',
       ui: uiDefaults,
+    });
+  });
+
+  test('refuses a time zone the runtime has never heard of', async () => {
+    const dir = await configDir();
+    await write(dir, 'app.json', { timezone: 'Mars/Olympus' });
+
+    // Caught at load, where an operator can still read which line is wrong,
+    // rather than at the first message stamped with it.
+    expect(loadSection(appSection, context(dir))).rejects.toThrow(/IANA time zone/u);
+  });
+
+  test('keeps a configured time zone as written', async () => {
+    const dir = await configDir();
+    await write(dir, 'app.json', { timezone: 'America/Mexico_City' });
+
+    expect(await loadSection(appSection, context(dir))).toMatchObject({
+      timezone: 'America/Mexico_City',
     });
   });
 
@@ -250,6 +270,7 @@ describe('config files', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
+      timezone: 'UTC',
       ui: uiDefaults,
     });
     const before = await readFile(join(dir, 'app.json'), 'utf8');
@@ -505,6 +526,7 @@ describe('Config', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'info',
+      timezone: 'UTC',
       ui: uiDefaults,
     });
     expect(await read(dir, 'app.json')).toMatchObject({ logLevel: 'info' });
@@ -520,6 +542,7 @@ describe('Config', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'debug',
+      timezone: 'UTC',
       ui: uiDefaults,
     });
 
@@ -542,6 +565,7 @@ describe('Config', () => {
           chat: {},
           database: databaseDefaults,
           logLevel,
+          timezone: 'UTC',
           ui: uiDefaults,
         }),
       ),
@@ -566,6 +590,7 @@ describe('Config', () => {
       chat: {},
       database: databaseDefaults,
       logLevel: 'error',
+      timezone: 'UTC',
       ui: uiDefaults,
     });
 

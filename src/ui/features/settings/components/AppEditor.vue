@@ -46,6 +46,7 @@ interface AppDraft extends ConfigValue {
   chat: ChatDraft
   database: DatabaseDraft
   logLevel: string
+  timezone: string
   ui: UiDraft
 }
 
@@ -148,6 +149,11 @@ function setUiLocale(value: string): void {
   draft.value = { ...draft.value, ui: { ...draft.value.ui, locale: value } }
   clearFeedback('locale')
   void setLocale(value)
+}
+
+function setTimezone(value: string): void {
+  draft.value = { ...draft.value, timezone: value }
+  clearFeedback('timezone')
 }
 
 function setDefaultAgent(value: string): void {
@@ -258,6 +264,9 @@ function validateForm(): boolean {
   if (!availableLanguages.value.some((language) => language.locale === draft.value.ui.locale)) {
     errors.locale = t('settings.general.validation.locale')
   }
+  if (!knownTimezone(draft.value.timezone)) {
+    errors.timezone = t('settings.general.validation.timezone')
+  }
 
   const defaultAgent = configuredDefaultAgent.value
   if (defaultAgent.length === 0 && agentIds.value.length !== 1) {
@@ -335,6 +344,7 @@ function asAppDraft(value: ConfigValue): AppDraft {
   const path = stringValue(database.path)
   const synchronous = stringValue(database.synchronous)
   const logLevel = stringValue(cloned.logLevel)
+  const timezone = stringValue(cloned.timezone)
   const uiLocale = stringValue(ui.locale)
 
   return {
@@ -361,6 +371,7 @@ function asAppDraft(value: ConfigValue): AppDraft {
       synchronous: synchronous.length > 0 ? synchronous : 'normal',
     },
     logLevel: logLevel.length > 0 ? logLevel : 'info',
+    timezone: timezone.length > 0 ? timezone : 'UTC',
     ui: {
       ...ui,
       locale: uiLocale.length > 0 ? uiLocale : 'en',
@@ -370,6 +381,16 @@ function asAppDraft(value: ConfigValue): AppDraft {
 
 function appTemplate(): AppDraft {
   return asAppDraft({})
+}
+
+/** Whether this browser's own zone database knows the name, which is what the server asks too. */
+function knownTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
 }
 
 function objectValue(value: unknown): ConfigValue {
@@ -484,6 +505,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 {{ t('settings.general.localeHint') }}
               </p>
             </div>
+
+            <NoxTextField
+              id="app-timezone"
+              :model-value="draft.timezone"
+              :error="fieldErrors.timezone"
+              :hint="t('settings.general.timezoneHint')"
+              :label="t('settings.general.timezone')"
+              placeholder="UTC"
+              required
+              @update:model-value="setTimezone($event)"
+            />
           </div>
         </section>
 

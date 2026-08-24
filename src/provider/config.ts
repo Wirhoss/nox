@@ -98,6 +98,13 @@ const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
   model: modelConfigSchema.optional(),
   requestId: z.string().optional(),
   signal: z.instanceof(AbortSignal).optional(),
+  /**
+   * The zone timestamps in this request are written in. It travels with the
+   * request rather than sitting in an adapter's configuration because it is one
+   * installation-wide answer, and two adapters disagreeing about what time it is
+   * would be two different conversations about the same day.
+   */
+  timeZone: z.string().min(1).optional(),
 });
 
 interface TextGenerateOptions extends z.infer<typeof textGenerateOptionsSchema> {

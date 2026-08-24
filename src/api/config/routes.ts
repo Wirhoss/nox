@@ -144,6 +144,16 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
         authenticated: true,
       })
 
+      /**
+       * The kinds a tool set may be, with each kind's own schema. An editor
+       * builds its form from this instead of carrying a copy of what one
+       * extension's configuration looks like — which is what let the previous
+       * one keep offering fields the contribution had already stopped accepting.
+       */
+      .get('/capabilities/tool-set-types', () => ({ toolSetTypes: config.toolSetTypes() }), {
+        authenticated: true,
+      })
+
       .get(
         '/config/:section',
         ({ params, status }) => {

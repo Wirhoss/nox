@@ -206,8 +206,12 @@ function versionTool(version: string): Tool {
 class TestToolSet extends ToolSet {
   readonly #definitions: readonly Tool[];
 
-  constructor(definitions: readonly Tool[]) {
-    super('test', 'Tool set used by agent tests.');
+  constructor(
+    definitions: readonly Tool[],
+    name = 'test',
+    description = 'Tool set used by agent tests.',
+  ) {
+    super(name, description);
     this.#definitions = definitions;
     this.addTools();
   }
@@ -434,6 +438,62 @@ describe('Agent', () => {
 
     await first.stop();
     await second.stop();
+  });
+
+  test('adds routed tool-set names and descriptions after the configured system prompt', async () => {
+    const provider = new RecordingProvider();
+    const direct = new TestToolSet(
+      [{ ...echoTool(), name: 'direct_echo' }],
+      'Direct tools',
+      'Tools already exposed directly.',
+    );
+    const web = new TestToolSet(
+      [{ ...echoTool(), name: 'browser_navigate' }],
+      'Web tools',
+      'Drive a real browser,\nextract pages and search the public web.',
+    );
+    const files = new TestToolSet(
+      [{ ...echoTool(), name: 'read_file' }],
+      'File tools',
+      'Read and search local files.',
+    );
+    const omitted = new TestToolSet(
+      [{ ...echoTool(), name: 'hidden_tool' }],
+      'Hidden tools',
+      'This grant contributes no routed tools.',
+    );
+    const agent = new Agent(await openDatabase(), provider, MODEL, {
+      agentId: 'test',
+      authorities: testCatalog(),
+      directToolSets: [{ toolSet: direct, toolSetId: 'direct-instance' }],
+      routedToolSets: [
+        { toolSet: web, toolSetId: 'internet-instance' },
+        { toolSet: files, toolSetId: 'files-instance' },
+        { toolSet: omitted, toolSetId: 'empty-instance', tools: [] },
+      ],
+      systemPrompt: 'you are nox',
+    });
+
+    const session = await agent.openSession({ authorization: permissiveAuthorization });
+    session.send('hi', testOrigin());
+    await session.idle;
+
+    // The blueprint prompt remains operator-owned. Only the snapshotted request
+    // head receives Nox's compact map of the capabilities hidden by the router.
+    expect(agent.systemPrompt).toBe('you are nox');
+    expect(provider.agentRequests[0]?.systemPrompt).toBe(
+      [
+        'you are nox',
+        '',
+        'Routed tool sets available through search_tool:',
+        '- File tools: Read and search local files.',
+        '- Web tools: Drive a real browser, extract pages and search the public web.',
+        '',
+        'Use these descriptions to decide when to call search_tool and which capability keywords to search. Its results are authoritative for exact tool names and parameter schemas.',
+      ].join('\n'),
+    );
+
+    await session.stop();
   });
 
   test('new and loaded sessions snapshot the current direct and routed tools', async () => {

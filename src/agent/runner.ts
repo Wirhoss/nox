@@ -61,6 +61,8 @@ interface RunnerOptions {
 }
 
 interface RunnerConstructionOptions extends RunnerOptions {
+  /** The zone this installation reads clocks in; timestamps shown to the model use it. */
+  timeZone?: string;
   /** Host-bound file output. Absent for internal or deliberately text-only sessions. */
   artifactOutputs?: ArtifactOutputHost;
   /** Where both halves of the decision pipeline write their one timeline. */
@@ -137,6 +139,7 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
  */
 class Runner {
   readonly #artifactOutputs?: ArtifactOutputHost;
+  readonly #timeZone?: string;
   readonly #audit?: DecisionAuditSink;
   readonly #authorities?: AuthorityCatalog;
   readonly #authorization?: AuthorizationProvider;
@@ -173,6 +176,7 @@ class Runner {
     options: RunnerConstructionOptions,
   ) {
     this.#artifactOutputs = options.artifactOutputs;
+    this.#timeZone = options.timeZone;
     this.#audit = options.audit;
     this.#authorities = options.authorities;
     this.#authorization = options.authorization;
@@ -436,6 +440,7 @@ class Runner {
       Object.values(this.#context.getTools()),
       {
         ...(artifactOutput === undefined ? {} : { artifactOutput }),
+        ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
         model: this.#model,
         signal,
       },

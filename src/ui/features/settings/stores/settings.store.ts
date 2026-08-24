@@ -12,6 +12,7 @@ import {
   type Secret,
   settingsApi,
   type ToolSetInventory,
+  type ToolSetType,
 } from '../api/settings.api'
 
 type SettingsResourceState =
@@ -40,6 +41,7 @@ const useSettingsStore = defineStore('settings', () => {
   const section = ref<ConfigSection>()
   const secrets = ref<readonly Secret[]>([])
   const toolSetInventory = ref<readonly ToolSetInventory[]>([])
+  const toolSetTypes = ref<readonly ToolSetType[]>([])
   const resource = ref<SettingsResourceState>({ type: 'idle' })
   const mutation = ref<SettingsMutationState>({ type: 'idle' })
 
@@ -58,8 +60,14 @@ const useSettingsStore = defineStore('settings', () => {
           : ['app', 'brokers'].includes(sectionKey)
             ? ['blueprints']
             : []
-      const [nextCatalog, nextSection, nextReferences, nextSecrets, nextToolSetInventory] =
-        await Promise.all([
+      const [
+        nextCatalog,
+        nextSection,
+        nextReferences,
+        nextSecrets,
+        nextToolSetInventory,
+        nextToolSetTypes,
+      ] = await Promise.all([
           settingsApi.listConfig(accessToken),
           settingsApi.readSection(accessToken, sectionKey),
           Promise.all(
@@ -70,13 +78,19 @@ const useSettingsStore = defineStore('settings', () => {
           ['brokers', 'providers', 'toolSets'].includes(sectionKey)
             ? settingsApi.listSecrets(accessToken)
             : undefined,
-          sectionKey === 'blueprints' ? settingsApi.listToolSetInventory(accessToken) : [],
+          ['blueprints', 'toolSets'].includes(sectionKey)
+            ? settingsApi.listToolSetInventory(accessToken)
+            : [],
+          // The kinds and their schemas: what the tool-set editor renders its
+          // form from, and pointless to fetch anywhere else.
+          sectionKey === 'toolSets' ? settingsApi.listToolSetTypes(accessToken) : [],
         ])
       if (version !== loadVersion) return
       catalog.value = nextCatalog
       references.value = Object.fromEntries(nextReferences)
       if (nextSecrets !== undefined) secrets.value = nextSecrets
       toolSetInventory.value = nextToolSetInventory
+      toolSetTypes.value = nextToolSetTypes
       section.value = nextSection
       resource.value = { type: 'ready' }
     } catch (error) {
@@ -306,6 +320,7 @@ const useSettingsStore = defineStore('settings', () => {
     section: readonly(section),
     secrets: readonly(secrets),
     toolSetInventory: readonly(toolSetInventory),
+    toolSetTypes: readonly(toolSetTypes),
   }
 })
 

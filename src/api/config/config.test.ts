@@ -163,6 +163,7 @@ async function configNox(options: NoxOptions = {}): Promise<ConfigNox> {
     config: new ConfigStore({
       authorities: () => AuthorityCatalog.from([...CORE_AUTHORITIES]),
       config,
+      contributions,
       toolSets: new ToolSetCatalog({
         configured: () => config.get('toolSets'),
         contributions,
@@ -260,6 +261,30 @@ describe('reading configuration', () => {
           type: 'fake_tools',
         },
       ],
+    });
+  });
+
+  test('describes each configurable tool-set kind with the contribution’s own schema', async () => {
+    const nox = await configNox();
+
+    const response = await fetch(`${nox.url}/capabilities/tool-set-types`, {
+      headers: nox.headers,
+    });
+    const body = (await response.json()) as {
+      toolSetTypes: { extensionId: string; schema: Record<string, unknown>; type: string }[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.toolSetTypes).toHaveLength(1);
+    expect(body.toolSetTypes[0]).toMatchObject({
+      extensionId: 'test.extension',
+      type: 'fake_tools',
+    });
+    // The schema an editor builds its form from is the one the loader validates
+    // against, down to the discriminator.
+    expect(body.toolSetTypes[0]?.schema).toMatchObject({
+      properties: { type: { const: 'fake_tools' } },
+      type: 'object',
     });
   });
 

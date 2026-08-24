@@ -1,8 +1,12 @@
+import { z } from 'zod';
+
 import { type ConfigKey, sections } from '../../config/sections';
+import { toolSets } from '../../extensions/contribution-points/toolsets';
 import { configPolicies, type SectionPolicies, type SectionPolicy } from './policies';
 
 import type { Config, ConfigUpdate, ContributionKey, DirectoryKey } from '../../config/config';
 import type { ConfigApply, ConfigSection } from '../../config/section';
+import type { ContributionReader } from '../../extensions/contribution';
 import type { ToolSetCatalog, ToolSetInventory } from '../../extensions/toolSetCatalog';
 import type { BlueprintContext } from './blueprints';
 
@@ -32,6 +36,23 @@ interface SectionSummary {
   readonly name: string;
   /** Whether the whole document may be replaced in one write. */
   readonly writable: boolean;
+}
+
+/**
+ * One kind of tool set an operator may configure, with the shape its entries
+ * must take.
+ *
+ * The shape is the contribution's own schema, converted rather than restated: an
+ * editor that carried its own idea of what a kind looks like would be a second
+ * definition, and the first entry it saved against the wrong one would be
+ * refused by the loader with the operator holding a form that had said it was
+ * fine.
+ */
+interface ToolSetTypeDescriptor {
+  readonly extensionId: string;
+  /** JSON Schema of one configured entry, in the form a client writes. */
+  readonly schema: Readonly<Record<string, unknown>>;
+  readonly type: string;
 }
 
 /** An entry nothing may remove yet, and the reasons an operator can act on. */
@@ -67,11 +88,13 @@ function sorted(record: Record<string, unknown>): Record<string, unknown> {
  */
 class ConfigStore {
   readonly #config: Config;
+  readonly #contributions: ContributionReader;
   readonly #policies: SectionPolicies;
   readonly #toolSets: ToolSetCatalog;
 
   constructor(options: BlueprintContext) {
     this.#config = options.config;
+    this.#contributions = options.contributions;
     this.#policies = configPolicies(options);
     this.#toolSets = options.toolSets;
   }
@@ -113,6 +136,31 @@ class ConfigStore {
 
   public hasEntries(key: ConfigKey): key is EntryKey {
     return sections[key].kind !== 'file';
+  }
+
+  /**
+   * Every kind of tool set that can be configured, and the schema of each.
+   *
+   * Read on every call rather than captured: contributions arrive when their
+   * extension activates and can be disposed afterwards, so a kind that appeared
+   * or left is visible here without a restart of the surface.
+   */
+  public toolSetTypes(): readonly ToolSetTypeDescriptor[] {
+    return Object.freeze(
+      this.#contributions
+        .list(toolSets)
+        .map((contribution) =>
+          Object.freeze({
+            extensionId: contribution.extensionId,
+            schema: z.toJSONSchema(contribution.value.configSchema, {
+              io: 'input',
+              unrepresentable: 'any',
+            }),
+            type: contribution.id,
+          }),
+        )
+        .sort((a, b) => a.type.localeCompare(b.type)),
+    );
   }
 
   /** Tools exposed by each configured capability, using the runtime factories' own answer. */
@@ -181,4 +229,4 @@ class ConfigStore {
 
 export { ConfigStore, EntryInUseError };
 
-export type { EntryKey, SectionSummary };
+export type { EntryKey, SectionSummary, ToolSetTypeDescriptor };

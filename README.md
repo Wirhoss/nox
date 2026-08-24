@@ -31,6 +31,14 @@ bun run build:ui
 bun run start
 ```
 
+`app.json` holds one setting worth naming here: `timezone`, an IANA zone such as
+`America/Mexico_City`, defaulting to `UTC`. Every message a model is shown
+carries the moment it was said in that zone — `[from esteban · 2026-08-23 14:14
+GMT-6]` — which is how an agent knows what day it is. Nothing injects a live
+clock into the system prompt: the newest message in the history already is the
+current time, so the cached prefix of a request never moves for the model to read
+it, and a replayed request renders byte-for-byte as it did the first time.
+
 The first run writes `app.json` into `CONFIG_DIR` with defaults and migrates a
 SQLite database into `DATA_DIR`. Type to talk; `/exit` or Ctrl-C ends the
 session. Replies stream to stdout and every log line goes to stderr, so
@@ -53,8 +61,10 @@ to configured contributions as redacted snapshot handles, so rotating a secret r
 existing consumers. Environment variables and mounted secret directories are not alternate sources.
 
 Tool sets are configured as instances in `toolsets.json` and granted from a
-blueprint as either direct or routed. The builtin `web` kind can expose SearXNG
-search, Crawl4AI extraction, or both:
+blueprint as either direct or routed. The builtin `web` kind has three slots —
+`search`, `extract` and `browser` — and each is filled by naming the module that
+backs it. A slot left empty is a tool the agents holding that instance simply do
+not have:
 
 `toolsets.json`:
 
@@ -62,11 +72,20 @@ search, Crawl4AI extraction, or both:
 {
   "internet": {
     "type": "web",
-    "search": { "url": "http://localhost:8081" },
-    "extract": { "url": "http://localhost:11235" }
+    "search": { "module": "searxng", "url": "http://localhost:8081" },
+    "extract": { "module": "crawl4ai", "url": "http://localhost:11235" },
+    "browser": { "module": "camoufox", "url": "https://camofox.example" }
   }
 }
 ```
+
+The fields beside `module` are that module's own: SearXNG has a language and an
+engine list, Crawl4AI has captures and a batch ceiling, camofox has a session
+owner. A module added later — Firecrawl beside Crawl4AI, say — is a file in
+`src/extensions/builtin/toolsets/web/modules/` plus a line in that directory's
+registry; nothing else widens, and no entry naming another module changes
+meaning. The settings surface builds its form from each kind's own schema, so a
+new module's fields appear there without the editor learning their names.
 
 The corresponding field inside `blueprints/nox.json`:
 
@@ -76,11 +95,27 @@ The corresponding field inside `blueprints/nox.json`:
 }
 ```
 
-`web_extract` returns bounded readable Markdown and the image candidates Crawl4AI found. With
-`returnArtifacts: true`, it publishes each bounded page as a durable `.md` file and returns only its
-reference, leaving `present_artifact` to decide whether it reaches the user. `web_view_image` then
-returns a chosen candidate as image content, so a multimodal model receives
-pixels through its provider adapter rather than an alt string or URL disguised as a tool result.
+At session open, Nox appends the names and descriptions of routed tool sets to
+the runtime system context. This gives the model enough of a capability map to
+decide whether to call `search_tool` and which keywords to use without paying for
+every routed tool schema in the request head. The exact names and schemas
+returned by `search_tool` remain authoritative.
+
+`web_extract` returns the page as files rather than as prose: the cleaned HTML,
+the pictures it found (fetched and published, bounded in count and size), and on
+request a screenshot, a PDF or Markdown. The transcript keeps only what has to be
+read — the title, where each file went, and a bounded excerpt — leaving
+`present_artifact` to decide what reaches the user. The browser is a family of tools rather than one tool with an
+`action` argument — `browser_open`, `browser_snapshot`, `browser_click`,
+`browser_type` and the rest — and which of them exist is the configured module's
+answer, so a backend that cannot press a key never offers `browser_press` and one
+that can do more than camofox offers more. `browser_open` hands back a tab ID
+that later calls name, and every action that changes the page answers with the
+page it produced: an accessibility snapshot with element refs, which is what the
+next click or keystroke addresses. Reading a page and acting on one are separate
+authorities, so an agent can be granted a browser it may look at and not touch,
+and clicking and typing are recorded as irreversible network writes. An instance
+that should expose fewer of them lists the ones it keeps in `enabledTools`.
 
 Model modalities are explicit metadata. A model is text-only until its exact configuration declares
 additional inputs; model IDs are never used as a capability database:
