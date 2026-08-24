@@ -1,74 +1,56 @@
 const spanishMessages = Object.freeze({
-  'toolSet.description': 'Busca en la web pública y extrae contenido legible de páginas web.',
+  'toolSet.description':
+    'Busca en la web pública, extrae páginas como archivos duraderos y controla un navegador real.',
   'toolSet.name': 'Herramientas web',
+  'tools.browser_click.description':
+    'Hace clic en un elemento de una página abierta y devuelve la página resultante.',
+  'tools.browser_close.description': 'Cierra una pestaña abierta.',
+  'tools.browser_images.description': 'Lista las imágenes a las que apunta una página abierta.',
+  'tools.browser_links.description': 'Lista los enlaces a los que apunta una página abierta.',
+  'tools.browser_navigate.description': 'Lleva una pestaña abierta a otra URL.',
+  'tools.browser_open.description':
+    'Abre una pestaña del navegador y devuelve su tabId junto con la página.',
+  'tools.browser_press.description': 'Pulsa una tecla en una página abierta.',
+  'tools.browser_screenshot.description': 'Captura una página abierta como artefacto de imagen.',
+  'tools.browser_scroll.description': 'Desplaza una página abierta.',
+  'tools.browser_snapshot.description':
+    'Lee una página abierta como una instantánea de accesibilidad con refs de elementos.',
+  'tools.browser_type.description': 'Escribe texto en un elemento de una página abierta.',
+  'tools.browser_wait.description': 'Espera a un elemento o a un retardo en una página abierta.',
   'tools.web_extract.description':
-    'Extrae páginas web y devuelve un resultado Markdown separado para cada URL.',
+    'Extrae páginas web públicas como archivos duraderos — HTML limpio, las imágenes de la página y, si se pide, una captura, un PDF o Markdown.',
   'tools.web_search.description':
     'Busca en la web pública y devuelve títulos, URL y fragmentos de los resultados.',
-  'tools.web_view_image.description':
-    'Presenta una URL de imagen pública como contenido visual a un modelo multimodal.',
-  'ui.capabilitySurface': 'Superficie de capacidades',
-  'ui.capabilitySurfaceHelp':
-    'La implementación aportada y las herramientas exactas expuestas cuando un agente recibe este conjunto.',
-  'ui.configured': 'CONFIGURADO',
-  'ui.credentialValueHint':
-    'Si se deja vacío se conserva el valor existente. Los secretos nunca se vuelven a leer.',
-  'ui.defaultCharacters': 'Caracteres predeterminados por página',
-  'ui.defaultLanguage': 'Idioma predeterminado',
-  'ui.defaultLanguageHint': 'Código de idioma de SearXNG, como en, es o all.',
+  'ui.camoufox.snapshot': 'Caracteres de instantánea en línea',
+  'ui.camoufox.snapshotHelp':
+    'Las instantáneas de accesibilidad más largas se publican como archivo y solo su inicio queda en la conversación.',
+  'ui.camoufox.userId': 'Propietario de la sesión del navegador',
+  'ui.camoufox.userIdHelp': 'El usuario de camofox con el que navega esta instancia de Nox.',
+  'ui.crawl4ai.captures': 'Capturas predeterminadas',
+  'ui.crawl4ai.capturesHelp': 'Lo que devuelve cada página cuando el agente no pide otra cosa.',
+  'ui.crawl4ai.waitUntil': 'Esperar hasta',
+  'ui.crawl4ai.waitUntilHelp': 'Cuán asentada debe estar una página antes de capturarla.',
+  'ui.credential': 'Credencial',
+  'ui.credentialHelp':
+    'El secreto gestionado que guarda el token de este servicio. Los valores nunca se vuelven a leer.',
   'ui.defaultResults': 'Resultados predeterminados',
-  'ui.disabled': 'DESACTIVADO',
-  'ui.enableExtract': 'Activa este endpoint para exponer web_extract.',
-  'ui.enableSearch': 'Activa este endpoint para exponer web_search.',
-  'ui.exposed': 'EXPUESTA',
-  'ui.extract': 'EXTRACCIÓN',
-  'ui.extractAuthority': 'RED / LECTURA / EXTRACCIÓN',
-  'ui.extractCredential': 'Credencial de extracción',
-  'ui.extractCredentialValue': 'Valor de la credencial de extracción',
-  'ui.extractEndpoint': 'Endpoint de Crawl4AI',
-  'ui.extractEndpointHelp':
-    'Extracción de páginas legibles con límites estrictos de lote y tamaño de respuesta.',
-  'ui.extractOffline': 'HERRAMIENTA DE EXTRACCIÓN FUERA DE LÍNEA',
-  'ui.extractUrl': 'URL del servicio de extracción',
-  'ui.extractUrlHint': 'Endpoint HTTP de Crawl4AI que recibe solicitudes de rastreo por lotes.',
-  'ui.held': 'RETENIDA',
-  'ui.maximumCharacters': 'Máximo de caracteres por página',
   'ui.maximumResults': 'Resultados máximos',
   'ui.maximumUrls': 'Máximo de URL por llamada',
-  'ui.newExtractSecretId': 'Nuevo ID de secreto de extracción',
-  'ui.newManagedSecret': 'Nuevo secreto gestionado',
-  'ui.newSearchSecretId': 'Nuevo ID de secreto de búsqueda',
-  'ui.noCredential': 'Sin credencial',
-  'ui.noEndpoint': 'No hay ningún endpoint configurado',
-  'ui.search': 'BÚSQUEDA',
-  'ui.searchAuthority': 'RED / LECTURA / BÚSQUEDA',
-  'ui.searchCredential': 'Credencial de búsqueda',
-  'ui.searchCredentialValue': 'Valor de la credencial de búsqueda',
-  'ui.searchEndpoint': 'Endpoint de SearXNG',
-  'ui.searchEndpointHelp':
-    'Búsqueda en la web pública con un número limitado de resultados y un idioma predeterminado.',
-  'ui.searchOffline': 'HERRAMIENTA DE BÚSQUEDA FUERA DE LÍNEA',
-  'ui.searchUrl': 'URL del servicio de búsqueda',
-  'ui.searchUrlHint': 'Nox añade /search y solicita los resultados en formato JSON.',
-  'ui.secretIdHint':
-    'La configuración del conjunto de herramientas guardará este ID, nunca su valor.',
-  'ui.surface': 'SUPERFICIE',
+  'ui.searxng.engines': 'Motores',
+  'ui.searxng.enginesHelp':
+    'Motores de SearXNG separados por comas. Vacío usa el conjunto propio de la instancia.',
+  'ui.searxng.language': 'Idioma predeterminado',
+  'ui.searxng.languageHelp': 'Código de idioma de SearXNG, como en, es o all.',
+  'ui.searxng.safeSearch': 'Búsqueda segura',
+  'ui.searxng.safeSearchHelp': '0 desactivada, 1 moderada, 2 estricta.',
+  'ui.serviceUrl': 'URL del servicio',
+  'ui.slot.browser': 'Navegador',
+  'ui.slot.browserHelp': 'Llena esta ranura para exponer la herramienta browser.',
+  'ui.slot.extract': 'Extracción',
+  'ui.slot.extractHelp': 'Llena esta ranura para exponer web_extract.',
+  'ui.slot.search': 'Búsqueda',
+  'ui.slot.searchHelp': 'Llena esta ranura para exponer web_search.',
   'ui.timeout': 'Tiempo límite (ms)',
-  'ui.timeoutHint': 'Si está vacío se usa el valor predeterminado del entorno: 30000 ms.',
-  'ui.type': 'Tipo de conjunto de herramientas',
-  'ui.validation.chooseSecretId': 'Elige un ID de secreto válido antes de introducir su valor.',
-  'ui.validation.configureEndpoint': 'Configura búsqueda, extracción o ambas.',
-  'ui.validation.conflictingSecretValues':
-    'Ambos endpoints usan este ID de secreto, pero especifican valores diferentes.',
-  'ui.validation.defaultExceedsMaximum':
-    'El valor predeterminado no puede superar el máximo del endpoint.',
-  'ui.validation.defaultLanguageRequired': 'El idioma predeterminado es obligatorio.',
-  'ui.validation.httpUrl': 'Introduce una URL HTTP o HTTPS absoluta.',
-  'ui.validation.oneToolExposed': 'Al menos una herramienta configurada debe permanecer expuesta.',
-  'ui.validation.secretValueRequired': 'Introduce el valor del nuevo secreto gestionado.',
-  'ui.validation.useJson':
-    'Usa el modo JSON para los tipos de conjuntos de herramientas aportados.',
-  'ui.webTools': 'Herramientas web',
 } as const);
 
 export { spanishMessages };

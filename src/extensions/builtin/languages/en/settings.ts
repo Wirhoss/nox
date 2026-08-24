@@ -110,6 +110,25 @@ const settingsMessages = Object.freeze({
     'Capability bundles contributed by extensions and granted to Agents.',
   'settings.sections.toolSets.label': 'Tool set',
   'settings.sections.toolSets.plural': 'Tool Sets',
+  'settings.toolSet.capabilitySurface': 'Capability surface',
+  'settings.toolSet.capabilitySurfaceHelp':
+    'The contributed implementation and the exact tools exposed when an agent receives this set.',
+  'settings.toolSet.configured': 'CONFIGURED',
+  'settings.toolSet.credentialValue': 'Credential value',
+  'settings.toolSet.credentialValueHint':
+    'Blank preserves an existing value. Secrets are never read back.',
+  'settings.toolSet.disabled': 'DISABLED',
+  'settings.toolSet.enableSlot': 'Enable this section to configure it.',
+  'settings.toolSet.exposed': 'EXPOSED',
+  'settings.toolSet.held': 'HELD',
+  'settings.toolSet.listHint': 'Separate values with commas.',
+  'settings.toolSet.newManagedSecret': 'New managed secret',
+  'settings.toolSet.newSecretId': 'New secret ID',
+  'settings.toolSet.noCredential': 'No credential',
+  'settings.toolSet.secretIdHint': 'The tool-set config will store this ID, never its value.',
+  'settings.toolSet.slotOffline': 'NOT CONFIGURED',
+  'settings.toolSet.surface': 'SURFACE',
+  'settings.toolSet.type': 'Tool-set type',
   'settings.toolSet.changeRefused': 'Tool-set change refused',
   'settings.toolSet.confirmDiscard': 'Discard the unsaved tool-set changes?',
   'settings.toolSet.header': 'TOOL SET',
@@ -128,6 +147,16 @@ const settingsMessages = Object.freeze({
     'Restart Nox to compose this capability bundle from the saved configuration.',
   'settings.toolSet.titleFallback': 'Tool set',
   'settings.toolSet.titleNew': 'New tool set',
+  'settings.toolSet.validation.chooseSecretId':
+    'Choose a valid secret ID before entering its value.',
+  'settings.toolSet.validation.conflictingSecretValues':
+    'Two positions use this secret ID but specify different values.',
+  'settings.toolSet.validation.httpUrl': 'Enter an absolute HTTP or HTTPS URL.',
+  'settings.toolSet.validation.oneToolExposed': 'At least one tool must remain exposed.',
+  'settings.toolSet.validation.required': 'This field is required.',
+  'settings.toolSet.validation.secretValueRequired': 'Enter the value for the new managed secret.',
+  'settings.toolSet.validation.useJson':
+    'No extension contributes this type. Continue in JSON mode.',
   'settings.toolSet.validation.configurationObject':
     'Tool-set configuration must be one JSON object.',
   'settings.toolSet.validation.curatedFormUnavailable':

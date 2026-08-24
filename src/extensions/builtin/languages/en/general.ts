@@ -53,6 +53,9 @@ const generalMessages = Object.freeze({
   'settings.general.runtimeLoggingHelp':
     'Minimum event severity written by Nox. Trace and debug can expose operational metadata and produce substantially more output.',
   'settings.general.save': 'Save general settings',
+  'settings.general.timezone': 'Time zone',
+  'settings.general.timezoneHint':
+    'IANA zone, such as UTC or America/Mexico_City. Agents read every message timestamp in it.',
   'settings.general.saved': 'Application configuration saved',
   'settings.general.savedBody':
     'The document is on disk. Restart Nox to apply the machine-level changes.',
@@ -74,6 +77,8 @@ const generalMessages = Object.freeze({
   'settings.general.validation.durabilityMode': 'Choose a supported SQLite durability mode.',
   'settings.general.validation.hostRequired': 'A bind host is required.',
   'settings.general.validation.locale': 'Choose an installed language.',
+  'settings.general.validation.timezone':
+    'Use an IANA time zone name, such as UTC or America/Mexico_City.',
   'settings.general.validation.logLevel': 'Choose a supported log level.',
   'settings.general.validation.pathRequired': 'A database path is required.',
   'settings.general.webChat': 'WEB CHAT',

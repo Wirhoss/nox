@@ -7,14 +7,12 @@ import { toolSetContribution, toolSets } from '../../../contribution-points/tool
 import { defineExtension } from '../../../extension';
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
-import {
-  WEB_EXTRACT_AUTHORITY,
-  WEB_SEARCH_AUTHORITY,
-  WEB_VIEW_IMAGE_AUTHORITY,
-  WebTools,
-} from './webTools';
+import { BROWSER_ACT_AUTHORITY, BROWSER_READ_AUTHORITY } from './tools/browser';
+import { WEB_EXTRACT_AUTHORITY } from './tools/extract';
+import { WEB_SEARCH_AUTHORITY } from './tools/search';
+import { WebToolSet } from './webToolSet';
 
-/** Contributes the builtin SearXNG/Crawl4AI web tool set. */
+/** Contributes the builtin web tool set: search, extraction and a browser. */
 const webToolsExtension = defineExtension({
   manifest: { engines: { nox: '^0.1.0' }, id: 'nox.toolset.web' },
   activate(context) {
@@ -40,22 +38,29 @@ const webToolsExtension = defineExtension({
 
     // Declared before the tools that reference them: an authority nobody
     // registered cannot be granted, and a tool naming one cannot be composed.
+    // Four rather than one, because searching the public web, downloading what a
+    // page is made of, reading a page in a browser, and clicking and typing on
+    // one are four different permissions to grant or withhold — an agent can be
+    // given a browser it may look at and not touch.
     context.contributions.register(authorities, WEB_SEARCH_AUTHORITY, {
       description: 'Search the public web.',
     });
     context.contributions.register(authorities, WEB_EXTRACT_AUTHORITY, {
-      description: 'Fetch and extract the readable content of public web pages.',
+      description: 'Fetch public web pages and publish their content as artifacts.',
     });
-    context.contributions.register(authorities, WEB_VIEW_IMAGE_AUTHORITY, {
-      description: 'Present a public web image to a multimodal model.',
+    context.contributions.register(authorities, BROWSER_READ_AUTHORITY, {
+      description: 'Open, read and capture public web pages in a browser.',
+    });
+    context.contributions.register(authorities, BROWSER_ACT_AUTHORITY, {
+      description: 'Click, type and otherwise act on pages open in a browser.',
     });
 
     context.contributions.register(
       toolSets,
       'web',
       toolSetContribution({
-        configSchema: WebTools.configSchema,
-        create: (config) => new WebTools(config),
+        configSchema: WebToolSet.configSchema,
+        create: (config) => new WebToolSet(config),
       }),
     );
   },

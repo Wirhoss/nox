@@ -113,6 +113,26 @@ const settingsMessages = Object.freeze({
     'Paquetes de capacidades aportados por extensiones y concedidos a agentes.',
   'settings.sections.toolSets.label': 'Conjunto de herramientas',
   'settings.sections.toolSets.plural': 'Conjuntos de herramientas',
+  'settings.toolSet.capabilitySurface': 'Superficie de capacidades',
+  'settings.toolSet.capabilitySurfaceHelp':
+    'La implementación aportada y las herramientas exactas que se exponen cuando un agente recibe este conjunto.',
+  'settings.toolSet.configured': 'CONFIGURADO',
+  'settings.toolSet.credentialValue': 'Valor de la credencial',
+  'settings.toolSet.credentialValueHint':
+    'Si se deja vacío se conserva el valor existente. Los secretos nunca se vuelven a leer.',
+  'settings.toolSet.disabled': 'DESACTIVADO',
+  'settings.toolSet.enableSlot': 'Activa esta sección para configurarla.',
+  'settings.toolSet.exposed': 'EXPUESTA',
+  'settings.toolSet.held': 'RETENIDA',
+  'settings.toolSet.listHint': 'Separa los valores con comas.',
+  'settings.toolSet.newManagedSecret': 'Nuevo secreto gestionado',
+  'settings.toolSet.newSecretId': 'Nuevo ID de secreto',
+  'settings.toolSet.noCredential': 'Sin credencial',
+  'settings.toolSet.secretIdHint':
+    'La configuración del conjunto de herramientas guardará este ID, nunca su valor.',
+  'settings.toolSet.slotOffline': 'SIN CONFIGURAR',
+  'settings.toolSet.surface': 'SUPERFICIE',
+  'settings.toolSet.type': 'Tipo de conjunto de herramientas',
   'settings.toolSet.changeRefused': 'Cambio de conjunto de herramientas rechazado',
   'settings.toolSet.confirmDiscard':
     '¿Descartar los cambios del conjunto de herramientas sin guardar?',
@@ -132,6 +152,18 @@ const settingsMessages = Object.freeze({
   'settings.toolSet.toolSetJson': 'JSON del conjunto de herramientas',
   'settings.toolSet.toolSetJsonHelp':
     'Acceso completo para implementaciones aportadas. Las credenciales no pertenecen a este documento; cada implementación declara lo que Nox debe proporcionarle por separado.',
+  'settings.toolSet.validation.chooseSecretId':
+    'Elige un ID de secreto válido antes de introducir su valor.',
+  'settings.toolSet.validation.conflictingSecretValues':
+    'Dos posiciones usan este ID de secreto, pero especifican valores diferentes.',
+  'settings.toolSet.validation.httpUrl': 'Introduce una URL HTTP o HTTPS absoluta.',
+  'settings.toolSet.validation.oneToolExposed':
+    'Al menos una herramienta debe permanecer expuesta.',
+  'settings.toolSet.validation.required': 'Este campo es obligatorio.',
+  'settings.toolSet.validation.secretValueRequired':
+    'Introduce el valor del nuevo secreto gestionado.',
+  'settings.toolSet.validation.useJson':
+    'Ninguna extensión aporta este tipo. Continúa en modo JSON.',
   'settings.toolSet.validation.configurationObject':
     'La configuración del conjunto de herramientas debe ser un único objeto JSON.',
   'settings.toolSet.validation.curatedFormUnavailable':

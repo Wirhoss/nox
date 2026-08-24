@@ -431,7 +431,7 @@ class OpenAICompletions extends ChatProvider {
 
     const sampling = { ...model, ...opts };
     const body: Record<string, unknown> = {
-      messages: await this.toOpenAIMessages(systemPrompt, messageHistory, model),
+      messages: await this.toOpenAIMessages(systemPrompt, messageHistory, model, opts?.timeZone),
       model: modelId,
       stream: true,
       stream_options: { include_usage: true },
@@ -452,6 +452,7 @@ class OpenAICompletions extends ChatProvider {
     systemPrompt: string,
     history: Message[],
     model: ModelConfig | undefined,
+    timeZone?: string,
   ): Promise<OpenAIMessage[]> {
     const messages: OpenAIMessage[] = [{ content: systemPrompt, role: 'system' }];
     const pendingToolMedia: { readonly content: MessageContent[]; readonly label: string }[] = [];
@@ -476,7 +477,7 @@ class OpenAICompletions extends ChatProvider {
       switch (message.role) {
         case 'user': {
           messages.push({
-            content: await this.toOpenAIUserContent(userContentForModel(message), model),
+            content: await this.toOpenAIUserContent(userContentForModel(message, timeZone), model),
             role: 'user',
           });
           break;

@@ -4,7 +4,7 @@ import { NoxApplication } from '../../../../application';
 import { translationFragments } from '../../../contribution-points/languages';
 import { toolSets } from '../../../contribution-points/toolsets';
 import { webToolsExtension } from './extension';
-import { WebTools } from './webTools';
+import { WebToolSet } from './webToolSet';
 
 async function started(): Promise<NoxApplication> {
   const app = new NoxApplication({ extensions: [webToolsExtension] });
@@ -18,7 +18,7 @@ describe('webToolsExtension', () => {
     const contribution = app.contributions.get(toolSets, 'web');
 
     expect(contribution?.extensionId).toBe('nox.toolset.web');
-    expect(contribution?.value.configSchema).toBe(WebTools.configSchema);
+    expect(contribution?.value.configSchema).toBe(WebToolSet.configSchema);
     expect(contribution?.value.configSchema.shape.type.value).toBe('web');
     await app.stop();
   });
@@ -31,10 +31,10 @@ describe('webToolsExtension', () => {
 
     expect(english?.extensionId).toBe('nox.toolset.web');
     expect(english?.value.namespace).toBe('nox.toolset.web');
-    expect(english?.value.messages['ui.searchUrl']).toBe('Search service URL');
+    expect(english?.value.messages['ui.serviceUrl']).toBe('Service URL');
     expect(spanish?.extensionId).toBe('nox.toolset.web');
     expect(spanish?.value.namespace).toBe('nox.toolset.web');
-    expect(spanish?.value.messages['ui.searchUrl']).toBe('URL del servicio de búsqueda');
+    expect(spanish?.value.messages['ui.serviceUrl']).toBe('URL del servicio');
     expect(Object.keys(spanish?.value.messages ?? {}).sort()).toEqual(
       Object.keys(english?.value.messages ?? {}).sort(),
     );
@@ -44,12 +44,12 @@ describe('webToolsExtension', () => {
   test('builds a configured tool set and disposes its contribution', async () => {
     const app = await started();
     const contribution = app.contributions.get(toolSets, 'web');
-    const config = WebTools.configSchema.parse({
-      search: { url: 'https://search.example.test' },
+    const config = WebToolSet.configSchema.parse({
+      search: { module: 'searxng', url: 'https://search.example.test' },
       type: 'web',
     });
 
-    expect(contribution?.value.create(config)).toBeInstanceOf(WebTools);
+    expect(contribution?.value.create(config)).toBeInstanceOf(WebToolSet);
     await app.stop();
     expect(app.contributions.has(toolSets, 'web')).toBe(false);
   });

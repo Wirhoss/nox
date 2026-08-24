@@ -161,7 +161,33 @@ describe('OpenAICompletions request body', () => {
     expect(body.stream_options).toEqual({ include_usage: true });
     expect(body.messages).toEqual([
       { content: 'be brief', role: 'system' },
-      { content: '[from test-broker:alice]\nhello', role: 'user' },
+      { content: '[from test-broker:alice · 1970-01-01 00:00 GMT]\nhello', role: 'user' },
+    ]);
+  });
+
+  test('writes each message’s time in the zone the request asked for', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await collect(
+      provider().getMessageStream(
+        'be brief',
+        [
+          message({
+            content: [{ text: 'hello', type: 'text' }],
+            createdAt: new Date('2026-08-23T20:14:07Z'),
+            role: 'user',
+          }),
+        ],
+        [],
+        { timeZone: 'America/Mexico_City' },
+      ),
+    );
+
+    // The clock reaches the model as part of what was said, so the cached
+    // prefix of the request never has to move for the model to read it.
+    expect(requests[0]?.body.messages).toEqual([
+      { content: 'be brief', role: 'system' },
+      { content: '[from test-broker:alice · 2026-08-23 14:14 GMT-6]\nhello', role: 'user' },
     ]);
   });
 
@@ -234,7 +260,7 @@ describe('OpenAICompletions message mapping', () => {
 
     expect((requests[0]?.body.messages as unknown[])[1]).toEqual({
       content: [
-        { text: '[from test-broker:alice]\n', type: 'text' },
+        { text: '[from test-broker:alice · 1970-01-01 00:00 GMT]\n', type: 'text' },
         { text: 'look', type: 'text' },
         { image_url: { url: 'https://img.test/a.png' }, type: 'image_url' },
       ],
@@ -301,7 +327,7 @@ describe('OpenAICompletions message mapping', () => {
 
       const visual = (requests[0]?.body.messages as { content: unknown }[])[1]?.content;
       expect(visual).toEqual([
-        { text: '[from test-broker:alice]\n', type: 'text' },
+        { text: '[from test-broker:alice · 1970-01-01 00:00 GMT]\n', type: 'text' },
         {
           text:
             `[artifact id=${JSON.stringify(stored.artifactId)} name="pixel.png" ` +
@@ -311,7 +337,7 @@ describe('OpenAICompletions message mapping', () => {
         { image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' }, type: 'image_url' },
       ]);
       expect((requests[1]?.body.messages as { content: unknown }[])[1]?.content).toBe(
-        '[from test-broker:alice]\n' +
+        '[from test-broker:alice · 1970-01-01 00:00 GMT]\n' +
           `[artifact id=${JSON.stringify(stored.artifactId)} name="pixel.png" ` +
           'media_type="image/png" bytes=8]\n',
       );
@@ -365,7 +391,7 @@ describe('OpenAICompletions message mapping', () => {
       );
 
       expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toEqual([
-        { text: '[from test-broker:alice]\n', type: 'text' },
+        { text: '[from test-broker:alice · 1970-01-01 00:00 GMT]\n', type: 'text' },
         {
           text:
             `[artifact id=${JSON.stringify(stored.artifactId)} name="vector.svg" ` +
@@ -411,7 +437,7 @@ describe('OpenAICompletions message mapping', () => {
       );
 
       expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toBe(
-        '[from test-broker:alice]\n' +
+        '[from test-broker:alice · 1970-01-01 00:00 GMT]\n' +
           `[artifact id=${JSON.stringify(stored.artifactId)} name="vector.svg" ` +
           `media_type="image/svg+xml" bytes=${String(stored.size)}]\n`,
       );
@@ -470,7 +496,7 @@ describe('OpenAICompletions message mapping', () => {
       );
 
       expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toBe(
-        '[from test-broker:alice]\n' +
+        '[from test-broker:alice · 1970-01-01 00:00 GMT]\n' +
           `[artifact id=${JSON.stringify(stored.artifactId)} name="broken.svg" ` +
           `media_type="image/svg+xml" bytes=${String(stored.size)}]\n`,
       );
@@ -727,7 +753,7 @@ describe('OpenAICompletions message mapping', () => {
 
     expect(requests[0]?.body.messages).toEqual([
       { content: 'be brief', role: 'system' },
-      { content: '[from test-broker:alice]\ndo it', role: 'user' },
+      { content: '[from test-broker:alice · 1970-01-01 00:00 GMT]\ndo it', role: 'user' },
       { content: '[folded 2 calls]', role: 'assistant' },
     ]);
   });
@@ -937,10 +963,13 @@ describe('OpenAICompletions session regression', () => {
       ).toBeTrue();
       expect(JSON.stringify(replayedWire)).not.toContain('thinking before the call');
       expect(JSON.stringify(replayedWire)).not.toContain('checking the result');
-      expect(replayedWire.at(-1)).toEqual({
-        content: '[from test-broker:alice]\nwhat happened?',
-        role: 'user',
-      });
+      // A live session stamps the real clock, so what is pinned is the shape:
+      // who spoke, when they spoke, and what they said.
+      const replayedLast = replayedWire.at(-1);
+      expect(replayedLast?.role).toBe('user');
+      expect(replayedLast?.content).toMatch(
+        /^\[from test-broker:alice · \d{4}-\d{2}-\d{2} \d{2}:\d{2} GMT[+\-\d:]*\]\nwhat happened\?$/u,
+      );
     } finally {
       await database.close();
       try {
