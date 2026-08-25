@@ -1,6 +1,7 @@
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
 
 import { useActiveSessionStore } from '../stores/activeSession.store'
 import ChatTimeline from './ChatTimeline.vue'
@@ -17,7 +18,7 @@ afterEach(() => {
 })
 
 describe('ChatTimeline', () => {
-  it('integrates response work and run details into the assistant reply', async () => {
+  it('closes a stable response process before showing the assistant reply', async () => {
     const conversationId = session.conversationId
     session.applyEvent({
       conversationId,
@@ -69,37 +70,108 @@ describe('ChatTimeline', () => {
     })
 
     const { container } = render(ChatTimeline)
-    const message = container.querySelector('.message--assistant')
-    const process = message?.querySelector<HTMLDetailsElement>(':scope > .message__process')
-    const detailsButton = message?.querySelector<HTMLButtonElement>('.message__details-summary')
+    const response = container.querySelector('.assistant-response')
+    const message = response?.querySelector('.message--assistant')
+    const process = response?.querySelector<HTMLElement>('.response-process')
+    const detailsButton = response?.querySelector<HTMLButtonElement>(
+      '.assistant-response__details-summary',
+    )
     if (
+      response === null ||
       message === null ||
+      message === undefined ||
       process === null ||
       process === undefined ||
       detailsButton === null ||
       detailsButton === undefined
     ) {
-      throw new Error('Expected process and run controls inside the assistant message.')
+      throw new Error('Expected a response process followed by the assistant message.')
     }
 
-    expect(container.querySelector('.timeline__process')).toBeNull()
-    expect(process.nextElementSibling?.classList.contains('message__author')).toBe(true)
-    expect(process.querySelectorAll('.message__process-body > details')).toHaveLength(7)
+    expect(process.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+    expect(process.nextElementSibling).toBe(message)
+    expect(process.querySelectorAll('.response-process__body > details')).toHaveLength(7)
     expect(process.querySelector('.tool--error')).not.toBeNull()
+    expect(message.classList.contains('message--embedded')).toBe(true)
+    expect(process.closest('.assistant-response')).toBe(message.closest('.assistant-response'))
     expect(detailsButton.textContent).toContain('Details')
     expect(detailsButton.getAttribute('aria-expanded')).toBe('false')
-    expect(message.querySelector('.message__details-body')).toBeNull()
+    expect(response.querySelector('.assistant-response__details-body')).toBeNull()
 
     await fireEvent.click(detailsButton)
 
-    const runDetails = message.querySelector('.message__details-body')
+    const runDetails = response.querySelector('.assistant-response__details-body')
     expect(detailsButton.getAttribute('aria-expanded')).toBe('true')
     expect(runDetails?.querySelector('.activity--embedded')).not.toBeNull()
-    expect(runDetails?.querySelector('.message__process')).toBeNull()
+    expect(runDetails?.querySelector('.response-process')).toBeNull()
     expect(runDetails?.textContent).toContain('Run completed')
   })
 
-  it('associates each response process with its assistant inside one tool loop', () => {
+  it('keeps the same process card mounted and closes it when the reply starts', async () => {
+    const conversationId = session.conversationId
+    session.applyEvent({
+      conversationId,
+      text: 'Inspecting the current state…',
+      turnId: 'turn-stable',
+      type: 'reasoningFragment',
+    })
+
+    const { container } = render(ChatTimeline)
+    const process = container.querySelector<HTMLElement>('.response-process')
+    if (process === null) throw new Error('Expected an active response process.')
+    const response = process.closest('.assistant-response')
+    expect(process.querySelector('button')?.getAttribute('aria-expanded')).toBe('true')
+
+    session.applyEvent({
+      conversationId,
+      text: 'Inspecting the current state.',
+      turnId: 'turn-stable',
+      type: 'reasoning',
+    })
+    session.applyEvent({
+      conversationId,
+      text: 'Everything is ready.',
+      turnId: 'turn-stable',
+      type: 'message',
+    })
+    await nextTick()
+    await nextTick()
+
+    const completedProcess = container.querySelector<HTMLElement>('.response-process')
+    expect(completedProcess?.closest('.assistant-response')).toBe(response)
+    expect(completedProcess).toBe(process)
+    expect(completedProcess?.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+    expect(completedProcess?.nextElementSibling?.classList.contains('message--assistant')).toBe(
+      true,
+    )
+  })
+
+  it('unifies consecutive assistant messages into one response bubble', () => {
+    const conversationId = session.conversationId
+    session.applyEvent({
+      conversationId,
+      text: 'First part.',
+      turnId: 'turn-continuous',
+      type: 'message',
+    })
+    session.applyEvent({
+      conversationId,
+      text: 'Second part.',
+      turnId: 'turn-continuous',
+      type: 'message',
+    })
+
+    const { container } = render(ChatTimeline)
+    const messages = container.querySelectorAll('.message--assistant')
+
+    expect(container.querySelectorAll('.assistant-response')).toHaveLength(1)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.querySelectorAll('.message__content > .message__text')).toHaveLength(2)
+    expect(messages[0]?.textContent).toContain('First part.')
+    expect(messages[0]?.textContent).toContain('Second part.')
+  })
+
+  it('keeps multiple model cycles in one card while no user message intervenes', () => {
     const conversationId = session.conversationId
     const responses = [
       {
@@ -107,12 +179,14 @@ describe('ChatTimeline', () => {
         reasoning: 'Inspect the first source.',
         tool: 'read_first',
         trackId: 'track-first',
+        turnId: 'turn-loop-first',
       },
       {
         assistant: 'Second result.',
         reasoning: 'Inspect the second source.',
         tool: 'read_second',
         trackId: 'track-second',
+        turnId: 'turn-loop-second',
       },
     ]
 
@@ -120,7 +194,7 @@ describe('ChatTimeline', () => {
       session.applyEvent({
         conversationId,
         text: response.reasoning,
-        turnId: 'turn-loop',
+        turnId: response.turnId,
         type: 'reasoning',
       })
       session.applyEvent({
@@ -128,13 +202,13 @@ describe('ChatTimeline', () => {
         conversationId,
         name: response.tool,
         trackId: response.trackId,
-        turnId: 'turn-loop',
+        turnId: response.turnId,
         type: 'toolCall',
       })
       session.applyEvent({
         conversationId,
         text: response.assistant,
-        turnId: 'turn-loop',
+        turnId: response.turnId,
         type: 'message',
       })
     }
@@ -142,26 +216,36 @@ describe('ChatTimeline', () => {
       conversationId,
       durationMs: 1_250,
       status: 'completed',
-      turnId: 'turn-loop',
+      turnId: 'turn-loop-second',
       type: 'runCompleted',
     })
 
     const { container } = render(ChatTimeline)
     const messages = [...container.querySelectorAll('.message--assistant')]
+    const processes = [...container.querySelectorAll('.response-process')]
+    expect(container.querySelectorAll('.assistant-response')).toHaveLength(1)
     expect(messages).toHaveLength(2)
-    expect(container.querySelector('.timeline__process')).toBeNull()
+    expect(processes).toHaveLength(2)
+    expect(container.querySelectorAll('.message__author')).toHaveLength(1)
+    expect(container.querySelectorAll('.message__timestamp')).toHaveLength(0)
+    expect(container.querySelectorAll('.assistant-response__timestamp')).toHaveLength(1)
+    expect(container.querySelector('.assistant-response__footer')?.previousElementSibling).toBe(
+      messages[1],
+    )
 
     for (const [index, response] of responses.entries()) {
       const message = messages[index]
-      const process = message?.querySelector(':scope > .message__process')
+      const process = processes[index]
       expect(message?.querySelector('.message__text')?.textContent).toContain(response.assistant)
-      expect(process?.querySelectorAll('.message__process-body > details')).toHaveLength(2)
+      expect(process?.querySelectorAll('.response-process__body > details')).toHaveLength(2)
       expect(process?.textContent).toContain(response.reasoning)
       expect(process?.textContent).toContain(response.tool)
       expect(process?.textContent).not.toContain(responses[1 - index]?.tool)
+      expect(process?.nextElementSibling).toBe(message)
     }
 
     expect(messages[0]?.querySelector('.message__details-summary')).toBeNull()
-    expect(messages[1]?.querySelector('.message__details-summary')).not.toBeNull()
+    expect(messages[1]?.querySelector('.message__details-summary')).toBeNull()
+    expect(container.querySelectorAll('.assistant-response__details-summary')).toHaveLength(1)
   })
 })

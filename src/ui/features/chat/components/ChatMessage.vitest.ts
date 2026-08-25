@@ -27,8 +27,45 @@ describe('ChatMessage', () => {
     expect(timestamp.textContent.trim()).not.toBe('')
     expect(timestamp.parentElement?.classList.contains('message__footer')).toBe(true)
     expect(
-      timestamp.parentElement?.previousElementSibling?.classList.contains('message__text'),
+      timestamp.parentElement?.previousElementSibling?.classList.contains('message__content'),
     ).toBe(true)
+  })
+
+  it('keeps generated artifacts at their position between text parts', () => {
+    const { container } = render(ChatMessage, {
+      props: {
+        item: {
+          content: [
+            { text: 'Before the artifact.', type: 'text' },
+            {
+              source: { type: 'url', url: 'https://images.example.test/generated.png' },
+              type: 'image',
+            },
+            { text: 'After the artifact.', type: 'text' },
+          ],
+          createdAt: '2026-03-10T14:35:00.000Z',
+          id: 'message-artifact',
+          kind: 'assistant',
+          media: [
+            {
+              source: { type: 'url', url: 'https://images.example.test/generated.png' },
+              type: 'image',
+            },
+          ],
+          streaming: false,
+          text: 'Before the artifact.After the artifact.',
+          turnId: 'turn-artifact',
+        },
+      },
+    })
+
+    const parts = [...container.querySelectorAll('.message__content > *')]
+    expect(parts).toHaveLength(3)
+    expect(parts[0]?.textContent).toContain('Before the artifact.')
+    expect(parts[1]?.querySelector('img')?.getAttribute('src')).toBe(
+      'https://images.example.test/generated.png',
+    )
+    expect(parts[2]?.textContent).toContain('After the artifact.')
   })
 
   it('renders image content instead of reducing it to a placeholder', () => {

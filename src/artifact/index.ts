@@ -5,7 +5,11 @@ export {
   ArtifactRepresentationUnavailableError,
   ArtifactTooLargeError,
 } from './error';
-export { artifactConversationScope, ArtifactOutputSink } from './output';
+export {
+  ARTIFACT_TEXT_READ_PROFILE,
+  artifactConversationScope,
+  ArtifactOutputSink,
+} from './output';
 export { ArtifactPipeline, artifactRef, DEFAULT_MAX_ARTIFACT_BYTES } from './pipeline';
 export {
   artifactProcessorIdSchema,
@@ -33,11 +37,14 @@ export {
 } from './types';
 
 export type {
+  ArtifactContentReader,
   ArtifactOutputHost,
   ArtifactOutputInput,
   ArtifactOutputProvenance,
   ArtifactOutputPublisher,
-  ArtifactResponsePresenter,
+  ArtifactReadInput,
+  ArtifactReadResult,
+  ArtifactResponseAttacher,
 } from './output';
 export type { ArtifactPipelineOptions, ArtifactResolveOptions } from './pipeline';
 export type {

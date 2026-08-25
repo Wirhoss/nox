@@ -1,4 +1,10 @@
-import { run } from './src/cli';
+import { bootstrap } from './src/bootstrap';
+import { loggerService } from './src/services';
+
+async function run(): Promise<void> {
+  const application = await bootstrap();
+  const logger = application.services.get(loggerService);
+}
 
 try {
   await run();

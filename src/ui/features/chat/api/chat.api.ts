@@ -23,8 +23,9 @@ type PermissionDecision =
 
 interface ChatStreamOptions {
   readonly accessToken: string
-  readonly listener: (event: ChatEvent) => void
-  readonly opened: () => void
+  readonly lastEventId?: string
+  readonly listener: (event: ChatEvent, eventId?: string) => void
+  readonly opened: (streamInstanceId?: string) => void
   readonly signal: AbortSignal
 }
 
@@ -93,15 +94,17 @@ const chatApi: ChatApi = {
     return response.conversations
   },
 
-  async openStream({ accessToken, listener, opened, signal }) {
+  async openStream({ accessToken, lastEventId, listener, opened, signal }) {
+    const headers = new Headers(authorization(accessToken))
+    if (lastEventId !== undefined) headers.set('last-event-id', lastEventId)
     const response = await requestStream('/chat/stream', {
-      headers: authorization(accessToken),
+      headers,
       signal,
     })
     if (response.body === null) {
       throw new ApiContractError('Nox opened a chat stream without a response body.')
     }
-    opened()
+    opened(response.headers.get('x-nox-chat-stream-id') ?? undefined)
     await parseChatEventStream(response.body, listener)
   },
 

@@ -168,7 +168,9 @@ class Session {
         ? undefined
         : new ArtifactOutputSink(options.artifacts, options.artifactScope);
     this.#runner = new Runner(this.#context, this.#events, provider, model, {
-      ...(artifactOutputs === undefined ? {} : { artifactOutputs }),
+      ...(artifactOutputs === undefined
+        ? {}
+        : { artifactOutputs, artifactReader: artifactOutputs }),
       audit,
       authorities: options.authorities,
       authorization: options.authorization,

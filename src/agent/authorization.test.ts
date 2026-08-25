@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { artifactConversationScope } from '../artifact/output';
+import { ArtifactPipeline } from '../artifact/pipeline';
 import { type AuthorizationProvider, GrantAuthorizationProvider } from '../auth/authorization';
 import { TOOL_CALL_AUTHORITY, TOOL_SEARCH_AUTHORITY } from '../auth/coreAuthorities';
 import { type MessageOrigin, SYSTEM_CRON } from '../auth/principal';
@@ -154,6 +156,47 @@ class SelectiveToolProvider extends ChatProvider {
         type: 'toolCall',
       };
       if (this.#failAfterCall) throw new Error('provider failed after tool call');
+    } else {
+      yield { text: 'done', type: 'textFragment' };
+    }
+    yield { type: 'end' };
+  }
+}
+
+class AttachingProvider extends ChatProvider {
+  readonly #artifactId: string;
+
+  constructor(artifactId: string) {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    this.#artifactId = artifactId;
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    const last = messageHistory.at(-1);
+    const requestsAttachment =
+      last?.role === 'user' &&
+      last.content.some((part) => part.type === 'text' && part.text.includes('tool'));
+    if (requestsAttachment) {
+      yield {
+        toolCall: {
+          arguments: { artifactId: this.#artifactId },
+          name: 'attach_artifact',
+          role: 'toolCall',
+          trackId: 'attach-approved',
+        },
+        type: 'toolCall',
+      };
     } else {
       yield { text: 'done', type: 'textFragment' };
     }
@@ -323,7 +366,10 @@ function grantsFor(
 }
 
 interface OpenOptions {
+  artifactScope?: ReturnType<typeof artifactConversationScope>;
+  artifacts?: ArtifactPipeline;
   authorization?: AuthorizationProvider;
+  database?: Database;
   directToolSets?: readonly ToolSetGrant[];
   gate?: GatePolicyInput;
   gateEvaluators?: readonly GateEvaluator[];
@@ -333,16 +379,23 @@ interface OpenOptions {
 }
 
 async function openSession(options: OpenOptions = {}): Promise<Session> {
-  const agent = new Agent(await openDatabase(), options.provider ?? new EchoingProvider(), MODEL, {
-    agentId: 'test',
-    authorities: CATALOG,
-    directToolSets: options.directToolSets,
-    gate: options.gate,
-    gateEvaluators: options.gateEvaluators,
-    routedToolSets: options.routedToolSets,
-    systemPrompt: 'system',
-  });
+  const agent = new Agent(
+    options.database ?? (await openDatabase()),
+    options.provider ?? new EchoingProvider(),
+    MODEL,
+    {
+      agentId: 'test',
+      artifacts: options.artifacts,
+      authorities: CATALOG,
+      directToolSets: options.directToolSets,
+      gate: options.gate,
+      gateEvaluators: options.gateEvaluators,
+      routedToolSets: options.routedToolSets,
+      systemPrompt: 'system',
+    },
+  );
   return agent.openSession({
+    artifactScope: options.artifactScope,
     authorization: options.authorization ?? grantsFor({ alice: ['*'] }),
     sessionId: options.sessionId,
   });
@@ -952,6 +1005,132 @@ describe('shared-conversation permission floor', () => {
     ).toBeTrue();
     const audit = await session.getDecisionAudit();
     expect(audit.filter((entry) => entry.stage === 'authorization')).toHaveLength(2);
+    await session.stop();
+  });
+
+  test('keeps artifact publishing available when an approved shared call resumes', async () => {
+    const database = await openDatabase();
+    const dataDirectory = mkdtempSync(join(tmpdir(), 'nox-authz-artifacts-'));
+    directories.push(dataDirectory);
+    const artifacts = await ArtifactPipeline.open({ dataDirectory, database });
+    const scope = artifactConversationScope('test-broker', 'shared-artifacts');
+    let receivedPublisher = false;
+    const producer: Tool = {
+      authority: TEST_AUTHORITY,
+      description: 'Produces a file after approval.',
+      name: 'produce',
+      output: { artifacts: true },
+      parameters: z.object({}),
+      prepare: () => ({
+        run: async ({ artifacts: publisher }) => {
+          receivedPublisher = publisher !== undefined;
+          if (publisher === undefined) throw new Error('Artifact publisher was not restored.');
+          return [
+            await publisher.publish({
+              data: new Blob(['approved output']),
+              declaredMediaType: 'text/plain',
+              filename: 'approved.txt',
+            }),
+          ];
+        },
+        title: 'Produce approved output',
+        type: 'immediate',
+      }),
+      risk: { effects: ['write'] },
+    };
+    const session = await openSession({
+      artifactScope: scope,
+      artifacts,
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      database,
+      directToolSets: [grant('direct', producer)],
+      provider: new SelectiveToolProvider('produce'),
+    });
+    session.send('hola', alice());
+    await session.idle;
+    session.send('hola', bob());
+    await session.idle;
+    session.send('tool', alice());
+    const requestId = await waitForPermission(session);
+    await session.idle;
+
+    expect(
+      session.resolvePermission(requestId, { approved: 'once' }, testPrincipal('alice')),
+    ).toBeTrue();
+    let part: Extract<MessageContent, { type: 'artifact' }> | undefined;
+    for (let attempt = 0; attempt < 200 && part === undefined; attempt += 1) {
+      const result = [...session.getTranscript()]
+        .reverse()
+        .find(
+          (message) => message.role === 'toolResponse' && message.execution === 'deferredResult',
+        );
+      part =
+        result?.role === 'toolResponse'
+          ? result.response.find(
+              (candidate): candidate is Extract<MessageContent, { type: 'artifact' }> =>
+                candidate.type === 'artifact',
+            )
+          : undefined;
+      if (part === undefined) await Bun.sleep(1);
+    }
+    await session.idle;
+
+    expect(receivedPublisher).toBeTrue();
+    expect(part?.type).toBe('artifact');
+    if (part === undefined) throw new Error('Approved producer returned no artifact.');
+    const payload = await artifacts.open(part.artifact.artifactId, scope);
+    expect(await new Response(payload.stream).text()).toBe('approved output');
+    await session.stop();
+  });
+
+  test('carries an approved detached attachment into its own follow-up response', async () => {
+    const database = await openDatabase();
+    const dataDirectory = mkdtempSync(join(tmpdir(), 'nox-authz-attachment-'));
+    directories.push(dataDirectory);
+    const artifacts = await ArtifactPipeline.open({ dataDirectory, database });
+    const scope = artifactConversationScope('test-broker', 'shared-attachment');
+    const stored = await artifacts.ingest({
+      data: new Blob(['attach me']),
+      declaredMediaType: 'text/plain',
+      filename: 'attached.txt',
+      provenance: { type: 'tool' },
+      scope,
+    });
+    const session = await openSession({
+      artifactScope: scope,
+      artifacts,
+      authorization: grantsFor({ alice: ['*'], bob: ['*'] }),
+      database,
+      gate: { defaultVerdict: 'escalate', escalationTimeoutMs: 10_000 },
+      provider: new AttachingProvider(stored.artifactId),
+    });
+    session.send('hola', alice());
+    await session.idle;
+    session.send('hola', bob());
+    await session.idle;
+    session.send('tool', alice());
+    const requestId = await waitForPermission(session);
+    await session.idle;
+
+    expect(
+      session.resolvePermission(requestId, { approved: 'once' }, testPrincipal('alice')),
+    ).toBeTrue();
+    let attached = false;
+    for (let attempt = 0; attempt < 200 && !attached; attempt += 1) {
+      attached = session
+        .getTranscript()
+        .some(
+          (message) =>
+            message.role === 'assistant' &&
+            message.content.some(
+              (part) => part.type === 'artifact' && part.artifact.artifactId === stored.artifactId,
+            ),
+        );
+      if (!attached) await Bun.sleep(1);
+    }
+    await session.idle;
+
+    expect(attached).toBeTrue();
     await session.stop();
   });
 

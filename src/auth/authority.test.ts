@@ -18,13 +18,15 @@ describe('AuthorityCatalog', () => {
     const catalog = AuthorityCatalog.from(CORE_AUTHORITIES);
 
     expect(catalog.ids).toEqual([
-      'nox.artifacts.present',
+      'nox.artifacts.attach',
+      'nox.artifacts.read',
       'nox.history.read',
       'nox.history.search',
       'nox.tools.call',
       'nox.tools.search',
     ]);
-    expect(catalog.has('nox.artifacts.present')).toBeTrue();
+    expect(catalog.has('nox.artifacts.attach')).toBeTrue();
+    expect(catalog.has('nox.artifacts.read')).toBeTrue();
     expect(catalog.has('nox.history.read')).toBeTrue();
     expect(catalog.has('nox.history.write')).toBeFalse();
   });

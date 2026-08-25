@@ -81,18 +81,23 @@ async function requestStream(path: string, init: RequestInit = {}): Promise<Resp
   const response = await request(path, init)
   if (response.ok) return response
 
-  const body = await readJson(response)
+  let body: unknown
+  try {
+    body = await readJson(response)
+  } catch (error) {
+    // A restarting reverse proxy often answers with its own HTML error page.
+    // The HTTP status is still actionable and, unlike a successful malformed
+    // response, this is a connection failure the stream caller can retry.
+    if (error instanceof ApiContractError) throw new ApiError(response.status)
+    throw error
+  }
   const parsedError = errorResponseSchema.safeParse(body)
   throw new ApiError(response.status, parsedError.success ? parsedError.data : undefined)
 }
 
 async function request(path: string, init: RequestInit): Promise<Response> {
   const headers = new Headers(init.headers)
-  if (
-    init.body !== undefined &&
-    !(init.body instanceof FormData) &&
-    !headers.has('content-type')
-  ) {
+  if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
 
@@ -119,11 +124,4 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-export {
-  ApiConnectionError,
-  ApiContractError,
-  ApiError,
-  requestEmpty,
-  requestJson,
-  requestStream,
-}
+export { ApiConnectionError, ApiContractError, ApiError, requestEmpty, requestJson, requestStream }

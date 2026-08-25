@@ -79,7 +79,7 @@ describe('ToolRouter', () => {
 
     expect(payload.tools).toContain('Tool: weather_forecast');
     expect(payload.tools).toContain('Description: Get a weather forecast for a city.');
-    expect(payload.tools).toContain('call present_artifact with an artifact ID');
+    expect(payload.tools).toContain('call attach_artifact with an artifact ID');
     expect(payload.tools).toContain('Do not encode file bytes as base64');
     expect(payload.tools).not.toContain('Tool: calendar_events');
   });

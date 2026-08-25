@@ -18,7 +18,7 @@ describe('chat SSE parser', () => {
     const events: unknown[] = []
     const stream = streamOf(
       ': open\n\n',
-      'event: fragment\ndata: {"conversationId":"web_1",',
+      'id: 17\nevent: fragment\ndata: {"conversationId":"web_1",',
       '"turnId":"run_1","type":"fragment","text":"hel"}\n\n',
       ': ping\n\n',
     )
@@ -28,6 +28,17 @@ describe('chat SSE parser', () => {
     expect(events).toEqual([
       { conversationId: 'web_1', text: 'hel', turnId: 'run_1', type: 'fragment' },
     ])
+  })
+
+  it('passes the event cursor to the listener for reconnects', async () => {
+    const cursors: (string | undefined)[] = []
+    const stream = streamOf(
+      'id: 41\nevent: fragment\ndata: {"conversationId":"web_1","turnId":"run_1","type":"fragment","text":"hello"}\n\n',
+    )
+
+    await parseChatEventStream(stream, (_event, eventId) => cursors.push(eventId))
+
+    expect(cursors).toEqual(['41'])
   })
 
   it('accepts the web broker activity events, including live reasoning', async () => {
@@ -87,6 +98,14 @@ describe('chat SSE parser', () => {
     expect(events.map((event) => (event as { type: string }).type)).toEqual(
       payloads.map((payload) => payload.type),
     )
+  })
+
+  it('times out a stream that stops delivering events and heartbeats', async () => {
+    const stream = new ReadableStream<Uint8Array>()
+
+    await expect(
+      parseChatEventStream(stream, () => undefined, { idleTimeoutMs: 5 }),
+    ).rejects.toMatchObject({ name: 'ApiConnectionError' })
   })
 
   it('rejects an SSE name that disagrees with its validated payload', async () => {

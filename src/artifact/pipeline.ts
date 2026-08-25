@@ -278,6 +278,7 @@ class ArtifactPipeline {
       mkdir(pipeline.#temporaryDirectory, { mode: DIRECTORY_MODE, recursive: true }),
     ]);
     await pipeline.#discardTemporaryFiles();
+    await pipeline.#discardUntrackedBlobs();
     return pipeline;
   }
 
@@ -599,6 +600,36 @@ class ArtifactPipeline {
     }
     if (removed > 0) {
       this.#logger.warn({ removed }, 'Discarded interrupted artifact ingestions.');
+    }
+  }
+
+  /**
+   * A blob reaches its final content-addressed path before its SQLite transaction
+   * commits. A crash or rolled-back transaction can therefore leave immutable
+   * bytes with no metadata. Startup is exclusive in a Nox process, so it is the
+   * safe point to reconcile that narrow gap without racing a live ingestion.
+   */
+  async #discardUntrackedBlobs(): Promise<void> {
+    const tracked = await this.#database.exclusive(
+      (database) =>
+        new Set(
+          database
+            .select({ storageKey: artifactBlobs.storageKey })
+            .from(artifactBlobs)
+            .all()
+            .map((row) => row.storageKey),
+        ),
+    );
+    const glob = new Bun.Glob('*/*');
+    let removed = 0;
+    for await (const name of glob.scan({ cwd: this.#blobsDirectory, onlyFiles: true })) {
+      const storageKey = posix.join('blobs', 'sha256', name.replaceAll('\\', '/'));
+      if (tracked.has(storageKey)) continue;
+      await rm(join(this.#blobsDirectory, ...name.split(/[\\/]/u)), { force: true });
+      removed += 1;
+    }
+    if (removed > 0) {
+      this.#logger.warn({ removed }, 'Discarded artifact blobs without committed metadata.');
     }
   }
 

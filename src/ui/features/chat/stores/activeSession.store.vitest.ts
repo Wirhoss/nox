@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuthStore } from '@/app/stores/auth.store'
 import { authApi } from '@/features/auth/api/auth.api'
+import { ApiError } from '@/shared/api/http'
 
 import { chatApi } from '../api/chat.api'
 import { useActiveSessionStore } from './activeSession.store'
@@ -83,6 +84,37 @@ describe('active chat event projection', () => {
       durationMs: 1250,
       status: 'completed',
       usageTotal: { inputTokens: 20, outputTokens: 5 },
+    })
+  })
+
+  it('preserves the position of artifacts inside a settled assistant message', () => {
+    const conversationId = session.conversationId
+    const content = [
+      { text: 'Before.', type: 'text' as const },
+      {
+        artifact: {
+          artifactId: 'artifact-1',
+          filename: 'result.png',
+          mediaType: 'image/png',
+          size: 128,
+        },
+        type: 'artifact' as const,
+      },
+      { text: 'After.', type: 'text' as const },
+    ]
+
+    session.applyEvent({
+      content,
+      conversationId,
+      text: 'Before.After.',
+      turnId: 'turn-artifact',
+      type: 'message',
+    })
+
+    expect(session.items.find((item) => item.kind === 'assistant')).toMatchObject({
+      content,
+      media: [content[1]],
+      text: 'Before.After.',
     })
   })
 
@@ -419,6 +451,111 @@ describe('active chat surface integration', () => {
     )
   })
 
+  it('retries while the chat transport is temporarily unavailable', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(chatApi, 'listCommands').mockResolvedValue([])
+      vi.spyOn(chatApi, 'listConversations').mockResolvedValue([])
+      let attempts = 0
+      vi.spyOn(chatApi, 'openStream').mockImplementation(({ opened, signal }) => {
+        attempts += 1
+        if (attempts === 1) {
+          return Promise.reject(new ApiError(503, { error: 'chat_unavailable' }))
+        }
+        return new Promise<void>((resolve) => {
+          opened('stream-instance')
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
+        })
+      })
+
+      await session.initialize()
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(attempts).toBe(2)
+      expect(session.connection).toEqual({ type: 'connected' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resumes a dropped stream from its last event cursor', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(chatApi, 'listCommands').mockResolvedValue([])
+      vi.spyOn(chatApi, 'listConversations').mockResolvedValue([])
+      const cursors: (string | undefined)[] = []
+      let attempts = 0
+      vi.spyOn(chatApi, 'openStream').mockImplementation(
+        ({ lastEventId, listener, opened, signal }) => {
+          attempts += 1
+          cursors.push(lastEventId)
+          opened('same-backend')
+          if (attempts === 1) {
+            listener(
+              {
+                conversationId: session.conversationId,
+                modelId: 'test-model',
+                startedAt: '2026-01-01T00:00:00.000Z',
+                trigger: 'user',
+                turnId: 'turn-resumed',
+                type: 'runStarted',
+              },
+              '1',
+            )
+            listener(
+              {
+                conversationId: session.conversationId,
+                text: 'before ',
+                turnId: 'turn-resumed',
+                type: 'fragment',
+              },
+              '2',
+            )
+            return Promise.resolve()
+          }
+
+          listener(
+            {
+              conversationId: session.conversationId,
+              text: 'after',
+              turnId: 'turn-resumed',
+              type: 'fragment',
+            },
+            '3',
+          )
+          return new Promise<void>((resolve) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                resolve()
+              },
+              { once: true },
+            )
+          })
+        },
+      )
+
+      await session.initialize()
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(cursors).toEqual([undefined, '2'])
+      expect(session.run).toEqual({ turnId: 'turn-resumed', type: 'running' })
+      expect(session.items.find((item) => item.kind === 'assistant')).toMatchObject({
+        streaming: true,
+        text: 'before after',
+      })
+      expect(session.sendError).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('opens the latest conversation and reconstructs its transcript', async () => {
     vi.spyOn(chatApi, 'listCommands').mockResolvedValue([
       { description: 'Stops the run.', name: 'stop', parameters: { type: 'object' } },
@@ -499,6 +636,91 @@ describe('active chat surface integration', () => {
       historical: true,
       kind: 'activity',
     })
+  })
+
+  it('keeps the current draft when history already contains an earlier reply from the run', async () => {
+    vi.spyOn(chatApi, 'listCommands').mockResolvedValue([])
+    vi.spyOn(chatApi, 'listConversations').mockResolvedValue([
+      {
+        agentId: 'assistant',
+        conversationId: 'web_active',
+        sessionId: 'session-active',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        updatedAt: '2026-01-01T00:00:02.000Z',
+      },
+    ])
+    vi.spyOn(chatApi, 'readHistory').mockResolvedValue({
+      agentId: 'assistant',
+      conversationId: 'web_active',
+      entries: [
+        {
+          at: '2026-01-01T00:00:01.000Z',
+          messageId: 'message-first',
+          text: 'First tool-loop reply.',
+          type: 'message',
+        },
+      ],
+      sessionId: 'session-active',
+    })
+    vi.spyOn(chatApi, 'openStream').mockImplementation(
+      ({ listener, opened, signal }) =>
+        new Promise<void>((resolve) => {
+          opened('same-backend')
+          listener(
+            {
+              conversationId: 'web_active',
+              modelId: 'test-model',
+              startedAt: '2026-01-01T00:00:00.000Z',
+              trigger: 'user',
+              turnId: 'turn-active',
+              type: 'runStarted',
+            },
+            '1',
+          )
+          listener(
+            {
+              conversationId: 'web_active',
+              text: 'First tool-loop ',
+              turnId: 'turn-active',
+              type: 'fragment',
+            },
+            '2',
+          )
+          listener(
+            {
+              conversationId: 'web_active',
+              text: 'First tool-loop reply.',
+              turnId: 'turn-active',
+              type: 'message',
+            },
+            '3',
+          )
+          listener(
+            {
+              conversationId: 'web_active',
+              text: 'Draft after the tool call.',
+              turnId: 'turn-active',
+              type: 'fragment',
+            },
+            '4',
+          )
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
+        }),
+    )
+
+    await session.initialize()
+
+    expect(session.items.filter((item) => item.kind === 'assistant')).toMatchObject([
+      { streaming: false, text: 'First tool-loop reply.' },
+      { streaming: true, text: 'Draft after the tool call.' },
+    ])
   })
 
   it('sends image content without flattening it into the text field', async () => {

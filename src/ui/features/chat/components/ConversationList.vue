@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
@@ -9,6 +9,17 @@ import { useActiveSessionStore } from '../stores/activeSession.store'
 const session = useActiveSessionStore()
 const { t } = useI18n()
 const conversations = computed(() => session.conversations)
+const query = ref('')
+const filteredConversations = computed(() => {
+  const normalizedQuery = query.value.trim().toLocaleLowerCase()
+  if (normalizedQuery.length === 0) return conversations.value
+
+  return conversations.value.filter((conversation) =>
+    [conversation.title, conversation.agentId, conversation.conversationId].some(
+      (value) => value?.toLocaleLowerCase().includes(normalizedQuery) ?? false,
+    ),
+  )
+})
 
 function shortId(value: string): string {
   return value.slice(-8).toUpperCase()
@@ -35,6 +46,20 @@ function relativeTime(value: string): string {
       + {{ t('chat.conversation.new') }}
     </NoxButton>
 
+    <label class="conversations__search">
+      <span>{{ t('chat.conversation.find') }}</span>
+      <svg aria-hidden="true" viewBox="0 0 20 20">
+        <circle cx="8.5" cy="8.5" r="5.5" />
+        <path d="m12.5 12.5 4 4" />
+      </svg>
+      <input
+        v-model="query"
+        type="search"
+        :disabled="session.catalog.type !== 'ready' || conversations.length === 0"
+        :placeholder="t('chat.conversation.searchPlaceholder')"
+      />
+    </label>
+
     <p v-if="session.catalog.type === 'loading'" class="conversations__state">
       {{ t('chat.conversation.scanning') }}
     </p>
@@ -44,9 +69,12 @@ function relativeTime(value: string): string {
     <p v-else-if="conversations.length === 0" class="conversations__state">
       {{ t('chat.conversation.none') }}
     </p>
+    <p v-else-if="filteredConversations.length === 0" class="conversations__state">
+      {{ t('chat.conversation.noMatches') }}
+    </p>
 
     <ol v-else>
-      <li v-for="conversation in conversations" :key="conversation.conversationId">
+      <li v-for="conversation in filteredConversations" :key="conversation.conversationId">
         <button
           type="button"
           :class="{
@@ -82,7 +110,7 @@ function relativeTime(value: string): string {
   display: grid;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: var(--nox-space-3);
 }
 
@@ -105,14 +133,79 @@ function relativeTime(value: string): string {
   font-size: var(--nox-text-xs);
 }
 
+.conversations__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.conversations__search > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.conversations__search svg {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: var(--nox-space-3);
+  width: 1rem;
+  height: 1rem;
+  color: var(--nox-text-muted);
+  fill: none;
+  pointer-events: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+  transform: translateY(-50%);
+}
+
+.conversations__search input {
+  width: 100%;
+  height: var(--nox-control-height);
+  padding-inline: 2.25rem var(--nox-space-3);
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-control);
+  outline: 0;
+  color: var(--nox-text-primary);
+  background: var(--nox-surface-input);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+}
+
+.conversations__search input::placeholder {
+  color: var(--nox-text-muted);
+}
+
+.conversations__search input:hover:not(:disabled) {
+  border-color: var(--nox-border-strong);
+}
+
+.conversations__search input:focus {
+  border-color: var(--nox-action-primary);
+  box-shadow: 0 0 0 1px var(--nox-action-primary);
+}
+
+.conversations__search input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .conversations ol {
   display: grid;
   min-height: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
   margin: 0;
   gap: var(--nox-space-1);
   padding: 0;
   list-style: none;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-color: var(--nox-border-strong) transparent;
 }
 

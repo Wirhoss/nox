@@ -232,6 +232,42 @@ describe('ArtifactPipeline', () => {
     expect(readdirSync(temporaryDirectory)).toEqual(['leave-me.txt']);
   });
 
+  test('reconciles final blobs left without committed metadata on startup', async () => {
+    const artifactsPipeline = await pipeline();
+    const stored = await artifactsPipeline.ingest(upload());
+    const orphan = new TextEncoder().encode('transaction never committed');
+    const orphanHash = sha256(orphan);
+    const orphanDirectory = join(
+      artifactsPipeline.directory,
+      'blobs',
+      'sha256',
+      orphanHash.slice(0, 2),
+    );
+    const orphanPath = join(orphanDirectory, orphanHash);
+    mkdirSync(orphanDirectory, { recursive: true });
+    writeFileSync(orphanPath, orphan);
+    const database = databases[0];
+    if (database === undefined) throw new Error('Expected a test database.');
+
+    await ArtifactPipeline.open({
+      dataDirectory: dirname(artifactsPipeline.directory),
+      database,
+    });
+
+    expect(existsSync(orphanPath)).toBeFalse();
+    expect(
+      existsSync(
+        join(
+          artifactsPipeline.directory,
+          'blobs',
+          'sha256',
+          stored.blobHash.slice(0, 2),
+          stored.blobHash,
+        ),
+      ),
+    ).toBeTrue();
+  });
+
   test('resolves the immutable original when it already satisfies the profile', async () => {
     const artifactsPipeline = await pipeline();
     const artifact = await artifactsPipeline.ingest(upload());

@@ -6,11 +6,15 @@ import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from
 import { ToolRouter } from '../tool/router';
 import { bindTool, type Tool, type ToolContext } from '../tool/tool';
 import { EventLog } from '../utils/eventLog';
-import { presentArtifactTool } from './artifactTool';
+import { attachArtifactTool, readArtifactTool } from './artifactTool';
 import { Context } from './context/context';
 import { Runner } from './runner';
 
-import type { ArtifactOutputHost, ArtifactOutputProvenance } from '../artifact/output';
+import type {
+  ArtifactContentReader,
+  ArtifactOutputHost,
+  ArtifactOutputProvenance,
+} from '../artifact/output';
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
 import type { ProviderSourceEvent } from '../provider/stream';
 import type { Message, MessageContent, UserMessage } from './context/message';
@@ -139,6 +143,7 @@ function setup(
   maxIterations?: 'unlimited' | number,
   contextWindow?: number,
   artifactOutputs?: ArtifactOutputHost,
+  artifactReader?: ArtifactContentReader,
 ): {
   context: Context;
   events: EventLog<AgentEvent>;
@@ -153,6 +158,7 @@ function setup(
   const events = new EventLog<AgentEvent>();
   const runner = new Runner(context, events, provider, MODEL, {
     ...(artifactOutputs === undefined ? {} : { artifactOutputs }),
+    ...(artifactReader === undefined ? {} : { artifactReader }),
     authorities: testCatalog(),
     authorization: permissiveAuthorization,
     maxIterations,
@@ -251,12 +257,96 @@ describe('Runner', () => {
     ]);
   });
 
+  test('lets the core reader inspect only artifacts already known by the conversation', async () => {
+    const known = {
+      artifactId: 'art_known0001',
+      filename: 'notes.txt',
+      mediaType: 'text/plain',
+      size: 11,
+    };
+    const reads: Parameters<ArtifactContentReader['read']>[0][] = [];
+    const artifactReader: ArtifactContentReader = {
+      read: (input) => {
+        reads.push(input);
+        return Promise.resolve({
+          artifact: known,
+          mediaType: 'text/plain',
+          offset: input.offset,
+          text: 'hello world',
+          type: 'text',
+        });
+      },
+    };
+    const { context, runner } = setup(
+      [
+        callsWith('read_artifact', 'track-read', { artifactId: known.artifactId }),
+        says('understood'),
+      ],
+      [readArtifactTool()],
+      undefined,
+      undefined,
+      undefined,
+      artifactReader,
+    );
+
+    runner.send({
+      ...user('read this'),
+      content: [
+        { text: 'read this', type: 'text' },
+        { artifact: known, type: 'artifact' },
+      ],
+    });
+    await runner.idle;
+
+    const response = context.getFullHistory().find((message) => message.role === 'toolResponse');
+    expect(reads).toEqual([{ artifactId: known.artifactId, maxCharacters: 12_000, offset: 0 }]);
+    expect(response?.role === 'toolResponse' ? response.response : []).toEqual([
+      {
+        text: 'Artifact "notes.txt" (text/plain), characters 0-11:\n\nhello world\n\nEnd of artifact.',
+        type: 'text',
+      },
+    ]);
+  });
+
+  test('refuses to read an artifact ID the conversation has never referenced', async () => {
+    let called = false;
+    const artifactReader: ArtifactContentReader = {
+      read: () => {
+        called = true;
+        return Promise.resolve(undefined);
+      },
+    };
+    const { context, runner } = setup(
+      [
+        callsWith('read_artifact', 'track-read-hidden', { artifactId: 'art_hidden0001' }),
+        says('unavailable'),
+      ],
+      [readArtifactTool()],
+      undefined,
+      undefined,
+      undefined,
+      artifactReader,
+    );
+
+    runner.send(user('guess a file'));
+    await runner.idle;
+
+    const response = context.getFullHistory().find((message) => message.role === 'toolResponse');
+    expect(called).toBeFalse();
+    expect(response?.role === 'toolResponse' ? response.response[0] : undefined).toMatchObject({
+      text: expect.stringContaining('is not available to this conversation') as string,
+      type: 'text',
+    });
+  });
+
   test('does not give an undeclared tool hidden artifact capabilities', async () => {
     let receivedPresenter = true;
     let receivedPublisher = true;
+    let receivedReader = true;
     const inspect = immediateTool('inspect_output', (ctx) => {
-      receivedPresenter = ctx.responseArtifacts !== undefined;
+      receivedPresenter = ctx.responseAttachments !== undefined;
       receivedPublisher = ctx.artifacts !== undefined;
+      receivedReader = ctx.artifactReader !== undefined;
       return Promise.resolve([{ text: 'checked', type: 'text' }]);
     });
     const artifactOutputs: ArtifactOutputHost = {
@@ -283,6 +373,7 @@ describe('Runner', () => {
 
     expect(receivedPresenter).toBeFalse();
     expect(receivedPublisher).toBeFalse();
+    expect(receivedReader).toBeFalse();
   });
 
   test('gives a routed declared producer its publisher and concrete provenance', async () => {
@@ -290,7 +381,7 @@ describe('Runner', () => {
     let receivedPublisher = false;
     const producer: Tool = {
       ...immediateTool('routed_producer', (ctx) => {
-        receivedPresenter = ctx.responseArtifacts !== undefined;
+        receivedPresenter = ctx.responseAttachments !== undefined;
         receivedPublisher = ctx.artifacts !== undefined;
         return Promise.resolve([{ text: 'produced', type: 'text' }]);
       }),
@@ -338,7 +429,7 @@ describe('Runner', () => {
     });
   });
 
-  test('attaches a tool artifact only after the model explicitly presents it', async () => {
+  test('attaches a tool artifact only after the model explicitly requests it', async () => {
     const provenance: ArtifactOutputProvenance[] = [];
     const generated = {
       artifact: {
@@ -374,10 +465,10 @@ describe('Runner', () => {
     const { context, runner } = setup(
       [
         calls('publish', 'track-output'),
-        callsWith('present_artifact', 'track-present', { artifactId: 'art_generated1' }),
+        callsWith('attach_artifact', 'track-attach', { artifactId: 'art_generated1' }),
         says('ready'),
       ],
-      [publish, presentArtifactTool()],
+      [publish, attachArtifactTool()],
       undefined,
       undefined,
       artifactOutputs,
@@ -431,11 +522,11 @@ describe('Runner', () => {
     };
     const { context, runner } = setup(
       [
-        callsWith('present_artifact', 'track-select', {
+        callsWith('attach_artifact', 'track-select', {
           artifactId: generated.artifact.artifactId,
         }),
       ],
-      [presentArtifactTool()],
+      [attachArtifactTool()],
       1,
       undefined,
       artifactOutputs,

@@ -6,7 +6,7 @@ import {
   authorize,
 } from '../auth/authorization';
 import { ConversationParticipants } from '../auth/conversation';
-import { ARTIFACT_PRESENT_AUTHORITY } from '../auth/coreAuthorities';
+import { ARTIFACT_ATTACH_AUTHORITY, ARTIFACT_READ_AUTHORITY } from '../auth/coreAuthorities';
 import {
   messageAuthority,
   type PrincipalRef,
@@ -16,14 +16,15 @@ import {
 } from '../auth/principal';
 import {
   prepareToolCall,
+  type ToolContext,
   type ToolExecution,
   type ToolExecutionSubject,
   type ToolOutputTrust,
 } from '../tool/tool';
-import { PRESENT_ARTIFACT_TOOL_NAME } from './artifactTool';
+import { ATTACH_ARTIFACT_TOOL_NAME, READ_ARTIFACT_TOOL_NAME } from './artifactTool';
 import { freezeMessage, freezeValue } from './context/immutable';
 
-import type { ArtifactOutputHost } from '../artifact/output';
+import type { ArtifactContentReader, ArtifactOutputHost } from '../artifact/output';
 import type { ArtifactRef } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
@@ -65,6 +66,8 @@ interface RunnerConstructionOptions extends RunnerOptions {
   timeZone?: string;
   /** Host-bound file output. Absent for internal or deliberately text-only sessions. */
   artifactOutputs?: ArtifactOutputHost;
+  /** Privileged storage reader, narrowed by the runner to conversation-known artifact IDs. */
+  artifactReader?: ArtifactContentReader;
   /** Where both halves of the decision pipeline write their one timeline. */
   audit?: DecisionAuditSink;
   /** Every authority this Nox knows. Absent means nothing can be authorized. */
@@ -91,6 +94,7 @@ interface RunnerConstructionOptions extends RunnerOptions {
 interface QueuedMessage {
   readonly authority: RunAuthority;
   readonly message: Message;
+  readonly responseAttachments?: readonly ArtifactRef[];
   readonly trigger: RunTrigger;
 }
 
@@ -102,6 +106,7 @@ interface PendingOwnedOperation {
   readonly execution: ToolExecution;
   readonly pendingResponseId: string;
   readonly publish: () => void;
+  readonly responseAttachments: Map<string, ArtifactRef>;
   readonly runId: string;
   readonly subject: ToolExecutionSubject;
   readonly whenPublished: Promise<void>;
@@ -139,6 +144,7 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
  */
 class Runner {
   readonly #artifactOutputs?: ArtifactOutputHost;
+  readonly #artifactReader?: ArtifactContentReader;
   readonly #timeZone?: string;
   readonly #audit?: DecisionAuditSink;
   readonly #authorities?: AuthorityCatalog;
@@ -152,7 +158,7 @@ class Runner {
   readonly #participants: ConversationParticipants;
   readonly #pendingOperations = new Map<string, PendingOwnedOperation>();
   readonly #provider: ChatProvider;
-  readonly #responseArtifacts = new Map<string, ArtifactRef>();
+  readonly #responseAttachments = new Map<string, ArtifactRef>();
   readonly #sessionId: string;
 
   /** Waiting to enter the context: user messages and deferred results alike. */
@@ -176,6 +182,7 @@ class Runner {
     options: RunnerConstructionOptions,
   ) {
     this.#artifactOutputs = options.artifactOutputs;
+    this.#artifactReader = options.artifactReader;
     this.#timeZone = options.timeZone;
     this.#audit = options.audit;
     this.#authorities = options.authorities;
@@ -283,8 +290,11 @@ class Runner {
       owned += 1;
     }
 
-    for (const { message } of this.#queue.splice(0, owned)) {
+    for (const { message, responseAttachments } of this.#queue.splice(0, owned)) {
       this.#context.addMessage(message);
+      for (const artifact of responseAttachments ?? []) {
+        this.#responseAttachments.set(artifact.artifactId, artifact);
+      }
     }
   }
 
@@ -364,7 +374,7 @@ class Runner {
   /** One run, under one authority, from one entry on the queue. */
   async #runTurn(authority: RunAuthority, trigger: RunTrigger): Promise<RunStatus> {
     this.#run = new AbortController();
-    this.#responseArtifacts.clear();
+    this.#responseAttachments.clear();
 
     const runId = nanoid();
     // Fixed here and read by every tool call this run makes. Nothing that lands
@@ -393,13 +403,13 @@ class Runner {
       // that uncommitted call can ever execute.
       this.#run.abort(failure);
       this.#discardUnpublishedOperations(runId);
-      this.#flushResponseArtifacts();
+      this.#flushResponseAttachments();
       this.#logger?.error({ err: failure, modelId: this.#model.modelId }, 'Agent run failed.');
       this.#events.push({ error: failure, type: 'error' });
       this.#finish(runId, 'failed', startedAt, usage);
       return 'failed';
     } finally {
-      this.#responseArtifacts.clear();
+      this.#responseAttachments.clear();
       this.#run = undefined;
     }
   }
@@ -457,7 +467,7 @@ class Runner {
             this.#recordUsage(usage, event.usage);
           }
           const messages =
-            responses.length === 0 ? this.#withResponseArtifacts(event.messages) : event.messages;
+            responses.length === 0 ? this.#withResponseAttachments(event.messages) : event.messages;
           for (const message of messages) this.#context.addMessage(message);
           break;
         }
@@ -503,8 +513,8 @@ class Runner {
     this.#events.push({ type: 'usage', usage: call });
   }
 
-  #withResponseArtifacts(messages: readonly Message[]): Message[] {
-    if (this.#responseArtifacts.size === 0) return [...messages];
+  #withResponseAttachments(messages: readonly Message[]): Message[] {
+    if (this.#responseAttachments.size === 0) return [...messages];
 
     const attached = new Set(
       messages.flatMap((message) =>
@@ -515,10 +525,10 @@ class Runner {
           : [],
       ),
     );
-    const output = [...this.#responseArtifacts.values()].filter(
+    const output = [...this.#responseAttachments.values()].filter(
       (artifact) => !attached.has(artifact.artifactId),
     );
-    this.#responseArtifacts.clear();
+    this.#responseAttachments.clear();
     if (output.length === 0) return [...messages];
 
     const result = [...messages];
@@ -538,8 +548,8 @@ class Runner {
     return result;
   }
 
-  #flushResponseArtifacts(): void {
-    for (const message of this.#withResponseArtifacts([])) this.#context.addMessage(message);
+  #flushResponseAttachments(): void {
+    for (const message of this.#withResponseAttachments([])) this.#context.addMessage(message);
   }
 
   async #runLoop(usage: Usage): Promise<RunStatus> {
@@ -556,7 +566,7 @@ class Runner {
       }
 
       if (this.#runSignal().aborted) {
-        this.#flushResponseArtifacts();
+        this.#flushResponseAttachments();
         return 'aborted';
       }
 
@@ -573,7 +583,7 @@ class Runner {
 
     // Explicitly selected output survives even when the model never got one final
     // turn to mention it; the iteration ceiling must not make that choice vanish.
-    this.#flushResponseArtifacts();
+    this.#flushResponseAttachments();
 
     // Not a failure, but the reply is probably cut off mid-thought.
     this.#logger?.warn(
@@ -636,47 +646,13 @@ class Runner {
       if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
 
       const outputSignal = execution.type === 'deferred' ? this.#session.signal : this.#runSignal();
-      const artifacts =
-        subject.output?.artifacts === true
-          ? this.#artifactOutputs?.publisher(
-              {
-                details: {
-                  runId: this.#currentRunId(),
-                  sessionId: this.#sessionId,
-                  toolName: subject.toolName,
-                  toolSetId: subject.toolSetId,
-                  trackId: call.trackId,
-                },
-                type: 'tool',
-              },
-              outputSignal,
-            )
-          : undefined;
-      const mayPresentArtifact =
-        subject.authority === ARTIFACT_PRESENT_AUTHORITY &&
-        subject.toolName === PRESENT_ARTIFACT_TOOL_NAME;
-      const responseArtifacts =
-        this.#artifactOutputs === undefined || !mayPresentArtifact
-          ? undefined
-          : Object.freeze({
-              addArtifact: async (artifactId: string) => {
-                outputSignal.throwIfAborted();
-                const part = await this.#artifactOutputs?.reference(artifactId);
-                outputSignal.throwIfAborted();
-                if (part === undefined) {
-                  throw new Error(
-                    `Artifact ${artifactId} is not an output owned by this conversation.`,
-                  );
-                }
-                this.#responseArtifacts.set(part.artifact.artifactId, part.artifact);
-                return part;
-              },
-            });
-      const toolContext = {
-        abortSignal: outputSignal,
-        ...(artifacts === undefined ? {} : { artifacts }),
-        ...(responseArtifacts === undefined ? {} : { responseArtifacts }),
-      };
+      const toolContext = this.#toolContext(
+        call,
+        subject,
+        outputSignal,
+        this.#currentRunId(),
+        this.#responseAttachments,
+      );
 
       if (execution.type === 'deferred') {
         // Authorization and the Gate are behind us, so the whole deferred
@@ -713,6 +689,91 @@ class Runner {
         true,
       );
     }
+  }
+
+  #toolContext(
+    call: ToolCallMessage,
+    subject: ToolExecutionSubject,
+    signal: AbortSignal,
+    runId: string,
+    responseAttachmentTarget?: Map<string, ArtifactRef>,
+  ): ToolContext {
+    const artifacts =
+      subject.output?.artifacts === true
+        ? this.#artifactOutputs?.publisher(
+            {
+              details: {
+                runId,
+                sessionId: this.#sessionId,
+                toolName: subject.toolName,
+                toolSetId: subject.toolSetId,
+                trackId: call.trackId,
+              },
+              type: 'tool',
+            },
+            signal,
+          )
+        : undefined;
+
+    const mayReadArtifact =
+      subject.authority === ARTIFACT_READ_AUTHORITY && subject.toolName === READ_ARTIFACT_TOOL_NAME;
+    const artifactReader =
+      this.#artifactReader === undefined || !mayReadArtifact
+        ? undefined
+        : Object.freeze({
+            read: async (input: Parameters<ArtifactContentReader['read']>[0]) => {
+              signal.throwIfAborted();
+              const known = this.#knownArtifactIds().has(input.artifactId);
+              const owned =
+                known || (await this.#artifactOutputs?.reference(input.artifactId)) !== undefined;
+              if (!owned) return undefined;
+
+              const result = await this.#artifactReader?.read(input, signal);
+              signal.throwIfAborted();
+              return result;
+            },
+          });
+
+    const mayAttachArtifact =
+      responseAttachmentTarget !== undefined &&
+      subject.authority === ARTIFACT_ATTACH_AUTHORITY &&
+      subject.toolName === ATTACH_ARTIFACT_TOOL_NAME;
+    const responseAttachments =
+      this.#artifactOutputs === undefined || !mayAttachArtifact
+        ? undefined
+        : Object.freeze({
+            addArtifact: async (artifactId: string) => {
+              signal.throwIfAborted();
+              const part = await this.#artifactOutputs?.reference(artifactId);
+              signal.throwIfAborted();
+              if (part === undefined) {
+                throw new Error(
+                  `Artifact ${artifactId} is not an output owned by this conversation.`,
+                );
+              }
+              responseAttachmentTarget.set(part.artifact.artifactId, part.artifact);
+              return part;
+            },
+          });
+
+    return {
+      abortSignal: signal,
+      ...(artifactReader === undefined ? {} : { artifactReader }),
+      ...(artifacts === undefined ? {} : { artifacts }),
+      ...(responseAttachments === undefined ? {} : { responseAttachments }),
+    };
+  }
+
+  #knownArtifactIds(): ReadonlySet<string> {
+    const ids = new Set<string>();
+    for (const message of this.#context.getFullHistory()) {
+      if (message.role === 'toolCall') continue;
+      const content = message.role === 'toolResponse' ? message.response : message.content;
+      for (const part of content) {
+        if (part.type === 'artifact') ids.add(part.artifact.artifactId);
+      }
+    }
+    return ids;
   }
 
   /**
@@ -921,6 +982,7 @@ class Runner {
       pendingResponseId: response.messageId,
       publish,
       published: false,
+      responseAttachments: new Map(),
       runId,
       state: 'awaitingApproval',
       subject,
@@ -1000,15 +1062,22 @@ class Runner {
 
     try {
       let response: MessageContent[];
+      const toolContext = this.#toolContext(
+        operation.call,
+        operation.subject,
+        this.#session.signal,
+        operation.runId,
+        operation.responseAttachments,
+      );
       if (operation.execution.type === 'deferred') {
-        const started = await operation.execution.run({ abortSignal: this.#session.signal });
+        const started = await operation.execution.run(toolContext);
         const result = await started.result;
         // The original call is already paired with permissionPending, so a late
         // deferred ack cannot be emitted as an OpenAI `tool` message. Preserve
         // its information by folding it into the one correlated final result.
         response = [...started.ack, ...result];
       } else {
-        response = await operation.execution.run({ abortSignal: this.#session.signal });
+        response = await operation.execution.run(toolContext);
       }
 
       operation.state = 'settled';
@@ -1055,6 +1124,9 @@ class Runner {
     this.#enqueue({
       authority: operation.authority,
       message,
+      ...(operation.responseAttachments.size === 0
+        ? {}
+        : { responseAttachments: [...operation.responseAttachments.values()] }),
       trigger: 'deferredResult',
     });
   }
@@ -1072,6 +1144,9 @@ class Runner {
     this.#enqueue({
       authority: operation.authority,
       message: completion,
+      ...(operation.responseAttachments.size === 0
+        ? {}
+        : { responseAttachments: [...operation.responseAttachments.values()] }),
       trigger: 'deferredResult',
     });
   }

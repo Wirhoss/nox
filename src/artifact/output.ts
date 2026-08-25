@@ -1,7 +1,24 @@
+import { ArtifactRepresentationUnavailableError } from './error';
 import { type ArtifactPipeline, artifactRef } from './pipeline';
 import { type ArtifactByteSource, type ArtifactScope, artifactScopeSchema } from './types';
 
 import type { ContentArtifact } from '../content/content';
+import type { RepresentationProfile } from './representation';
+
+const ARTIFACT_TEXT_READ_PROFILE = Object.freeze({
+  id: 'nox.agent.text-read',
+  mediaTypes: Object.freeze([
+    'text/*',
+    'application/javascript',
+    'application/json',
+    'application/ld+json',
+    'application/sql',
+    'application/xml',
+    'application/x-ndjson',
+    'image/svg+xml',
+  ]),
+  version: 1,
+}) satisfies RepresentationProfile;
 
 interface ArtifactOutputInput {
   readonly data: ArtifactByteSource;
@@ -24,9 +41,98 @@ interface ArtifactOutputHost {
   reference(artifactId: string): Promise<ContentArtifact | undefined>;
 }
 
-/** The response outbox exposed to the one explicit presentation tool. */
-interface ArtifactResponsePresenter {
+interface ArtifactReadInput {
+  readonly artifactId: string;
+  readonly maxCharacters: number;
+  readonly offset: number;
+}
+
+type ArtifactReadResult =
+  | {
+      readonly artifact: ContentArtifact['artifact'];
+      readonly mediaType: string;
+      readonly nextOffset?: number;
+      readonly offset: number;
+      readonly text: string;
+      readonly type: 'text';
+    }
+  | {
+      readonly artifact: ContentArtifact['artifact'];
+      readonly type: 'binary';
+    };
+
+/** Host-side content access. The runner narrows it to IDs known by one conversation. */
+interface ArtifactContentReader {
+  read(input: ArtifactReadInput, signal?: AbortSignal): Promise<ArtifactReadResult | undefined>;
+}
+
+/** The response outbox exposed to the one explicit attachment tool. */
+interface ArtifactResponseAttacher {
   addArtifact(artifactId: string): Promise<ContentArtifact>;
+}
+
+async function readTextPage(
+  stream: ReadableStream<Uint8Array>,
+  offset: number,
+  maxCharacters: number,
+  signal?: AbortSignal,
+): Promise<{ readonly nextOffset?: number; readonly text: string }> {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new RangeError('Artifact read offset must be a non-negative safe integer.');
+  }
+  if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1) {
+    throw new RangeError('Artifact read maxCharacters must be a positive safe integer.');
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const selected: string[] = [];
+  let complete = false;
+  let hasMore: boolean;
+  let skipped = 0;
+
+  const consume = (text: string): boolean => {
+    for (const character of text) {
+      if (skipped < offset) {
+        skipped += 1;
+        continue;
+      }
+      if (selected.length < maxCharacters) {
+        selected.push(character);
+        continue;
+      }
+      return true;
+    }
+    return false;
+  };
+
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      const chunk = await reader.read();
+      if (chunk.done) {
+        hasMore = consume(decoder.decode());
+        complete = true;
+        break;
+      }
+      hasMore = consume(decoder.decode(chunk.value, { stream: true }));
+      if (hasMore) break;
+    }
+  } finally {
+    if (!complete) await reader.cancel().catch(() => undefined);
+  }
+
+  if (!hasMore && skipped < offset) {
+    throw new RangeError(
+      `Artifact read offset ${String(offset)} is past the end of its textual representation.`,
+    );
+  }
+
+  const text = selected.join('');
+  return Object.freeze({
+    ...(hasMore ? { nextOffset: offset + selected.length } : {}),
+    text,
+  });
 }
 
 /**
@@ -34,7 +140,7 @@ interface ArtifactResponsePresenter {
  * Providers and tools never choose either, and only receive the small reference produced after
  * streaming ingestion has committed successfully.
  */
-class ArtifactOutputSink implements ArtifactOutputHost {
+class ArtifactOutputSink implements ArtifactContentReader, ArtifactOutputHost {
   readonly #artifacts: ArtifactPipeline;
   readonly #scope: ArtifactScope;
 
@@ -48,6 +154,40 @@ class ArtifactOutputSink implements ArtifactOutputHost {
     return reference === undefined
       ? undefined
       : Object.freeze({ artifact: reference, type: 'artifact' });
+  }
+
+  /** Privileged storage read; callers must enforce conversation membership before invoking it. */
+  public async read(
+    input: ArtifactReadInput,
+    signal?: AbortSignal,
+  ): Promise<ArtifactReadResult | undefined> {
+    const record = await this.#artifacts.find(input.artifactId);
+    if (record === undefined) return undefined;
+
+    const reference = artifactRef(record);
+    signal?.throwIfAborted();
+
+    try {
+      const payload = await this.#artifacts.resolve(record.artifactId, ARTIFACT_TEXT_READ_PROFILE, {
+        scope: record.scope,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      const page = await readTextPage(payload.stream, input.offset, input.maxCharacters, signal);
+      signal?.throwIfAborted();
+      return Object.freeze({
+        artifact: reference,
+        mediaType: payload.representation.mediaType,
+        ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }),
+        offset: input.offset,
+        text: page.text,
+        type: 'text',
+      });
+    } catch (error) {
+      if (error instanceof ArtifactRepresentationUnavailableError) {
+        return Object.freeze({ artifact: reference, type: 'binary' });
+      }
+      throw error;
+    }
   }
 
   public publisher(
@@ -85,12 +225,15 @@ function artifactConversationScope(brokerId: string, conversationId: string): Ar
   });
 }
 
-export { artifactConversationScope, ArtifactOutputSink };
+export { ARTIFACT_TEXT_READ_PROFILE, artifactConversationScope, ArtifactOutputSink };
 
 export type {
+  ArtifactContentReader,
   ArtifactOutputHost,
   ArtifactOutputInput,
   ArtifactOutputProvenance,
   ArtifactOutputPublisher,
-  ArtifactResponsePresenter,
+  ArtifactReadInput,
+  ArtifactReadResult,
+  ArtifactResponseAttacher,
 };

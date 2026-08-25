@@ -80,12 +80,36 @@ not have:
 ```
 
 The fields beside `module` are that module's own: SearXNG has a language and an
-engine list, Crawl4AI has captures and a batch ceiling, camofox has a session
-owner. A module added later — Firecrawl beside Crawl4AI, say — is a file in
-`src/extensions/builtin/toolsets/web/modules/` plus a line in that directory's
-registry; nothing else widens, and no entry naming another module changes
-meaning. The settings surface builds its form from each kind's own schema, so a
-new module's fields appear there without the editor learning their names.
+engine list, Crawl4AI has captures and a batch ceiling, and camoufox has a session
+owner. Modules are grouped by the slot they fill under
+`src/extensions/builtin/toolsets/web/modules/{browser,extract,search}/`; adding
+one means adding its file and one registry entry. Nothing else widens, and no
+entry naming another module changes meaning. The settings surface builds its
+form from each kind's own schema, so a new module's fields appear there without
+the editor learning their names.
+
+The browser slot can instead use Playwright. Its client is imported lazily and
+the browser is started only on the first browser tool call, so an installation
+that does not configure or use this module opens no Playwright process or
+connection. With no `wsEndpoint`, the container launches its bundled system
+Chromium and keeps one isolated browser context per named session:
+
+```json
+{
+  "browser": {
+    "module": "playwright",
+    "browser": "chromium",
+    "headless": true,
+    "timeoutMs": 30000
+  }
+}
+```
+
+The Nox image installs Alpine's Chromium and points Playwright at it; it does not
+download Playwright's browser bundle. Firefox and WebKit are available through a
+remote `wsEndpoint` returned by the matching version of
+`browserType.launchServer`. `apiKey` may reference a managed secret to send as a
+Bearer token, and `executablePath` can override the local browser binary.
 
 The corresponding field inside `blueprints/nox.json`:
 
@@ -105,11 +129,10 @@ returned by `search_tool` remain authoritative.
 the pictures it found (fetched and published, bounded in count and size), and on
 request a screenshot, a PDF or Markdown. The transcript keeps only what has to be
 read — the title, where each file went, and a bounded excerpt — leaving
-`present_artifact` to decide what reaches the user. The browser is a family of tools rather than one tool with an
+`attach_artifact` to decide what reaches the user. The browser is a family of tools rather than one tool with an
 `action` argument — `browser_open`, `browser_snapshot`, `browser_click`,
 `browser_type` and the rest — and which of them exist is the configured module's
-answer, so a backend that cannot press a key never offers `browser_press` and one
-that can do more than camofox offers more. `browser_open` hands back a tab ID
+answer, so a backend that cannot press a key never offers `browser_press`. `browser_open` hands back a tab ID
 that later calls name, and every action that changes the page answers with the
 page it produced: an accessibility snapshot with element refs, which is what the
 next click or keystroke addresses. Reading a page and acting on one are separate
@@ -165,7 +188,7 @@ a provider as `TextGenerateOptions.artifactOutput` and to an executing tool as
 `ToolContext.artifacts`. A producer streams bytes into `publish(...)`; Nox, not the producer, assigns
 the conversation scope and provider/tool provenance, and returns a `ContentArtifact` containing only
 the canonical reference. Creation does not imply presentation: tool artifacts remain tool results
-until the model explicitly calls the core `present_artifact` tool for each file it has decided the
+until the model explicitly calls the core `attach_artifact` tool for each file it has decided the
 user should receive. Tools that declare `output: { artifacts: true }` receive a provider-visible
 notice explaining that selection step and forbidding inline/base64 file bytes. Those selections are
 appended to the next assistant message, or emitted alone
@@ -173,6 +196,14 @@ if the run ends before another assistant turn. Native provider output is already
 answer and enters the normalized stream as an `artifact` event. Assistant messages, the transcript,
 brokers and the UI all carry the same reference, and later model calls replay it as a stable
 descriptor.
+
+The companion core `read_artifact` tool inspects only IDs already referenced by the conversation.
+It requests the versioned `nox.agent.text-read` representation profile: compatible textual originals
+are streamed in bounded Unicode-character pages, while registered deterministic processors may
+produce and cache textual renditions for formats such as PDF or Office documents. If no textual
+rendition exists, the tool returns the canonical binary reference so a compatible provider can still
+consume it visually or another specialized tool can handle it; it never treats arbitrary bytes as
+text.
 
 Artifact and model modality are intentionally different concepts. Consumers resolve bytes through a
 versioned representation profile: accepted media types, an optional size ceiling, and deterministic

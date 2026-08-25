@@ -1,4 +1,9 @@
-import { PRESENT_ARTIFACT_TOOL_NAME, presentArtifactTool } from './artifactTool';
+import {
+  ATTACH_ARTIFACT_TOOL_NAME,
+  attachArtifactTool,
+  READ_ARTIFACT_TOOL_NAME,
+  readArtifactTool,
+} from './artifactTool';
 import { Session } from './session';
 import { composeSessionTools } from './tools';
 
@@ -176,17 +181,21 @@ class Agent {
       this.#authorities,
     );
     const outputEnabled = this.#artifacts !== undefined && options.artifactScope !== undefined;
-    if (outputEnabled && configuredTools[PRESENT_ARTIFACT_TOOL_NAME] !== undefined) {
-      throw new Error(
-        `Configured tool ${PRESENT_ARTIFACT_TOOL_NAME} conflicts with Nox's artifact response tool.`,
-      );
+    let tools = configuredTools;
+    if (outputEnabled) {
+      const attachmentTool = attachArtifactTool();
+      const readerTool = readArtifactTool();
+      for (const tool of [attachmentTool, readerTool]) {
+        if (configuredTools[tool.name] !== undefined) {
+          throw new Error(`Configured tool ${tool.name} conflicts with Nox's core artifact tools.`);
+        }
+      }
+      tools = Object.freeze({
+        ...configuredTools,
+        [ATTACH_ARTIFACT_TOOL_NAME]: attachmentTool,
+        [READ_ARTIFACT_TOOL_NAME]: readerTool,
+      });
     }
-    const tools = outputEnabled
-      ? Object.freeze({
-          ...configuredTools,
-          [PRESENT_ARTIFACT_TOOL_NAME]: presentArtifactTool(),
-        })
-      : configuredTools;
     const systemPrompt = withRoutedToolSetCatalog(this.#systemPrompt, this.#routedToolSets);
 
     return Session.open(this.#database, this.#provider, this.#model, {

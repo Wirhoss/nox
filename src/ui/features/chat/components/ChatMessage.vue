@@ -5,31 +5,38 @@ import { useI18n } from '@/shared/i18n'
 
 import { renderMarkdown } from '../model/markdown'
 import ArtifactMedia from './ArtifactMedia.vue'
-import ReasoningActivityCard from './ReasoningActivityCard.vue'
 import RunActivityCard from './RunActivityCard.vue'
-import ToolActivityCard from './ToolActivityCard.vue'
 
-import type {
-  AssistantItem,
-  ReasoningActivity,
-  RunActivityItem,
-  ToolActivity,
-  UserItem,
-} from '../stores/activeSession.store'
+import type { ChatContentPart } from '../api/chat.schemas'
+import type { AssistantItem, RunActivityItem, UserItem } from '../stores/activeSession.store'
 
-type ProcessItem = ReasoningActivity | ToolActivity
 interface Props {
   activity?: DeepReadonly<RunActivityItem>
+  embedded?: boolean
   item: AssistantItem | UserItem
-  processItems?: readonly DeepReadonly<ProcessItem>[]
+  showAuthor?: boolean
+  showTimestamp?: boolean
 }
 
-const props = defineProps<Props>()
-const { formatDate, plural, t } = useI18n()
+const props = withDefaults(defineProps<Props>(), { showAuthor: true, showTimestamp: true })
+const { formatDate, t } = useI18n()
 const detailsOpen = ref(false)
 const hasDetails = computed(() => props.item.kind === 'assistant' && props.activity !== undefined)
-const renderedMessage = computed(() => renderMarkdown(props.item.text))
 const streaming = computed(() => props.item.kind === 'assistant' && props.item.streaming)
+const assistantContent = computed<readonly ChatContentPart[]>(() => {
+  if (props.item.kind !== 'assistant') return []
+  if (props.item.content !== undefined) return props.item.content
+  return [
+    ...props.item.media,
+    ...(props.item.text.length === 0 ? [] : [{ text: props.item.text, type: 'text' as const }]),
+  ]
+})
+const lastAssistantTextIndex = computed(() => {
+  for (let index = assistantContent.value.length - 1; index >= 0; index -= 1) {
+    if (assistantContent.value[index]?.type === 'text') return index
+  }
+  return -1
+})
 
 const timestamp = computed(() =>
   formatDate(props.item.createdAt, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -37,45 +44,47 @@ const timestamp = computed(() =>
 </script>
 
 <template>
-  <article class="message" :class="`message--${props.item.kind}`">
-    <details
-      v-if="props.item.kind === 'assistant' && (props.processItems?.length ?? 0) > 0"
-      class="message__process"
-    >
-      <summary class="message__process-summary">
-        <span class="message__process-chevron" aria-hidden="true"></span>
-        <strong>{{ t('chat.message.responseProcess') }}</strong>
-        <span>{{ plural('chat.message.steps', props.processItems?.length ?? 0) }}</span>
-      </summary>
-
-      <div class="message__process-body" :aria-label="t('chat.message.responseProcess')">
-        <template v-for="processItem in props.processItems" :key="processItem.id">
-          <ReasoningActivityCard v-if="processItem.kind === 'reasoning'" :item="processItem" />
-          <ToolActivityCard v-else :item="processItem" />
-        </template>
-      </div>
-    </details>
-
-    <header class="message__author">
+  <article
+    class="message"
+    :class="[`message--${props.item.kind}`, { 'message--embedded': props.embedded === true }]"
+  >
+    <header v-if="props.showAuthor" class="message__author">
       {{ props.item.kind === 'user' ? t('chat.message.you') : 'NOX' }}
     </header>
-    <div v-if="props.item.media.length > 0" class="message__media">
-      <ArtifactMedia
-        v-for="(part, index) in props.item.media"
-        :key="`${part.type}-${String(index)}`"
-        :part="part"
-      />
+    <div v-if="props.item.kind === 'assistant'" class="message__content">
+      <template v-for="(part, index) in assistantContent" :key="`${part.type}-${String(index)}`">
+        <!-- markdown.ts escapes raw HTML and only emits HTML from trusted renderers. -->
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <div
+          v-if="part.type === 'text'"
+          class="message__text"
+          :class="{
+            'message__text--streaming': streaming && index === lastAssistantTextIndex,
+          }"
+          :aria-busy="streaming && index === lastAssistantTextIndex"
+          v-html="renderMarkdown(part.text)"
+        ></div>
+        <div v-else class="message__media message__media--inline">
+          <ArtifactMedia :part="part" />
+        </div>
+      </template>
     </div>
-    <!-- markdown.ts escapes raw HTML and only emits HTML from trusted renderers. -->
-    <!-- eslint-disable-next-line vue/no-v-html -->
-    <div
-      class="message__text"
-      :class="{ 'message__text--streaming': streaming }"
-      :aria-busy="streaming"
-      v-html="renderedMessage"
-    ></div>
-    <footer class="message__footer">
+
+    <template v-else>
+      <div v-if="props.item.media.length > 0" class="message__media">
+        <ArtifactMedia
+          v-for="(part, index) in props.item.media"
+          :key="`${part.type}-${String(index)}`"
+          :part="part"
+        />
+      </div>
+      <!-- markdown.ts escapes raw HTML and only emits HTML from trusted renderers. -->
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <div class="message__text" v-html="renderMarkdown(props.item.text)"></div>
+    </template>
+    <footer v-if="props.showTimestamp || hasDetails" class="message__footer">
       <time
+        v-if="props.showTimestamp"
         class="message__timestamp"
         :datetime="props.item.createdAt"
         :title="props.item.createdAt"
@@ -126,6 +135,14 @@ const timestamp = computed(() =>
   border-radius: var(--nox-radius-panel);
   border-end-start-radius: 0;
   background: var(--nox-surface-1);
+}
+
+.message--embedded.message--assistant {
+  width: 100%;
+  padding: var(--nox-space-5) var(--nox-space-6);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .message--user {
@@ -215,71 +232,16 @@ const timestamp = computed(() =>
   margin-top: var(--nox-space-4);
 }
 
-.message__process {
-  min-width: 0;
-  border-bottom: 1px solid var(--nox-border-subtle);
-  margin-bottom: var(--nox-space-2);
-  padding-bottom: var(--nox-space-3);
-}
-
-.message__process-summary {
-  display: flex;
-  min-height: 2rem;
-  align-items: center;
-  gap: var(--nox-space-3);
-  color: var(--nox-text-muted);
-  cursor: pointer;
-  font-family: var(--nox-font-mono);
-  font-size: 0.65rem;
-  letter-spacing: 0.08em;
-  list-style: none;
-  text-transform: uppercase;
-}
-
-.message__process-summary::-webkit-details-marker {
-  display: none;
-}
-
-.message__process-summary strong {
-  color: var(--nox-text-secondary);
-  font-size: var(--nox-text-xs);
-}
-
-.message__process-summary > span:last-child {
-  margin-inline-start: auto;
-}
-
-.message__process-chevron {
-  width: 0.38rem;
-  height: 0.38rem;
-  flex: 0 0 auto;
-  border-right: 1px solid currentcolor;
-  border-bottom: 1px solid currentcolor;
-  transform: rotate(-45deg);
-  transition: transform 120ms ease;
-}
-
-.message__process[open] > .message__process-summary > .message__process-chevron {
-  transform: rotate(45deg) translate(-0.08rem, -0.08rem);
-}
-
-.message__process-body {
-  display: grid;
-  min-width: 0;
-  gap: var(--nox-space-1);
-  padding-top: var(--nox-space-3);
-}
-
-.message__process-body :deep(.reasoning),
-.message__process-body :deep(.tool) {
-  width: 100%;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .message__details-chevron,
-  .message__process-chevron {
+  .message__details-chevron {
     transition: none;
   }
+}
+
+.message__content {
+  display: grid;
+  min-width: 0;
+  gap: var(--nox-space-2);
 }
 
 .message__media {
@@ -301,6 +263,10 @@ const timestamp = computed(() =>
 
 .message__media :deep(.artifact--audio) {
   width: 100%;
+}
+
+.message__media--inline {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .message__media :deep(.artifact--document) {

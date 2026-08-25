@@ -30,6 +30,7 @@ export type {
   ChatRetryEvent,
   ChatRunCompletedEvent,
   ChatRunStartedEvent,
+  ChatSubscriptionOptions,
   ChatToolCallEvent,
   ChatToolResponseEvent,
   ChatTransport,

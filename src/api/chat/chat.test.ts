@@ -41,6 +41,8 @@ class RecordingTransport implements ChatTransport {
   public readonly reads: ChatHistoryInput[] = [];
   public readonly steers: ChatMessageInput[] = [];
 
+  #nextEventId = 0;
+
   /** What the gateway would refuse with, set by whichever test cares. */
   public rejection: ChatCommandRejection | undefined;
 
@@ -50,7 +52,8 @@ class RecordingTransport implements ChatTransport {
   public history: ChatHistory | undefined;
 
   public emit(event: ChatEvent): void {
-    for (const listener of this.listeners) listener(event);
+    const eventId = ++this.#nextEventId;
+    for (const listener of this.listeners) listener(event, eventId);
   }
 
   public listCommands(): readonly ChatCommand[] {
@@ -383,6 +386,7 @@ describe('the chat routes', () => {
     });
 
     const frame = await nextFrame(reader);
+    expect(frame).toContain('id: 1');
     expect(frame).toContain('event: message');
     expect(frame).toContain('"text":"listo"');
 

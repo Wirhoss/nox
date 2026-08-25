@@ -44,6 +44,7 @@ COPY --from=deps /build/src/ui/node_modules ./src/ui/node_modules
 RUN bun build ./index.ts \
       --target=bun \
       --outfile ./dist/nox.js \
+      --external playwright \
       --external sharp \
       --minify-whitespace \
       --minify-syntax \
@@ -62,7 +63,11 @@ LABEL org.opencontainers.image.title="nox" \
       org.opencontainers.image.licenses="UNLICENSED" \
       org.opencontainers.image.base.name="${BUN_IMAGE}"
 
-RUN addgroup -g 10001 nox \
+# Playwright is a lazy client, but a configured local instance needs a browser
+# executable. Alpine's Chromium is musl-native; no Playwright browser download
+# is performed, and no browser process starts until the first browser tool call.
+RUN apk add --no-cache chromium \
+ && addgroup -g 10001 nox \
  && adduser -D -H -u 10001 -G nox -s /sbin/nologin nox \
  && install -d -m 0750 -o nox -g nox /home/nox /etc/nox/config /var/lib/nox \
  && install -d -m 0555 -o root -g root /app \
@@ -80,6 +85,7 @@ ENV NODE_ENV=production \
     DATA_DIR=/var/lib/nox \
     UI_DIR=/app/ui \
     HOME=/home/nox \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     TZ=UTC
 
 USER 10001:10001

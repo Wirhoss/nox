@@ -1,15 +1,21 @@
 import { InvalidToolParamsError, UnknownToolError } from './error';
 
 import type { MessageContent } from '../agent/context/message';
-import type { ArtifactOutputPublisher, ArtifactResponsePresenter } from '../artifact/output';
+import type {
+  ArtifactContentReader,
+  ArtifactOutputPublisher,
+  ArtifactResponseAttacher,
+} from '../artifact/output';
 import type { z } from 'zod';
 
 interface ToolContext {
   abortSignal: AbortSignal;
+  /** Bounded access available only to the core artifact-reading tool. */
+  artifactReader?: ArtifactContentReader;
   /** Host-scoped creation, available only to tools that declare artifact output. */
   artifacts?: ArtifactOutputPublisher;
-  /** Explicit user-facing response outbox, used by the core presentation tool. */
-  responseArtifacts?: ArtifactResponsePresenter;
+  /** Explicit user-facing response outbox, used by the core attachment tool. */
+  responseAttachments?: ArtifactResponseAttacher;
 }
 
 type ToolEffect =

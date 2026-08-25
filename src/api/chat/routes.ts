@@ -111,6 +111,7 @@ interface ChatRoutesOptions {
  */
 function createChatRoutes(options: ChatRoutesOptions) {
   const { artifacts, hub, store } = options;
+  const streamInstanceId = nanoid();
 
   const canonicalContent = async (
     content: readonly ContentPart[],
@@ -194,7 +195,12 @@ function createChatRoutes(options: ChatRoutesOptions) {
         ({ request, status }) => {
           const transport = hub.transport;
           if (transport === undefined) return status(503, UNAVAILABLE);
-          return eventStream(transport, request.signal);
+          return eventStream(
+            transport,
+            request.signal,
+            streamInstanceId,
+            requestedEventId(request),
+          );
         },
         { authenticated: true },
       )
@@ -334,7 +340,12 @@ function createChatRoutes(options: ChatRoutesOptions) {
  * A stream that cannot be written to is over: the browser is gone, and holding
  * a subscription for it would leak one per closed tab.
  */
-function eventStream(transport: ChatTransport, signal: AbortSignal): Response {
+function eventStream(
+  transport: ChatTransport,
+  signal: AbortSignal,
+  streamInstanceId: string,
+  afterEventId?: number,
+): Response {
   const encoder = new TextEncoder();
   /** Assigned as the stream starts; every way of ending it goes through this. */
   let stop: (() => void) | undefined;
@@ -355,9 +366,12 @@ function eventStream(transport: ChatTransport, signal: AbortSignal): Response {
         }
       };
 
-      const unsubscribe = transport.subscribe((event: ChatEvent) => {
-        write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-      });
+      const unsubscribe = transport.subscribe(
+        (event: ChatEvent, eventId: number) => {
+          write(`id: ${String(eventId)}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        },
+        { afterEventId },
+      );
       const heartbeat = setInterval(() => {
         write(': ping\n\n');
       }, HEARTBEAT_MS);
@@ -389,11 +403,20 @@ function eventStream(transport: ChatTransport, signal: AbortSignal): Response {
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'content-type': 'text/event-stream',
+      'x-nox-chat-stream-id': streamInstanceId,
       // Nginx buffers a response body by default, which turns a live stream into
       // one delivery at the end of the run.
       'x-accel-buffering': 'no',
     },
   });
+}
+
+function requestedEventId(request: Request): number | undefined {
+  const value = request.headers.get('last-event-id');
+  if (value === null || value.length === 0) return undefined;
+
+  const eventId = Number(value);
+  return Number.isSafeInteger(eventId) && eventId >= 0 ? eventId : undefined;
 }
 
 function chatRoutes(options: ChatRoutesOptions): ReturnType<typeof createChatRoutes> {

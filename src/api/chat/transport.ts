@@ -268,7 +268,13 @@ interface ChatConversation {
   readonly updatedAt: string;
 }
 
-type ChatListener = (event: ChatEvent) => void;
+/** One rendered event and its monotonic cursor on this transport instance. */
+type ChatListener = (event: ChatEvent, eventId: number) => void;
+
+interface ChatSubscriptionOptions {
+  /** Replays events after this cursor before following live delivery. */
+  readonly afterEventId?: number;
+}
 
 /** An answer to a pending request, as a client states it. */
 interface ChatDecisionInput {
@@ -357,7 +363,7 @@ interface ChatTransport {
   /** Says something over the top of the run in flight, rather than after it. */
   submitSteer(input: ChatMessageInput): void;
   /** Everything the transport renders, until the returned function is called. */
-  subscribe(listener: ChatListener): () => void;
+  subscribe(listener: ChatListener, options?: ChatSubscriptionOptions): () => void;
 }
 
 /**
@@ -417,6 +423,7 @@ export type {
   ChatRetryEvent,
   ChatRunCompletedEvent,
   ChatRunStartedEvent,
+  ChatSubscriptionOptions,
   ChatTitleEvent,
   ChatToolCallEvent,
   ChatToolResponseEvent,

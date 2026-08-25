@@ -67,6 +67,91 @@ describe('ArtifactOutputSink', () => {
     ).toBeUndefined();
   });
 
+  test('reads textual artifacts in bounded Unicode pages through a representation profile', async () => {
+    const scope = artifactConversationScope('web', 'conversation-text');
+    const sink = new ArtifactOutputSink(pipeline, scope);
+    const part = await sink.publisher({ type: 'tool' }).publish({
+      data: new Blob(['á😀bc']),
+      declaredMediaType: 'text/plain',
+      filename: 'unicode.txt',
+    });
+
+    const first = await sink.read({
+      artifactId: part.artifact.artifactId,
+      maxCharacters: 2,
+      offset: 0,
+    });
+    const second = await sink.read({
+      artifactId: part.artifact.artifactId,
+      maxCharacters: 2,
+      offset: 2,
+    });
+
+    expect(first).toEqual({
+      artifact: part.artifact,
+      mediaType: 'text/plain',
+      nextOffset: 2,
+      offset: 0,
+      text: 'á😀',
+      type: 'text',
+    });
+    expect(second).toEqual({
+      artifact: part.artifact,
+      mediaType: 'text/plain',
+      offset: 2,
+      text: 'bc',
+      type: 'text',
+    });
+    expect(
+      sink.read({ artifactId: part.artifact.artifactId, maxCharacters: 2, offset: 99 }),
+    ).rejects.toBeInstanceOf(RangeError);
+  });
+
+  test('uses registered deterministic processors for textual artifact renditions', async () => {
+    pipeline.processors.register({
+      id: 'test.pdf.text',
+      process: () => ({ data: new Blob(['extracted PDF']), mediaType: 'text/plain' }),
+      supports: (source, profile) =>
+        source.mediaType === 'application/pdf' && profile.id === 'nox.agent.text-read',
+      version: '1',
+    });
+    const scope = artifactConversationScope('web', 'conversation-pdf');
+    const sink = new ArtifactOutputSink(pipeline, scope);
+    const part = await sink.publisher({ type: 'tool' }).publish({
+      data: new Blob(['%PDF- fixture']),
+      declaredMediaType: 'application/pdf',
+      filename: 'report.pdf',
+    });
+
+    const result = await sink.read({
+      artifactId: part.artifact.artifactId,
+      maxCharacters: 100,
+      offset: 0,
+    });
+
+    expect(result).toEqual({
+      artifact: part.artifact,
+      mediaType: 'text/plain',
+      offset: 0,
+      text: 'extracted PDF',
+      type: 'text',
+    });
+  });
+
+  test('returns a binary reference when no textual representation exists', async () => {
+    const scope = artifactConversationScope('web', 'conversation-image');
+    const sink = new ArtifactOutputSink(pipeline, scope);
+    const part = await sink.publisher({ type: 'tool' }).publish({
+      data: new Blob([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])]),
+      declaredMediaType: 'image/png',
+      filename: 'image.png',
+    });
+
+    expect(
+      await sink.read({ artifactId: part.artifact.artifactId, maxCharacters: 100, offset: 0 }),
+    ).toEqual({ artifact: part.artifact, type: 'binary' });
+  });
+
   test('uses broker identity in conversation ownership', () => {
     expect(artifactConversationScope('web', 'same')).not.toEqual(
       artifactConversationScope('discord', 'same'),

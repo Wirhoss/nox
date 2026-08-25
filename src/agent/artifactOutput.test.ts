@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { artifactConversationScope } from '../artifact/output';
-import { ArtifactPipeline } from '../artifact/pipeline';
+import { ArtifactPipeline, artifactRef } from '../artifact/pipeline';
 import { Database } from '../database/database';
 import { messages } from '../database/schema';
 import { ChatProvider } from '../provider/provider';
-import { testCatalog, testOrigin } from '../testFixtures';
+import { permissiveAuthorization, testCatalog, testOrigin } from '../testFixtures';
 import { Agent } from './agent';
 
 import type { ModelConfig, TextGenerateOptions } from '../provider/config';
@@ -22,6 +22,59 @@ const MODEL: ModelConfig = {
   modelId: 'artifact-model',
   outputModalities: ['text', 'document'],
 };
+
+class ArtifactReadingProvider extends ChatProvider {
+  public readResponse = '';
+
+  readonly #artifactId: string;
+
+  constructor(artifactId: string) {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    this.#artifactId = artifactId;
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected override async *attempt(
+    _systemPrompt: string,
+    history: Message[],
+    tools: Tool[],
+    _options: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    if (tools.length === 0) {
+      yield { text: 'artifact reading', type: 'textFragment' };
+      yield { type: 'end' };
+      return;
+    }
+
+    const response = history.findLast(
+      (message) => message.role === 'toolResponse' && message.name === 'read_artifact',
+    );
+    if (response?.role !== 'toolResponse') {
+      yield {
+        toolCall: {
+          arguments: { artifactId: this.#artifactId },
+          name: 'read_artifact',
+          role: 'toolCall',
+          trackId: 'read-upload',
+        },
+        type: 'toolCall',
+      };
+      yield { type: 'end' };
+      return;
+    }
+
+    this.readResponse = response.response
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('');
+    yield { text: 'read', type: 'textFragment' };
+    yield { type: 'end' };
+  }
+}
 
 class ArtifactProvider extends ChatProvider {
   public readonly requestedTools: Tool[][] = [];
@@ -60,6 +113,52 @@ afterEach(async () => {
 });
 
 describe('agent artifact output', () => {
+  test('reads an account-owned user attachment through the conversation capability', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nox-agent-artifact-read-'));
+    const database = await Database.open({ path: join(directory, 'nox.db') });
+    cleanup.push(async () => {
+      await database.close();
+      try {
+        rmSync(directory, { force: true, recursive: true });
+      } catch {
+        // Windows may briefly retain a SQLite handle.
+      }
+    });
+    const artifacts = await ArtifactPipeline.open({ dataDirectory: directory, database });
+    const stored = await artifacts.ingest({
+      data: new Blob(['one\ntwo\nthree']),
+      declaredMediaType: 'text/plain',
+      filename: 'notes.txt',
+      provenance: { type: 'upload' },
+      scope: { id: 'account-1', type: 'account' },
+    });
+    const provider = new ArtifactReadingProvider(stored.artifactId);
+    const agent = new Agent(database, provider, MODEL, {
+      agentId: 'artifact-reader',
+      artifacts,
+      authorities: testCatalog(),
+      systemPrompt: 'read the attached file',
+    });
+    const session = await agent.openSession({
+      artifactScope: artifactConversationScope('web', 'conversation-read'),
+      authorization: permissiveAuthorization,
+    });
+    cleanup.push(() => session.stop());
+
+    session.send(
+      [
+        { text: 'Read this.', type: 'text' },
+        { artifact: artifactRef(stored), type: 'artifact' },
+      ],
+      testOrigin(),
+    );
+    await session.idle;
+
+    expect(provider.readResponse).toContain('characters 0-13');
+    expect(provider.readResponse).toContain('one\ntwo\nthree');
+    expect(provider.readResponse).toContain('End of artifact.');
+  });
+
   test('streams provider bytes into a conversation-owned assistant artifact', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nox-agent-artifact-output-'));
     const database = await Database.open({ path: join(directory, 'nox.db') });
@@ -95,13 +194,15 @@ describe('agent artifact output', () => {
     if (part?.type !== 'artifact') throw new Error('Assistant artifact was not recorded.');
     const payload = await artifacts.open(part.artifact.artifactId, scope);
 
-    const presentationTool = provider.requestedTools[0]?.find(
-      (tool) => tool.name === 'present_artifact',
+    const attachmentTool = provider.requestedTools[0]?.find(
+      (tool) => tool.name === 'attach_artifact',
     );
-    expect(presentationTool).toMatchObject({
-      authority: 'nox.artifacts.present',
+    const readerTool = provider.requestedTools[0]?.find((tool) => tool.name === 'read_artifact');
+    expect(attachmentTool).toMatchObject({
+      authority: 'nox.artifacts.attach',
       trust: 'trusted',
     });
+    expect(readerTool).toMatchObject({ authority: 'nox.artifacts.read' });
     expect(part.artifact).toMatchObject({
       filename: 'answer.txt',
       mediaType: 'text/plain',

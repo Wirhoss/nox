@@ -56,6 +56,7 @@ type RunTrigger = Extract<ChatEvent, { type: 'runStarted' }>['trigger']
 type ToolResponseExecution = Extract<ChatEvent, { type: 'toolResponse' }>['execution']
 
 interface AssistantItem {
+  content?: readonly ChatContentPart[]
   readonly createdAt: string
   readonly id: string
   readonly kind: 'assistant'
@@ -195,8 +196,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
 
   let eventBuffer: ChatEvent[] | undefined
   let initializePromise: Promise<void> | undefined
+  let lastEventId: string | undefined
   let selectionVersion = 0
   let streamController: AbortController | undefined
+  let streamInstanceId: string | undefined
 
   function initialize(): Promise<void> {
     initializePromise ??= initializeChat()
@@ -226,7 +229,9 @@ const useActiveSessionStore = defineStore('active-session', () => {
 
       const latest = availableConversations[0]
       if (latest === undefined) {
+        const buffer = eventBuffer
         eventBuffer = undefined
+        replayBufferedEvents(buffer)
         return
       }
       await openConversation(latest.conversationId)
@@ -365,14 +370,24 @@ const useActiveSessionStore = defineStore('active-session', () => {
       try {
         await chatApi.openStream({
           accessToken,
-          listener: applyEvent,
-          opened: () => {
+          lastEventId,
+          listener: (event, eventId) => {
+            if (eventId !== undefined) lastEventId = eventId.length === 0 ? undefined : eventId
+            applyEvent(event)
+          },
+          opened: (nextStreamInstanceId) => {
+            const backendRestarted =
+              streamInstanceId !== undefined &&
+              nextStreamInstanceId !== undefined &&
+              streamInstanceId !== nextStreamInstanceId
+            streamInstanceId = nextStreamInstanceId ?? streamInstanceId
             if (
-              connection.value.type === 'reconnecting' &&
+              backendRestarted &&
               (run.value.type === 'running' || run.value.type === 'sending')
             ) {
               run.value = { type: 'idle' }
               sendError.value = t('chat.error.reconnectedIncomplete')
+              lastEventId = undefined
             }
             attempt = 0
             connection.value = { type: 'connected' }
@@ -384,10 +399,6 @@ const useActiveSessionStore = defineStore('active-session', () => {
         await waitForRetry(Math.min(4_000, attempt * 1_000), controller.signal)
       } catch (error) {
         if (isAborted(controller.signal)) break
-        if (error instanceof ApiError && error.code === 'chat_unavailable') {
-          connection.value = { type: 'unavailable' }
-          break
-        }
         if (error instanceof ApiError && error.status === 401) {
           connection.value = {
             message: t('chat.error.noLongerAuthorized'),
@@ -558,7 +569,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
         markRunning(event.turnId)
         break
       case 'message':
-        settleMessage(event.turnId, event.text, mediaFrom(event.content))
+        settleMessage(event.turnId, event.text, event.content)
         break
       case 'permission':
         if (permissionItem(event.request.requestId) === undefined) {
@@ -700,6 +711,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
         }
         case 'message':
           insertBeforeRunSummary(turnId, {
+            content: entry.content,
             createdAt: entry.at,
             id: entry.messageId,
             kind: 'assistant',
@@ -756,23 +768,42 @@ const useActiveSessionStore = defineStore('active-session', () => {
     }
 
     const duplicate = new Set<ChatEvent>()
-    const settledTextTurns = new Set<string>()
-    const settledReasoningTurns = new Set<string>()
+    const pendingReasoningFragments = new Map<string, ChatEvent[]>()
+    const pendingTextFragments = new Map<string, ChatEvent[]>()
     for (const event of buffer) {
       if (event.conversationId !== conversationId.value) continue
+      if (event.type === 'fragment') {
+        appendPending(pendingTextFragments, event)
+        continue
+      }
+      if (event.type === 'reasoningFragment') {
+        appendPending(pendingReasoningFragments, event)
+        continue
+      }
+
       const signature = eventSignature(event)
       const count = signature === undefined ? 0 : (represented.get(signature) ?? 0)
-      if (signature === undefined || count === 0) continue
-      represented.set(signature, count - 1)
-      duplicate.add(event)
-      if (event.type === 'message') settledTextTurns.add(event.turnId)
-      if (event.type === 'reasoning') settledReasoningTurns.add(event.turnId)
+      if (signature !== undefined && count > 0) {
+        represented.set(signature, count - 1)
+        duplicate.add(event)
+        if (event.type === 'message') {
+          for (const fragment of pendingTextFragments.get(event.turnId) ?? []) {
+            duplicate.add(fragment)
+          }
+        }
+        if (event.type === 'reasoning') {
+          for (const fragment of pendingReasoningFragments.get(event.turnId) ?? []) {
+            duplicate.add(fragment)
+          }
+        }
+      }
+
+      if (event.type === 'message') pendingTextFragments.delete(event.turnId)
+      if (event.type === 'reasoning') pendingReasoningFragments.delete(event.turnId)
     }
 
     for (const event of buffer) {
       if (event.conversationId !== conversationId.value || duplicate.has(event)) continue
-      if (event.type === 'fragment' && settledTextTurns.has(event.turnId)) continue
-      if (event.type === 'reasoningFragment' && settledReasoningTurns.has(event.turnId)) continue
       applyEvent(event)
     }
   }
@@ -815,9 +846,11 @@ const useActiveSessionStore = defineStore('active-session', () => {
     })
   }
 
-  function settleMessage(turnId: string, text: string, media: readonly ChatMediaPart[] = []): void {
+  function settleMessage(turnId: string, text: string, content?: readonly ChatContentPart[]): void {
+    const media = mediaFrom(content)
     const existing = streamingAssistantItem(turnId)
     if (existing !== undefined) {
+      existing.content = content
       existing.text = text
       existing.media = media
       existing.streaming = false
@@ -825,6 +858,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     }
 
     insertBeforeRunSummary(turnId, {
+      content,
       createdAt: new Date().toISOString(),
       id: createId('assistant'),
       kind: 'assistant',
@@ -930,6 +964,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (run.value.type !== 'running' || run.value.turnId === undefined) {
       run.value = { turnId, type: 'running' }
     }
+    sendError.value = undefined
   }
 
   function isSending(messageId: string): boolean {
@@ -985,6 +1020,12 @@ function createId(prefix: string): string {
 
 function mediaFrom(content: readonly ChatContentPart[] | undefined): readonly ChatMediaPart[] {
   return content?.filter((part): part is ChatMediaPart => part.type !== 'text') ?? []
+}
+
+function appendPending(pending: Map<string, ChatEvent[]>, event: ChatEvent): void {
+  const events = pending.get(event.turnId)
+  if (events === undefined) pending.set(event.turnId, [event])
+  else events.push(event)
 }
 
 function historyEntrySignature(entry: ChatHistoryEntry): string | undefined {
