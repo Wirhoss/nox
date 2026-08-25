@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { authConfigSchema } from '../api/auth/config';
 import { apiConfigSchema } from '../api/serverConfig';
+import { artifactConfigSchema } from '../artifact/config';
 import { databaseConfigSchema } from '../database/config';
 import { localeSchema } from '../i18n/locale';
 import { LOG_LEVELS } from '../logger/logger';
@@ -47,6 +48,7 @@ const timezoneSchema = z
 
 const appConfigSchema = z.object({
   api: apiConfigSchema.prefault({}),
+  artifacts: artifactConfigSchema.prefault({}),
   auth: authConfigSchema.prefault({}),
   chat: chatConfigSchema.prefault({}),
   database: databaseConfigSchema.prefault({}),

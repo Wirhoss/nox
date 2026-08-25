@@ -184,6 +184,7 @@ const historyEntrySchema = z.discriminatedUnion('type', [
   }),
   historyEntryBase.extend({
     content: z.array(contentPartSchema).optional(),
+    mode: z.enum(['message', 'steer']),
     principal: z.object({ issuer: z.string(), subject: z.string() }),
     text: z.string(),
     type: z.literal('userMessage'),

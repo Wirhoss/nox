@@ -5,6 +5,12 @@ const generalMessages = Object.freeze({
   'settings.general.applicationJson': 'JSON de la aplicación',
   'settings.general.applicationJsonHelp':
     'Acceso al documento completo mediante el mismo esquema que app.json. Al guardar se reemplaza todo el documento; Nox materializa los valores predeterminados.',
+  'settings.general.artifactSizeLimit': 'Máximo de bytes por artefacto',
+  'settings.general.artifactSizeLimitHint':
+    'Mayor original o representación generada que acepta el almacenamiento en streaming.',
+  'settings.general.artifactStorageQuota': 'Cuota de artefactos (bytes)',
+  'settings.general.artifactStorageQuotaHint':
+    'Total de bytes inmutables únicos retenidos entre originales y representaciones en caché.',
   'settings.general.automaticAgent': 'Automático · {agent}',
   'settings.general.bindHost': 'Host de escucha',
   'settings.general.bindHostHint':
@@ -67,9 +73,11 @@ const generalMessages = Object.freeze({
   'settings.general.sessionSecurity': 'Seguridad de la sesión',
   'settings.general.sessionSecurityHelp':
     'Los tokens de acceso de corta duración autorizan solicitudes; la sesión de renovación mantiene la sesión del operador y puede revocarse.',
-  'settings.general.sqliteStorage': 'Almacenamiento SQLite',
+  'settings.general.sqliteStorage': 'Almacenamiento persistente',
   'settings.general.sqliteStorageHelp':
-    'Ubicación del estado persistente, margen de contención de bloqueos y política de durabilidad. Las rutas relativas se resuelven dentro del directorio de datos de Nox.',
+    'Estado SQLite, límites de artefactos, contención de bloqueos y durabilidad. Las rutas relativas se resuelven dentro del directorio de datos de Nox.',
+  'settings.general.validation.artifactStorageQuota':
+    'La cuota de almacenamiento debe ser al menos igual al tamaño máximo de un artefacto.',
   'settings.general.validation.configurationObject':
     'La configuración de la aplicación debe ser un único objeto JSON.',
   'settings.general.validation.defaultAgentExists':

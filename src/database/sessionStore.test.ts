@@ -54,6 +54,7 @@ function everyRole(): Message[] {
     {
       content: [{ text: 'hello', type: 'text' }],
       createdAt: CREATED_AT,
+      delivery: 'steer',
       messageId: 'u1',
       origin: testOrigin(),
       role: 'user',

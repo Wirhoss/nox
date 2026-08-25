@@ -6,6 +6,7 @@ import {
   artifactIdSchema,
   type ArtifactPipeline,
   artifactRef,
+  ArtifactStorageQuotaError,
   ArtifactTooLargeError,
 } from '../../artifact';
 import { authGuard } from '../auth/guard';
@@ -68,6 +69,13 @@ function createArtifactRoutes(options: ArtifactRoutesOptions) {
             return status(413, {
               detail: error.message,
               error: 'artifact_too_large',
+              maxBytes: error.maxBytes,
+            });
+          }
+          if (error instanceof ArtifactStorageQuotaError) {
+            return status(507, {
+              detail: error.message,
+              error: 'artifact_storage_full',
               maxBytes: error.maxBytes,
             });
           }

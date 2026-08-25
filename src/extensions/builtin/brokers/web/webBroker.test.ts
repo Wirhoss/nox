@@ -574,8 +574,8 @@ describe('the web broker', () => {
       text: 'mejor no',
     });
 
-    // Interrupting and talking reach the gateway the same way and mean different
-    // things; which one it was is on the event, never inferred from the words.
+    // Steering and ordinary speech reach the gateway the same way, but the
+    // explicit intent stays on the event and is never inferred from the words.
     expect(received[0]).toMatchObject({
       content: [{ text: 'mejor no', type: 'text' }],
       conversationId: CONVERSATION,
@@ -651,6 +651,7 @@ describe('the web broker', () => {
               at: new Date('2026-01-01T00:00:00.000Z'),
               content: [{ text: 'hola', type: 'text' }],
               messageId: 'm-1',
+              mode: 'steer',
               principal: { issuer: 'web', subject: 'account-1' },
               text: 'hola',
               type: 'userMessage',
@@ -691,6 +692,7 @@ describe('the web broker', () => {
         at: '2026-01-01T00:00:00.000Z',
         content: [{ text: 'hola', type: 'text' }],
         messageId: 'm-1',
+        mode: 'steer',
         principal: { issuer: 'web', subject: 'account-1' },
         text: 'hola',
         type: 'userMessage',

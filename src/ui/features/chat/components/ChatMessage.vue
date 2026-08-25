@@ -22,6 +22,7 @@ const props = withDefaults(defineProps<Props>(), { showAuthor: true, showTimesta
 const { formatDate, t } = useI18n()
 const detailsOpen = ref(false)
 const hasDetails = computed(() => props.item.kind === 'assistant' && props.activity !== undefined)
+const steering = computed(() => props.item.kind === 'user' && props.item.mode === 'steer')
 const streaming = computed(() => props.item.kind === 'assistant' && props.item.streaming)
 const assistantContent = computed<readonly ChatContentPart[]>(() => {
   if (props.item.kind !== 'assistant') return []
@@ -46,10 +47,17 @@ const timestamp = computed(() =>
 <template>
   <article
     class="message"
-    :class="[`message--${props.item.kind}`, { 'message--embedded': props.embedded === true }]"
+    :class="[
+      `message--${props.item.kind}`,
+      { 'message--embedded': props.embedded === true, 'message--steer': steering },
+    ]"
   >
     <header v-if="props.showAuthor" class="message__author">
-      {{ props.item.kind === 'user' ? t('chat.message.you') : 'NOX' }}
+      <span>{{ props.item.kind === 'user' ? t('chat.message.you') : 'NOX' }}</span>
+      <span v-if="steering" class="message__steer-label">
+        <span class="message__steer-signal" aria-hidden="true"></span>
+        {{ t('chat.message.steer') }}
+      </span>
     </header>
     <div v-if="props.item.kind === 'assistant'" class="message__content">
       <template v-for="(part, index) in assistantContent" :key="`${part.type}-${String(index)}`">
@@ -155,7 +163,29 @@ const timestamp = computed(() =>
   background: var(--nox-surface-2);
 }
 
+.message--steer {
+  position: relative;
+  width: min(94%, 42rem);
+  border-color: color-mix(in srgb, var(--nox-status-warning) 52%, var(--nox-border-subtle));
+  border-inline-end: 2px solid var(--nox-status-warning);
+  background: color-mix(in srgb, var(--nox-status-warning) 7%, var(--nox-surface-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nox-status-warning) 8%, transparent);
+}
+
+.message--steer::before {
+  position: absolute;
+  width: var(--nox-space-8);
+  border-top: 1px dashed color-mix(in srgb, var(--nox-status-warning) 58%, transparent);
+  content: '';
+  inset-block-start: 50%;
+  inset-inline-start: calc(-1 * var(--nox-space-8));
+}
+
 .message__author {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nox-space-3);
   color: var(--nox-text-muted);
   font-family: var(--nox-font-mono);
   font-size: var(--nox-text-xs);
@@ -165,6 +195,28 @@ const timestamp = computed(() =>
 
 .message--assistant .message__author {
   color: var(--nox-action-primary);
+}
+
+.message__steer-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nox-space-2);
+  padding: var(--nox-space-1) var(--nox-space-2);
+  border: 1px solid color-mix(in srgb, var(--nox-status-warning) 45%, transparent);
+  border-radius: 999px;
+  color: var(--nox-status-warning);
+  background: color-mix(in srgb, var(--nox-status-warning) 8%, transparent);
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.message__steer-signal {
+  width: 0.42rem;
+  height: 0.42rem;
+  border: 1px solid currentcolor;
+  border-block-start: 0;
+  border-inline-start: 0;
+  transform: rotate(45deg);
 }
 
 .message__footer {

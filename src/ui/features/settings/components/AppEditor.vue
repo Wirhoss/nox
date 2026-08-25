@@ -13,11 +13,22 @@ import type { ConfigSection, ConfigValue } from '../api/settings.api'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'
-type NumericInputKey = 'accessTtlSeconds' | 'busyTimeoutMs' | 'port' | 'refreshTtlSeconds'
+type NumericInputKey =
+  | 'accessTtlSeconds'
+  | 'busyTimeoutMs'
+  | 'maxArtifactBytes'
+  | 'maxStorageBytes'
+  | 'port'
+  | 'refreshTtlSeconds'
 
 interface ApiDraft extends ConfigValue {
   host: string
   port: number
+}
+
+interface ArtifactDraft extends ConfigValue {
+  maxArtifactBytes: number
+  maxStorageBytes: number
 }
 
 interface AuthDraft extends ConfigValue {
@@ -42,6 +53,7 @@ interface UiDraft extends ConfigValue {
 
 interface AppDraft extends ConfigValue {
   api: ApiDraft
+  artifacts: ArtifactDraft
   auth: AuthDraft
   chat: ChatDraft
   database: DatabaseDraft
@@ -71,6 +83,8 @@ const fieldErrors = ref<Readonly<Record<string, string>>>({})
 const numericInputs = reactive<Record<NumericInputKey, string>>({
   accessTtlSeconds: '900',
   busyTimeoutMs: '5000',
+  maxArtifactBytes: String(100 * 1024 * 1024),
+  maxStorageBytes: String(10 * 1024 * 1024 * 1024),
   port: '8080',
   refreshTtlSeconds: '2592000',
 })
@@ -122,6 +136,8 @@ function resetEditor(): void {
 function syncNumericInputs(): void {
   numericInputs.accessTtlSeconds = String(draft.value.auth.accessTtlSeconds)
   numericInputs.busyTimeoutMs = String(draft.value.database.busyTimeoutMs)
+  numericInputs.maxArtifactBytes = String(draft.value.artifacts.maxArtifactBytes)
+  numericInputs.maxStorageBytes = String(draft.value.artifacts.maxStorageBytes)
   numericInputs.port = String(draft.value.api.port)
   numericInputs.refreshTtlSeconds = String(draft.value.auth.refreshTtlSeconds)
 }
@@ -187,6 +203,11 @@ function setNumericInput(key: NumericInputKey, value: string): void {
         ...draft.value,
         database: { ...draft.value.database, busyTimeoutMs: parsed },
       }
+    } else if (key === 'maxArtifactBytes' || key === 'maxStorageBytes') {
+      draft.value = {
+        ...draft.value,
+        artifacts: { ...draft.value.artifacts, [key]: parsed },
+      }
     } else {
       draft.value = {
         ...draft.value,
@@ -251,6 +272,15 @@ function validateForm(): boolean {
   validateInteger(errors, 'accessTtlSeconds', 60, 60 * 60)
   validateInteger(errors, 'refreshTtlSeconds', 60 * 60, 365 * 24 * 60 * 60)
   validateInteger(errors, 'busyTimeoutMs', 0)
+  validateInteger(errors, 'maxArtifactBytes', 1, Number.MAX_SAFE_INTEGER)
+  validateInteger(errors, 'maxStorageBytes', 1, Number.MAX_SAFE_INTEGER)
+  if (
+    Number.isSafeInteger(Number(numericInputs.maxArtifactBytes)) &&
+    Number.isSafeInteger(Number(numericInputs.maxStorageBytes)) &&
+    Number(numericInputs.maxStorageBytes) < Number(numericInputs.maxArtifactBytes)
+  ) {
+    errors.maxStorageBytes = t('settings.general.validation.artifactStorageQuota')
+  }
 
   if (draft.value.database.path.trim().length === 0) {
     errors.path = t('settings.general.validation.pathRequired')
@@ -335,6 +365,7 @@ onBeforeRouteUpdate(canLeave)
 function asAppDraft(value: ConfigValue): AppDraft {
   const cloned = cloneValue(value)
   const api = objectValue(cloned.api)
+  const artifacts = objectValue(cloned.artifacts)
   const auth = objectValue(cloned.auth)
   const chat = objectValue(cloned.chat)
   const database = objectValue(cloned.database)
@@ -353,6 +384,11 @@ function asAppDraft(value: ConfigValue): AppDraft {
       ...api,
       host: host.length > 0 ? host : '0.0.0.0',
       port: numberValue(api.port, 8080),
+    },
+    artifacts: {
+      ...artifacts,
+      maxArtifactBytes: numberValue(artifacts.maxArtifactBytes, 100 * 1024 * 1024),
+      maxStorageBytes: numberValue(artifacts.maxStorageBytes, 10 * 1024 * 1024 * 1024),
     },
     auth: {
       ...auth,
@@ -661,6 +697,28 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               required
               @update:model-value="setDatabaseString('path', $event)"
             />
+            <div class="app-editor__field-grid">
+              <NoxTextField
+                id="app-artifact-size-limit"
+                :model-value="numericInputs.maxArtifactBytes"
+                :error="fieldErrors.maxArtifactBytes"
+                :hint="t('settings.general.artifactSizeLimitHint')"
+                inputmode="numeric"
+                :label="t('settings.general.artifactSizeLimit')"
+                required
+                @update:model-value="setNumericInput('maxArtifactBytes', $event)"
+              />
+              <NoxTextField
+                id="app-artifact-storage-quota"
+                :model-value="numericInputs.maxStorageBytes"
+                :error="fieldErrors.maxStorageBytes"
+                :hint="t('settings.general.artifactStorageQuotaHint')"
+                inputmode="numeric"
+                :label="t('settings.general.artifactStorageQuota')"
+                required
+                @update:model-value="setNumericInput('maxStorageBytes', $event)"
+              />
+            </div>
             <div class="app-editor__field-grid">
               <NoxTextField
                 id="app-busy-timeout"

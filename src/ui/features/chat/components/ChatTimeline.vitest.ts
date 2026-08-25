@@ -1,20 +1,28 @@
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
+import { useAuthStore } from '@/app/stores/auth.store'
+import { authApi } from '@/features/auth/api/auth.api'
+
+import { chatApi } from '../api/chat.api'
 import { useActiveSessionStore } from '../stores/activeSession.store'
 import ChatTimeline from './ChatTimeline.vue'
 
+let auth: ReturnType<typeof useAuthStore>
 let session: ReturnType<typeof useActiveSessionStore>
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  auth = useAuthStore()
   session = useActiveSessionStore()
 })
 
 afterEach(() => {
   session.$dispose()
+  auth.$dispose()
+  vi.restoreAllMocks()
 })
 
 describe('ChatTimeline', () => {
@@ -144,6 +152,76 @@ describe('ChatTimeline', () => {
     expect(completedProcess?.nextElementSibling?.classList.contains('message--assistant')).toBe(
       true,
     )
+  })
+
+  it('uses a steer marker to cut one response process into two visual segments', async () => {
+    vi.spyOn(authApi, 'login').mockResolvedValue({
+      accessToken: 'access-token',
+      account: { accountId: 'account-1', createdAt: 1, username: 'operator' },
+      expiresInSeconds: 3_600,
+    })
+    vi.spyOn(chatApi, 'listCommands').mockResolvedValue([])
+    vi.spyOn(chatApi, 'listConversations').mockResolvedValue([])
+    vi.spyOn(chatApi, 'sendSteer').mockResolvedValue({ messageId: 'steer-1' })
+    vi.spyOn(chatApi, 'openStream').mockImplementation(
+      ({ opened, signal }) =>
+        new Promise<void>((resolve) => {
+          opened()
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
+        }),
+    )
+    await auth.login({ password: 'secret', username: 'operator' })
+    await session.initialize()
+
+    const conversationId = session.conversationId
+    session.applyEvent({
+      conversationId,
+      modelId: 'test-model',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      trigger: 'user',
+      turnId: 'turn-steered',
+      type: 'runStarted',
+    })
+    session.applyEvent({
+      arguments: { source: 'first' },
+      conversationId,
+      name: 'inspect_first',
+      trackId: 'track-first',
+      turnId: 'turn-steered',
+      type: 'toolCall',
+    })
+    expect(await session.send('Use the second source instead.')).toBe(true)
+    session.applyEvent({
+      arguments: { source: 'second' },
+      conversationId,
+      name: 'inspect_second',
+      trackId: 'track-second',
+      turnId: 'turn-steered',
+      type: 'toolCall',
+    })
+
+    const { container } = render(ChatTimeline)
+    const timeline = container.querySelector('.timeline')
+    const responses = container.querySelectorAll('.assistant-response')
+    const steer = container.querySelector('.message--steer')
+
+    expect(timeline?.children).toHaveLength(3)
+    expect(timeline?.children[0]).toBe(responses[0])
+    expect(timeline?.children[1]).toBe(steer)
+    expect(timeline?.children[2]).toBe(responses[1])
+    expect(responses[0]?.classList.contains('assistant-response--redirected')).toBe(true)
+    expect(responses[0]?.classList.contains('assistant-response--active')).toBe(false)
+    expect(responses[0]?.textContent).toContain('inspect_first')
+    expect(responses[0]?.textContent).not.toContain('inspect_second')
+    expect(responses[1]?.classList.contains('assistant-response--active')).toBe(true)
+    expect(responses[1]?.textContent).toContain('inspect_second')
+    expect(responses[1]?.textContent).not.toContain('inspect_first')
   })
 
   it('unifies consecutive assistant messages into one response bubble', () => {

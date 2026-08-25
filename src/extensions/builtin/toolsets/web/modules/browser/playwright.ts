@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 import { publicUrl } from '../../http';
 import { runtimeCredentialSchema, type WebModule, type WebModuleConfig } from '../../module';
+import { evaluationResult } from './evaluate';
+import { inspectionExpression, inspectionResult } from './inspect';
 
 import type {
   BrowserAction,
@@ -22,6 +24,7 @@ const PLAYWRIGHT_ACTIONS: readonly BrowserAction[] = Object.freeze([
   'click',
   'close',
   'images',
+  'inspect',
   'links',
   'navigate',
   'open',
@@ -31,6 +34,10 @@ const PLAYWRIGHT_ACTIONS: readonly BrowserAction[] = Object.freeze([
   'snapshot',
   'type',
   'wait',
+]);
+const PLAYWRIGHT_EVALUATE_ACTIONS: readonly BrowserAction[] = Object.freeze([
+  ...PLAYWRIGHT_ACTIONS,
+  'evaluate',
 ]);
 
 type PlaywrightTypes = Readonly<Record<PlaywrightBrowserName, BrowserType>>;
@@ -62,6 +69,15 @@ function playwrightFields<TCredential extends z.ZodType>(credential: TCredential
       .enum(PLAYWRIGHT_BROWSERS)
       .default('chromium')
       .meta({ nox: { help: 'ui.playwright.browserHelp', label: 'ui.playwright.browser' } }),
+    enableEvaluate: z
+      .boolean()
+      .default(false)
+      .meta({
+        nox: {
+          help: 'ui.browser.enableEvaluateHelp',
+          label: 'ui.browser.enableEvaluate',
+        },
+      }),
     executablePath: z
       .string()
       .trim()
@@ -130,7 +146,7 @@ class PlaywrightBrowser implements BrowserCapability {
   }
 
   public get actions(): readonly BrowserAction[] {
-    return PLAYWRIGHT_ACTIONS;
+    return this.#config.enableEvaluate ? PLAYWRIGHT_EVALUATE_ACTIONS : PLAYWRIGHT_ACTIONS;
   }
 
   public get maxSnapshotCharacters(): number {
@@ -178,10 +194,33 @@ class PlaywrightBrowser implements BrowserCapability {
         this.#closed(tabId, tab);
         return Object.freeze({ closed: true, tabId });
       }
+      case 'evaluate': {
+        if (!this.#config.enableEvaluate) {
+          throw new Error('browser_evaluate is disabled for this Playwright module.');
+        }
+        const tabId = this.#tabId(request.tabId);
+        const page = this.#tab(tabId).page;
+        signal.throwIfAborted();
+        const result: unknown = await page.evaluate(this.#expression(request.expression));
+        signal.throwIfAborted();
+        return Object.freeze({
+          evaluation: { result: evaluationResult(result) },
+          tabId,
+          url: page.url(),
+        });
+      }
       case 'images': {
         const tabId = this.#tabId(request.tabId);
         const page = this.#tab(tabId).page;
         return Object.freeze({ images: await pageImages(page, signal), tabId });
+      }
+      case 'inspect': {
+        const tabId = this.#tabId(request.tabId);
+        const page = this.#tab(tabId).page;
+        signal.throwIfAborted();
+        const result: unknown = await page.evaluate(inspectionExpression(request));
+        signal.throwIfAborted();
+        return Object.freeze({ inspection: inspectionResult(result), tabId, url: page.url() });
       }
       case 'links': {
         const tabId = this.#tabId(request.tabId);
@@ -397,9 +436,7 @@ class PlaywrightBrowser implements BrowserCapability {
     const ref = request.ref;
     const selector = request.selector;
     const locator =
-      ref !== undefined
-        ? page.locator(`aria-ref=${ref}`)
-        : page.locator(selector === undefined ? ':focus' : selector);
+      ref !== undefined ? page.locator(`aria-ref=${ref}`) : page.locator(selector ?? ':focus');
     signal.throwIfAborted();
     const count = await locator.count();
     signal.throwIfAborted();
@@ -422,6 +459,13 @@ class PlaywrightBrowser implements BrowserCapability {
       );
     }
     return locator;
+  }
+
+  #expression(expression: string | undefined): string {
+    if (expression === undefined || expression.length === 0) {
+      throw new Error('The evaluate action needs a JavaScript expression.');
+    }
+    return expression;
   }
 
   #key(key: string | undefined): string {

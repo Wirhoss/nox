@@ -181,6 +181,7 @@ function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | un
       at,
       messageId,
       content: message.content,
+      mode: message.delivery ?? 'message',
       principal: message.origin.principal,
       text: textOf(message.content),
       type: 'userMessage',
@@ -350,10 +351,10 @@ class Gateway implements MessageGateway {
   }
 
   /**
-   * Something said into a conversation, and the two ways of saying it. A message
-   * waits for the run in flight; a steer cuts it short and speaks over it. Every
-   * step before that last one is the same, because interrupting is still someone
-   * talking: it is attributed, deduplicated and serialized like anything else.
+   * Something said into a conversation, and the two ways of saying it. A steer
+   * explicitly marks new direction for the run in flight, but queues like any
+   * other speech and never cancels the active operation. Both are attributed,
+   * deduplicated and serialized in exactly the same way.
    */
   async #handleSpeech(grant: BrokerGrant, message: InboundMessage | InboundSteer): Promise<void> {
     const content = message.content ?? [
@@ -595,22 +596,17 @@ class Gateway implements MessageGateway {
 
     const key: ConversationKey = { brokerId: grant.brokerId, conversationId };
     const bound = await this.#store.find(key);
-    if (bound !== undefined && bound.agentId !== binding.agentId) {
-      throw new Error(
-        `Conversation ${conversationId} on broker ${grant.brokerId} belongs to agent ` +
-          `${bound.agentId}, but it is now configured for ${binding.agentId}. ` +
-          'Delete its persisted binding to start a new session explicitly.',
-      );
-    }
-
-    const session = await this.#application.openSession(binding.agentId, {
+    // A route chooses an agent only when the conversation is first bound. Changing
+    // the broker default must not move existing transcripts to another agent.
+    const agentId = bound?.agentId ?? binding.agentId;
+    const session = await this.#application.openSession(agentId, {
       artifactScope: artifactConversationScope(grant.brokerId, conversationId),
       authorization: binding.authorization,
       metadata: { brokerId: grant.brokerId, conversationId },
       sessionId: bound?.sessionId,
     });
 
-    if (bound === undefined) await this.#store.bind(key, binding.agentId, session.sessionId);
+    if (bound === undefined) await this.#store.bind(key, agentId, session.sessionId);
 
     const conversation: Conversation = {
       grant,

@@ -220,6 +220,7 @@ type ChatBody<T extends ChatEvent> = Omit<T, keyof ChatEventBase>;
  */
 interface ChatUserMessage {
   readonly content: readonly MessageContent[];
+  readonly mode: 'message' | 'steer';
   readonly principal: PrincipalRef;
   readonly text: string;
   readonly type: 'userMessage';
@@ -360,7 +361,7 @@ interface ChatTransport {
   submitCommand(input: ChatCommandInput): ChatCommandRejection | undefined;
   submitDecision(input: ChatDecisionInput): void;
   submitMessage(input: ChatMessageInput): void;
-  /** Says something over the top of the run in flight, rather than after it. */
+  /** Adds direction at the next safe opening in the run in flight. */
   submitSteer(input: ChatMessageInput): void;
   /** Everything the transport renders, until the returned function is called. */
   subscribe(listener: ChatListener, options?: ChatSubscriptionOptions): () => void;

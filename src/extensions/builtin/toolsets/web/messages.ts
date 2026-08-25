@@ -5,7 +5,11 @@ const englishMessages = Object.freeze({
   'tools.browser_click.description':
     'Click an element on an open page and return the page after it.',
   'tools.browser_close.description': 'Close an open tab.',
+  'tools.browser_evaluate.description':
+    'Run arbitrary JavaScript in an open page when explicitly enabled.',
   'tools.browser_images.description': 'List the images an open page points at.',
+  'tools.browser_inspect.description':
+    'Find DOM elements and report selectors and interaction signals.',
   'tools.browser_links.description': 'List the links an open page points at.',
   'tools.browser_navigate.description': 'Point an open tab at another URL.',
   'tools.browser_open.description': 'Open a browser tab and return its tabId with the page.',
@@ -20,6 +24,9 @@ const englishMessages = Object.freeze({
     'Extract public web pages as durable files — cleaned HTML, the page images, and optionally a screenshot, PDF or Markdown.',
   'tools.web_search.description':
     'Search the public web and return result titles, URLs, and snippets.',
+  'ui.browser.enableEvaluate': 'Enable arbitrary JavaScript evaluation',
+  'ui.browser.enableEvaluateHelp':
+    'Opt in to browser_evaluate. Page JavaScript can read storage, make requests and modify the page, and requires its own authority.',
   'ui.camoufox.snapshot': 'Inline snapshot characters',
   'ui.camoufox.snapshotHelp':
     'Longer accessibility snapshots are published as a file and only their head stays in the conversation.',

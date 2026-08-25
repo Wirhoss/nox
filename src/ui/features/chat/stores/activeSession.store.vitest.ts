@@ -579,6 +579,7 @@ describe('active chat surface integration', () => {
         {
           at: '2026-01-01T00:00:00.000Z',
           messageId: 'message-user',
+          mode: 'message',
           principal: { issuer: 'web', subject: 'account-1' },
           text: 'Inspect it.',
           type: 'userMessage',
@@ -632,6 +633,10 @@ describe('active chat surface integration', () => {
       'assistant',
       'activity',
     ])
+    expect(session.items.find((item) => item.kind === 'user')).toMatchObject({
+      mode: 'message',
+      text: 'Inspect it.',
+    })
     expect(session.items[session.items.length - 1]).toMatchObject({
       historical: true,
       kind: 'activity',
@@ -775,6 +780,12 @@ describe('active chat surface integration', () => {
         text: 'Change direction.',
       }),
     )
+    expect(session.items.find((item) => item.kind === 'user')).toMatchObject({
+      mode: 'steer',
+      steeredTurnId: 'turn-1',
+      text: 'Change direction.',
+    })
+    expect(session.run).toEqual({ turnId: 'turn-1', type: 'running' })
 
     expect(await session.invokeCommand('stop', { scope: 'run' })).toBe(true)
     expect(submitCommand).toHaveBeenCalledWith(

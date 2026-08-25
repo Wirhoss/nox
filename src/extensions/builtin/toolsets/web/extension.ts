@@ -7,7 +7,11 @@ import { toolSetContribution, toolSets } from '../../../contribution-points/tool
 import { defineExtension } from '../../../extension';
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
-import { BROWSER_ACT_AUTHORITY, BROWSER_READ_AUTHORITY } from './tools/browser';
+import {
+  BROWSER_ACT_AUTHORITY,
+  BROWSER_EVALUATE_AUTHORITY,
+  BROWSER_READ_AUTHORITY,
+} from './tools/browser';
 import { WEB_EXTRACT_AUTHORITY } from './tools/extract';
 import { WEB_SEARCH_AUTHORITY } from './tools/search';
 import { WebToolSet } from './webToolSet';
@@ -38,10 +42,11 @@ const webToolsExtension = defineExtension({
 
     // Declared before the tools that reference them: an authority nobody
     // registered cannot be granted, and a tool naming one cannot be composed.
-    // Four rather than one, because searching the public web, downloading what a
-    // page is made of, reading a page in a browser, and clicking and typing on
-    // one are four different permissions to grant or withhold — an agent can be
-    // given a browser it may look at and not touch.
+    // Separate permissions because searching, downloading, reading a browser,
+    // acting on a page and executing arbitrary page JavaScript are materially
+    // different things to grant. An agent can inspect a browser it may not touch,
+    // and evaluation remains independently grantable even when explicitly
+    // enabled in module configuration.
     context.contributions.register(authorities, WEB_SEARCH_AUTHORITY, {
       description: 'Search the public web.',
     });
@@ -53,6 +58,9 @@ const webToolsExtension = defineExtension({
     });
     context.contributions.register(authorities, BROWSER_ACT_AUTHORITY, {
       description: 'Click, type and otherwise act on pages open in a browser.',
+    });
+    context.contributions.register(authorities, BROWSER_EVALUATE_AUTHORITY, {
+      description: 'Execute arbitrary JavaScript in the context of an open browser page.',
     });
 
     context.contributions.register(

@@ -18,6 +18,16 @@ class ArtifactTooLargeError extends Error {
   }
 }
 
+class ArtifactStorageQuotaError extends Error {
+  public readonly maxBytes: number;
+
+  constructor(maxBytes: number) {
+    super(`Artifact storage exceeds the configured ${String(maxBytes)} byte quota.`);
+    this.name = 'ArtifactStorageQuotaError';
+    this.maxBytes = maxBytes;
+  }
+}
+
 class ArtifactRepresentationUnavailableError extends Error {
   public readonly artifactId: string;
   public readonly profileId: string;
@@ -60,5 +70,6 @@ export {
   ArtifactProcessorDeterminismError,
   ArtifactProcessorOutputError,
   ArtifactRepresentationUnavailableError,
+  ArtifactStorageQuotaError,
   ArtifactTooLargeError,
 };

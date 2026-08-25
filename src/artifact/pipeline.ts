@@ -9,11 +9,13 @@ import { artifactBlobs, artifactRenditions, artifacts } from '../database/schema
 import { type Logger, silentLogger } from '../logger/logger';
 import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
+import { DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_ARTIFACT_STORAGE_BYTES } from './config';
 import {
   ArtifactNotFoundError,
   ArtifactProcessorDeterminismError,
   ArtifactProcessorOutputError,
   ArtifactRepresentationUnavailableError,
+  ArtifactStorageQuotaError,
   ArtifactTooLargeError,
 } from './error';
 import { PROBE_BYTES, probeArtifact } from './probe';
@@ -47,7 +49,6 @@ import {
 
 import type { Database, NoxDrizzle, NoxTransaction } from '../database/database';
 
-const DEFAULT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024;
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 
@@ -56,6 +57,7 @@ interface ArtifactPipelineOptions {
   readonly database: Database;
   readonly logger?: Logger;
   readonly maxArtifactBytes?: number;
+  readonly maxStorageBytes?: number;
   readonly processorRegistry?: ArtifactProcessorRegistry;
 }
 
@@ -70,6 +72,7 @@ interface StoredBlob {
   readonly prefix: Uint8Array;
   readonly size: number;
   readonly storageKey: string;
+  readonly temporaryPath: string;
 }
 
 interface BlobWriteOptions {
@@ -254,6 +257,7 @@ class ArtifactPipeline {
   readonly #directory: string;
   readonly #logger: Logger;
   readonly #maxArtifactBytes: number;
+  readonly #maxStorageBytes: number;
   readonly #processors: ArtifactProcessorRegistry;
   readonly #resolutionLocks = new Map<string, ResolutionLock>();
   readonly #temporaryDirectory: string;
@@ -265,9 +269,16 @@ class ArtifactPipeline {
     this.#database = options.database;
     this.#logger = options.logger ?? silentLogger;
     this.#maxArtifactBytes = options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
+    this.#maxStorageBytes = options.maxStorageBytes ?? DEFAULT_MAX_ARTIFACT_STORAGE_BYTES;
     this.#processors = options.processorRegistry ?? new ArtifactProcessorRegistry();
     if (!Number.isSafeInteger(this.#maxArtifactBytes) || this.#maxArtifactBytes <= 0) {
       throw new RangeError('maxArtifactBytes must be a positive safe integer.');
+    }
+    if (!Number.isSafeInteger(this.#maxStorageBytes) || this.#maxStorageBytes <= 0) {
+      throw new RangeError('maxStorageBytes must be a positive safe integer.');
+    }
+    if (this.#maxStorageBytes < this.#maxArtifactBytes) {
+      throw new RangeError('maxStorageBytes must be at least maxArtifactBytes.');
     }
   }
 
@@ -303,7 +314,7 @@ class ArtifactPipeline {
     const artifactId = `art_${nanoid()}`;
     const createdAt = Date.now();
 
-    const record = await this.#database.transaction((database) => {
+    const record = await this.#persistBlob(blob, (database) => {
       this.#recordBlob(database, blob);
       const row = {
         artifactId,
@@ -529,7 +540,7 @@ class ArtifactPipeline {
 
     const renditionId = `rnd_${nanoid()}`;
     const createdAt = Date.now();
-    const rendition = await this.#database.transaction((database) => {
+    const rendition = await this.#persistBlob(blob, (database) => {
       this.#recordBlob(database, blob);
       database
         .insert(artifactRenditions)
@@ -674,6 +685,46 @@ class ArtifactPipeline {
     return join(this.#directory, ...storageKey.split('/'));
   }
 
+  /**
+   * Final paths and SQLite move together behind one short lock. Streaming and
+   * hashing stay concurrent; only quota accounting and the commit are serialized.
+   */
+  async #persistBlob<T>(blob: StoredBlob, persist: (database: NoxTransaction) => T): Promise<T> {
+    return this.#database.exclusive(async (database) => {
+      const tracked =
+        database
+          .select({ blobHash: artifactBlobs.blobHash })
+          .from(artifactBlobs)
+          .where(eq(artifactBlobs.blobHash, blob.blobHash))
+          .get() !== undefined;
+      if (!tracked) {
+        const used = database
+          .select({ size: artifactBlobs.size })
+          .from(artifactBlobs)
+          .all()
+          .reduce((total, row) => total + row.size, 0);
+        if (used > this.#maxStorageBytes - blob.size) {
+          await rm(blob.temporaryPath, { force: true });
+          throw new ArtifactStorageQuotaError(this.#maxStorageBytes);
+        }
+      }
+
+      const blobPath = this.#pathForStorageKey(blob.storageKey);
+      await mkdir(join(this.#blobsDirectory, blob.blobHash.slice(0, 2)), {
+        mode: DIRECTORY_MODE,
+        recursive: true,
+      });
+      await this.#commitBlob(blob.temporaryPath, blobPath, blob.size);
+
+      try {
+        return database.transaction(persist);
+      } catch (error) {
+        if (!tracked) await rm(blobPath, { force: true });
+        throw error;
+      }
+    });
+  }
+
   #recordBlob(database: NoxTransaction, blob: StoredBlob): void {
     database
       .insert(artifactBlobs)
@@ -786,18 +837,13 @@ class ArtifactPipeline {
       options.validate?.(prefixBuffer);
       const blobHash = hash.digest('hex');
       const storageKey = posix.join('blobs', 'sha256', blobHash.slice(0, 2), blobHash);
-      const blobPath = this.#pathForStorageKey(storageKey);
-      await mkdir(join(this.#blobsDirectory, blobHash.slice(0, 2)), {
-        mode: DIRECTORY_MODE,
-        recursive: true,
-      });
-      await this.#commitBlob(temporaryPath, blobPath, size);
       return Object.freeze({
         blobHash,
         createdAt: Date.now(),
         prefix: prefixBuffer,
         size,
         storageKey,
+        temporaryPath,
       });
     } catch (error) {
       if (!closed) await file.close().catch(() => undefined);
@@ -807,6 +853,6 @@ class ArtifactPipeline {
   }
 }
 
-export { ArtifactPipeline, artifactRef, DEFAULT_MAX_ARTIFACT_BYTES };
+export { ArtifactPipeline, artifactRef };
 
 export type { ArtifactPipelineOptions, ArtifactResolveOptions };

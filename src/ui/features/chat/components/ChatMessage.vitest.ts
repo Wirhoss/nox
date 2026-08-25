@@ -81,6 +81,7 @@ describe('ChatMessage', () => {
               type: 'image',
             },
           ],
+          mode: 'message',
           text: 'What is this?',
         },
       },
@@ -90,5 +91,26 @@ describe('ChatMessage', () => {
       'https://images.example.test/object.png',
     )
     expect(container.querySelector('.message__text')?.textContent).toContain('What is this?')
+  })
+
+  it('renders a steer as an explicit response redirect instead of a normal message', () => {
+    const { container } = render(ChatMessage, {
+      props: {
+        item: {
+          createdAt: '2026-03-10T14:35:00.000Z',
+          id: 'steer-1',
+          kind: 'user',
+          media: [],
+          mode: 'steer',
+          steeredTurnId: 'turn-1',
+          text: 'Use the second approach instead.',
+        },
+      },
+    })
+
+    expect(container.querySelector('.message--steer')).not.toBeNull()
+    expect(container.querySelector('.message__steer-label')?.textContent).toContain(
+      'RESPONSE REDIRECTED',
+    )
   })
 })

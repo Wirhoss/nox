@@ -1,8 +1,14 @@
 export {
+  artifactConfigSchema,
+  DEFAULT_MAX_ARTIFACT_BYTES,
+  DEFAULT_MAX_ARTIFACT_STORAGE_BYTES,
+} from './config';
+export {
   ArtifactNotFoundError,
   ArtifactProcessorDeterminismError,
   ArtifactProcessorOutputError,
   ArtifactRepresentationUnavailableError,
+  ArtifactStorageQuotaError,
   ArtifactTooLargeError,
 } from './error';
 export {
@@ -10,7 +16,7 @@ export {
   artifactConversationScope,
   ArtifactOutputSink,
 } from './output';
-export { ArtifactPipeline, artifactRef, DEFAULT_MAX_ARTIFACT_BYTES } from './pipeline';
+export { ArtifactPipeline, artifactRef } from './pipeline';
 export {
   artifactProcessorIdSchema,
   ArtifactProcessorRegistry,
@@ -36,6 +42,7 @@ export {
   mediaTypeSchema,
 } from './types';
 
+export type { ArtifactConfig } from './config';
 export type {
   ArtifactContentReader,
   ArtifactOutputHost,

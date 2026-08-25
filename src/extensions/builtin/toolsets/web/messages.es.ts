@@ -5,7 +5,11 @@ const spanishMessages = Object.freeze({
   'tools.browser_click.description':
     'Hace clic en un elemento de una página abierta y devuelve la página resultante.',
   'tools.browser_close.description': 'Cierra una pestaña abierta.',
+  'tools.browser_evaluate.description':
+    'Ejecuta JavaScript arbitrario en una página abierta cuando se habilita explícitamente.',
   'tools.browser_images.description': 'Lista las imágenes a las que apunta una página abierta.',
+  'tools.browser_inspect.description':
+    'Encuentra elementos del DOM e informa selectores e indicios de interacción.',
   'tools.browser_links.description': 'Lista los enlaces a los que apunta una página abierta.',
   'tools.browser_navigate.description': 'Lleva una pestaña abierta a otra URL.',
   'tools.browser_open.description':
@@ -21,6 +25,9 @@ const spanishMessages = Object.freeze({
     'Extrae páginas web públicas como archivos duraderos — HTML limpio, las imágenes de la página y, si se pide, una captura, un PDF o Markdown.',
   'tools.web_search.description':
     'Busca en la web pública y devuelve títulos, URL y fragmentos de los resultados.',
+  'ui.browser.enableEvaluate': 'Habilitar evaluación arbitraria de JavaScript',
+  'ui.browser.enableEvaluateHelp':
+    'Activa browser_evaluate. El JavaScript de la página puede leer almacenamiento, hacer solicitudes y modificarla, y requiere su propia autoridad.',
   'ui.camoufox.snapshot': 'Caracteres de instantánea en línea',
   'ui.camoufox.snapshotHelp':
     'Las instantáneas de accesibilidad más largas se publican como archivo y solo su inicio queda en la conversación.',

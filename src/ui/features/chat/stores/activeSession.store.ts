@@ -144,6 +144,9 @@ interface UserItem {
   readonly id: string
   readonly kind: 'user'
   readonly media: readonly ChatMediaPart[]
+  readonly mode: 'message' | 'steer'
+  /** The live run this item visually divides; history already carries real ordering. */
+  readonly steeredTurnId?: string
   readonly text: string
 }
 
@@ -448,14 +451,21 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (accessToken === undefined || !canSend.value) return false
 
     const messageId = createId('msg')
+    const mode = sendMode.value
+    const steeredTurnId =
+      mode === 'steer' &&
+      (run.value.type === 'running' || run.value.type === 'waiting-permission')
+        ? run.value.turnId
+        : undefined
     const item: UserItem = {
       createdAt: new Date().toISOString(),
       id: messageId,
       kind: 'user',
       media: mediaFrom(content),
+      mode,
+      ...(steeredTurnId === undefined ? {} : { steeredTurnId }),
       text,
     }
-    const mode = sendMode.value
     items.value.push(item)
     run.value = { clientMessageId: messageId, mode, type: 'sending' }
     sendError.value = undefined
@@ -470,7 +480,12 @@ const useActiveSessionStore = defineStore('active-session', () => {
       }
       if (mode === 'steer') await chatApi.sendSteer(input)
       else await chatApi.sendMessage(input)
-      if (isSending(messageId)) run.value = { type: 'running' }
+      if (isSending(messageId)) {
+        run.value =
+          steeredTurnId === undefined
+            ? { type: 'running' }
+            : { turnId: steeredTurnId, type: 'running' }
+      }
       void refreshConversations()
       return true
     } catch (error) {
@@ -692,6 +707,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
           id: entry.messageId,
           kind: 'user',
           media: mediaFrom(entry.content),
+          mode: entry.mode,
           text: entry.text,
         })
         continue
@@ -957,6 +973,29 @@ const useActiveSessionStore = defineStore('active-session', () => {
       items.value.push(item)
       return
     }
+
+    // A steer is a visible cut through one long run. New response-process items
+    // belong below its marker instead of jumping back above the run summary and
+    // making the steer look like an ordinary message after everything finished.
+    let steerIndex = -1
+    for (let index = items.value.length - 1; index > summaryIndex; index -= 1) {
+      const candidate = items.value[index]
+      if (
+        candidate?.kind === 'user' &&
+        candidate.mode === 'steer' &&
+        candidate.steeredTurnId === turnId
+      ) {
+        steerIndex = index
+        break
+      }
+    }
+    if (steerIndex > summaryIndex) {
+      let insertionIndex = steerIndex + 1
+      while (turnIdOf(items.value[insertionIndex]) === turnId) insertionIndex += 1
+      items.value.splice(insertionIndex, 0, item)
+      return
+    }
+
     items.value.splice(summaryIndex, 0, item)
   }
 
@@ -1016,6 +1055,10 @@ function createId(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12))
   const value = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
   return `${prefix}_${value}`
+}
+
+function turnIdOf(item: TimelineItem | undefined): string | undefined {
+  return item === undefined || item.kind === 'user' ? undefined : item.turnId
 }
 
 function mediaFrom(content: readonly ChatContentPart[] | undefined): readonly ChatMediaPart[] {

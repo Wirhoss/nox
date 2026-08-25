@@ -234,13 +234,13 @@ function createChatRoutes(options: ChatRoutesOptions) {
       )
 
       /**
-       * Says something over the top of the run in flight, rather than after it.
+       * Adds explicit direction at the next safe opening in the run in flight.
        *
        * A route and not a prefix on a message, for the same reason answering a
-       * permission is: "/stop" typed into a chat is a word the model reads, and
-       * nothing a person says in prose interrupts a run. A client that wants a
-       * slash command builds one and posts here — what a surface does with what
-       * someone types is the surface's business, never the runtime's.
+       * permission is: steering is transport intent, not prose for the model to
+       * interpret. It queues behind the active operation rather than cancelling
+       * it. What a surface does with what someone types remains the surface's
+       * business, never the runtime's.
        */
       .post(
         '/chat/conversations/:conversationId/steer',

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { ApiServer } from './api/server';
+import { ArtifactStorageQuotaError } from './artifact/error';
 import { bootstrap } from './bootstrap';
 import { SecretStore } from './config/secrets';
 import { Database } from './database/database';
@@ -309,6 +310,31 @@ describe('bootstrap', () => {
     expect(application.services.get(secretStoreService).consumers('OPENAI_API_KEY')).toEqual([
       { extensionId: 'nox.provider.openai', location: 'providers.main.apiKey' },
     ]);
+  });
+
+  test('wires configured artifact limits into the storage pipeline', async () => {
+    const application = await boot({
+      app: {
+        api: { port: 0 },
+        artifacts: { maxArtifactBytes: 4, maxStorageBytes: 4 },
+      },
+    });
+    const artifacts = application.services.get(artifactPipelineService);
+    await artifacts.ingest({
+      data: new Blob(['1234']),
+      declaredMediaType: 'text/plain',
+      provenance: { type: 'upload' },
+      scope: { id: 'account-1', type: 'account' },
+    });
+
+    expect(
+      artifacts.ingest({
+        data: new Blob(['abcd']),
+        declaredMediaType: 'text/plain',
+        provenance: { type: 'upload' },
+        scope: { id: 'account-1', type: 'account' },
+      }),
+    ).rejects.toBeInstanceOf(ArtifactStorageQuotaError);
   });
 
   test('opens storage under the configured data directory', async () => {

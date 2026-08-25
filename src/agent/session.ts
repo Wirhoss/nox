@@ -25,7 +25,7 @@ import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
-import type { Message, MessageContent, UserMessage } from './context/message';
+import type { Message, MessageContent, UserMessage, UserMessageDelivery } from './context/message';
 import type { ContextOptions, ContextUsage } from './context/options';
 import type { AgentEvent } from './events';
 
@@ -66,10 +66,15 @@ interface SessionOptions extends RunnerOptions {
 
 type UserMessageInput = readonly MessageContent[] | string;
 
-function toUserMessage(input: UserMessageInput, origin: MessageOrigin): UserMessage {
+function toUserMessage(
+  input: UserMessageInput,
+  origin: MessageOrigin,
+  delivery: UserMessageDelivery,
+): UserMessage {
   return {
     content: typeof input === 'string' ? [{ text: input, type: 'text' }] : [...input],
     createdAt: new Date(),
+    delivery,
     messageId: nanoid(),
     origin,
     role: 'user',
@@ -314,11 +319,11 @@ class Session {
 
   /** Says structured content as a principal. There is no unattributed way in. */
   public send(content: UserMessageInput, origin: MessageOrigin): void {
-    this.#runner.send(toUserMessage(content, origin));
+    this.#runner.send(toUserMessage(content, origin, 'message'));
   }
 
   public steer(content: UserMessageInput, origin: MessageOrigin): Promise<void> {
-    return this.#runner.steer(toUserMessage(content, origin));
+    return this.#runner.steer(toUserMessage(content, origin, 'steer'));
   }
 
   /** Ends the session and waits for what it wrote to reach storage. */

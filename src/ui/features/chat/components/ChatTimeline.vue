@@ -24,22 +24,27 @@ interface ResponseEntry {
   readonly id: string
   readonly items: ResponseItem[]
   readonly kind: 'response'
+  redirected: boolean
 }
 type TimelineEntry =
   ResponseEntry | { readonly id: string; readonly item: UserItem; readonly kind: 'item' }
 
 const timelineEntries = computed<TimelineEntry[]>(() => {
   const entries: TimelineEntry[] = []
+  const activitiesByTurn = new Map<string, RunItem[]>()
   let currentResponse: ResponseEntry | undefined
 
   const responseFor = (turnId: string): ResponseEntry => {
     if (currentResponse !== undefined) return currentResponse
 
     currentResponse = {
-      activities: [],
-      id: `response_${turnId}`,
+      // A steer splits one run into visual response segments. Each segment keeps
+      // the same run activity so its active/completed state remains truthful.
+      activities: [...(activitiesByTurn.get(turnId) ?? [])],
+      id: `response_${turnId}_${String(entries.length)}`,
       items: [],
       kind: 'response',
+      redirected: false,
     }
     entries.push(currentResponse)
     return currentResponse
@@ -47,9 +52,14 @@ const timelineEntries = computed<TimelineEntry[]>(() => {
 
   for (const item of session.items) {
     switch (item.kind) {
-      case 'activity':
-        responseFor(item.turnId).activities.push(item)
+      case 'activity': {
+        const activities = activitiesByTurn.get(item.turnId) ?? []
+        if (!activities.includes(item)) activities.push(item)
+        activitiesByTurn.set(item.turnId, activities)
+        const response = responseFor(item.turnId)
+        if (!response.activities.includes(item)) response.activities.push(item)
         break
+      }
       case 'assistant':
       case 'error':
       case 'permission':
@@ -57,10 +67,18 @@ const timelineEntries = computed<TimelineEntry[]>(() => {
       case 'tool':
         responseFor(item.turnId).items.push(item)
         break
-      case 'user':
+      case 'user': {
+        if (item.mode === 'steer' && currentResponse !== undefined) {
+          currentResponse.redirected = true
+          // Run details follow the still-active segment below the marker. The
+          // response above it is closed by the steer itself.
+          currentResponse.activities.splice(0)
+        }
         currentResponse = undefined
         entries.push({ id: item.id, item, kind: 'item' })
+        if (item.steeredTurnId !== undefined) responseFor(item.steeredTurnId)
         break
+      }
     }
   }
 
@@ -112,6 +130,7 @@ watch(
         v-if="entry.kind === 'response'"
         :activities="entry.activities"
         :items="entry.items"
+        :redirected="entry.redirected"
         @decide="(requestId, decision) => session.decide(requestId, decision)"
       />
 

@@ -56,9 +56,13 @@ interface ReasoningMessage extends MessageBase {
  * This is provenance only. Authority for an execution is fixed when its run
  * starts and is never recomputed from messages sitting in the transcript.
  */
+type UserMessageDelivery = 'message' | 'steer';
+
 interface UserMessage extends MessageBase {
   readonly role: 'user';
   readonly content: readonly MessageContent[];
+  /** How the participant handed it over. Missing only on legacy/in-memory fixtures. */
+  readonly delivery?: UserMessageDelivery;
   readonly origin: MessageOrigin;
 }
 
@@ -287,4 +291,5 @@ export type {
   ToolResponseExecution,
   ToolResponseMessage,
   UserMessage,
+  UserMessageDelivery,
 };

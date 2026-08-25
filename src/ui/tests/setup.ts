@@ -30,6 +30,7 @@ installTestLanguage(
     'chat.conversation.noMatches': 'No matching conversations.',
     'chat.conversation.searchPlaceholder': 'Search conversations…',
     'chat.message.responseProcess': 'Response process',
+    'chat.message.steer': 'STEER · RESPONSE REDIRECTED',
     'chat.tool.arguments': 'Arguments',
     'chat.tool.error': 'error',
     'chat.tool.failed': 'failed',
@@ -86,6 +87,10 @@ installTestLanguage(
     'settings.entries.emptyContributed':
       'This section is loaded, but no active extension has contributed an entry.',
     'settings.general.accessTtl': 'Access token TTL (seconds)',
+    'settings.general.artifactSizeLimit': 'Maximum artifact bytes',
+    'settings.general.artifactSizeLimitHint': 'Maximum artifact hint',
+    'settings.general.artifactStorageQuota': 'Artifact storage quota',
+    'settings.general.artifactStorageQuotaHint': 'Artifact quota hint',
     'settings.general.bindHost': 'Bind host',
     'settings.general.databasePath': 'Database path',
     'settings.general.defaultAgent': 'Default agent',
@@ -98,6 +103,8 @@ installTestLanguage(
     'settings.general.logLevel': 'Log level',
     'settings.general.save': 'Save general settings',
     'settings.general.timezone': 'Time zone',
+    'settings.general.validation.artifactStorageQuota':
+      'Storage quota must hold one artifact.',
     'settings.general.validation.timezone':
       'Use an IANA time zone name, such as UTC or America/Mexico_City.',
     'settings.general.saved': 'Application configuration saved',

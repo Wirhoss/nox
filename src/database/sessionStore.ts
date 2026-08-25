@@ -142,6 +142,7 @@ function toRow(sessionId: string, seq: number, message: Message): MessageRowInse
       return {
         ...base,
         content: message.content,
+        ...(message.delivery === undefined ? {} : { delivery: message.delivery }),
         principalIssuer: message.origin.principal.issuer,
         principalSubject: message.origin.principal.subject,
         role: 'user',
@@ -202,6 +203,7 @@ function toMessage(row: MessageRow): Message {
       return {
         content: row.content ?? fail(row, 'content'),
         createdAt,
+        ...(row.delivery === null ? {} : { delivery: row.delivery }),
         messageId,
         origin: {
           principal: {

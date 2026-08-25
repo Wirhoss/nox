@@ -14,6 +14,7 @@ import {
   samePrincipal,
   SYSTEM_ISSUER,
 } from '../auth/principal';
+import { isProviderError, type ProviderError } from '../provider/error';
 import {
   prepareToolCall,
   type ToolContext,
@@ -30,7 +31,6 @@ import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
-import type { ProviderError } from '../provider/error';
 import type { ChatProvider } from '../provider/provider';
 import type { Usage } from '../provider/stream';
 import type {
@@ -164,7 +164,7 @@ class Runner {
   /** Waiting to enter the context: user messages and deferred results alike. */
   readonly #queue: QueuedMessage[] = [];
 
-  /** Outlives every run, so background work survives `abort()` and `steer()`. */
+  /** Outlives every run, so background work survives a foreground `abort()`. */
   readonly #session = new AbortController();
 
   #run?: AbortController;
@@ -240,15 +240,19 @@ class Runner {
     });
   }
 
-  /** Cuts the current run short and speaks over it. */
-  public async steer(message: UserMessage): Promise<void> {
-    await this.abort();
+  /**
+   * Queues new direction without cancelling the operation in flight. The run
+   * drains it at the next safe opening, after the current provider request and
+   * its tool responses have settled.
+   */
+  public steer(message: UserMessage): Promise<void> {
     this.#participants.observe(message.origin.principal);
     this.#enqueue({
       authority: messageAuthority(message.origin, message.messageId),
       message,
       trigger: 'steer',
     });
+    return Promise.resolve();
   }
 
   /**
@@ -559,7 +563,7 @@ class Runner {
       this.#drainOwn(principal);
       await this.#context.compact();
 
-      const responses = await this.#request(usage);
+      const responses = await this.#requestWithinBudget(usage);
       for (const response of responses) {
         this.#context.addMessage(response);
         this.#publishPendingOperation(response.messageId);
@@ -591,6 +595,33 @@ class Runner {
       'Agent run hit the tool iteration ceiling.',
     );
     return 'maxIterations';
+  }
+
+  /**
+   * The provider is the authority on what fits. A refusal for length is not a
+   * failed run: it is the measurement that proves the local estimate wrong, and
+   * the only answer to it is to reduce and ask again. A length refusal rejects
+   * the request before any of it streams back, so nothing of the turn was
+   * committed and the retry re-asks from an unchanged history.
+   *
+   * Once. A pass that reclaimed nothing will reclaim nothing the second time,
+   * and the run has genuinely run out of room.
+   */
+  async #requestWithinBudget(usage: Usage): Promise<ToolResponseMessage[]> {
+    try {
+      return await this.#request(usage);
+    } catch (error) {
+      if (!isProviderError(error) || error.code !== 'context_limit') throw error;
+
+      const { reduced } = await this.#context.compact({ force: true });
+      if (!reduced) throw error;
+
+      this.#logger?.warn(
+        { err: error, modelId: this.#model.modelId },
+        'Provider refused the request for length; reduced the working set and retried.',
+      );
+      return await this.#request(usage);
+    }
   }
 
   #runSignal(): AbortSignal {

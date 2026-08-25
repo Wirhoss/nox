@@ -458,7 +458,7 @@ describe('the chat hub', () => {
         senderId: nox.accountId,
         text: 'mejor no',
       });
-      // Interrupting is not talking, and the transport is told which one it was.
+      // Steering intent stays explicit instead of being flattened into a message.
       expect(transport.messages).toHaveLength(0);
     });
 
@@ -559,6 +559,7 @@ describe('the chat hub', () => {
             at: '2026-01-01T00:00:00.000Z',
             content: [{ text: 'hola', type: 'text' }],
             messageId: 'm-1',
+            mode: 'message',
             principal: { issuer: 'web', subject: 'esteban' },
             text: 'hola',
             type: 'userMessage',

@@ -85,6 +85,8 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       dataDirectory: env.dataDir,
       database,
       logger: logger.child('artifacts'),
+      maxArtifactBytes: appConfig.artifacts.maxArtifactBytes,
+      maxStorageBytes: appConfig.artifacts.maxStorageBytes,
     });
     secretStore = await SecretStore.open({
       dataDirectory: env.dataDir,

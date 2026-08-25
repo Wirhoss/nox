@@ -31,7 +31,19 @@ const HANDOFF_REQUEST_PREFIX = 'compaction-request';
 const SESSION_TOOL_SET_ID = 'nox.session';
 
 interface CompactResult {
+  /** The lossy path ran: a range of the working set is now a summary. */
   readonly compacted: boolean;
+  /** Anything at all was reclaimed, by either path. What a caller retries on. */
+  readonly reduced: boolean;
+}
+
+interface CompactOptions {
+  /**
+   * Reduce without consulting the local budget. The only caller is a provider
+   * that already refused the request for length: its count is the measurement,
+   * and the estimate that said there was room is the thing being corrected.
+   */
+  readonly force?: boolean;
 }
 
 /**
@@ -136,14 +148,16 @@ class Context {
     this.#activeHistory.push(this.#transcript.append(message));
   }
 
-  public async compact(): Promise<CompactResult> {
+  public async compact({ force = false }: CompactOptions = {}): Promise<CompactResult> {
     return this.#mutations.run(async () => {
       // Compaction is budget-triggered by definition. Without a configured
       // context window there is no budget, and summarizing on a guess is worse
       // than not summarizing: the working set is not known to be in trouble,
-      // the reduction is lossy, and nobody asked for it.
-      if (this.#pressureTokenLimit === undefined || !this.isUnderPressure()) {
-        return Object.freeze({ compacted: false });
+      // the reduction is lossy, and nobody asked for it. A forced pass is the
+      // one case where the budget has nothing left to say: the request was
+      // already refused for length, which outranks any local estimate.
+      if (!force && (this.#pressureTokenLimit === undefined || !this.isUnderPressure())) {
+        return Object.freeze({ compacted: false, reduced: false });
       }
 
       // Fold first — Law 2 — but only over traffic the model has already
@@ -152,18 +166,25 @@ class Context {
       // leaves its own pairs alone. Without this, pressure inside one long loop
       // reaches the lossy path while the lossless one is still waiting.
       const settled = this.#settledBoundaryId();
-      if (settled !== undefined) {
+      const folded =
+        settled !== undefined &&
         this.#applyFoldResult(
           foldHistory(this.#activeHistory, this.#foldOptions(undefined, settled)),
         );
-        if (!this.isUnderPressure()) return Object.freeze({ compacted: false });
+
+      // Under pressure the fold may be all that was needed, and stopping here
+      // leaves the lossy path unused. A forced pass cannot stop: it has no
+      // threshold to fall back under, and its caller gets one retry, so this
+      // pass has to reclaim everything a single pass can.
+      if (!force && !this.isUnderPressure()) {
+        return Object.freeze({ compacted: false, reduced: folded });
       }
 
       const middle = this.#selectCompactionRange();
-      if (middle === undefined) return Object.freeze({ compacted: false });
+      if (middle === undefined) return Object.freeze({ compacted: false, reduced: folded });
 
       const compacted = await this.#summarize(middle);
-      if (compacted === undefined) return Object.freeze({ compacted: false });
+      if (compacted === undefined) return Object.freeze({ compacted: false, reduced: folded });
 
       const replacedTokens = this.#estimateMessages(middle);
       const compactedTokens = this.#estimator.estimateMessage(compacted);
@@ -172,13 +193,13 @@ class Context {
           { compactedTokens, messageCount: middle.length, replacedTokens },
           'Compaction did not reduce the context; keeping the range intact.',
         );
-        return Object.freeze({ compacted: false });
+        return Object.freeze({ compacted: false, reduced: folded });
       }
 
       const history = applyCompaction(this.#activeHistory, compacted);
       this.#transcript.append(compacted);
       this.#rewriteHistory(history);
-      return Object.freeze({ compacted: true });
+      return Object.freeze({ compacted: true, reduced: true });
     });
   }
 
@@ -263,18 +284,24 @@ class Context {
 
   /**
    * The last message the model has demonstrably consumed. Everything after it
-   * belongs to a tool loop still in flight, which nothing may collapse yet.
+   * belongs to a tool loop still in flight, which no reduction may collapse
+   * yet — not the lossless one, and not the lossy one either. It is one law, so
+   * it is stated once here rather than kept as a habit of the fold.
    */
-  #settledBoundaryId(): string | undefined {
+  #settledBoundary(): number {
     const history = this.#activeHistory;
     const lastAssistant = history.findLastIndex((message) => message.role === 'assistant');
-    if (lastAssistant === -1) return undefined;
+    const inFlight =
+      lastAssistant !== -1 &&
+      history
+        .slice(lastAssistant + 1)
+        .some((message) => message.role === 'toolCall' || message.role === 'toolResponse');
 
-    const inFlight = history
-      .slice(lastAssistant + 1)
-      .some((message) => message.role === 'toolCall' || message.role === 'toolResponse');
+    return inFlight ? lastAssistant : history.length - 1;
+  }
 
-    return history[inFlight ? lastAssistant : history.length - 1]?.messageId;
+  #settledBoundaryId(): string | undefined {
+    return this.#activeHistory[this.#settledBoundary()]?.messageId;
   }
 
   /** Folding is measured with the same estimator used for unobserved token deltas. */
@@ -332,7 +359,16 @@ class Context {
   #selectCompactionRange(): readonly Message[] | undefined {
     const history = this.#activeHistory;
     const start = this.#guardedStart(history);
-    const end = this.#guardedEnd(history);
+    // The guarded end walks back by token budget alone, so a single oversized
+    // tool response exhausts the guard on its first step and leaves the end at
+    // the very tip of the history — handing the lossy path a result the model
+    // has never read. Whatever the budget says, compaction stops where the
+    // model's demonstrated reading stops.
+    const end = seekSafeCut(
+      history,
+      Math.min(this.#guardedEnd(history), this.#settledBoundary() + 1),
+      -1,
+    );
     if (end <= start) return undefined;
 
     const middle = history.slice(start, end);
@@ -371,4 +407,4 @@ class Context {
 
 export { Context };
 
-export type { CompactResult, ContextUsage };
+export type { CompactOptions, CompactResult, ContextUsage };

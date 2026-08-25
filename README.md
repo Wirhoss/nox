@@ -111,6 +111,30 @@ remote `wsEndpoint` returned by the matching version of
 `browserType.launchServer`. `apiKey` may reference a managed secret to send as a
 Bearer token, and `executablePath` can override the local browser binary.
 
+Both browser modules expose `browser_inspect`, a bounded DOM search by text or
+CSS. It reports visibility, semantic and visual interaction signals, and a
+unique selector, covering controls that a site's incomplete accessibility markup
+leaves without snapshot refs. The routine is fixed and read-only from the tool's
+perspective; it does not enable caller-supplied JavaScript.
+
+Arbitrary page JavaScript is a separate opt-in. Setting `enableEvaluate` on the
+configured browser module exposes `browser_evaluate`:
+
+```json
+{
+  "browser": {
+    "module": "playwright",
+    "enableEvaluate": true
+  }
+}
+```
+
+That tool has its own `nox.toolset.web.browser.evaluate` authority and declares
+credential, code-execution and irreversible page/network effects. It can read
+page storage, issue requests and mutate the live document, so it remains absent
+when the option is false (the default), independently of ordinary browser read
+and act grants.
+
 The corresponding field inside `blueprints/nox.json`:
 
 ```json
@@ -129,12 +153,13 @@ returned by `search_tool` remain authoritative.
 the pictures it found (fetched and published, bounded in count and size), and on
 request a screenshot, a PDF or Markdown. The transcript keeps only what has to be
 read — the title, where each file went, and a bounded excerpt — leaving
-`attach_artifact` to decide what reaches the user. The browser is a family of tools rather than one tool with an
-`action` argument — `browser_open`, `browser_snapshot`, `browser_click`,
-`browser_type` and the rest — and which of them exist is the configured module's
-answer, so a backend that cannot press a key never offers `browser_press`. `browser_open` hands back a tab ID
-that later calls name, and every action that changes the page answers with the
-page it produced: an accessibility snapshot with element refs, which is what the
+`attach_artifact` to decide what reaches the user. The browser is a family of
+tools rather than one tool with an `action` argument — `browser_open`,
+`browser_snapshot`, `browser_inspect`, `browser_click`, `browser_type` and the
+rest — and which of them exist is the configured module's answer, so a backend
+that cannot press a key never offers `browser_press`. `browser_open` hands back a
+tab ID that later calls name, and every action that changes the page answers with
+the page it produced: an accessibility snapshot with element refs, which is what the
 next click or keystroke addresses. Reading a page and acting on one are separate
 authorities, so an agent can be granted a browser it may look at and not touch,
 and clicking and typing are recorded as irreversible network writes. An instance
@@ -165,7 +190,10 @@ Uploaded files do not live in messages or SQLite. The authenticated artifact API
 bytes into `DATA_DIR/artifacts`, hashes them while writing, detects their media type, and returns a
 small `ArtifactRef`. Immutable blobs are addressed by SHA-256, so separate uploads retain their own
 filename, provenance and access scope while identical bytes occupy disk once. SQLite stores only that
-logical metadata.
+logical metadata. `app.json` bounds the stream with `artifacts.maxArtifactBytes` (100 MiB by default)
+and bounds all unique original and rendition bytes with `artifacts.maxStorageBytes` (10 GiB by
+default). Deduplicated references consume no additional quota; a new blob is refused before its final
+path or metadata commits when storage is full.
 
 ```http
 POST /api/artifacts
@@ -181,7 +209,8 @@ under the authenticated account and replaces every client-supplied metadata fiel
 record before it reaches the transcript. Bytes are read back through the authenticated
 `GET /api/artifacts/:artifactId/content` route. Conversation-owned output includes its conversation ID
 in that authenticated request. The web client fetches the response as a blob; it never turns a file
-into base64 JSON.
+into base64 JSON. Stored images are requested only when their placeholder enters the viewport, while
+audio, video and documents remain references until the operator explicitly opens or downloads them.
 
 The path is bidirectional. Every user-facing run receives a host-owned `ArtifactOutputSink`, exposed to
 a provider as `TextGenerateOptions.artifactOutput` and to an executing tool as
@@ -224,6 +253,24 @@ nor OpenAI imports it. It can normalize SVG, AVIF, GIF, JPEG, PNG, TIFF and WebP
 preferred PNG, JPEG, WebP, GIF or AVIF representation, with bounded resize, fit, position, background,
 quality and orientation parameters. Processing is streamed, timed out, pixel-limited, metadata-stripped
 and cache-versioned with both the Sharp and libvips versions.
+
+#### Pending: artifact retention and deletion
+
+Storage quotas bound growth but do not delete committed artifacts automatically. A future lifecycle
+pass must preserve transcript history and content-addressed deduplication rather than removing files by
+age alone:
+
+- persist normalized references from messages and active operations instead of discovering them by
+  scanning JSON;
+- distinguish deleting a logical `artifactId` from collecting its shared physical blob;
+- support authorized deletion, pinning, expiration and a configurable grace period per scope;
+- evict regenerable renditions before immutable originals;
+- collect a blob only when no artifact, message, rendition source or in-flight operation references it;
+- reconcile tombstones, SQLite metadata and filesystem state after crashes, with race and restart
+  coverage.
+
+Until that lifecycle exists, reaching `artifacts.maxStorageBytes` rejects new unique blobs with a 507
+response; it never silently breaks an old conversation to recover space.
 
 ### Models for internal tasks
 

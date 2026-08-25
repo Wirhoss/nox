@@ -11,6 +11,7 @@ import {
   ArtifactProcessorDeterminismError,
   ArtifactProcessorOutputError,
   ArtifactRepresentationUnavailableError,
+  ArtifactStorageQuotaError,
   ArtifactTooLargeError,
 } from './error';
 import { ArtifactPipeline } from './pipeline';
@@ -28,6 +29,7 @@ const PNG = Uint8Array.from([
 async function pipeline(
   maxArtifactBytes?: number,
   processorRegistry?: ArtifactProcessorRegistry,
+  maxStorageBytes?: number,
 ): Promise<ArtifactPipeline> {
   const directory = mkdtempSync(join(tmpdir(), 'nox-artifacts-'));
   directories.push(directory);
@@ -37,6 +39,7 @@ async function pipeline(
     dataDirectory: directory,
     database,
     maxArtifactBytes,
+    maxStorageBytes,
     processorRegistry,
   });
 }
@@ -214,6 +217,71 @@ describe('ArtifactPipeline', () => {
     const database = databases[0];
     expect(await database?.db.select().from(artifactBlobs)).toEqual([]);
     expect(await database?.db.select().from(artifacts)).toEqual([]);
+  });
+
+  test('counts unique physical bytes against the storage quota', async () => {
+    const artifactsPipeline = await pipeline(PNG.byteLength, undefined, PNG.byteLength);
+    const first = await artifactsPipeline.ingest(upload(PNG, { filename: 'first.png' }));
+    const duplicate = await artifactsPipeline.ingest(upload(PNG, { filename: 'duplicate.png' }));
+
+    expect(duplicate.blobHash).toBe(first.blobHash);
+    expect(
+      artifactsPipeline.ingest(
+        upload(Uint8Array.from([...PNG.slice(0, -1), 0xff]), { filename: 'different.png' }),
+      ),
+    ).rejects.toBeInstanceOf(ArtifactStorageQuotaError);
+    expect(readdirSync(join(artifactsPipeline.directory, 'tmp'))).toEqual([]);
+    const database = databases[0];
+    expect(await database?.db.select().from(artifactBlobs)).toHaveLength(1);
+    expect(await database?.db.select().from(artifacts)).toHaveLength(2);
+  });
+
+  test('serializes concurrent quota decisions across pipelines sharing one database', async () => {
+    const artifactsPipeline = await pipeline(PNG.byteLength, undefined, PNG.byteLength);
+    const database = databases[0];
+    if (database === undefined) throw new Error('Expected a test database.');
+    const secondPipeline = await ArtifactPipeline.open({
+      dataDirectory: dirname(artifactsPipeline.directory),
+      database,
+      maxArtifactBytes: PNG.byteLength,
+      maxStorageBytes: PNG.byteLength,
+    });
+    const different = Uint8Array.from([...PNG.slice(0, -1), 0xff]);
+
+    const results = await Promise.allSettled([
+      artifactsPipeline.ingest(upload(PNG, { filename: 'first.png' })),
+      secondPipeline.ingest(upload(different, { filename: 'second.png' })),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected');
+    expect(rejected?.status === 'rejected' ? rejected.reason : undefined).toBeInstanceOf(
+      ArtifactStorageQuotaError,
+    );
+    expect(readdirSync(join(artifactsPipeline.directory, 'tmp'))).toEqual([]);
+    expect(await database.db.select().from(artifactBlobs)).toHaveLength(1);
+    expect(await database.db.select().from(artifacts)).toHaveLength(1);
+  });
+
+  test('applies the storage quota to lazy rendition bytes too', async () => {
+    const registry = new ArtifactProcessorRegistry([
+      processor(() => ({ data: new Blob(['rendered']), mediaType: 'text/plain' })),
+    ]);
+    const artifactsPipeline = await pipeline(8, registry, 8);
+    const source = await artifactsPipeline.ingest(
+      upload(new Blob(['source']), {
+        declaredMediaType: 'application/octet-stream',
+        filename: 'source.bin',
+      }),
+    );
+
+    expect(artifactsPipeline.resolve(source.artifactId, profile())).rejects.toBeInstanceOf(
+      ArtifactStorageQuotaError,
+    );
+    expect(readdirSync(join(artifactsPipeline.directory, 'tmp'))).toEqual([]);
+    const database = databases[0];
+    expect(await database?.db.select().from(artifactBlobs)).toHaveLength(1);
+    expect(await database?.db.select().from(artifactRenditions)).toEqual([]);
   });
 
   test('cleans interrupted temporary writes when it opens', async () => {

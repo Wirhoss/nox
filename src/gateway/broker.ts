@@ -264,6 +264,8 @@ type MessageBody = Extract<
  */
 interface HistoryUserMessage {
   readonly content: readonly MessageContent[];
+  /** Whether this started a turn or redirected one already in progress. */
+  readonly mode: 'message' | 'steer';
   readonly principal: PrincipalRef;
   readonly text: string;
   readonly type: 'userMessage';
@@ -345,10 +347,10 @@ interface InboundMessage extends InboundSpeech {
 }
 
 /**
- * Someone said something over the top of the run in flight. This is the
- * difference between talking and interrupting: the run is cut short first and
- * what was said becomes the next one, rather than queueing behind an answer that
- * is already going the wrong way. On an idle conversation it is a message.
+ * Someone explicitly added direction to the run in flight. Like other speech,
+ * it is queued immediately and enters at the next safe opening, after the active
+ * provider request and its tool responses settle; it never cancels that work.
+ * On an idle conversation it starts a run like a message.
  */
 interface InboundSteer extends InboundSpeech {
   readonly type: 'steer';

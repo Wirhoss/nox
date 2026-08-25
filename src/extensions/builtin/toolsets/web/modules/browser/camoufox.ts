@@ -7,6 +7,8 @@ import {
   type WebModule,
   type WebModuleConfig,
 } from '../../module';
+import { evaluationResult } from './evaluate';
+import { inspectionExpression, inspectionResult } from './inspect';
 
 import type {
   BrowserAction,
@@ -32,6 +34,7 @@ const CAMOUFOX_ACTIONS: readonly BrowserAction[] = Object.freeze([
   'click',
   'close',
   'images',
+  'inspect',
   'links',
   'navigate',
   'open',
@@ -42,6 +45,10 @@ const CAMOUFOX_ACTIONS: readonly BrowserAction[] = Object.freeze([
   'type',
   'wait',
 ]);
+const CAMOUFOX_EVALUATE_ACTIONS: readonly BrowserAction[] = Object.freeze([
+  ...CAMOUFOX_ACTIONS,
+  'evaluate',
+]);
 
 function camoufoxFields<TCredential extends z.ZodType>(credential: TCredential) {
   return {
@@ -49,6 +56,15 @@ function camoufoxFields<TCredential extends z.ZodType>(credential: TCredential) 
       timeoutMs: 60_000,
       url: 'The base URL of the camofox browser server.',
     }),
+    enableEvaluate: z
+      .boolean()
+      .default(false)
+      .meta({
+        nox: {
+          help: 'ui.browser.enableEvaluateHelp',
+          label: 'ui.browser.enableEvaluate',
+        },
+      }),
     maxSnapshotCharacters: z
       .number()
       .int()
@@ -91,6 +107,7 @@ interface CamoufoxResponse extends CamoufoxSnapshot {
   links?: { href?: string; ref?: string; text?: string; url?: string }[];
   message?: string;
   ok?: boolean;
+  result?: unknown;
   screenshot?: { data?: string; mimeType?: string };
   tabId?: string;
 }
@@ -124,7 +141,7 @@ class CamoufoxBrowser implements BrowserCapability {
   }
 
   public get actions(): readonly BrowserAction[] {
-    return CAMOUFOX_ACTIONS;
+    return this.#config.enableEvaluate ? CAMOUFOX_EVALUATE_ACTIONS : CAMOUFOX_ACTIONS;
   }
 
   public get origin(): string {
@@ -188,9 +205,33 @@ class CamoufoxBrowser implements BrowserCapability {
         });
         return Object.freeze({ closed: true, tabId: request.tabId });
       }
+      case 'evaluate': {
+        if (!this.#config.enableEvaluate) {
+          throw new Error('browser_evaluate is disabled for this camoufox module.');
+        }
+        const tabId = this.#tab(request.tabId);
+        const body = await this.#post(tabId, 'evaluate', signal, {
+          expression: request.expression,
+          userId,
+        });
+        return Object.freeze({
+          evaluation: { result: evaluationResult(body.result) },
+          tabId,
+          ...(body.title === undefined ? {} : { title: body.title }),
+          ...(body.url === undefined ? {} : { url: body.url }),
+        });
+      }
       case 'images': {
         const body = await this.#get(request.tabId, 'images', signal);
         return Object.freeze({ images: images(body, body.url), tabId: request.tabId });
+      }
+      case 'inspect': {
+        const tabId = this.#tab(request.tabId);
+        const body = await this.#post(tabId, 'evaluate', signal, {
+          expression: inspectionExpression(request),
+          userId,
+        });
+        return Object.freeze({ inspection: inspectionResult(body.result), tabId });
       }
       case 'links': {
         const body = await this.#get(request.tabId, 'links', signal);

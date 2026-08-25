@@ -184,9 +184,9 @@ class ToolCallingProvider extends ChatProvider {
 }
 
 /**
- * Answers, then keeps going until something stops it. A steer and a stop are
- * both about a run that is still in flight, and a provider that finishes before
- * the test can speak proves nothing.
+ * Answers, then keeps going until something stops it. Stop tests need a run
+ * that is still in flight; a provider that finishes before the test can act
+ * proves nothing.
  */
 class SlowProvider extends ChatProvider {
   constructor() {
@@ -226,6 +226,62 @@ function interrupted(signal: AbortSignal): Promise<void> {
       { once: true },
     );
   });
+}
+
+/** Pauses its first reply so steering can arrive while work is demonstrably active. */
+class PausingProvider extends ChatProvider {
+  public readonly firstPaused: Promise<void>;
+  public firstAborted = false;
+
+  #markFirstPaused!: () => void;
+  #releaseFirst?: () => void;
+
+  constructor() {
+    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    this.firstPaused = new Promise<void>((resolve) => {
+      this.#markFirstPaused = resolve;
+    });
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  public releaseFirst(): void {
+    this.#releaseFirst?.();
+  }
+
+  protected override async *attempt(
+    _systemPrompt: string,
+    messageHistory: Message[],
+    _tools: Tool[],
+    _opts: TextGenerateOptions | undefined,
+    signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    const userMessages = messageHistory.filter((message) => message.role === 'user').length;
+    if (userMessages === 1) {
+      yield { text: 'termino esto', type: 'textFragment' };
+      await new Promise<void>((resolve) => {
+        const finish = (): void => {
+          this.#releaseFirst = undefined;
+          resolve();
+        };
+        const onAbort = (): void => {
+          this.firstAborted = true;
+          finish();
+        };
+        this.#releaseFirst = () => {
+          signal.removeEventListener('abort', onAbort);
+          finish();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        this.#markFirstPaused();
+      });
+    } else {
+      yield { text: 'ahora lo nuevo', type: 'textFragment' };
+    }
+    yield { type: 'end' };
+  }
 }
 
 class TestToolSet extends ToolSet {
@@ -306,8 +362,8 @@ class TestBroker implements Broker {
     this.#host?.receive({ conversationId, requestId, resolution, senderId, type: 'permission' });
   }
 
-  /** Says something over the top of the run in flight. */
-  public interrupt(conversationId: string, text: string, senderId = 'someone'): void {
+  /** Adds direction at the next opening in the run in flight. */
+  public steer(conversationId: string, text: string, senderId = 'someone'): void {
     this.#messages += 1;
     this.#host?.receive({
       conversationId,
@@ -534,6 +590,53 @@ describe('Gateway', () => {
     expect(resumed?.sessionId).toBe(sessionId);
     // The transcript is the one that chat already had, not a new one.
     expect(resumed?.getTranscript().filter((message) => message.role === 'user')).toHaveLength(2);
+  });
+
+  test('keeps an existing conversation on its bound agent when the route changes', async () => {
+    const database = await openDatabase();
+    const before = new TestBroker();
+    const first = await harness(database, before);
+
+    before.say('existing', 'primera');
+    await settle(first);
+    const sessionId = first.application.sessions[0]?.session.sessionId;
+    await first.application.stop();
+
+    const after = new TestBroker();
+    const application = new NoxApplication();
+    applications.push(application);
+    await application.start();
+    for (const [agentId, text] of [
+      ['assistant', 'old agent reply'],
+      ['replacement', 'new agent reply'],
+    ] as const) {
+      application.addAgent(
+        new Agent(database, new SayingProvider(text), MODEL, {
+          agentId,
+          authorities: catalog,
+          systemPrompt: 'system',
+        }),
+      );
+    }
+    const gateway = new Gateway(application, {
+      brokers: [{ agentId: 'replacement', broker: after, brokerId: 'test' }],
+      database,
+    });
+    application.setGateway(gateway);
+    await gateway.start();
+    const second = { application, broker: after, gateway };
+
+    after.say('existing', 'segunda');
+    await settle(second);
+    after.say('new', 'primera');
+    await settle(second);
+
+    expect(after.texts('message')).toEqual(['old agent reply', 'new agent reply']);
+    const resumed = application.sessions.find(({ agentId }) => agentId === 'assistant');
+    expect(resumed?.session.sessionId).toBe(sessionId);
+    expect(
+      resumed?.session.getTranscript().filter((message) => message.role === 'user'),
+    ).toHaveLength(2);
   });
 
   test('routes a configured conversation to its replacement agent', async () => {
@@ -903,34 +1006,41 @@ describe('Gateway', () => {
   });
 
   describe('steering and stopping', () => {
-    test('cuts the run short and answers what was said over it', async () => {
+    test('queues direction immediately after the active operation without aborting it', async () => {
       const broker = new TestBroker({ runs: true });
-      const harnessed = await harness(await openDatabase(), broker, {
-        provider: new SlowProvider(),
-      });
+      const provider = new PausingProvider();
+      const harnessed = await harness(await openDatabase(), broker, { provider });
 
       broker.say('chat-1', 'contame algo largo');
-      await waitFor(
-        () => broker.delivered.find((event) => event.type === 'runStarted'),
-        'A started run',
-      );
-      broker.interrupt('chat-1', 'mejor no');
+      await provider.firstPaused;
+      broker.steer('chat-1', 'mejor no');
+      await harnessed.gateway.drain();
+
+      // The steer has been accepted while the first provider request remains live.
+      expect(provider.firstAborted).toBeFalse();
+      expect(finished(broker)).toHaveLength(0);
+
+      provider.releaseFirst();
       await settle(harnessed);
-      await waitFor(() => (finished(broker).length === 2 ? true : undefined), 'Two finished runs');
+      await waitFor(() => (finished(broker).length === 1 ? true : undefined), 'A finished run');
 
       const runs = broker.delivered.filter((event) => event.type === 'runStarted');
-
-      // The first run never finished saying what it was saying, and the second
-      // is not a reply to it: it is what was said over the top of it.
-      expect(finished(broker).map((run) => run.status)).toEqual(['aborted', 'completed']);
-      expect(runs.map((run) => run.trigger)).toEqual(['user', 'steer']);
+      expect(broker.texts('message')).toEqual(['termino esto', 'ahora lo nuevo']);
+      expect(finished(broker).map((run) => run.status)).toEqual(['completed']);
+      expect(runs.map((run) => run.trigger)).toEqual(['user']);
+      expect(
+        harnessed.application.sessions[0]?.session
+          .getTranscript()
+          .filter((message) => message.role === 'user')
+          .map((message) => message.delivery),
+      ).toEqual(['message', 'steer']);
     });
 
     test('steers an idle conversation, which is only talking', async () => {
       const broker = new TestBroker({ runs: true });
       const harnessed = await harness(await openDatabase(), broker);
 
-      broker.interrupt('chat-1', 'hola');
+      broker.steer('chat-1', 'hola');
       await settle(harnessed);
       await waitFor(() => (finished(broker).length === 1 ? true : undefined), 'A finished run');
 

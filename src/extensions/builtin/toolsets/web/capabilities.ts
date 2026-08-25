@@ -111,7 +111,9 @@ interface ExtractCapability {
 const BROWSER_ACTIONS = [
   'click',
   'close',
+  'evaluate',
   'images',
+  'inspect',
   'links',
   'navigate',
   'open',
@@ -135,7 +137,10 @@ interface BrowserRequest {
   readonly amount?: number;
   readonly clear?: boolean;
   readonly direction?: 'down' | 'up';
+  readonly exact?: boolean;
+  readonly expression?: string;
   readonly key?: string;
+  readonly maxResults?: number;
   readonly ref?: string;
   readonly selector?: string;
   /** Names the tab group a call belongs to, so two lines of work never share tabs. */
@@ -152,10 +157,38 @@ interface BrowserRequest {
  * with element refs rather than markup: refs are what the next click or keystroke
  * addresses, and handing the model raw HTML would leave it guessing at selectors.
  */
+interface BrowserInspectionMatch {
+  readonly attributes?: Readonly<Record<string, string>>;
+  readonly box?: {
+    readonly height: number;
+    readonly width: number;
+    readonly x: number;
+    readonly y: number;
+  };
+  readonly classes?: readonly string[];
+  readonly id?: string;
+  readonly interactive: boolean;
+  readonly interactionSignals?: readonly string[];
+  readonly role?: string;
+  /** A selector that uniquely identifies this element in the current document. */
+  readonly selector: string;
+  readonly tag: string;
+  readonly text?: string;
+  readonly visible: boolean;
+}
+
+interface BrowserInspection {
+  readonly matches: readonly BrowserInspectionMatch[];
+  readonly total: number;
+  readonly truncated: boolean;
+}
+
 interface BrowserOutcome {
   readonly closed?: boolean;
   readonly detail?: string;
+  readonly evaluation?: { readonly result: unknown };
   readonly images?: readonly PageImage[];
+  readonly inspection?: BrowserInspection;
   readonly links?: readonly PageLink[];
   readonly screenshot?: PageBytes;
   readonly snapshot?: {
@@ -182,6 +215,8 @@ export { BROWSER_ACTIONS, PAGE_CAPTURES };
 export type {
   BrowserAction,
   BrowserCapability,
+  BrowserInspection,
+  BrowserInspectionMatch,
   BrowserOutcome,
   BrowserRequest,
   ExtractCapability,

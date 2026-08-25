@@ -30,6 +30,10 @@ import type { ChatProvider } from '../provider/provider';
 const created: string[] = [];
 
 const apiDefaults = { host: '0.0.0.0', port: 8080 } as const;
+const artifactDefaults = {
+  maxArtifactBytes: 100 * 1024 * 1024,
+  maxStorageBytes: 10 * 1024 * 1024 * 1024,
+} as const;
 const authDefaults = {
   accessTtlSeconds: 900,
   refreshTtlSeconds: 2_592_000,
@@ -206,6 +210,7 @@ describe('config files', () => {
 
     expect(value).toEqual({
       api: apiDefaults,
+      artifacts: artifactDefaults,
       auth: authDefaults,
       chat: {},
       database: databaseDefaults,
@@ -225,6 +230,7 @@ describe('config files', () => {
     expect(value.database).toEqual(databaseDefaults);
     expect(await read(dir, 'app.json')).toEqual({
       api: apiDefaults,
+      artifacts: artifactDefaults,
       auth: authDefaults,
       chat: {},
       database: databaseDefaults,
@@ -232,6 +238,17 @@ describe('config files', () => {
       timezone: 'UTC',
       ui: uiDefaults,
     });
+  });
+
+  test('refuses an artifact quota smaller than one allowed artifact', async () => {
+    const dir = await configDir();
+    await write(dir, 'app.json', {
+      artifacts: { maxArtifactBytes: 1024, maxStorageBytes: 512 },
+    });
+
+    expect(loadSection(appSection, context(dir))).rejects.toThrow(
+      /storage must hold at least one maximum-sized artifact/iu,
+    );
   });
 
   test('refuses a time zone the runtime has never heard of', async () => {
@@ -266,6 +283,7 @@ describe('config files', () => {
     const dir = await configDir();
     await write(dir, 'app.json', {
       api: apiDefaults,
+      artifacts: artifactDefaults,
       auth: authDefaults,
       chat: {},
       database: databaseDefaults,
@@ -522,6 +540,7 @@ describe('Config', () => {
     expect(config.env.environment).toBe('test');
     expect(config.get('app')).toEqual({
       api: apiDefaults,
+      artifacts: artifactDefaults,
       auth: authDefaults,
       chat: {},
       database: databaseDefaults,
@@ -538,6 +557,7 @@ describe('Config', () => {
 
     const result = await config.update('app', {
       api: apiDefaults,
+      artifacts: artifactDefaults,
       auth: authDefaults,
       chat: {},
       database: databaseDefaults,
@@ -561,6 +581,7 @@ describe('Config', () => {
       levels.map(async (logLevel) =>
         config.update('app', {
           api: apiDefaults,
+          artifacts: artifactDefaults,
           auth: authDefaults,
           chat: {},
           database: databaseDefaults,
@@ -586,6 +607,7 @@ describe('Config', () => {
 
     await first.update('app', {
       api: apiDefaults,
+      artifacts: artifactDefaults,
       auth: authDefaults,
       chat: {},
       database: databaseDefaults,

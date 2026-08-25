@@ -11,7 +11,7 @@ import type { MessageContent } from '../agent/context/message';
 
 const ROUTER_TOOL_NAMES = Object.freeze(['call_tool', 'search_tool'] as const);
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
-const SEARCH_RESULT_LIMIT = 5;
+const SEARCH_RESULT_LIMIT = 10;
 
 const callToolSchema = z.object({
   name: z.string().min(1).describe('Exact tool name returned by search_tool.'),

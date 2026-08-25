@@ -218,9 +218,10 @@ class WebBroker implements Broker, ChatTransport {
   }
 
   /**
-   * Says something over the top of the run in flight. Speech, not a command: it
-   * is attributed, deduplicated and appended to the transcript like anything
-   * else someone said, and its UI is the message box rather than a palette.
+   * Adds direction at the next safe opening in the run in flight. Speech, not a
+   * command: it is attributed, deduplicated and appended to the transcript like
+   * anything else someone said, and its UI is the message box rather than a
+   * palette.
    */
   public submitSteer(input: ChatMessageInput): void {
     this.#host?.receive({
@@ -406,6 +407,7 @@ function toChatHistoryEntry(entry: BrokerHistoryEntry): ChatHistoryEntry {
       return {
         ...base,
         content: entry.content,
+        mode: entry.mode,
         principal: entry.principal,
         text: entry.text,
         type: 'userMessage',

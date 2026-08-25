@@ -5,6 +5,12 @@ const generalMessages = Object.freeze({
   'settings.general.applicationJson': 'Application JSON',
   'settings.general.applicationJsonHelp':
     'Full document access using the same schema as app.json. Saving replaces the document whole; defaults are materialized by Nox.',
+  'settings.general.artifactSizeLimit': 'Maximum artifact bytes',
+  'settings.general.artifactSizeLimitHint':
+    'Largest original or generated rendition accepted by the streaming store.',
+  'settings.general.artifactStorageQuota': 'Artifact storage quota (bytes)',
+  'settings.general.artifactStorageQuotaHint':
+    'Total unique immutable bytes retained across originals and cached renditions.',
   'settings.general.automaticAgent': 'Automatic · {agent}',
   'settings.general.bindHost': 'Bind host',
   'settings.general.bindHostHint':
@@ -65,9 +71,11 @@ const generalMessages = Object.freeze({
   'settings.general.sessionSecurity': 'Session security',
   'settings.general.sessionSecurityHelp':
     'Short-lived access tokens authorize requests; the refresh session keeps an operator signed in and remains revocable.',
-  'settings.general.sqliteStorage': 'SQLite storage',
+  'settings.general.sqliteStorage': 'Persistent storage',
   'settings.general.sqliteStorageHelp':
-    'Persistent state location, lock contention budget and durability policy. Relative paths resolve inside the Nox data directory.',
+    'SQLite state, artifact limits, lock contention and durability. Relative paths resolve inside the Nox data directory.',
+  'settings.general.validation.artifactStorageQuota':
+    'Storage quota must be at least the maximum artifact size.',
   'settings.general.validation.configurationObject':
     'Application configuration must be one JSON object.',
   'settings.general.validation.defaultAgentExists':

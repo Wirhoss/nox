@@ -26,6 +26,7 @@ type ReadonlyProcessItem = DeepReadonly<ProcessItem>
 interface Props {
   activities: readonly DeepReadonly<RunActivityItem>[]
   items: readonly DeepReadonly<ResponseItem>[]
+  redirected?: boolean
 }
 interface AssistantBlock {
   item: ReadonlyAssistantItem
@@ -95,6 +96,7 @@ const blocks = computed<ResponseBlock[]>(() => {
 })
 
 function processComplete(index: number): boolean {
+  if (props.redirected) return true
   for (let next = index + 1; next < blocks.value.length; next += 1) {
     const block = blocks.value[next]
     if (block?.kind === 'process') break
@@ -132,8 +134,10 @@ function contentFromAssistant(item: ReadonlyAssistantItem): NonNullable<Assistan
   <article
     class="assistant-response"
     :class="{
-      'assistant-response--active': currentActivity?.status === undefined,
+      'assistant-response--active':
+        currentActivity?.status === undefined && props.redirected !== true,
       'assistant-response--answered': blocks.some((block) => block.kind === 'assistant'),
+      'assistant-response--redirected': props.redirected === true,
     }"
   >
     <div v-if="blocks.length === 0" class="assistant-response__waiting">
@@ -227,6 +231,12 @@ function contentFromAssistant(item: ReadonlyAssistantItem): NonNullable<Assistan
 .assistant-response--active {
   border-color: var(--nox-border-strong);
   border-inline-start-color: var(--nox-action-primary);
+}
+
+.assistant-response--redirected {
+  border-block-end-color: color-mix(in srgb, var(--nox-status-warning) 48%, var(--nox-border-subtle));
+  border-end-start-radius: var(--nox-radius-panel);
+  opacity: 0.86;
 }
 
 .assistant-response > :deep(* + *) {

@@ -25,12 +25,19 @@ interface ArtifactNox {
   readonly url: string;
 }
 
-async function artifactNox(logger: Logger = silentLogger): Promise<ArtifactNox> {
+async function artifactNox(
+  logger: Logger = silentLogger,
+  limits?: { readonly maxArtifactBytes: number; readonly maxStorageBytes: number },
+): Promise<ArtifactNox> {
   const directory = await mkdtemp(join(tmpdir(), 'nox-artifact-api-'));
   directories.push(directory);
   const database = await Database.open({ path: join(directory, 'nox.db') });
   databases.push(database);
-  const pipeline = await ArtifactPipeline.open({ dataDirectory: directory, database });
+  const pipeline = await ArtifactPipeline.open({
+    dataDirectory: directory,
+    database,
+    ...limits,
+  });
   const store = await AuthStore.open({ database, dataDirectory: directory });
   const account = await store.register('esteban', 'correct-horse-battery');
   const tokens = await store.openSession(account.accountId);
@@ -51,9 +58,13 @@ async function artifactNox(logger: Logger = silentLogger): Promise<ArtifactNox> 
   };
 }
 
-async function upload(nox: ArtifactNox, filename = 'diagram.png'): Promise<Response> {
+async function upload(
+  nox: ArtifactNox,
+  filename = 'diagram.png',
+  data: Uint8Array = PNG,
+): Promise<Response> {
   return fetch(`${nox.url}/artifacts`, {
-    body: PNG,
+    body: data,
     headers: {
       authorization: `Bearer ${nox.accessToken}`,
       'content-type': 'image/webp',
@@ -104,6 +115,29 @@ describe('artifact routes', () => {
     expect(content.headers.get('content-type')).toBe('image/png');
     expect(content.headers.get('x-content-type-options')).toBe('nosniff');
     expect(new Uint8Array(await content.arrayBuffer())).toEqual(PNG);
+  });
+
+  test('reports a full storage quota without committing another artifact', async () => {
+    const nox = await artifactNox(silentLogger, {
+      maxArtifactBytes: PNG.byteLength,
+      maxStorageBytes: PNG.byteLength,
+    });
+    expect((await upload(nox)).status).toBe(201);
+
+    const response = await upload(
+      nox,
+      'different.png',
+      Uint8Array.from([...PNG.slice(0, -1), 0xff]),
+    );
+
+    expect(response.status).toBe(507);
+    expect(await response.json()).toEqual({
+      detail: `Artifact storage exceeds the configured ${String(PNG.byteLength)} byte quota.`,
+      error: 'artifact_storage_full',
+      maxBytes: PNG.byteLength,
+    });
+    expect(await nox.database.db.select().from(artifactBlobs)).toHaveLength(1);
+    expect(await nox.database.db.select().from(artifacts)).toHaveLength(1);
   });
 
   test('streams generated output only in the conversation that owns it', async () => {

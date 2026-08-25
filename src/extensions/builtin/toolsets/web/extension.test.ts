@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../../../../application';
+import { authorities } from '../../../contribution-points/authorities';
 import { translationFragments } from '../../../contribution-points/languages';
 import { toolSets } from '../../../contribution-points/toolsets';
 import { webToolsExtension } from './extension';
@@ -38,6 +39,15 @@ describe('webToolsExtension', () => {
     expect(Object.keys(spanish?.value.messages ?? {}).sort()).toEqual(
       Object.keys(english?.value.messages ?? {}).sort(),
     );
+    await app.stop();
+  });
+
+  test('registers arbitrary browser evaluation as its own authority', async () => {
+    const app = await started();
+
+    const contribution = app.contributions.get(authorities, 'nox.toolset.web.browser.evaluate');
+    expect(contribution?.extensionId).toBe('nox.toolset.web');
+    expect(contribution?.value.description).toContain('arbitrary JavaScript');
     await app.stop();
   });
 

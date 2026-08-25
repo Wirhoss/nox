@@ -26,9 +26,16 @@ import type {
  */
 const BROWSER_READ_AUTHORITY = 'nox.toolset.web.browser.read';
 const BROWSER_ACT_AUTHORITY = 'nox.toolset.web.browser.act';
+const BROWSER_EVALUATE_AUTHORITY = 'nox.toolset.web.browser.evaluate';
 
 /** Which actions change the page rather than only look at it. */
-const INTERACTIONS: ReadonlySet<BrowserAction> = new Set(['click', 'press', 'scroll', 'type']);
+const INTERACTIONS: ReadonlySet<BrowserAction> = new Set([
+  'click',
+  'evaluate',
+  'press',
+  'scroll',
+  'type',
+]);
 
 /** Which actions can bring a page back, and so may publish one as a file. */
 const PUBLISHES: ReadonlySet<BrowserAction> = new Set([
@@ -89,10 +96,19 @@ interface BrowserToolOptions<TSchema extends z.ZodObject> {
  */
 function browserTool<TSchema extends z.ZodObject>(options: BrowserToolOptions<TSchema>): Tool {
   const interactive = INTERACTIONS.has(options.action);
-  const effects: ToolEffect[] = interactive ? ['network', 'read', 'write'] : ['network', 'read'];
+  const evaluating = options.action === 'evaluate';
+  const effects: ToolEffect[] = evaluating
+    ? ['credential', 'execute', 'network', 'read', 'write']
+    : interactive
+      ? ['network', 'read', 'write']
+      : ['network', 'read'];
 
   const tool: Tool<TSchema> = {
-    authority: interactive ? BROWSER_ACT_AUTHORITY : BROWSER_READ_AUTHORITY,
+    authority: evaluating
+      ? BROWSER_EVALUATE_AUTHORITY
+      : interactive
+        ? BROWSER_ACT_AUTHORITY
+        : BROWSER_READ_AUTHORITY,
     description: options.description,
     name: options.name,
     ...(PUBLISHES.has(options.action) ? { output: { artifacts: true as const } } : {}),
@@ -175,6 +191,28 @@ const BUILDERS: Readonly<
       title: () => 'Browser close tab',
     }),
 
+  evaluate: (capability, origin) =>
+    browserTool({
+      action: 'evaluate',
+      capability,
+      description:
+        'Run an arbitrary JavaScript expression in an open page and return its serializable ' +
+        'result. This opt-in tool can read page storage, make requests and change the page.',
+      name: 'browser_evaluate',
+      origin,
+      parameters: z.object({
+        expression: z
+          .string()
+          .trim()
+          .min(1)
+          .max(50_000)
+          .describe('JavaScript expression to run in the page context.'),
+        tabId: tabIdField,
+      }),
+      request: (params) => ({ expression: params.expression, tabId: params.tabId }),
+      title: () => 'Browser evaluate JavaScript',
+    }),
+
   images: (capability, origin) =>
     browserTool({
       action: 'images',
@@ -185,6 +223,53 @@ const BUILDERS: Readonly<
       parameters: z.object({ tabId: tabIdField }),
       request: (params) => ({ tabId: params.tabId }),
       title: () => 'Browser page images',
+    }),
+
+  inspect: (capability, origin) =>
+    browserTool({
+      action: 'inspect',
+      capability,
+      description:
+        'Find live DOM elements by text or CSS and report their tag, attributes, visibility, ' +
+        'interaction signals and a unique selector. Use this when a visual control has no ' +
+        'snapshot ref.',
+      name: 'browser_inspect',
+      origin,
+      parameters: z
+        .object({
+          exact: z
+            .boolean()
+            .default(false)
+            .describe('Require an exact normalized text match instead of a substring.'),
+          maxResults: z
+            .number()
+            .int()
+            .positive()
+            .max(50)
+            .default(10)
+            .describe('Maximum matching elements to return.'),
+          selector: selectorField,
+          tabId: tabIdField,
+          text: z
+            .string()
+            .trim()
+            .min(1)
+            .max(500)
+            .optional()
+            .describe('Visible or hidden DOM text to find, matched case-insensitively.'),
+        })
+        .refine(
+          (params) => params.selector !== undefined || params.text !== undefined,
+          'Inspect by text, selector, or both.',
+        ),
+      request: (params) => ({
+        exact: params.exact,
+        maxResults: params.maxResults,
+        selector: params.selector,
+        tabId: params.tabId,
+        text: params.text,
+      }),
+      title: (params) => `Browser inspect — ${params.text ?? params.selector ?? 'element'}`,
     }),
 
   links: (capability, origin) =>
@@ -388,6 +473,8 @@ async function report(
   if (outcome.title !== undefined) summary.title = outcome.title;
   if (outcome.detail !== undefined) summary.detail = outcome.detail;
   if (outcome.closed === true) summary.closed = true;
+  if (outcome.evaluation !== undefined) summary.result = outcome.evaluation.result;
+  if (outcome.inspection !== undefined) summary.inspection = outcome.inspection;
   if (outcome.links !== undefined) summary.links = outcome.links;
   if (outcome.images !== undefined) summary.images = outcome.images;
 
@@ -434,4 +521,4 @@ function hostOf(url: string | undefined): string {
   }
 }
 
-export { BROWSER_ACT_AUTHORITY, BROWSER_READ_AUTHORITY, browserTools };
+export { BROWSER_ACT_AUTHORITY, BROWSER_EVALUATE_AUTHORITY, BROWSER_READ_AUTHORITY, browserTools };

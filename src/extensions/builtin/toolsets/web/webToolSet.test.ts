@@ -84,6 +84,7 @@ describe('WebToolSet configuration', () => {
       'browser_click',
       'browser_close',
       'browser_images',
+      'browser_inspect',
       'browser_links',
       'browser_navigate',
       'browser_open',
@@ -321,6 +322,14 @@ describe('browser over the camoufox module', () => {
     // A tab is not optional anywhere but open.
     expect(() => tools.prepare('browser_navigate', { url: 'https://example.test/' })).toThrow();
     expect(() => tools.prepare('browser_open', {})).not.toThrow();
+    // Inspecting needs a DOM selector, text, or both.
+    expect(() => tools.prepare('browser_inspect', { tabId: 'tab-1' })).toThrow();
+    expect(() =>
+      tools.prepare('browser_inspect', { tabId: 'tab-1', text: 'availability' }),
+    ).not.toThrow();
+    expect(() =>
+      tools.prepare('browser_evaluate', { expression: '1 + 1', tabId: 'tab-1' }),
+    ).toThrow();
     // Waiting for nothing at all is not a wait.
     expect(() => tools.prepare('browser_wait', { tabId: 'tab-1' })).toThrow();
     expect(() => tools.prepare('browser_wait', { tabId: 'tab-1', timeoutMs: 500 })).not.toThrow();
@@ -414,6 +423,83 @@ describe('browser over the camoufox module', () => {
     expect(published[0]?.declaredMediaType).toBe('image/png');
     expect(parsed(content).screenshotArtifactId).toBe('art_00000001');
     expect(content[1]?.type).toBe('artifact');
+  });
+
+  test('inspects DOM text through a fixed expression and returns a unique selector', async () => {
+    let expression = '';
+    globalThis.fetch = mock((_input: Request | string | URL, init?: RequestInit) => {
+      const request = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        expression?: string;
+      };
+      expression = request.expression ?? '';
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          result: {
+            matches: [
+              {
+                id: 'btn-ver-disponibilidad',
+                interactive: true,
+                interactionSignals: ['pointer cursor'],
+                selector: '#btn-ver-disponibilidad',
+                tag: 'div',
+                text: 'Ver disponibilidad en tiendas',
+                visible: true,
+              },
+            ],
+            total: 1,
+            truncated: false,
+          },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    const body = parsed(
+      await ran(
+        browserTools().prepare('browser_inspect', {
+          tabId: 'tab-7',
+          text: 'Ver disponibilidad en tiendas',
+        }),
+        context(),
+      ),
+    );
+
+    expect(expression).toContain('noxBrowserInspect');
+    expect(expression).toContain('Ver disponibilidad en tiendas');
+    expect(body.inspection).toMatchObject({
+      matches: [{ selector: '#btn-ver-disponibilidad', tag: 'div' }],
+      total: 1,
+      truncated: false,
+    });
+  });
+
+  test('exposes arbitrary evaluation only with an explicit module opt-in', async () => {
+    const tools = new WebToolSet({
+      browser: {
+        enableEvaluate: true,
+        module: 'camoufox',
+        url: 'https://browser.example.test',
+      },
+      type: 'web',
+    });
+    expect(tools.tools.browser_evaluate?.authority).toBe('nox.toolset.web.browser.evaluate');
+
+    globalThis.fetch = mock((_input: Request | string | URL, init?: RequestInit) => {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as unknown;
+      expect(body).toMatchObject({ expression: 'document.title' });
+      return Promise.resolve(Response.json({ ok: true, result: 'Example' }));
+    }) as unknown as typeof fetch;
+
+    const execution = tools.prepare('browser_evaluate', {
+      expression: 'document.title',
+      tabId: 'tab-7',
+    });
+    const body = parsed(await ran(execution, context()));
+
+    expect(body.result).toBe('Example');
+    expect(execution.risk?.effects).toContain('execute');
+    expect(execution.risk?.effects).toContain('credential');
+    expect(execution.risk?.reversible).toBe(false);
   });
 
   test('reads the links this server sends, whichever field it names them in', async () => {

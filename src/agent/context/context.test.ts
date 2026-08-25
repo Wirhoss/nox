@@ -35,6 +35,30 @@ function textMessage(
   return { content: [{ text, type: 'text' }], createdAt: BASE_TIME, messageId, role };
 }
 
+function toolCall(id: string, track: string, payload: string): Message {
+  return {
+    arguments: { payload },
+    createdAt: BASE_TIME,
+    messageId: id,
+    name: 'work',
+    role: 'toolCall',
+    trackId: track,
+  };
+}
+
+function toolResponse(id: string, track: string, payload: string): Message {
+  return {
+    createdAt: BASE_TIME,
+    execution: 'immediate',
+    messageId: id,
+    name: 'work',
+    response: [{ text: payload, type: 'text' }],
+    role: 'toolResponse',
+    trackId: track,
+    trust: 'untrusted',
+  };
+}
+
 function bytes(messages: readonly Message[]): string[] {
   return messages.map(messageToString);
 }
@@ -194,7 +218,7 @@ describe('Context compaction', () => {
 
     const result = await context.compact();
 
-    expect(result).toEqual({ compacted: true });
+    expect(result).toEqual({ compacted: true, reduced: true });
     expect(Object.isFrozen(result)).toBeTrue();
     expect(provider.requests).toHaveLength(1);
     expect(provider.requests[0]?.model).toBe(compactionModel);
@@ -247,7 +271,7 @@ describe('Context compaction', () => {
     });
 
     expect(context.isUnderPressure()).toBeTrue();
-    expect(await context.compact()).toEqual({ compacted: true });
+    expect(await context.compact()).toEqual({ compacted: true, reduced: true });
     expect(context.getHistory()).toHaveLength(1);
     expect(context.getHistory()[0]?.role).toBe('compacted');
   });
@@ -265,7 +289,7 @@ describe('Context compaction', () => {
     const activeBefore = context.getHistory();
     const fullBefore = context.getFullHistory();
 
-    expect(await context.compact()).toEqual({ compacted: false });
+    expect(await context.compact()).toEqual({ compacted: false, reduced: false });
     expect(context.getHistory()).toEqual(activeBefore);
     expect(context.getHistory()[0]).toBe(activeBefore[0]);
     expect(context.getFullHistory()).toEqual(fullBefore);
@@ -282,7 +306,7 @@ describe('Context compaction', () => {
     const activeBefore = context.getHistory();
     const fullBefore = context.getFullHistory();
 
-    expect(await context.compact()).toEqual({ compacted: false });
+    expect(await context.compact()).toEqual({ compacted: false, reduced: false });
     expect(context.getHistory()).toEqual(activeBefore);
     expect(context.getFullHistory()).toEqual(fullBefore);
   });
@@ -316,25 +340,6 @@ describe('Context compaction', () => {
   test('under pressure it folds settled traffic and leaves the loop in flight alone', async () => {
     const heavy = 'x'.repeat(9_000);
     const light = 'y'.repeat(400);
-    const call = (id: string, track: string, payload: string): Message => ({
-      arguments: { payload },
-      createdAt: BASE_TIME,
-      messageId: id,
-      name: 'work',
-      role: 'toolCall',
-      trackId: track,
-    });
-    const response = (id: string, track: string, payload: string): Message => ({
-      createdAt: BASE_TIME,
-      execution: 'immediate',
-      messageId: id,
-      name: 'work',
-      response: [{ text: payload, type: 'text' }],
-      role: 'toolResponse',
-      trackId: track,
-      trust: 'untrusted',
-    });
-
     const provider = new SummaryProvider([]);
     const context = new Context('system', provider, {
       contextWindow: 10_000,
@@ -344,8 +349,8 @@ describe('Context compaction', () => {
         // A fold hangs its placeholder on the assistant turn that asked for the
         // work, so what it replaces must have one in front of it.
         textMessage('assistant', 'a0', 'calling'),
-        call('c1', 't1', heavy),
-        response('r1', 't1', heavy),
+        toolCall('c1', 't1', heavy),
+        toolResponse('r1', 't1', heavy),
         // The model answered, so everything above it is consumed and settled.
         textMessage('assistant', 'a1', 'done'),
         textMessage('user', 'u2', 'second'),
@@ -353,8 +358,8 @@ describe('Context compaction', () => {
         // This pair belongs to a loop still in flight, and is small on purpose:
         // once the settled pair folds, pressure is gone, so reaching the lossy
         // path at all would mean the fold never happened.
-        call('c2', 't2', light),
-        response('r2', 't2', light),
+        toolCall('c2', 't2', light),
+        toolResponse('r2', 't2', light),
       ],
       reserveForOutput: 2_000,
       tokenCounter: (text) => text.length,
@@ -365,7 +370,7 @@ describe('Context compaction', () => {
     const result = await context.compact();
 
     // Folding alone relieved it, so the lossy path was never reached.
-    expect(result).toEqual({ compacted: false });
+    expect(result).toEqual({ compacted: false, reduced: true });
     expect(provider.requests).toHaveLength(0);
 
     const ids = context.getHistory().map((message) => message.messageId);
@@ -410,15 +415,49 @@ describe('Context compaction', () => {
     expect(context.isUnderPressure()).toBeTrue();
     expect(await context.fold()).toBeTrue();
     expect(context.isUnderPressure()).toBeFalse();
-    expect(await context.compact()).toEqual({ compacted: false });
+    expect(await context.compact()).toEqual({ compacted: false, reduced: false });
     expect(provider.requests).toHaveLength(0);
     expect(context.getHistory().map((message) => message.role)).toEqual(['assistant', 'folded']);
   });
 
-  test('compaction does not fold tool traffic on its own', async () => {
+  test('a forced pass reduces where the local budget had nothing to say', async () => {
+    const heavy = 'x'.repeat(9_000);
+    const provider = new SummaryProvider([]);
+    // No window at all: locally there is no budget, so nothing here is under
+    // pressure and the unforced call is a no-op by design. A provider that has
+    // already refused the request knows better than that silence.
+    const context = new Context('system', provider, {
+      foldMinReductionRatio: 0.1,
+      fullHistory: [
+        textMessage('user', 'u1', 'first'),
+        textMessage('assistant', 'a0', 'calling'),
+        toolCall('c1', 't1', heavy),
+        toolResponse('r1', 't1', heavy),
+        textMessage('assistant', 'a1', 'done'),
+      ],
+      tokenCounter: (text) => text.length,
+    });
+    const before = context.getTokenEstimate();
+
+    expect(context.isUnderPressure()).toBeFalse();
+    expect(await context.compact()).toEqual({ compacted: false, reduced: false });
+    expect(context.getTokenEstimate()).toBe(before);
+
+    expect(await context.compact({ force: true })).toEqual({ compacted: false, reduced: true });
+    expect(context.getTokenEstimate()).toBeLessThan(before);
+
+    // Lossless where it could be: the summary was never asked for, and every
+    // byte the fold replaced is still in the transcript.
+    expect(provider.requests).toHaveLength(0);
+    expect(bytes(context.getFullHistory())).toContain(messageToString(toolResponse('r1', 't1', heavy)));
+  });
+
+  test('compaction stops at the in-flight boundary instead of eating an unread result', async () => {
     const provider = new SummaryProvider(['small']);
     const context = new Context('system', provider, {
       compactGuardBeginningTokens: 0,
+      // Zero guard on purpose. The token budget alone would leave the end at the
+      // tip of the history, so only the settled boundary holds the line here.
       compactGuardEndTokens: 0,
       compactMinTokens: 1,
       contextWindow: 10_000,
@@ -448,9 +487,16 @@ describe('Context compaction', () => {
       tokenCounter: (text) => text.length,
     });
 
-    expect(await context.compact()).toEqual({ compacted: true });
+    expect(context.isUnderPressure()).toBeTrue();
+    await context.compact();
+
+    // The model has never read this response, so neither path may stand in for
+    // it: not the fold, which already knew, and not the summary, which did not.
+    const active = context.getHistory().map((message) => message.messageId);
+    expect(active).toContain('call');
+    expect(active).toContain('response');
     expect(context.getFullHistory().some((message) => message.role === 'folded')).toBeFalse();
-    expect(provider.requests).toHaveLength(1);
+    expect(context.getFullHistory().some((message) => message.role === 'compacted')).toBeFalse();
   });
 
   test('the append sink sees the compaction the context writes on its own', async () => {
@@ -463,7 +509,7 @@ describe('Context compaction', () => {
       tokenCounter: (text) => text.length,
     });
 
-    expect(await context.compact()).toEqual({ compacted: true });
+    expect(await context.compact()).toEqual({ compacted: true, reduced: true });
     expect(appended.map((message) => message.role)).toEqual(['compacted']);
   });
 

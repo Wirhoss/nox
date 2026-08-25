@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { ProviderError } from '../provider/error';
 import { ChatProvider } from '../provider/provider';
 import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { ToolRouter } from '../tool/router';
@@ -101,6 +102,14 @@ function callsWith(name: string, trackId: string, arguments_: Record<string, unk
 
 function calls(name: string, trackId: string): Script {
   return callsWith(name, trackId, {});
+}
+
+/** What a provider does when the request it was handed does not fit. */
+function refusesForLength(): Script {
+  // eslint-disable-next-line @typescript-eslint/require-await, require-yield
+  return async function* (): AsyncIterable<ProviderSourceEvent> {
+    throw new ProviderError('context_limit', 'request too long');
+  };
 }
 
 function immediateTool(name: string, run: (ctx: ToolContext) => Promise<MessageContent[]>): Tool {
@@ -702,6 +711,41 @@ describe('Runner', () => {
     expect(roles(context).filter((role) => role === 'user')).toHaveLength(1);
   });
 
+  test('a refusal for length reduces the working set and asks again', async () => {
+    const bulky = 'detail '.repeat(200);
+    const { context, events, provider, runner } = setup(
+      [calls('work', 't1'), calls('work', 't2'), refusesForLength(), says('done')],
+      [immediateTool('work', () => Promise.resolve([{ text: bulky, type: 'text' }]))],
+    );
+
+    runner.send(user('hi'));
+    await runner.idle;
+
+    // Four requests for three model turns: the refused one was asked again.
+    expect(provider.requests).toHaveLength(4);
+    expect(events.snapshot().at(-1)).toMatchObject({ status: 'completed' });
+
+    // Reduced losslessly, so the refusal cost the run nothing but a round trip.
+    expect(context.getFullHistory().some((message) => message.role === 'folded')).toBeTrue();
+    expect(context.getFullHistory().some((message) => message.role === 'compacted')).toBeFalse();
+
+    // The retry is the same turn, not a second one invented to carry it.
+    expect(roles(context).filter((role) => role === 'user')).toHaveLength(1);
+  });
+
+  test('a refusal for length with nothing left to reclaim fails the run', async () => {
+    const { events, provider, runner } = setup([refusesForLength()]);
+
+    runner.send(user('hi'));
+    await runner.idle;
+
+    // Asked once. A pass that reclaimed nothing would reclaim nothing again.
+    expect(provider.requests).toHaveLength(1);
+    const failure = events.snapshot().find((event) => event.type === 'error');
+    expect(failure?.type === 'error' && failure.error.message).toContain('request too long');
+    expect(events.snapshot().at(-1)).toMatchObject({ status: 'failed' });
+  });
+
   test('a provider failure closes the run and leaves the runner usable', async () => {
     const { events, runner } = setup([
       // eslint-disable-next-line @typescript-eslint/require-await, require-yield
@@ -787,26 +831,38 @@ describe('Runner', () => {
     expect(await runner.abort()).toBeFalse();
   });
 
-  test('steer cuts the run short and speaks over it', async () => {
-    const abortable = immediateTool(
+  test('steer waits for the current operation and enters at the next opening', async () => {
+    const work = gate<MessageContent[]>();
+    const entered = gate<undefined>();
+    let toolAborted = false;
+    const waiting = immediateTool(
       'wait',
       (ctx) =>
         new Promise<MessageContent[]>((resolve) => {
-          const finish = (): void => {
+          const abort = (): void => {
+            toolAborted = true;
             resolve([{ text: 'aborted', type: 'text' }]);
           };
-          if (ctx.abortSignal.aborted) finish();
-          else ctx.abortSignal.addEventListener('abort', finish, { once: true });
+          if (ctx.abortSignal.aborted) abort();
+          else ctx.abortSignal.addEventListener('abort', abort, { once: true });
+          void work.promise.then(resolve);
+          entered.resolve(undefined);
         }),
     );
-    const { context, events, runner } = setup(
+    const { context, events, provider, runner } = setup(
       [calls('wait', 'track-1'), says('new plan it is')],
-      [abortable],
+      [waiting],
     );
 
     runner.send(user('first'));
-    await settle();
+    await entered.promise;
     await runner.steer(user('change of plans'));
+
+    // Steering is queued; it neither aborts nor waits for the active operation.
+    expect(toolAborted).toBeFalse();
+    expect(runner.state).toBe('running');
+
+    work.resolve([{ text: 'finished', type: 'text' }]);
     await runner.idle;
 
     expect(roles(context)).toEqual([
@@ -817,10 +873,14 @@ describe('Runner', () => {
       'user',
       'assistant',
     ]);
+    expect(provider.requests[1]?.at(-1)).toMatchObject({
+      content: [{ text: 'change of plans', type: 'text' }],
+      role: 'user',
+    });
     expect(events.snapshot().filter((event) => event.type === 'runStarted')).toMatchObject([
       { trigger: 'user' },
-      { trigger: 'steer' },
     ]);
+    expect(events.snapshot().at(-1)).toMatchObject({ status: 'completed' });
   });
 
   test('usage is reported, totalled and used to calibrate context pressure', async () => {

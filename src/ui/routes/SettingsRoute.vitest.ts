@@ -66,6 +66,11 @@ describe('Settings route', () => {
     expect(screen.getByLabelText(/^Default agent/)).toHaveProperty('value', 'nox')
     expect(screen.getByLabelText(/^Default language/)).toHaveProperty('value', 'en')
     expect(screen.getByLabelText(/^Database path/)).toHaveProperty('value', 'state/nox.db')
+    expect(screen.getByLabelText(/^Maximum artifact bytes/)).toHaveProperty('value', '104857600')
+    expect(screen.getByLabelText(/^Artifact storage quota/)).toHaveProperty(
+      'value',
+      '10737418240',
+    )
     expect(screen.getByRole('checkbox', { name: /Secure refresh cookies/ })).toHaveProperty(
       'checked',
       false,
@@ -82,12 +87,15 @@ describe('Settings route', () => {
     await fireEvent.update(screen.getByLabelText(/^Default language/), 'es')
     await fireEvent.update(screen.getByLabelText(/^Log level/), 'debug')
     await fireEvent.update(screen.getByLabelText(/^Time zone/), 'America/Mexico_City')
+    await fireEvent.update(screen.getByLabelText(/^Maximum artifact bytes/), '1048576')
+    await fireEvent.update(screen.getByLabelText(/^Artifact storage quota/), '10485760')
     await fireEvent.click(screen.getByRole('checkbox', { name: /Secure refresh cookies/ }))
     await fireEvent.click(screen.getByRole('button', { name: 'Save general settings' }))
 
     expect(await screen.findByText('Application configuration saved')).toBeTruthy()
     expect(savedBody).toEqual({
       api: { host: '0.0.0.0', port: 8080 },
+      artifacts: { maxArtifactBytes: 1_048_576, maxStorageBytes: 10_485_760 },
       auth: {
         accessTtlSeconds: 900,
         refreshTtlSeconds: 2_592_000,

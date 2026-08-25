@@ -6,9 +6,10 @@ import { PlaywrightBrowser } from './playwright';
 
 import type { Browser, BrowserContext, BrowserType, Locator, Page } from 'playwright';
 
-function config() {
+function config(enableEvaluate = false) {
   return {
     browser: 'chromium' as const,
+    enableEvaluate,
     headless: true,
     maxSnapshotCharacters: 24_000,
     timeoutMs: 30_000,
@@ -22,11 +23,13 @@ function requestContext() {
 function fakePlaywright(): {
   readonly clicked: string[];
   readonly contextsClosed: () => number;
+  readonly evaluated: string[];
   readonly launchOptions: () => unknown;
   readonly load: () => Promise<Readonly<Record<'chromium' | 'firefox' | 'webkit', BrowserType>>>;
   readonly loads: () => number;
 } {
   const clicked: string[] = [];
+  const evaluated: string[] = [];
   let closeListener: (() => void) | undefined;
   let contextsClosed = 0;
   let launchedWith: unknown;
@@ -47,6 +50,28 @@ function fakePlaywright(): {
     close: (): Promise<void> => {
       closeListener?.();
       return Promise.resolve();
+    },
+    evaluate: (expression: string): Promise<unknown> => {
+      evaluated.push(expression);
+      if (expression.includes('noxBrowserInspect')) {
+        return Promise.resolve({
+          matches: [
+            {
+              id: 'continue',
+              interactive: true,
+              interactionSignals: ['pointer cursor'],
+              selector: '#continue',
+              tag: 'div',
+              text: 'Continue',
+              visible: true,
+            },
+          ],
+          total: 1,
+          truncated: false,
+        });
+      }
+      if (expression === '1n') return Promise.resolve(1n);
+      return Promise.resolve('Example');
     },
     goto: (): Promise<null> => Promise.resolve(null),
     isClosed: (): boolean => false,
@@ -90,6 +115,7 @@ function fakePlaywright(): {
   return {
     clicked,
     contextsClosed: () => contextsClosed,
+    evaluated,
     launchOptions: () => launchedWith,
     load: () => {
       loadCount += 1;
@@ -107,7 +133,15 @@ describe('Playwright browser module', () => {
       browser: { browser: 'firefox', module: 'playwright' },
       type: 'web',
     });
+    expect(Object.keys(tools.tools)).toContain('browser_inspect');
     expect(Object.keys(tools.tools)).toContain('browser_snapshot');
+    expect(Object.keys(tools.tools)).not.toContain('browser_evaluate');
+
+    const evaluating = new WebToolSet({
+      browser: { enableEvaluate: true, module: 'playwright' },
+      type: 'web',
+    });
+    expect(Object.keys(evaluating.tools)).toContain('browser_evaluate');
 
     expect(
       () =>
@@ -143,8 +177,49 @@ describe('Playwright browser module', () => {
     expect(fake.clicked).toEqual(['aria-ref=e7']);
     expect(clicked.snapshot?.text).toContain('heading "Done"');
 
+    const inspected = await browser.act(
+      { action: 'inspect', session: 'research', tabId, text: 'Continue' },
+      requestContext(),
+    );
+    expect(inspected.inspection?.matches[0]).toMatchObject({
+      interactive: true,
+      selector: '#continue',
+      tag: 'div',
+    });
+    expect(fake.evaluated.at(-1)).toContain('"text":"Continue"');
+
     await browser.act({ action: 'close', session: 'research', tabId }, requestContext());
     await Promise.resolve();
     expect(fake.contextsClosed()).toBe(1);
+  });
+
+  test('returns arbitrary evaluation results only when the module exposes the opt-in tool', async () => {
+    const disabledFake = fakePlaywright();
+    const disabled = new PlaywrightBrowser(config(), disabledFake.load);
+    expect(
+      disabled.act(
+        { action: 'evaluate', expression: 'document.title', session: 'eval', tabId: 'missing' },
+        requestContext(),
+      ),
+    ).rejects.toThrow('browser_evaluate is disabled');
+    expect(disabledFake.loads()).toBe(0);
+
+    const fake = fakePlaywright();
+    const browser = new PlaywrightBrowser(config(true), fake.load);
+    const opened = await browser.act({ action: 'open', session: 'eval' }, requestContext());
+
+    const outcome = await browser.act(
+      { action: 'evaluate', expression: 'document.title', session: 'eval', tabId: opened.tabId },
+      requestContext(),
+    );
+
+    expect(outcome.evaluation?.result).toBe('Example');
+    expect(fake.evaluated).toContain('document.title');
+
+    const bigint = await browser.act(
+      { action: 'evaluate', expression: '1n', session: 'eval', tabId: opened.tabId },
+      requestContext(),
+    );
+    expect(bigint.evaluation?.result).toBe('1n');
   });
 });
