@@ -1,19 +1,19 @@
 import { z } from 'zod';
 
-import { WebService } from '../http';
+import { WebService } from '../../http';
 import {
   endpointFields,
   runtimeCredentialSchema,
   type WebModule,
   type WebModuleConfig,
-} from '../module';
+} from '../../module';
 
 import type {
   SearchCapability,
   SearchRequest,
   SearchResult,
   WebRequestContext,
-} from '../capabilities';
+} from '../../capabilities';
 
 /**
  * SearXNG: a self-hosted metasearch front end queried through its JSON format.

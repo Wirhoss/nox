@@ -225,18 +225,16 @@ describe('the web broker', () => {
     ).toEqual([{ resolution: 'approved', scope: 'session' }, { resolution: 'timeout' }]);
   });
 
-  test('drops an event nobody is watching rather than holding it', async () => {
+  test('does not replay settled traffic to a fresh page', async () => {
     const hub = new ChatHub();
     const broker = new WebBroker(hub);
     const rendered: ChatEvent[] = [];
     await broker.start(testHost([]));
 
-    // The transcript already has the reply; this surface has no memory to keep
-    // it in, and a closed tab is an ordinary state.
     await broker.deliver({
-      content: [{ text: 'nobody heard this', type: 'text' }],
+      content: [{ text: 'already durable', type: 'text' }],
       conversationId: CONVERSATION,
-      text: 'nobody heard this',
+      text: 'already durable',
       turnId: 'run-1',
       type: 'message',
     });
@@ -250,10 +248,93 @@ describe('the web broker', () => {
       type: 'message',
     });
 
-    // Nothing was replayed to the tab that opened afterwards, and what arrived
-    // while it was open reached it.
+    // A new page reads settled messages from history; only live traffic and an
+    // unfinished run are replayed by the stream.
     expect(rendered).toHaveLength(1);
     expect(rendered[0]).toMatchObject({ text: 'listo' });
+  });
+
+  test('replays an unfinished run to a page that opens while text is streaming', async () => {
+    const hub = new ChatHub();
+    const broker = new WebBroker(hub);
+    const rendered: ChatEvent[] = [];
+    await broker.start(testHost([]));
+
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      modelId: 'gpt-test',
+      startedAt: new Date('2026-01-01T00:00:00.000Z'),
+      trigger: 'user',
+      turnId: 'run-live',
+      type: 'runStarted',
+    });
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      text: 'texto antes de recargar',
+      turnId: 'run-live',
+      type: 'fragment',
+    });
+
+    broker.subscribe((event) => rendered.push(event));
+
+    expect(rendered.map((event) => event.type)).toEqual(['runStarted', 'fragment']);
+    expect(rendered[1]).toMatchObject({ text: 'texto antes de recargar' });
+  });
+
+  test('resumes from a cursor even when the run completed while disconnected', async () => {
+    const hub = new ChatHub();
+    const broker = new WebBroker(hub);
+    const received: { event: ChatEvent; eventId: number }[] = [];
+    await broker.start(testHost([]));
+    const unsubscribe = broker.subscribe((event, eventId) => received.push({ event, eventId }));
+
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      modelId: 'gpt-test',
+      startedAt: new Date('2026-01-01T00:00:00.000Z'),
+      trigger: 'user',
+      turnId: 'run-resume',
+      type: 'runStarted',
+    });
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      text: 'before ',
+      turnId: 'run-resume',
+      type: 'fragment',
+    });
+    const cursor = received[received.length - 1]?.eventId;
+    if (cursor === undefined) throw new Error('Expected a delivered event cursor.');
+    unsubscribe();
+
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      text: 'disconnect',
+      turnId: 'run-resume',
+      type: 'fragment',
+    });
+    await broker.deliver({
+      content: [{ text: 'before disconnect', type: 'text' }],
+      conversationId: CONVERSATION,
+      text: 'before disconnect',
+      turnId: 'run-resume',
+      type: 'message',
+    });
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      durationMs: 100,
+      status: 'completed',
+      turnId: 'run-resume',
+      type: 'runCompleted',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    });
+
+    const resumed: ChatEvent[] = [];
+    broker.subscribe((event) => resumed.push(event), { afterEventId: cursor });
+    const fresh: ChatEvent[] = [];
+    broker.subscribe((event) => fresh.push(event));
+
+    expect(resumed.map((event) => event.type)).toEqual(['fragment', 'message', 'runCompleted']);
+    expect(fresh).toBeEmpty();
   });
 
   test('renders reasoning as its own kind, live and settled', async () => {

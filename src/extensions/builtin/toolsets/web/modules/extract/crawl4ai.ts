@@ -10,14 +10,14 @@ import {
   type PageImage,
   type PageLink,
   type WebRequestContext,
-} from '../capabilities';
-import { decodeBase64, publicUrl, WebService } from '../http';
+} from '../../capabilities';
+import { decodeBase64, publicUrl, WebService } from '../../http';
 import {
   endpointFields,
   runtimeCredentialSchema,
   type WebModule,
   type WebModuleConfig,
-} from '../module';
+} from '../../module';
 
 /**
  * Crawl4AI: a browser-backed crawler that returns a rendered page rather than a

@@ -36,6 +36,22 @@ const englishMessages = Object.freeze({
   'ui.defaultResults': 'Default results',
   'ui.maximumResults': 'Maximum results',
   'ui.maximumUrls': 'Maximum URLs per call',
+  'ui.playwright.browser': 'Browser engine',
+  'ui.playwright.browserHelp':
+    'Chromium, Firefox or WebKit. The local container includes Chromium; the others need a remote endpoint.',
+  'ui.playwright.credentialHelp':
+    'Optional bearer token sent only when connecting to a remote Playwright endpoint.',
+  'ui.playwright.executablePath': 'Browser executable',
+  'ui.playwright.executablePathHelp':
+    'Optional local browser executable. Empty uses the container Chromium or a browser installed by Playwright.',
+  'ui.playwright.headless': 'Headless',
+  'ui.playwright.headlessHelp': 'Run a locally launched browser without a visible window.',
+  'ui.playwright.snapshot': 'Inline snapshot characters',
+  'ui.playwright.snapshotHelp':
+    'Longer accessibility snapshots are published as a file and only their head stays in the conversation.',
+  'ui.playwright.wsEndpoint': 'Playwright WebSocket endpoint',
+  'ui.playwright.wsEndpointHelp':
+    'Optional ws:// or wss:// endpoint from browserType.launchServer. Empty launches locally.',
   'ui.searxng.engines': 'Engines',
   'ui.searxng.enginesHelp': 'Comma-separated SearXNG engines. Empty uses the instance’s own set.',
   'ui.searxng.language': 'Default language',

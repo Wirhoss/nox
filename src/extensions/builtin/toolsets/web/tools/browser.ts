@@ -136,11 +136,10 @@ function browserTool<TSchema extends z.ZodObject>(options: BrowserToolOptions<TS
  * A table rather than a list, because the set an instance actually exposes is
  * the configured module's answer: `browserTools` builds only the entries the
  * module declared it can do. A module that cannot press a key never contributes
- * `browser_press`, and a backend that can do more than camofox — Playwright,
- * say — declares more actions and gets more tools without any tool here learning
- * its name. Keying it by action is what makes a declared action nobody wrote a
- * tool for a type error, rather than a capability that silently never reaches an
- * agent.
+ * `browser_press`, without any tool here learning the module's name. Keying the
+ * table by the complete action union also makes a newly declared action a type
+ * error here until it has a tool, rather than a capability that silently never
+ * reaches an agent.
  */
 const BUILDERS: Readonly<
   Record<BrowserAction, (capability: BrowserCapability, origin: string) => Tool>

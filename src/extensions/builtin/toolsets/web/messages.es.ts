@@ -36,6 +36,22 @@ const spanishMessages = Object.freeze({
   'ui.defaultResults': 'Resultados predeterminados',
   'ui.maximumResults': 'Resultados máximos',
   'ui.maximumUrls': 'Máximo de URL por llamada',
+  'ui.playwright.browser': 'Motor del navegador',
+  'ui.playwright.browserHelp':
+    'Chromium, Firefox o WebKit. El contenedor local incluye Chromium; los demás necesitan un endpoint remoto.',
+  'ui.playwright.credentialHelp':
+    'Token bearer opcional que solo se envía al conectar con un endpoint remoto de Playwright.',
+  'ui.playwright.executablePath': 'Ejecutable del navegador',
+  'ui.playwright.executablePathHelp':
+    'Ejecutable local opcional. Vacío usa Chromium del contenedor o un navegador instalado por Playwright.',
+  'ui.playwright.headless': 'Sin interfaz gráfica',
+  'ui.playwright.headlessHelp': 'Ejecuta un navegador iniciado localmente sin una ventana visible.',
+  'ui.playwright.snapshot': 'Caracteres de instantánea en línea',
+  'ui.playwright.snapshotHelp':
+    'Las instantáneas de accesibilidad más largas se publican como archivo y solo su inicio queda en la conversación.',
+  'ui.playwright.wsEndpoint': 'Endpoint WebSocket de Playwright',
+  'ui.playwright.wsEndpointHelp':
+    'Endpoint ws:// o wss:// opcional de browserType.launchServer. Vacío inicia el navegador localmente.',
   'ui.searxng.engines': 'Motores',
   'ui.searxng.enginesHelp':
     'Motores de SearXNG separados por comas. Vacío usa el conjunto propio de la instancia.',

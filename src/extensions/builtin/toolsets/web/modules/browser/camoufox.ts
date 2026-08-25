@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-import { decodeBase64, publicUrl, WebService, WebServiceError } from '../http';
+import { decodeBase64, publicUrl, WebService, WebServiceError } from '../../http';
 import {
   endpointFields,
   runtimeCredentialSchema,
   type WebModule,
   type WebModuleConfig,
-} from '../module';
+} from '../../module';
 
 import type {
   BrowserAction,
@@ -16,7 +16,7 @@ import type {
   PageImage,
   PageLink,
   WebRequestContext,
-} from '../capabilities';
+} from '../../capabilities';
 
 /**
  * camofox: an anti-detection browser driven over HTTP, addressed as tabs inside

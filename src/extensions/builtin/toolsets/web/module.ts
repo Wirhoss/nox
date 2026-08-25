@@ -7,8 +7,8 @@ import type { BrowserCapability, ExtractCapability, SearchCapability } from './c
 
 /**
  * The three things this tool set can be given, and what filling one produces.
- * A slot is not a tool: `browser` is one tool over one capability, while an
- * empty slot is a tool that does not exist at all for the agents holding this
+ * A slot is not a tool: `browser` is a family of tools over one capability,
+ * while an empty slot contributes no tools at all to the agents holding this
  * instance.
  */
 interface SlotCapabilities {

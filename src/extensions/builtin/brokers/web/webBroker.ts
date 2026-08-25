@@ -13,6 +13,7 @@ import type {
   ChatMessageInput,
   ChatPermissionOutcome,
   ChatPermissionRequest,
+  ChatSubscriptionOptions,
   ChatTransport,
 } from '../../../../api/chat';
 import type {
@@ -25,6 +26,14 @@ import type {
   OutboundEvent,
 } from '../../../../gateway/broker';
 import type { PermissionRequest, PermissionResolution } from '../../../../tool/gate';
+
+/** Enough completed traffic to repair an ordinary dropped browser connection. */
+const RECENT_EVENT_LIMIT = 10_000;
+
+interface SequencedChatEvent {
+  readonly event: ChatEvent;
+  readonly eventId: number;
+}
 
 /**
  * Nox's own web surface, as a broker.
@@ -62,11 +71,14 @@ class WebBroker implements Broker, ChatTransport {
     usage: true,
   });
 
+  readonly #activeEvents = new Map<string, SequencedChatEvent[]>();
   readonly #hub: ChatHub;
   readonly #listeners = new Set<ChatListener>();
+  readonly #recentEvents: SequencedChatEvent[] = [];
 
   #detach: (() => void) | undefined;
   #host: BrokerHost | undefined;
+  #nextEventId = 0;
 
   constructor(hub: ChatHub) {
     this.#hub = hub;
@@ -87,37 +99,42 @@ class WebBroker implements Broker, ChatTransport {
   public stop(): Promise<void> {
     this.#detach?.();
     this.#detach = undefined;
+    this.#activeEvents.clear();
     this.#listeners.clear();
+    this.#recentEvents.length = 0;
     this.#host = undefined;
     return Promise.resolve();
   }
 
   /**
-   * Renders one event to everyone watching. Nobody watching is an ordinary
-   * state — a closed tab, a person who walked away — and the event is dropped
-   * rather than held: the transcript already has the reply, and this surface has
-   * no memory of its own to keep it in.
+   * Renders one event to everyone watching and keeps a bounded reconnect log.
+   * The current run is retained separately until it completes, so a newly loaded
+   * page can reconstruct text that has not reached the durable transcript yet.
    */
   public deliver(event: OutboundEvent): Promise<void> {
+    const rendered = toChatEvent(event);
+    const sequenced = { event: rendered, eventId: ++this.#nextEventId };
+    this.#retainRecent(sequenced);
+    this.#retainActive(sequenced);
+
     if (this.#listeners.size === 0) {
       this.#host?.logger.debug(
         { conversationId: event.conversationId, event: event.type },
-        'Dropped an event: nothing is watching this conversation.',
+        'Buffered an event while no chat stream was connected.',
       );
-      return Promise.resolve();
     }
 
-    const rendered = toChatEvent(event);
     // A copy, because a listener that fails is removed while this iterates.
     for (const listener of [...this.#listeners]) {
       try {
-        listener(rendered);
+        listener(rendered, sequenced.eventId);
       } catch (error) {
         this.#listeners.delete(listener);
         this.#host?.logger.warn({ err: error }, 'A chat stream failed and was dropped.');
       }
     }
 
+    if (event.type === 'runCompleted') this.#activeEvents.delete(turnKey(rendered));
     return Promise.resolve();
   }
 
@@ -216,13 +233,40 @@ class WebBroker implements Broker, ChatTransport {
     });
   }
 
-  public subscribe(listener: ChatListener): () => void {
+  public subscribe(listener: ChatListener, options?: ChatSubscriptionOptions): () => void {
     this.#listeners.add(listener);
+
+    const afterEventId = options?.afterEventId;
+    const replay =
+      afterEventId === undefined
+        ? [...this.#activeEvents.values()].flat().sort((a, b) => a.eventId - b.eventId)
+        : this.#recentEvents.filter((entry) => entry.eventId > afterEventId);
+    for (const entry of replay) listener(entry.event, entry.eventId);
 
     return (): void => {
       this.#listeners.delete(listener);
     };
   }
+
+  #retainActive(entry: SequencedChatEvent): void {
+    const key = turnKey(entry.event);
+    if (entry.event.type === 'runStarted') {
+      this.#activeEvents.set(key, [entry]);
+      return;
+    }
+
+    this.#activeEvents.get(key)?.push(entry);
+  }
+
+  #retainRecent(entry: SequencedChatEvent): void {
+    this.#recentEvents.push(entry);
+    const overflow = this.#recentEvents.length - RECENT_EVENT_LIMIT;
+    if (overflow > 0) this.#recentEvents.splice(0, overflow);
+  }
+}
+
+function turnKey(event: ChatEvent): string {
+  return `${event.conversationId}\u0000${event.turnId}`;
 }
 
 /** The runtime's event as the wire says it. */

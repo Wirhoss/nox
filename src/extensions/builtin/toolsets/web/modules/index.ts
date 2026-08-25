@@ -1,21 +1,21 @@
-import { camoufoxModule } from './camoufox';
-import { crawl4aiModule } from './crawl4ai';
-import { searxngModule } from './searxng';
+import { camoufoxModule } from './browser/camoufox';
+import { playwrightModule } from './browser/playwright';
+import { crawl4aiModule } from './extract/crawl4ai';
+import { searxngModule } from './search/searxng';
 
 import type { WebModule, WebSlot } from '../module';
 
 /**
  * Every module this tool set knows, by the slot it fills.
  *
- * The list is the whole mechanism. SearXNG, Crawl4AI and camofox are three
- * entries in it and nothing more: none of them is read anywhere by name, none of
- * them is the shape the others are validated against, and a Firecrawl module is
- * a file beside `crawl4ai.ts` plus a line here — no schema to widen, no tool to
- * teach, no branch to add. That is what stops the first module from quietly
- * becoming the definition of its slot.
+ * The list is the whole mechanism. Integrations live below the slot they fill,
+ * and none of them is read anywhere else by name or used as the shape another
+ * one must validate against. Adding a module means adding its file below the
+ * matching slot and one registry entry here — no shared schema to widen, tool to
+ * teach or runtime branch to add.
  */
 const webModules = Object.freeze({
-  browser: Object.freeze([camoufoxModule]),
+  browser: Object.freeze([camoufoxModule, playwrightModule]),
   extract: Object.freeze([crawl4aiModule]),
   search: Object.freeze([searxngModule]),
 }) satisfies { readonly [TSlot in WebSlot]: readonly WebModule<TSlot>[] };
