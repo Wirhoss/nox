@@ -22,14 +22,10 @@ const generalMessages = Object.freeze({
   'settings.general.configuredAgents.one': '{count} agente configurado.',
   'settings.general.configuredAgents.other': '{count} agentes configurados.',
   'settings.general.controlPlane': 'PLANO DE CONTROL',
-  'settings.general.conversationEntrypoint': 'Punto de entrada de conversaciones',
-  'settings.general.conversationEntrypointHelp':
-    'Agente asignado a las nuevas conversaciones del navegador. Nox solo puede inferirlo cuando existe exactamente un agente.',
   'settings.general.dataPlane': 'PLANO DE DATOS',
   'settings.general.databasePath': 'Ruta de la base de datos',
   'settings.general.databasePathHint':
     'Ruta absoluta o relativa al directorio de datos configurado.',
-  'settings.general.defaultAgent': 'Agente predeterminado',
   'settings.general.diagnostics': 'DIAGNÓSTICO',
   'settings.general.durability.extra': 'Extra',
   'settings.general.durability.full': 'Completa',
@@ -52,7 +48,7 @@ const generalMessages = Object.freeze({
     'Idioma predeterminado de esta instalación. La pantalla pública de acceso puede conservar una elección específica del navegador.',
   'settings.general.locale': 'Idioma predeterminado',
   'settings.general.localeHint':
-    'Se aplica inmediatamente en este navegador y se usará de forma predeterminada después de reiniciar Nox.',
+    'Se aplica inmediatamente en este navegador y como valor predeterminado de la instalación.',
   'settings.general.logLevel': 'Nivel de registro',
   'settings.general.machineControl': 'CONTROL DE MÁQUINA // APLICACIÓN',
   'settings.general.refreshTtl': 'TTL de la sesión de renovación (segundos)',
@@ -65,11 +61,8 @@ const generalMessages = Object.freeze({
   'settings.general.timezoneHint':
     'Zona IANA, como UTC o America/Mexico_City. Los agentes leen en ella la hora de cada mensaje.',
   'settings.general.saved': 'Configuración de la aplicación guardada',
-  'settings.general.savedBody':
-    'El documento está en disco. Reinicia Nox para aplicar los cambios de la máquina.',
   'settings.general.secureCookies': 'Cookies de renovación seguras',
   'settings.general.secureCookiesHelp': 'Enviar la cookie de renovación solo mediante HTTPS.',
-  'settings.general.selectDefaultAgent': 'Selecciona un agente predeterminado',
   'settings.general.sessionSecurity': 'Seguridad de la sesión',
   'settings.general.sessionSecurityHelp':
     'Los tokens de acceso de corta duración autorizan solicitudes; la sesión de renovación mantiene la sesión del operador y puede revocarse.',
@@ -80,10 +73,6 @@ const generalMessages = Object.freeze({
     'La cuota de almacenamiento debe ser al menos igual al tamaño máximo de un artefacto.',
   'settings.general.validation.configurationObject':
     'La configuración de la aplicación debe ser un único objeto JSON.',
-  'settings.general.validation.defaultAgentExists':
-    'Elige un agente que exista en el directorio de planos.',
-  'settings.general.validation.defaultAgentRequired':
-    'Elige el agente que abrirá las nuevas conversaciones web.',
   'settings.general.validation.durabilityMode':
     'Elige un modo de durabilidad de SQLite compatible.',
   'settings.general.validation.hostRequired': 'Se requiere un host de escucha.',

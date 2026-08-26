@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { type Logger, silentLogger } from '../logger/logger';
+import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
 import { ConfigError } from './error';
 import { type LoaderContext, loadSection, removeEntry, updateEntry, updateSection } from './loader';
@@ -18,6 +19,16 @@ interface ConfigOptions {
 interface ConfigUpdate<T> {
   restartRequired: boolean;
   value: T;
+}
+
+interface ConfigProblem {
+  readonly error: string;
+  readonly key: ConfigKey;
+}
+
+interface ConfigReloadResult {
+  readonly changed: readonly ConfigKey[];
+  readonly problems: readonly ConfigProblem[];
 }
 
 /** The sections whose value is a set of separately addressable entries. */
@@ -78,14 +89,21 @@ function isDeferred(section: ConfigSection): boolean {
 class Config {
   readonly #context: LoaderContext;
   readonly #env: EnvConfig;
+  readonly #problems: Map<ConfigKey, string>;
   readonly #updates = new Mutex();
   readonly #values: Map<ConfigKey, unknown>;
 
   #contributions?: ContributionReader;
 
-  private constructor(env: EnvConfig, context: LoaderContext, values: Map<ConfigKey, unknown>) {
+  private constructor(
+    env: EnvConfig,
+    context: LoaderContext,
+    values: Map<ConfigKey, unknown>,
+    problems: Map<ConfigKey, string>,
+  ) {
     this.#context = context;
     this.#env = env;
+    this.#problems = problems;
     this.#values = values;
   }
 
@@ -95,22 +113,42 @@ class Config {
       logger: (options.logger ?? silentLogger).child('config'),
     };
 
+    const problems = new Map<ConfigKey, string>();
     const values = new Map<ConfigKey, unknown>();
     for (const key of Object.keys(sections) as ConfigKey[]) {
       const section = erase(key);
       if (isDeferred(section)) continue;
-      values.set(key, await loadSection(section, context));
+      try {
+        values.set(key, await loadSection(section, context));
+      } catch (error) {
+        // app.json chooses the database, authentication and listen address. The
+        // administration plane cannot safely guess those; every other section
+        // is optional runtime state and must remain repairable.
+        if (key === 'app') throw error;
+        const problem = error instanceof Error ? error.message : String(error);
+        problems.set(key, problem);
+        context.logger.error({ err: error, section: key }, 'Configuration section is unavailable.');
+      }
     }
 
     context.logger.info(
       { configDir: env.configDir, sections: [...values.keys()] },
       'Configuration loaded.',
     );
-    return new Config(env, context, values);
+    return new Config(env, context, values, problems);
   }
 
   public get env(): EnvConfig {
     return this.#env;
+  }
+
+  /** Invalid externally edited sections, while their last valid value remains active if one exists. */
+  public get problems(): readonly ConfigProblem[] {
+    return Object.freeze(
+      [...this.#problems.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, error]) => Object.freeze({ error, key })),
+    );
   }
 
   /** The sections holding a value. Deferred ones appear only after `resolve`. */
@@ -132,11 +170,27 @@ class Config {
         const section = erase(key);
         if (!isDeferred(section)) continue;
         this.#values.set(key, await loadSection(section, this.#context, contributions));
+        this.#problems.delete(key);
         resolved.push(key);
       }
 
       this.#context.logger.info({ sections: resolved }, 'Contributed configuration resolved.');
     });
+  }
+
+  /**
+   * Resolves contributed documents independently. Used by the process so one
+   * malformed optional component cannot keep the administration API offline.
+   */
+  public async resolveAvailable(contributions: ContributionReader): Promise<ConfigReloadResult> {
+    this.#contributions = contributions;
+    const keys = (Object.keys(sections) as ConfigKey[]).filter((key) => isDeferred(erase(key)));
+    return this.#updates.run(() => this.#reloadKeys(keys, contributions));
+  }
+
+  /** Re-reads mounted files, preserving each last valid in-memory document independently. */
+  public reload(): Promise<ConfigReloadResult> {
+    return this.#updates.run(() => this.#reloadKeys(Object.keys(sections) as ConfigKey[]));
   }
 
   /**
@@ -194,6 +248,7 @@ class Config {
       );
 
       this.#values.set(key, value);
+      this.#problems.delete(key);
       return { restartRequired: section.applies === 'restart', value: value as ConfigMap[K] };
     });
   }
@@ -223,6 +278,7 @@ class Config {
 
       const current = (this.#values.get(key) ?? {}) as Record<string, unknown>;
       this.#values.set(key, { ...current, [entryId]: value });
+      this.#problems.delete(key);
 
       return { restartRequired: section.applies === 'restart', value: value as EntryValue<K> };
     });
@@ -241,6 +297,7 @@ class Config {
 
       const current = (this.#values.get(key) ?? {}) as Record<string, unknown>;
       this.#values.set(key, without(current, entryId));
+      this.#problems.delete(key);
 
       return true;
     });
@@ -285,6 +342,7 @@ class Config {
       )) as Record<string, unknown>;
 
       this.#values.set(key, written);
+      this.#problems.delete(key);
       return {
         restartRequired: section.applies === 'restart',
         value: written[instanceId] as InstanceValue<K>,
@@ -314,8 +372,37 @@ class Config {
       );
 
       this.#values.set(key, written);
+      this.#problems.delete(key);
       return true;
     });
+  }
+
+  async #reloadKeys(
+    keys: readonly ConfigKey[],
+    contributions: ContributionReader | undefined = this.#contributions,
+  ): Promise<ConfigReloadResult> {
+    const changed: ConfigKey[] = [];
+    for (const key of keys) {
+      const section = erase(key);
+      try {
+        const next = await loadSection(
+          section,
+          this.#context,
+          section.kind === 'contribution' ? contributions : undefined,
+        );
+        if (stableStringify(this.#values.get(key)) !== stableStringify(next)) changed.push(key);
+        this.#values.set(key, next);
+        this.#problems.delete(key);
+      } catch (error) {
+        const problem = error instanceof Error ? error.message : String(error);
+        this.#problems.set(key, problem);
+        this.#context.logger.error(
+          { err: error, section: key },
+          'Configuration reload kept the last valid value.',
+        );
+      }
+    }
+    return Object.freeze({ changed: Object.freeze(changed), problems: this.problems });
   }
 
   /**
@@ -351,6 +438,8 @@ export { Config };
 
 export type {
   ConfigOptions,
+  ConfigProblem,
+  ConfigReloadResult,
   ConfigUpdate,
   ContributionKey,
   DirectoryKey,

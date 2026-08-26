@@ -290,6 +290,8 @@ interface ChatDecisionInput {
 
 /** Something a person said. `messageId` is this surface's own, used to deduplicate. */
 interface ChatMessageInput {
+  /** Required for a new conversation when the web broker has no default route. */
+  readonly agentId?: string;
   readonly content: readonly MessageContent[];
   readonly conversationId: string;
   readonly messageId: string;
@@ -335,6 +337,16 @@ type ChatCommandRejection =
   | { readonly reason: 'unavailable' }
   | { readonly reason: 'unknownCommand' };
 
+interface ChatAgentCatalog {
+  readonly agents: readonly string[];
+  readonly defaultAgent?: string;
+}
+
+type ChatMessageRejection =
+  | { readonly agentId: string; readonly reason: 'unknownAgent' }
+  | { readonly agents: readonly string[]; readonly reason: 'agentRequired' }
+  | { readonly reason: 'unavailable' };
+
 /**
  * What the chat routes need of whatever carries the conversation. It is stated
  * here, where it is consumed, rather than imported from the transport that
@@ -345,6 +357,8 @@ type ChatCommandRejection =
  * which is where the runtime's own rules take over.
  */
 interface ChatTransport {
+  /** Routes the operator may select for a new conversation. */
+  listAgents(): ChatAgentCatalog;
   /** Every conversation this surface carries, most recently spoken in first. */
   listConversations(): Promise<readonly ChatConversation[]>;
   /** Every command it offers, with the schema of what each one takes. */
@@ -360,9 +374,9 @@ interface ChatTransport {
    */
   submitCommand(input: ChatCommandInput): ChatCommandRejection | undefined;
   submitDecision(input: ChatDecisionInput): void;
-  submitMessage(input: ChatMessageInput): void;
+  submitMessage(input: ChatMessageInput): ChatMessageRejection | undefined;
   /** Adds direction at the next safe opening in the run in flight. */
-  submitSteer(input: ChatMessageInput): void;
+  submitSteer(input: ChatMessageInput): ChatMessageRejection | undefined;
   /** Everything the transport renders, until the returned function is called. */
   subscribe(listener: ChatListener, options?: ChatSubscriptionOptions): () => void;
 }
@@ -397,6 +411,7 @@ class ChatHub {
 export { ChatHub };
 
 export type {
+  ChatAgentCatalog,
   ChatBody,
   ChatCommand,
   ChatCommandInput,
@@ -415,6 +430,7 @@ export type {
   ChatListener,
   ChatMessageEvent,
   ChatMessageInput,
+  ChatMessageRejection,
   ChatPermissionEvent,
   ChatPermissionOutcome,
   ChatPermissionRequest,

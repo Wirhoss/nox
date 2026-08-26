@@ -1,4 +1,14 @@
 const settingsMessages = Object.freeze({
+  'settings.runtime.degraded': 'La configuración del runtime requiere atención',
+  'settings.runtime.degradedHelp':
+    'La configuración deseada se guardó, pero estos componentes no pudieron activarse. La última generación funcional continúa en servicio cuando existe.',
+  'settings.runtime.reload': 'Recargar configuración montada',
+  'settings.runtime.restartRequired': 'Reinicio requerido',
+  'settings.runtime.restartRequiredHelp':
+    'La configuración de infraestructura difiere del proceso activo y se aplicará al reiniciar.',
+  'settings.runtime.retry': 'Reintentar activación',
+  'settings.runtime.revert': 'Revertir cambio fallido',
+  'settings.runtime.unavailable': 'No hay una generación activa disponible.',
   'settings.confirm.discardAgent': '¿Descartar los cambios del agente sin guardar?',
   'settings.confirm.discardBroker': '¿Descartar los cambios del bróker sin guardar?',
   'settings.confirm.discardConfiguration': '¿Descartar los cambios de configuración sin guardar?',
@@ -19,6 +29,7 @@ const settingsMessages = Object.freeze({
   'settings.editor.json': 'JSON',
   'settings.editor.jsonObject': 'Objeto JSON',
   'settings.editor.metadata': 'Metadatos de configuración',
+  'settings.editor.mixedApply': 'INMEDIATA + REINICIO',
   'settings.editor.mode': 'Modo del editor',
   'settings.editor.removeEntry': 'Eliminar entrada',
   'settings.editor.removeEntryQuestion': '¿Eliminar la entrada de configuración?',
@@ -27,9 +38,9 @@ const settingsMessages = Object.freeze({
   'settings.editor.removeNamed': 'Eliminar {entry}',
   'settings.editor.saveChanges': 'Guardar cambios',
   'settings.editor.saved': 'Configuración guardada',
-  'settings.editor.savedImmediate': 'El nodo en ejecución ha aceptado este cambio inmediatamente.',
+  'settings.editor.savedImmediate': 'Nox ha reconciliado este cambio sin requerir un reinicio.',
   'settings.editor.savedRestart':
-    'El documento está en disco. Reinicia Nox para activar este cambio.',
+    'El documento deseado está guardado. Reinicia Nox para activar sus cambios de infraestructura.',
   'settings.editor.unsavedChanges': 'CAMBIOS SIN GUARDAR',
   'settings.entries.activation': 'ACTIVACIÓN',
   'settings.entries.configured': 'CONFIGURADAS',
@@ -82,8 +93,6 @@ const settingsMessages = Object.freeze({
     'Nox rechazará esta operación mientras un plano de agente siga mencionando este proveedor.',
   'settings.provider.save': 'Guardar proveedor',
   'settings.provider.saved': 'Configuración del proveedor guardada',
-  'settings.provider.savedBody':
-    'Reinicia Nox para componer este proveedor desde la configuración guardada.',
   'settings.provider.titleFallback': 'Proveedor',
   'settings.provider.titleNew': 'Nuevo proveedor',
   'settings.provider.validation.configurationObject':
@@ -144,8 +153,6 @@ const settingsMessages = Object.freeze({
     'Nox rechazará esta operación mientras un plano de agente siga concediendo este conjunto de herramientas.',
   'settings.toolSet.save': 'Guardar conjunto de herramientas',
   'settings.toolSet.saved': 'Configuración del conjunto de herramientas guardada',
-  'settings.toolSet.savedBody':
-    'Reinicia Nox para componer este paquete de capacidades desde la configuración guardada.',
   'settings.toolSet.titleFallback': 'Conjunto de herramientas',
   'settings.toolSet.titleNew': 'Nuevo conjunto de herramientas',
   'settings.toolSet.toolSetJson': 'JSON del conjunto de herramientas',

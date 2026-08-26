@@ -12,7 +12,6 @@ const agentMessages = Object.freeze({
   'settings.agent.contextPressure': 'Context pressure',
   'settings.agent.contextWindow': 'Context window',
   'settings.agent.customGate': 'Use a custom gate policy',
-  'settings.agent.defaultAgent': 'DEFAULT AGENT',
   'settings.agent.defaultVerdict': 'Default verdict',
   'settings.agent.description': 'Description',
   'settings.agent.descriptionHint':
@@ -65,7 +64,7 @@ const agentMessages = Object.freeze({
   'settings.agent.removeQuestion': 'Remove agent blueprint?',
   'settings.agent.removeToolSet': 'Remove {toolSet} from {channel}',
   'settings.agent.removeWarning':
-    'Nox will refuse to remove its final agent or the agent configured as the web default.',
+    'Nox will refuse removal while an enabled broker still routes to this agent.',
   'settings.agent.reserveOutput': 'Reserve for output',
   'settings.agent.riskHeuristics': 'Enable risk heuristics',
   'settings.agent.routed': 'Routed',
@@ -76,7 +75,6 @@ const agentMessages = Object.freeze({
   'settings.agent.runtimeTuning': 'RUNTIME TUNING',
   'settings.agent.save': 'Save agent',
   'settings.agent.saved': 'Agent blueprint saved',
-  'settings.agent.savedBody': 'Restart Nox to compose this agent from the saved blueprint.',
   'settings.agent.searchToolSets': 'Search configured Tool Sets',
   'settings.agent.searchToolSetsPlaceholder': 'Name, type or description',
   'settings.agent.searchTools': 'Search tools',

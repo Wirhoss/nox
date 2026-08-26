@@ -106,13 +106,6 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
                 }"
               >
                 {{ entryId }}
-                <small
-                  v-if="
-                    definition.key === 'blueprints' && settings.catalog?.defaultAgent === entryId
-                  "
-                >
-                  {{ t('common.default') }}
-                </small>
               </RouterLink>
             </div>
           </template>

@@ -336,6 +336,8 @@ interface InboundSpeech extends InboundBase {
    */
   readonly content?: readonly MessageContent[];
   readonly messageId: string;
+  /** Explicit route selected by a broker whose surface can offer that choice. */
+  readonly requestedAgentId?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly receivedAt?: Date;
   readonly text?: string;
@@ -374,6 +376,12 @@ interface InboundPermission extends InboundBase {
  */
 type InboundEvent = InboundMessage | InboundPermission | InboundSteer;
 
+/** Why selectable ingress was not accepted into a conversation. */
+type InboundRejection =
+  | { readonly agentId: string; readonly reason: 'unknownAgent' }
+  | { readonly agents: readonly string[]; readonly reason: 'agentRequired' }
+  | { readonly reason: 'unavailable' };
+
 /**
  * What the gateway hands a broker when it starts it. A concrete broker applies
  * its own channel/sender ingress rules before calling `receive`; rejected traffic
@@ -381,6 +389,10 @@ type InboundEvent = InboundMessage | InboundPermission | InboundSteer;
  * delivering an accepted event is not where a session failure is handled.
  */
 interface BrokerHost {
+  /** Agents currently available to bind a new selectable conversation. */
+  agentIds(): readonly string[];
+  /** Preferred route for a selectable conversation, when this broker names one. */
+  readonly defaultAgentId?: string;
   /**
    * Every command this Nox offers, with the schema of what each one takes. A
    * transport draws a form, fills a palette or registers slash commands from
@@ -406,7 +418,7 @@ interface BrokerHost {
     conversationId: string,
     options?: BrokerHistoryOptions,
   ): Promise<BrokerHistory | undefined>;
-  receive(event: InboundEvent): void;
+  receive(event: InboundEvent): InboundRejection | undefined;
   /**
    * Every conversation bound to this broker, most recently spoken in first. Its
    * own only: what another transport is carrying is not this one's to enumerate.
@@ -442,6 +454,7 @@ export type {
   InboundEvent,
   InboundMessage,
   InboundPermission,
+  InboundRejection,
   InboundSpeech,
   InboundSteer,
   MessageBody,

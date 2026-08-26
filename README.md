@@ -57,8 +57,17 @@ host `SecretStore`, but cannot read them back. Configuration contains only a glo
 
 The store generates `.secret-key` in `DATA_DIR` with owner-only permissions. Back up that key together
 with the database: losing it makes the encrypted values intentionally unrecoverable. Values are handed
-to configured contributions as redacted snapshot handles, so rotating a secret requires restarting its
-existing consumers. Environment variables and mounted secret directories are not alternate sources.
+to configured contributions as redacted snapshot handles. Rotating a secret reconciles replacement
+provider, tool-set, agent and broker generations; work already in flight finishes against its immutable
+snapshot. Environment variables and mounted secret directories are not alternate sources.
+
+Configuration files are durable desired state. Providers, tool sets, blueprints, brokers, log level,
+time zone and interface locale reconcile without a process restart; a failed candidate remains saved and
+visible while its last valid generation keeps serving. Settings offers retry, revert and an explicit
+**Reload mounted config** action. Set `CONFIG_WATCH=true` to add debounced filesystem reloads
+(`CONFIG_WATCH_DEBOUNCE_MS`, default 250 ms). The explicit action remains available even with the
+watcher enabled. HTTP listen address, SQLite structure/path, artifact storage construction and similar
+process infrastructure report `restartRequired` instead of pretending they changed live.
 
 Tool sets are configured as instances in `toolsets.json` and granted from a
 blueprint as either direct or routed. The builtin `web` kind has three slots —
@@ -351,18 +360,21 @@ transcript. The builtin `web` broker is Nox's own HTTP surface acting as one: it
 does not dial out, it is handed connections by the browser, and its ingress rule
 is the access token the API already checks.
 
-The web broker is not an entry in `brokers.json`. It is internal infrastructure:
-bootstrap creates exactly one, reserves the broker ID `web`, and attaches it
-before the API starts listening. `brokers.json` is only for transports that reach
-external services.
-
-With one blueprint, web conversations use that agent automatically. With more
-than one, choose the temporary default in `app.json` until the web surface offers
-an agent picker:
+The web broker is the reserved `web` entry in `brokers.json`. A missing entry is
+materialized automatically and can be disabled, but cannot be renamed or deleted
+through Settings:
 
 ```json
-{ "chat": { "defaultAgent": "nox" } }
+{
+  "web": { "type": "web", "agent": "nox" }
+}
 ```
+
+`agent` is optional for Web. With one available blueprint, Web uses it
+automatically. With multiple blueprints and no configured Web agent, every new
+conversation must explicitly choose one in the browser; Nox never invents an
+alphabetical default. Agent routing belongs to this broker rather than to a
+global `app.chat` setting.
 
 The authenticated installation owner receives every registered authority on
 this broker. The Gate still evaluates concrete risk and asks for approval where
@@ -564,10 +576,12 @@ in the tree may import one —
 `src/boundaries.test.ts` fails the build if it does — so a builtin can be
 published as its own package later by moving the directory.
 
-`NoxApplication` is deliberately *not* a plugin host: no dependency resolution,
-no activation rollback, no degraded startup, no hot unload. That machinery waits
-in `idk_yet/plugin/host.ts` until a contribution has to load from outside this
-repo or fail without taking the process down.
+`NoxApplication` is deliberately *not* a dynamic plugin host: it performs no
+package dependency resolution or extension hot unload. Runtime configuration is
+a separate generation reconciler: provider, tool-set, agent and broker failures
+are isolated, last valid generations remain active, and the authenticated
+Settings/control plane stays available for retry, revert and explicit mounted-file
+reload. External extension package loading still waits in `idk_yet/plugin/host.ts`.
 
 ## What exists today
 

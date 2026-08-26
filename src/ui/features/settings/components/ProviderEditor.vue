@@ -61,7 +61,6 @@ const coreCopyKeys: ReadonlySet<string> = new Set([
   'removeWarning',
   'save',
   'saved',
-  'savedBody',
   'titleFallback',
   'titleNew',
   'validation.configurationObject',
@@ -151,7 +150,7 @@ function resetEditor(): void {
   jsonError.value = undefined
   confirmingDelete.value = false
   syncNumericInputs()
-  jsonSource.value = JSON.stringify(draft.value, undefined, 2)
+  jsonSource.value = JSON.stringify(editableProviderConfig(draft.value), undefined, 2)
   originalJsonSignature.value = JSON.stringify(draft.value)
   originalSignature.value = formSignature()
 }
@@ -353,7 +352,7 @@ function removeModel(index: number): void {
 function switchMode(nextMode: EditorMode): void {
   if (mode.value === nextMode) return
   if (nextMode === 'json') {
-    jsonSource.value = JSON.stringify(draft.value, undefined, 2)
+    jsonSource.value = JSON.stringify(editableProviderConfig(draft.value), undefined, 2)
     jsonError.value = undefined
     mode.value = nextMode
     return
@@ -373,7 +372,9 @@ function switchMode(nextMode: EditorMode): void {
 
 function formatJson(): void {
   const parsed = parseJson(true)
-  if (parsed !== undefined) jsonSource.value = JSON.stringify(parsed, undefined, 2)
+  if (parsed !== undefined) {
+    jsonSource.value = JSON.stringify(editableProviderConfig(parsed), undefined, 2)
+  }
 }
 
 async function save(): Promise<void> {
@@ -504,7 +505,7 @@ function parseJson(report: boolean): ConfigValue | undefined {
       return undefined
     }
     if (report) jsonError.value = undefined
-    return parsed
+    return { ...editableProviderConfig(parsed), type: draft.value.type }
   } catch {
     if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
@@ -545,6 +546,10 @@ function asProviderDraft(value: ConfigValue): ProviderDraft {
     retryDelayMs: numberValue(cloned.retryDelayMs, 500),
     type: stringValue(cloned.type),
   }
+}
+
+function editableProviderConfig(value: ConfigValue): ConfigValue {
+  return withoutProperty(value, 'type')
 }
 
 function newProviderTemplate(): ProviderDraft {
@@ -641,9 +646,7 @@ function withoutProperties(
         <div class="provider-editor__badges">
           <span>{{ sourceName }}</span>
           <span>{{ draft.type }}</span>
-          <span class="provider-editor__badge--restart">{{
-            t('settings.editor.appliesOnRestart')
-          }}</span>
+          <span>{{ t('settings.editor.hotApply') }}</span>
         </div>
         <div class="provider-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
@@ -662,7 +665,15 @@ function withoutProperties(
         :title="copy('saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>{{ copy('savedBody') }}</p>
+        <p>
+          {{
+            t(
+              settings.mutation.restartRequired
+                ? 'settings.editor.savedRestart'
+                : 'settings.editor.savedImmediate',
+            )
+          }}
+        </p>
       </NoxNotice>
 
       <NoxNotice
@@ -694,6 +705,7 @@ function withoutProperties(
           </div>
           <div class="provider-editor__fields">
             <div
+              v-if="props.creating"
               class="provider-editor__field"
               :class="{ 'provider-editor__field--invalid': fieldErrors.type }"
             >
@@ -1105,11 +1117,6 @@ function withoutProperties(
   color: var(--nox-text-secondary);
   background: var(--nox-surface-1);
   font-size: 0.62rem;
-}
-
-.provider-editor__badges .provider-editor__badge--restart {
-  border-color: color-mix(in srgb, var(--nox-status-warning) 45%, var(--nox-border-subtle));
-  color: var(--nox-status-warning);
 }
 
 .provider-editor__modes {

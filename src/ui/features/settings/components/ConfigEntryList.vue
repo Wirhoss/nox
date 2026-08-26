@@ -4,8 +4,6 @@ import { RouterLink } from 'vue-router'
 
 import { useI18n } from '@/shared/i18n'
 
-import { useSettingsStore } from '../stores/settings.store'
-
 import type { ConfigSection, ConfigValue } from '../api/settings.api'
 import type { SettingsSectionDefinition } from '../model/sections'
 
@@ -16,7 +14,6 @@ interface Props {
 
 const props = defineProps<Props>()
 const { t } = useI18n()
-const settings = useSettingsStore()
 const entries = computed(() =>
   Object.entries(props.section.value).map(([entryId, value]) => ({
     entryId,
@@ -111,14 +108,6 @@ function isConfigValue(value: unknown): value is ConfigValue {
           <div>
             <span class="entry-list__id">
               {{ entry.entryId }}
-              <small
-                v-if="
-                  props.section.key === 'blueprints' &&
-                  settings.catalog?.defaultAgent === entry.entryId
-                "
-              >
-                {{ t('common.default') }}
-              </small>
             </span>
             <strong>{{ detail(entry.value) }}</strong>
             <p v-if="description(entry.value) !== undefined">{{ description(entry.value) }}</p>

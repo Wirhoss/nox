@@ -34,6 +34,7 @@ interface HostAnswers {
 /** The gateway's end of a broker, reduced to what it recorded and what it answers. */
 function testHost(received: InboundEvent[], answers: HostAnswers = {}): BrokerHost {
   return {
+    agentIds: () => ['nox'],
     command: (invocation) => {
       answers.invoked?.push(invocation);
       return answers.rejection;
@@ -44,8 +45,9 @@ function testHost(received: InboundEvent[], answers: HostAnswers = {}): BrokerHo
       return Promise.resolve(answers.history);
     },
     logger: silentLogger,
-    receive: (event: InboundEvent): void => {
+    receive: (event: InboundEvent) => {
       received.push(event);
+      return undefined;
     },
     sessions: () => Promise.resolve(answers.sessions ?? []),
     signal: new AbortController().signal,

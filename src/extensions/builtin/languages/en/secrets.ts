@@ -10,7 +10,7 @@ const secretMessages = Object.freeze({
   'settings.secrets.delete': 'Delete secret',
   'settings.secrets.deleteQuestion': 'Delete managed secret?',
   'settings.secrets.deleteWarning':
-    'The value cannot be recovered. Running consumers may retain their current snapshot, but the next restart will fail if configuration still references this ID.',
+    'The value cannot be recovered. Turns already in flight may finish with their current snapshot; future generations cannot resolve this ID while it remains unset.',
   'settings.secrets.id': 'Secret ID',
   'settings.secrets.idHint': 'Stable reference used in configuration, for example OPENAI_API_KEY.',
   'settings.secrets.managed': 'SECURITY // MANAGED SECRETS',
@@ -34,13 +34,13 @@ const secretMessages = Object.freeze({
   'settings.secrets.replaceValue': 'Replace value',
   'settings.secrets.runtimeReferences': 'RUNTIME REFERENCES',
   'settings.secrets.runtimeReferencesHelp':
-    'Consumers already holding a handle keep their snapshot until restart.',
+    'Contributions that resolved this ID in the current process. In-flight turns keep immutable snapshots while replacement generations activate.',
   'settings.secrets.store': 'Store secret',
   'settings.secrets.storeCredential': 'Store credential',
   'settings.secrets.storeStatus': 'STORE STATUS',
   'settings.secrets.stored': 'STORED',
   'settings.secrets.storedRestart':
-    'One or more running consumers retain the previous value until Nox restarts.',
+    'Turns already in flight may finish with the previous value; new generations use this one.',
   'settings.secrets.storedTitle': 'Secret stored',
   'settings.secrets.updated': 'UPDATED',
   'settings.secrets.updatedAt': 'updated {date}',

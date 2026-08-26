@@ -37,6 +37,7 @@ import type {
   InboundEvent,
   InboundMessage,
   InboundPermission,
+  InboundRejection,
   InboundSteer,
   MessageBody,
   OutboundBody,
@@ -48,7 +49,8 @@ const SEEN_LIMIT = 256;
 
 /** The complete agent route and authorization policy for one conversation. */
 interface BrokerConversationGrant {
-  readonly agentId: string;
+  /** Optional only for a surface that asks which agent should bind a new conversation. */
+  readonly agentId?: string;
   /** Absent is not permissive: a session without one authorizes nothing. */
   readonly authorization?: AuthorizationProvider;
 }
@@ -58,10 +60,13 @@ interface BrokerGrant extends BrokerConversationGrant {
   readonly broker: Broker;
   readonly brokerId: string;
   readonly conversations?: Readonly<Record<string, BrokerConversationGrant>>;
+  /** Whether this transport may carry an explicit agent route from its trusted UI. */
+  readonly selectableAgent?: boolean;
 }
 
 interface GatewayOptions {
   brokers: readonly BrokerGrant[];
+  brokerStatus?: (brokerId: string, state: 'active' | 'failed', error?: string) => void;
   /**
    * Commands on top of the built-in ones. A name that already exists is a
    * configuration error rather than an override: a transport rendered `stop`
@@ -242,10 +247,12 @@ function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | un
  * turns of one session, never two sessions racing to be the one that chat is.
  */
 class Gateway implements MessageGateway, ScheduledRunHost {
+  readonly #activeBrokers = new Set<string>();
   readonly #application: NoxApplication;
+  readonly #brokerStatus?: GatewayOptions['brokerStatus'];
   readonly #commands: CommandCatalog;
   readonly #conversations = new Map<string, Conversation>();
-  readonly #grants: readonly BrokerGrant[];
+  readonly #grants = new Map<string, BrokerGrant>();
   readonly #logger: Logger;
   /** Permission prompts in flight, with the originating turn they must retain. */
   readonly #pending = new Map<string, PendingDelivery>();
@@ -264,25 +271,24 @@ class Gateway implements MessageGateway, ScheduledRunHost {
 
   constructor(application: NoxApplication, options: GatewayOptions) {
     this.#application = application;
+    this.#brokerStatus = options.brokerStatus;
     this.#commands = new CommandCatalog([...BUILTIN_COMMANDS, ...(options.commands ?? [])]);
-    this.#grants = Object.freeze([...options.brokers]);
     this.#logger = options.logger ?? silentLogger;
     this.#store = new ConversationStore(options.database);
     this.#transcripts = new SessionStore(options.database, { logger: this.#logger });
 
     const ids = new Set<string>();
-    for (const grant of this.#grants) {
+    for (const grant of options.brokers) {
       if (ids.has(grant.brokerId)) {
         throw new Error(`Broker "${grant.brokerId}" is configured more than once.`);
       }
       ids.add(grant.brokerId);
+      this.#grants.set(grant.brokerId, grant);
     }
   }
 
   public get brokerIds(): readonly string[] {
-    return Object.freeze(
-      this.#grants.map((grant) => grant.brokerId).sort((a, b) => a.localeCompare(b)),
-    );
+    return Object.freeze([...this.#activeBrokers].sort((a, b) => a.localeCompare(b)));
   }
 
   /** Every command this Nox offers, in the shape a transport renders. */
@@ -305,23 +311,93 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     }
     this.#state = 'running';
 
-    for (const grant of this.#grants) {
-      await grant.broker.start({
-        command: (invocation: CommandInvocation): CommandRejection | undefined =>
-          this.#command(grant, invocation),
-        commands: this.#commands.specs,
-        history: (
-          conversationId: string,
-          options?: BrokerHistoryOptions,
-        ): Promise<BrokerHistory | undefined> => this.#history(grant, conversationId, options),
-        logger: this.#logger.child(grant.brokerId),
-        receive: (event: InboundEvent): void => {
-          this.#receive(grant, event);
-        },
-        sessions: (): Promise<readonly BrokerSession[]> => this.#sessions(grant),
-        signal: this.#application.signal,
-      });
+    for (const grant of this.#grants.values()) {
+      try {
+        await this.#startBroker(grant);
+        this.#activeBrokers.add(grant.brokerId);
+        this.#brokerStatus?.(grant.brokerId, 'active');
+      } catch (error) {
+        const problem = error instanceof Error ? error.message : String(error);
+        this.#brokerStatus?.(grant.brokerId, 'failed', problem);
+        this.#logger.error(
+          { brokerId: grant.brokerId, err: error },
+          'Broker failed to start; other transports remain available.',
+        );
+      }
     }
+  }
+
+  /**
+   * Publishes a broker generation after conversations on the previous one finish
+   * their current turn. If the candidate cannot start, the previous generation
+   * is restarted and remains the active route.
+   */
+  public async replaceBroker(grant: BrokerGrant): Promise<void> {
+    if (this.#state !== 'running') {
+      throw new Error(`The gateway cannot replace a broker while it is ${this.#state}.`);
+    }
+
+    const previous = this.#grants.get(grant.brokerId);
+    if (previous !== undefined) {
+      this.#activeBrokers.delete(grant.brokerId);
+      await this.retireBrokerSessions(grant.brokerId);
+      try {
+        await previous.broker.stop();
+      } catch (error) {
+        this.#activeBrokers.add(previous.brokerId);
+        throw error;
+      }
+    }
+
+    try {
+      await this.#startBroker(grant);
+      this.#grants.set(grant.brokerId, grant);
+      this.#activeBrokers.add(grant.brokerId);
+      this.#brokerStatus?.(grant.brokerId, 'active');
+    } catch (error) {
+      await grant.broker.stop().catch((stopError: unknown) => {
+        this.#logger.error(
+          { brokerId: grant.brokerId, err: stopError },
+          'Failed broker candidate did not stop cleanly.',
+        );
+      });
+      const problem = error instanceof Error ? error.message : String(error);
+      this.#brokerStatus?.(grant.brokerId, 'failed', problem);
+      if (previous !== undefined) {
+        try {
+          await this.#startBroker(previous);
+          this.#grants.set(previous.brokerId, previous);
+          this.#activeBrokers.add(previous.brokerId);
+          this.#brokerStatus?.(previous.brokerId, 'active');
+        } catch (rollbackError) {
+          this.#logger.error(
+            { brokerId: previous.brokerId, err: rollbackError },
+            'The previous broker generation could not be restored.',
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** Stops and removes a broker after its current conversation turns settle. */
+  public async removeBroker(brokerId: string): Promise<boolean> {
+    const grant = this.#grants.get(brokerId);
+    if (grant === undefined) return false;
+
+    this.#activeBrokers.delete(brokerId);
+    await this.retireBrokerSessions(brokerId);
+    try {
+      await grant.broker.stop();
+    } catch (error) {
+      // The route remains the last published generation when a transport could
+      // not confirm that it stopped. New messages may transparently reopen the
+      // sessions retired above while configuration exposes the failed removal.
+      this.#activeBrokers.add(brokerId);
+      throw error;
+    }
+    this.#grants.delete(brokerId);
+    return true;
   }
 
   /**
@@ -334,7 +410,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     this.#state = 'stopped';
     this.#scheduledAbort.abort(new Error('The gateway stopped.'));
 
-    for (const grant of [...this.#grants].reverse()) {
+    for (const grant of [...this.#grants.values()].reverse()) {
       try {
         await grant.broker.stop();
       } catch (error) {
@@ -343,8 +419,60 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     }
     await Promise.allSettled([...this.#scheduledWork]);
 
+    this.#activeBrokers.clear();
     this.#conversations.clear();
     this.#pending.clear();
+  }
+
+  /** Starts one broker with callbacks bound to exactly that immutable grant. */
+  async #startBroker(grant: BrokerGrant): Promise<void> {
+    await grant.broker.start({
+      agentIds: () => this.#application.agentIds,
+      command: (invocation: CommandInvocation): CommandRejection | undefined =>
+        this.#command(grant, invocation),
+      commands: this.#commands.specs,
+      ...(grant.agentId === undefined ? {} : { defaultAgentId: grant.agentId }),
+      history: (
+        conversationId: string,
+        options?: BrokerHistoryOptions,
+      ): Promise<BrokerHistory | undefined> => this.#history(grant, conversationId, options),
+      logger: this.#logger.child(grant.brokerId),
+      receive: (event: InboundEvent): InboundRejection | undefined => this.#receive(grant, event),
+      sessions: (): Promise<readonly BrokerSession[]> => this.#sessions(grant),
+      signal: this.#application.signal,
+    });
+  }
+
+  /** Retires live sessions carried by one broker after their current turns. */
+  public async retireBrokerSessions(brokerId: string): Promise<void> {
+    const retirements = [...this.#conversations.entries()]
+      .filter(([, conversation]) => conversation.key.brokerId === brokerId)
+      .map(([mapKey, conversation]) => this.#retireConversation(mapKey, conversation));
+    await Promise.all(retirements);
+  }
+
+  /**
+   * Retires live snapshots of one agent after their current turns. Per-conversation
+   * queueing makes later messages wait, then transparently reopen the same stored
+   * transcript through the newly published agent generation.
+   */
+  public async retireAgentSessions(agentId: string): Promise<void> {
+    const retirements = [...this.#conversations.entries()]
+      .filter(([, conversation]) => conversation.session.agentId === agentId)
+      .map(([mapKey, conversation]) => this.#retireConversation(mapKey, conversation));
+    await Promise.all(retirements);
+  }
+
+  #retireConversation(mapKey: string, conversation: Conversation): Promise<void> {
+    return this.#queue(mapKey, async () => {
+      await conversation.session.idle;
+      if (this.#conversations.get(mapKey) !== conversation) return;
+      this.#conversations.delete(mapKey);
+      for (const [requestId, pending] of this.#pending) {
+        if (pending.conversation === conversation) this.#pending.delete(requestId);
+      }
+      await this.#application.closeSession(conversation.session.sessionId);
+    });
   }
 
   /** Resolves once everything queued for every conversation has settled. */
@@ -419,9 +547,11 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       let deliveredAt: Date | undefined;
       let deliveryError: string | undefined;
       if (request.delivery !== undefined) {
-        const grant = this.#grants.find(
-          (candidate) => candidate.brokerId === request.delivery?.brokerId,
-        );
+        const candidate = this.#grants.get(request.delivery.brokerId);
+        const grant =
+          candidate !== undefined && this.#activeBrokers.has(candidate.brokerId)
+            ? candidate
+            : undefined;
         if (!hasUsableContent(content)) {
           deliveryError = 'The scheduled agent produced no response to deliver.';
         } else if (grant === undefined) {
@@ -467,10 +597,27 @@ class Gateway implements MessageGateway, ScheduledRunHost {
    * What a broker calls. It returns immediately and never throws: a transport
    * handing over what arrived is not where a session's failure is handled.
    */
-  #receive(grant: BrokerGrant, event: InboundEvent): void {
-    if (this.#state !== 'running') return;
+  #receive(grant: BrokerGrant, event: InboundEvent): InboundRejection | undefined {
+    if (
+      this.#state !== 'running' ||
+      !this.#activeBrokers.has(grant.brokerId) ||
+      this.#grants.get(grant.brokerId) !== grant
+    ) {
+      return { reason: 'unavailable' };
+    }
 
-    this.#queue(keyOf(grant.brokerId, event.conversationId), async () => {
+    if (event.type === 'message' || event.type === 'steer') {
+      const requested = event.requestedAgentId;
+      if (requested !== undefined) {
+        if (grant.selectableAgent !== true || !this.#application.agentIds.includes(requested)) {
+          return { agentId: requested, reason: 'unknownAgent' };
+        }
+      } else if (this.#bindingFor(grant, event.conversationId).agentId === undefined) {
+        return { agents: this.#application.agentIds, reason: 'agentRequired' };
+      }
+    }
+
+    void this.#queue(keyOf(grant.brokerId, event.conversationId), async () => {
       switch (event.type) {
         case 'message':
         case 'steer':
@@ -481,10 +628,11 @@ class Gateway implements MessageGateway, ScheduledRunHost {
           break;
       }
     });
+    return undefined;
   }
 
   /** Chains work per conversation, so nothing about one chat runs twice at once. */
-  #queue(key: string, task: () => Promise<void>): void {
+  #queue(key: string, task: () => Promise<void>): Promise<void> {
     const previous = this.#work.get(key) ?? Promise.resolve();
     const next: Promise<void> = previous
       .then(task)
@@ -497,6 +645,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
         if (this.#work.get(key) === next) this.#work.delete(key);
       });
     this.#work.set(key, next);
+    return next;
   }
 
   /**
@@ -512,7 +661,12 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     if (!hasUsableContent(content)) return;
 
     const binding = this.#bindingFor(grant, message.conversationId);
-    const conversation = await this.#attach(grant, binding, message.conversationId);
+    const conversation = await this.#attach(
+      grant,
+      binding,
+      message.conversationId,
+      message.requestedAgentId,
+    );
 
     // A transport that retries a delivery must not produce a second turn. This
     // is remembered per live conversation, not stored: a duplicate arriving
@@ -560,12 +714,18 @@ class Gateway implements MessageGateway, ScheduledRunHost {
    * race the run it is about.
    */
   #command(grant: BrokerGrant, invocation: CommandInvocation): CommandRejection | undefined {
-    if (this.#state !== 'running') return { reason: 'unavailable' };
+    if (
+      this.#state !== 'running' ||
+      !this.#activeBrokers.has(grant.brokerId) ||
+      this.#grants.get(grant.brokerId) !== grant
+    ) {
+      return { reason: 'unavailable' };
+    }
 
     const checked = this.#commands.check(invocation);
     if ('rejection' in checked) return checked.rejection;
 
-    this.#queue(keyOf(grant.brokerId, invocation.conversationId), () =>
+    void this.#queue(keyOf(grant.brokerId, invocation.conversationId), () =>
       this.#runCommand(grant, invocation, checked.command, checked.args),
     );
     return undefined;
@@ -735,6 +895,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     grant: BrokerGrant,
     binding: BrokerConversationGrant,
     conversationId: string,
+    requestedAgentId?: string,
   ): Promise<Conversation> {
     const mapKey = keyOf(grant.brokerId, conversationId);
     const live = this.#conversations.get(mapKey);
@@ -747,7 +908,10 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     const bound = await this.#store.find(key);
     // A route chooses an agent only when the conversation is first bound. Changing
     // the broker default must not move existing transcripts to another agent.
-    const agentId = bound?.agentId ?? binding.agentId;
+    const agentId = bound?.agentId ?? requestedAgentId ?? binding.agentId;
+    if (agentId === undefined) {
+      throw new Error(`Broker "${grant.brokerId}" did not select an agent for this conversation.`);
+    }
     const session = await this.#application.openSession(agentId, {
       artifactScope: artifactConversationScope(grant.brokerId, conversationId),
       authorization: binding.authorization,

@@ -22,7 +22,7 @@ const accessMessages = Object.freeze({
   'access.frame.webAccess': 'Acceso web',
   'access.registration.description':
     'Crea la única identidad de operador que será propietaria de esta instalación.',
-  'access.registration.eyebrow': 'NOX // PRIMERA RECLAMACIÓN',
+  'access.registration.eyebrow': 'NOX // RECLAMAR',
   'access.registration.status': 'Nodo sin reclamar',
   'access.registration.title': 'Reclama esta máquina',
   'access.signedOut.description': 'Identifícate para entrar en esta instalación local de Nox.',
@@ -64,7 +64,7 @@ const accessMessages = Object.freeze({
   'auth.registration.identityHint': 'Solo letras, dígitos, puntos, guiones y guiones bajos.',
   'auth.registration.passwordPlaceholder': '8 caracteres como mínimo',
   'auth.registration.rejected': 'Reclamación rechazada',
-  'auth.registration.submit': 'Reclamar este Nox',
+  'auth.registration.submit': 'Reclamar',
   'auth.validation.claimCodeRequired':
     'Introduce el código de reclamación mostrado por el contenedor de Nox.',
   'auth.validation.confirmPasswordRequired': 'Confirma la contraseña.',

@@ -17,7 +17,7 @@ const brokerMessages = Object.freeze({
   'settings.broker.brokerJsonHelp':
     'Acceso completo al enrutamiento, autorización y campos aportados. Las credenciales deben conservarse como referencias $secret.',
   'settings.broker.changeRefused': 'Cambio de bróker rechazado',
-  'settings.broker.composeOnRestart': 'Componer al reiniciar',
+  'settings.broker.composeOnRestart': 'Activar bróker',
   'settings.broker.composeOnRestartHelp':
     'Las entradas desactivadas siguen configuradas, pero no abren conexiones, rutas ni secretos.',
   'settings.broker.contribution': 'CONTRIBUCIÓN',
@@ -52,13 +52,12 @@ const brokerMessages = Object.freeze({
   'settings.broker.remove': 'Eliminar bróker',
   'settings.broker.removeQuestion': '¿Eliminar el bróker?',
   'settings.broker.removeWarning':
-    'El transporte externo dejará de componerse después de reiniciar Nox.',
+    'El transporte se detendrá cuando terminen los turnos actuales de sus conversaciones.',
   'settings.broker.routing': 'ENRUTAMIENTO',
   'settings.broker.save': 'Guardar bróker',
   'settings.broker.saved': 'Configuración del bróker guardada',
-  'settings.broker.savedBody':
-    'Reinicia Nox para componer este transporte y sus rutas de conversación.',
   'settings.broker.secretValueHint': 'Si se deja vacío se conserva el valor existente.',
+  'settings.broker.askAgentOnNewConversation': 'Preguntar al iniciar una conversación',
   'settings.broker.selectAgent': 'Selecciona un agente',
   'settings.broker.sender': 'REMITENTE',
   'settings.broker.senderId': 'ID del remitente',
@@ -72,8 +71,6 @@ const brokerMessages = Object.freeze({
   'settings.broker.transportRoute': 'Ruta del transporte',
   'settings.broker.transportRouteHelp':
     'Cada conversación entra mediante un transporte aportado y recurre a un agente base.',
-  'settings.broker.type': 'Tipo de bróker',
-  'settings.broker.typeHint': 'Discriminador registrado por la extensión de bróker instalada.',
   'settings.broker.typeUnset': 'TIPO SIN DEFINIR',
   'settings.broker.useBaseAgent': 'Usar {agent}',
   'settings.broker.validation.agentAvailable': 'Elige un plano de agente disponible en este Nox.',
@@ -99,7 +96,6 @@ const brokerMessages = Object.freeze({
     'Los ID de remitente deben ser únicos dentro de esta ruta.',
   'settings.broker.validation.storeBeforeEnabling':
     'Guarda un valor antes de activar esta referencia del bróker.',
-  'settings.broker.validation.typeRequired': 'Se requiere el tipo de bróker aportado.',
   'settings.broker.validation.webReserved': 'El ID «web» está reservado para el chat de Nox.',
 } as const);
 

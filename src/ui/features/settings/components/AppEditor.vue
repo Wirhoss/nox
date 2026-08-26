@@ -37,10 +37,6 @@ interface AuthDraft extends ConfigValue {
   secureCookies: boolean
 }
 
-interface ChatDraft extends ConfigValue {
-  defaultAgent?: string
-}
-
 interface DatabaseDraft extends ConfigValue {
   busyTimeoutMs: number
   path: string
@@ -55,7 +51,6 @@ interface AppDraft extends ConfigValue {
   api: ApiDraft
   artifacts: ArtifactDraft
   auth: AuthDraft
-  chat: ChatDraft
   database: DatabaseDraft
   logLevel: string
   timezone: string
@@ -63,7 +58,6 @@ interface AppDraft extends ConfigValue {
 }
 
 interface Props {
-  blueprintSection?: ConfigSection
   definition: SettingsSectionDefinition
   section: ConfigSection
 }
@@ -72,7 +66,7 @@ const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error'] as const
 const SYNCHRONOUS_MODES = ['extra', 'full', 'normal', 'off'] as const
 const props = defineProps<Props>()
 const settings = useSettingsStore()
-const { availableLanguages, plural, setLocale, t } = useI18n()
+const { availableLanguages, setLocale, t } = useI18n()
 const mode = ref<EditorMode>('form')
 const draft = ref<AppDraft>(appTemplate())
 const jsonSource = ref('')
@@ -89,24 +83,9 @@ const numericInputs = reactive<Record<NumericInputKey, string>>({
   refreshTtlSeconds: '2592000',
 })
 const selectedValue = computed(() => props.section.value)
-const agentIds = computed(() =>
-  Object.keys(props.blueprintSection?.value ?? {}).sort((a, b) => a.localeCompare(b)),
-)
-const configuredDefaultAgent = computed(() => draft.value.chat.defaultAgent ?? '')
 const configuredLocaleMissing = computed(
   () => !availableLanguages.value.some((language) => language.locale === draft.value.ui.locale),
 )
-const defaultAgentMissing = computed(
-  () =>
-    configuredDefaultAgent.value.length > 0 &&
-    !agentIds.value.includes(configuredDefaultAgent.value),
-)
-const automaticAgentLabel = computed(() => {
-  const [only] = agentIds.value
-  return agentIds.value.length === 1 && only !== undefined
-    ? t('settings.general.automaticAgent', { agent: only })
-    : t('settings.general.selectDefaultAgent')
-})
 const dirty = computed(() => {
   if (mode.value === 'json') {
     const parsed = parseJson(false)
@@ -170,17 +149,6 @@ function setUiLocale(value: string): void {
 function setTimezone(value: string): void {
   draft.value = { ...draft.value, timezone: value }
   clearFeedback('timezone')
-}
-
-function setDefaultAgent(value: string): void {
-  draft.value = {
-    ...draft.value,
-    chat:
-      value.length === 0
-        ? withoutProperty(draft.value.chat, 'defaultAgent')
-        : { ...draft.value.chat, defaultAgent: value },
-  }
-  clearFeedback('defaultAgent')
 }
 
 function setSecureCookies(event: Event): void {
@@ -298,13 +266,6 @@ function validateForm(): boolean {
     errors.timezone = t('settings.general.validation.timezone')
   }
 
-  const defaultAgent = configuredDefaultAgent.value
-  if (defaultAgent.length === 0 && agentIds.value.length !== 1) {
-    errors.defaultAgent = t('settings.general.validation.defaultAgentRequired')
-  } else if (defaultAgent.length > 0 && !agentIds.value.includes(defaultAgent)) {
-    errors.defaultAgent = t('settings.general.validation.defaultAgentExists')
-  }
-
   fieldErrors.value = errors
   return Object.keys(errors).length === 0
 }
@@ -367,10 +328,8 @@ function asAppDraft(value: ConfigValue): AppDraft {
   const api = objectValue(cloned.api)
   const artifacts = objectValue(cloned.artifacts)
   const auth = objectValue(cloned.auth)
-  const chat = objectValue(cloned.chat)
   const database = objectValue(cloned.database)
   const ui = objectValue(cloned.ui)
-  const defaultAgent = stringValue(chat.defaultAgent)
   const host = stringValue(api.host)
   const path = stringValue(database.path)
   const synchronous = stringValue(database.synchronous)
@@ -395,10 +354,6 @@ function asAppDraft(value: ConfigValue): AppDraft {
       accessTtlSeconds: numberValue(auth.accessTtlSeconds, 900),
       refreshTtlSeconds: numberValue(auth.refreshTtlSeconds, 30 * 24 * 60 * 60),
       secureCookies: booleanValue(auth.secureCookies, false),
-    },
-    chat: {
-      ...withoutProperty(chat, 'defaultAgent'),
-      ...(defaultAgent.length > 0 ? { defaultAgent } : {}),
     },
     database: {
       ...database,
@@ -453,9 +408,6 @@ function cloneValue<T extends ConfigValue>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-function withoutProperty(value: ConfigValue, property: string): ConfigValue {
-  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== property))
-}
 </script>
 
 <template>
@@ -469,8 +421,8 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
       <div class="app-editor__header-side">
         <div class="app-editor__badges">
           <span>{{ props.section.name }}</span>
-          <span class="app-editor__badge--restart">{{
-            t('settings.editor.appliesOnRestart')
+          <span class="app-editor__badge--mixed">{{
+            t('settings.editor.mixedApply')
           }}</span>
         </div>
         <div class="app-editor__modes" :aria-label="t('settings.editor.mode')">
@@ -490,7 +442,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         :title="t('settings.general.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>{{ t('settings.general.savedBody') }}</p>
+        <p>
+          {{
+            t(
+              settings.mutation.restartRequired
+                ? 'settings.editor.savedRestart'
+                : 'settings.editor.savedImmediate',
+            )
+          }}
+        </p>
       </NoxNotice>
 
       <NoxNotice
@@ -588,48 +548,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
           </div>
         </section>
 
-        <section class="app-editor__section" aria-labelledby="app-chat-title">
-          <div class="app-editor__section-copy">
-            <p>03 // {{ t('settings.general.webChat') }}</p>
-            <h3 id="app-chat-title">{{ t('settings.general.conversationEntrypoint') }}</h3>
-            <span>{{ t('settings.general.conversationEntrypointHelp') }}</span>
-          </div>
-          <div class="app-editor__fields">
-            <div
-              class="app-editor__field"
-              :class="{ 'app-editor__field--invalid': fieldErrors.defaultAgent }"
-            >
-              <label for="app-default-agent">
-                {{ t('settings.general.defaultAgent') }}
-                <small v-if="agentIds.length !== 1">{{ t('common.requiredShort') }}</small>
-              </label>
-              <select
-                id="app-default-agent"
-                :value="configuredDefaultAgent"
-                :aria-invalid="fieldErrors.defaultAgent !== undefined"
-                @change="setDefaultAgent(($event.target as HTMLSelectElement).value)"
-              >
-                <option value="">{{ automaticAgentLabel }}</option>
-                <option v-for="agentId in agentIds" :key="agentId" :value="agentId">
-                  {{ agentId }}
-                </option>
-                <option v-if="defaultAgentMissing" :value="configuredDefaultAgent">
-                  {{ configuredDefaultAgent }} · {{ t('common.missing') }}
-                </option>
-              </select>
-              <p v-if="fieldErrors.defaultAgent" class="app-editor__error">
-                {{ fieldErrors.defaultAgent }}
-              </p>
-              <p v-else class="app-editor__hint">
-                {{ plural('settings.general.configuredAgents', agentIds.length) }}
-              </p>
-            </div>
-          </div>
-        </section>
-
         <section class="app-editor__section" aria-labelledby="app-auth-title">
           <div class="app-editor__section-copy">
-            <p>04 // {{ t('settings.general.access') }}</p>
+            <p>03 // {{ t('settings.general.access') }}</p>
             <h3 id="app-auth-title">{{ t('settings.general.sessionSecurity') }}</h3>
             <span>{{ t('settings.general.sessionSecurityHelp') }}</span>
           </div>
@@ -682,7 +603,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="app-editor__section" aria-labelledby="app-database-title">
           <div class="app-editor__section-copy">
-            <p>05 // {{ t('settings.general.dataPlane') }}</p>
+            <p>04 // {{ t('settings.general.dataPlane') }}</p>
             <h3 id="app-database-title">{{ t('settings.general.sqliteStorage') }}</h3>
             <span>{{ t('settings.general.sqliteStorageHelp') }}</span>
           </div>
@@ -763,7 +684,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
         <section class="app-editor__section" aria-labelledby="app-logging-title">
           <div class="app-editor__section-copy">
-            <p>06 // {{ t('settings.general.diagnostics') }}</p>
+            <p>05 // {{ t('settings.general.diagnostics') }}</p>
             <h3 id="app-logging-title">{{ t('settings.general.runtimeLogging') }}</h3>
             <span>{{ t('settings.general.runtimeLoggingHelp') }}</span>
           </div>
@@ -893,7 +814,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   font-size: 0.62rem;
 }
 
-.app-editor__badges .app-editor__badge--restart {
+.app-editor__badges .app-editor__badge--mixed {
   border-color: color-mix(in srgb, var(--nox-status-warning) 45%, var(--nox-border-subtle));
   color: var(--nox-status-warning);
 }

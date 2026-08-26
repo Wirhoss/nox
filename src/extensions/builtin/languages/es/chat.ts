@@ -1,4 +1,9 @@
 const chatMessages = Object.freeze({
+  'chat.agent.chooseHelp': 'Elige el agente configurado que será dueño de esta conversación.',
+  'chat.agent.choosePlaceholder': 'Selecciona un agente',
+  'chat.agent.chooseTitle': 'Elige un agente',
+  'chat.agent.noneAvailable':
+    'No hay ningún agente disponible. Configura o repara un blueprint en Ajustes.',
   'chat.action.loadConversation': 'cargar esta conversación',
   'chat.action.loadConversations': 'cargar las conversaciones del chat',
   'chat.action.refreshConversations': 'actualizar las conversaciones',

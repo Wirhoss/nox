@@ -31,6 +31,16 @@ const section = computed(() => {
   const key = definition.value.key
   return key !== undefined && settings.section?.key === key ? settings.section : undefined
 })
+const runtimeIssues = computed(
+  () =>
+    settings.catalog?.runtime.filter(
+      (component) => component.state === 'failed' || component.state === 'unavailable',
+    ) ?? [],
+)
+const runtimeRestarts = computed(
+  () =>
+    settings.catalog?.runtime.filter((component) => component.state === 'restartRequired') ?? [],
+)
 const targetExists = computed(() => {
   if (entryId.value === undefined) return true
   if (definition.value.slug === 'secrets') {
@@ -55,6 +65,11 @@ watch(
   },
   { immediate: true },
 )
+
+async function reloadConfiguration(): Promise<void> {
+  await settings.reloadConfiguration()
+  if (definition.value.key !== undefined) await settings.loadSection(definition.value.key)
+}
 
 async function retry(): Promise<void> {
   if (definition.value.slug === 'secrets') {
@@ -86,6 +101,62 @@ function routeParam(name: string): string | undefined {
     <SettingsNavigation />
 
     <section class="settings__workbench" aria-live="polite">
+      <div v-if="settings.catalog !== undefined" class="settings__control-actions">
+        <NoxButton
+          :busy="settings.mutation.type === 'saving'"
+          variant="ghost"
+          @click="reloadConfiguration()"
+        >
+          {{ t('settings.runtime.reload') }}
+        </NoxButton>
+      </div>
+
+      <NoxNotice
+        v-if="runtimeRestarts.length > 0"
+        class="settings__runtime"
+        :title="t('settings.runtime.restartRequired')"
+        tone="warning"
+      >
+        <p>{{ t('settings.runtime.restartRequiredHelp') }}</p>
+        <ul>
+          <li v-for="component in runtimeRestarts" :key="`${component.kind}:${component.id}`">
+            <strong>{{ component.kind }} // {{ component.id }}</strong>
+          </li>
+        </ul>
+      </NoxNotice>
+
+      <NoxNotice
+        v-if="runtimeIssues.length > 0"
+        class="settings__runtime"
+        :title="t('settings.runtime.degraded')"
+        tone="danger"
+      >
+        <p>{{ t('settings.runtime.degradedHelp') }}</p>
+        <ul>
+          <li v-for="component in runtimeIssues" :key="`${component.kind}:${component.id}`">
+            <strong>{{ component.kind }} // {{ component.id }}</strong>
+            <span>{{ component.error ?? t('settings.runtime.unavailable') }}</span>
+          </li>
+        </ul>
+        <div class="settings__runtime-actions">
+          <NoxButton
+            :busy="settings.mutation.type === 'saving'"
+            variant="secondary"
+            @click="settings.retryRuntime()"
+          >
+            {{ t('settings.runtime.retry') }}
+          </NoxButton>
+          <NoxButton
+            v-if="settings.catalog?.revertAvailable"
+            :busy="settings.mutation.type === 'saving'"
+            variant="ghost"
+            @click="settings.revertRuntime()"
+          >
+            {{ t('settings.runtime.revert') }}
+          </NoxButton>
+        </div>
+      </NoxNotice>
+
       <div v-if="settings.resource.type === 'loading'" class="settings__loading">
         <span aria-hidden="true"></span>
         <div>
@@ -129,7 +200,6 @@ function routeParam(name: string): string | undefined {
 
       <AppEditor
         v-else-if="section?.key === 'app'"
-        :blueprint-section="settings.references.blueprints"
         :definition="definition"
         :section="section"
       />
@@ -209,6 +279,38 @@ function routeParam(name: string): string | undefined {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+}
+
+.settings__runtime {
+  margin: var(--nox-space-5) var(--nox-space-8) 0;
+}
+
+.settings__runtime ul {
+  display: grid;
+  gap: var(--nox-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.settings__runtime li {
+  display: grid;
+  gap: var(--nox-space-1);
+}
+
+.settings__control-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings__runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nox-space-2);
+}
+
+.settings__runtime strong {
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
 }
 
 .settings__loading,

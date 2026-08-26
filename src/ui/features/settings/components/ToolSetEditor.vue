@@ -509,9 +509,7 @@ function validHttpUrl(value: string): boolean {
         <div class="tool-set-editor__badges">
           <span>{{ sourceName }}</span>
           <span>{{ draft.type }}</span>
-          <span class="tool-set-editor__badge--restart">{{
-            t('settings.editor.appliesOnRestart')
-          }}</span>
+          <span>{{ t('settings.editor.hotApply') }}</span>
         </div>
         <div class="tool-set-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
@@ -530,7 +528,15 @@ function validHttpUrl(value: string): boolean {
         :title="copy('saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>{{ copy('savedBody') }}</p>
+        <p>
+          {{
+            t(
+              settings.mutation.restartRequired
+                ? 'settings.editor.savedRestart'
+                : 'settings.editor.savedImmediate',
+            )
+          }}
+        </p>
       </NoxNotice>
 
       <NoxNotice
@@ -761,10 +767,6 @@ function validHttpUrl(value: string): boolean {
   font-size: 0.62rem;
 }
 
-.tool-set-editor__badges .tool-set-editor__badge--restart {
-  border-color: color-mix(in srgb, var(--nox-status-warning) 45%, var(--nox-border-subtle));
-  color: var(--nox-status-warning);
-}
 
 .tool-set-editor__modes {
   padding: var(--nox-space-1);

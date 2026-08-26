@@ -95,6 +95,8 @@ interface SecretSummary {
 }
 
 interface SecretStoreOptions {
+  /** Reconciles future consumers after a value changes; existing handles stay immutable. */
+  readonly changed?: () => Promise<void> | void;
   readonly dataDirectory: string;
   readonly database: Database;
   readonly logger?: Logger;
@@ -179,7 +181,7 @@ class SecretHandle {
  * generated once in DATA_DIR and never enters the database.
  *
  * Resolved values are snapshots. Replacing a secret affects future handles;
- * already composed contributions keep their old handle until they restart.
+ * already composed generations keep the old handle while their current work settles.
  *
  * What the store knows is wider than what it holds. An ID is known because a
  * value was written for it, because configuration names it, or both, and `list`
@@ -188,18 +190,23 @@ class SecretHandle {
  */
 class SecretStore {
   readonly #cache = new Map<string, Promise<string>>();
+  readonly #changed: () => Promise<void> | void;
   readonly #consumers = new Map<string, Map<string, SecretConsumer>>();
   readonly #database: Database;
   readonly #key: Buffer;
   readonly #logger: Logger;
   readonly #references: () => readonly SecretReference[];
 
+  #revision = 0;
+
   private constructor(
     database: Database,
     key: Buffer,
     logger: Logger,
     references: () => readonly SecretReference[],
+    changed: () => Promise<void> | void,
   ) {
+    this.#changed = changed;
     this.#database = database;
     this.#key = key;
     this.#logger = logger;
@@ -216,15 +223,21 @@ class SecretStore {
       key,
       options.logger ?? silentLogger,
       options.references ?? (() => Object.freeze([])),
+      options.changed ?? (() => undefined),
     );
   }
 
   /**
    * What has resolved this ID since the process started. Narrower than
    * `references` on purpose: a reference is a fact about the configuration,
-   * while a consumer is something actually holding a snapshot of the value, and
-   * only the second says whether a replacement waits for a restart.
+   * while a consumer is something that resolved a snapshot of the value in this
+   * process, which explains which generations reconciliation may replace.
    */
+  /** Monotonic input to runtime signatures; values themselves never leave the store. */
+  public get revision(): number {
+    return this.#revision;
+  }
+
   public consumers(secretId: string): readonly SecretConsumer[] {
     return Object.freeze([...(this.#consumers.get(secretId)?.values() ?? [])]);
   }
@@ -335,11 +348,13 @@ class SecretStore {
     });
 
     this.#cache.delete(id);
+    this.#revision += 1;
     this.#logger.info({ secretId: id }, result.created ? 'Secret created.' : 'Secret replaced.');
+    await this.#changed();
     return result.metadata;
   }
 
-  /** Deletes a managed value. Existing handles remain snapshots until their owners restart. */
+  /** Deletes a managed value. Existing handles remain snapshots while their work settles. */
   public async delete(secretId: string): Promise<boolean> {
     const id = secretIdSchema.parse(secretId);
     const deleted = await this.#database.transaction((database) => {
@@ -354,7 +369,11 @@ class SecretStore {
       return exists;
     });
     this.#cache.delete(id);
-    if (deleted) this.#logger.info({ secretId: id }, 'Secret deleted.');
+    if (deleted) {
+      this.#revision += 1;
+      this.#logger.info({ secretId: id }, 'Secret deleted.');
+      await this.#changed();
+    }
     return deleted;
   }
 
@@ -498,7 +517,7 @@ async function composeWithSecrets<TConfig, TValue>(
         resolved.missing.length === 1 ? 'the secret it names has' : 'the secrets it names have'
       } no stored value: ${named}. Store ${
         resolved.missing.length === 1 ? 'it' : 'them'
-      } in the secrets surface, then restart.`,
+      } in the secrets surface, then retry activation.`,
       { cause: error },
     );
   }

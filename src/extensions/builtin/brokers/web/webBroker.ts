@@ -11,6 +11,7 @@ import type {
   ChatHub,
   ChatListener,
   ChatMessageInput,
+  ChatMessageRejection,
   ChatPermissionOutcome,
   ChatPermissionRequest,
   ChatSubscriptionOptions,
@@ -148,6 +149,16 @@ class WebBroker implements Broker, ChatTransport {
     return this.#host?.commands ?? [];
   }
 
+  /** The current choices for a new browser conversation. */
+  public listAgents(): { readonly agents: readonly string[]; readonly defaultAgent?: string } {
+    const host = this.#host;
+    if (host === undefined) return { agents: [] };
+    return {
+      agents: host.agentIds(),
+      ...(host.defaultAgentId === undefined ? {} : { defaultAgent: host.defaultAgentId }),
+    };
+  }
+
   /**
    * Every conversation this surface carries. Answered from the gateway rather
    * than from anything kept here: a transport that remembered its own list would
@@ -206,8 +217,11 @@ class WebBroker implements Broker, ChatTransport {
     });
   }
 
-  public submitMessage(input: ChatMessageInput): void {
-    this.#host?.receive({
+  public submitMessage(input: ChatMessageInput): ChatMessageRejection | undefined {
+    const host = this.#host;
+    if (host === undefined) return { reason: 'unavailable' };
+    return host.receive({
+      ...(input.agentId === undefined ? {} : { requestedAgentId: input.agentId }),
       content: input.content,
       conversationId: input.conversationId,
       messageId: input.messageId,
@@ -223,8 +237,11 @@ class WebBroker implements Broker, ChatTransport {
    * anything else someone said, and its UI is the message box rather than a
    * palette.
    */
-  public submitSteer(input: ChatMessageInput): void {
-    this.#host?.receive({
+  public submitSteer(input: ChatMessageInput): ChatMessageRejection | undefined {
+    const host = this.#host;
+    if (host === undefined) return { reason: 'unavailable' };
+    return host.receive({
+      ...(input.agentId === undefined ? {} : { requestedAgentId: input.agentId }),
       content: input.content,
       conversationId: input.conversationId,
       messageId: input.messageId,

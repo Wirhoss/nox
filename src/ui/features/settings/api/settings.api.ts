@@ -7,6 +7,7 @@ const configValueSchema = z.record(z.string(), z.unknown())
 const sectionSummarySchema = z.object({
   applies: z.enum(['hot', 'restart']),
   entries: z.boolean(),
+  error: z.string().optional(),
   key: z.string().min(1),
   kind: z.enum(['contribution', 'directory', 'file']),
   loaded: z.boolean(),
@@ -14,9 +15,30 @@ const sectionSummarySchema = z.object({
   writable: z.boolean(),
 })
 
+const runtimeComponentSchema = z.object({
+  activeGeneration: z.number().int().positive().optional(),
+  desiredGeneration: z.number().int().positive(),
+  error: z.string().optional(),
+  id: z.string().min(1),
+  kind: z.enum(['agent', 'application', 'broker', 'provider', 'toolSet']),
+  state: z.enum(['active', 'applying', 'failed', 'restartRequired', 'unavailable']),
+})
+
+const runtimeComponentsSchema = z.preprocess(
+  (value) => value ?? [],
+  z.array(runtimeComponentSchema),
+)
+const revertAvailableSchema = z.preprocess((value) => value ?? false, z.boolean())
+
 const configCatalogSchema = z.object({
-  defaultAgent: z.string().min(1).optional(),
+  revertAvailable: revertAvailableSchema,
+  runtime: runtimeComponentsSchema,
   sections: z.array(sectionSummarySchema),
+})
+
+const runtimeStatusSchema = z.object({
+  components: z.array(runtimeComponentSchema),
+  revertAvailable: revertAvailableSchema,
 })
 
 const configSectionSchema = sectionSummarySchema.extend({ value: configValueSchema })
@@ -56,11 +78,21 @@ const toolSetTypeSchema = z.object({
 })
 const toolSetTypesSchema = z.object({ toolSetTypes: z.array(toolSetTypeSchema) })
 
-const savedSectionSchema = configSectionSchema.extend({ restartRequired: z.boolean() })
-const savedEntrySchema = configEntrySchema.extend({ restartRequired: z.boolean() })
+const savedSectionSchema = configSectionSchema.extend({
+  restartRequired: z.boolean(),
+  revertAvailable: revertAvailableSchema,
+  runtime: runtimeComponentsSchema,
+})
+const savedEntrySchema = configEntrySchema.extend({
+  restartRequired: z.boolean(),
+  revertAvailable: revertAvailableSchema,
+  runtime: runtimeComponentsSchema,
+})
 const removedEntrySchema = z.object({
   entryId: z.string().min(1),
   restartRequired: z.boolean(),
+  revertAvailable: revertAvailableSchema,
+  runtime: runtimeComponentsSchema,
   section: z.string().min(1),
 })
 
@@ -104,6 +136,8 @@ type ConfigEntry = z.infer<typeof configEntrySchema>
 type ConfigSection = z.infer<typeof configSectionSchema>
 type ConfigValue = z.infer<typeof configValueSchema>
 type RemovedEntry = z.infer<typeof removedEntrySchema>
+type RuntimeComponent = z.infer<typeof runtimeComponentSchema>
+type RuntimeRecovery = z.infer<typeof runtimeStatusSchema>
 type RemovedSecret = z.infer<typeof removedSecretSchema>
 type SavedEntry = z.infer<typeof savedEntrySchema>
 type SavedSection = z.infer<typeof savedSectionSchema>
@@ -149,6 +183,9 @@ interface SettingsApi {
   listToolSetTypes(accessToken: string): Promise<readonly ToolSetType[]>
   readEntry(input: EntryInput): Promise<ConfigEntry>
   readSection(accessToken: string, section: string): Promise<ConfigSection>
+  reloadConfiguration(accessToken: string): Promise<ConfigCatalog>
+  retryRuntime(accessToken: string): Promise<RuntimeRecovery>
+  revertRuntime(accessToken: string): Promise<RuntimeRecovery>
   replaceEntry(input: SaveEntryInput): Promise<SavedEntry>
   replaceSection(input: SaveSectionInput): Promise<SavedSection>
   saveSecret(input: SaveSecretInput): Promise<Secret>
@@ -234,6 +271,30 @@ const settingsApi: SettingsApi = {
     })
   },
 
+  reloadConfiguration(accessToken) {
+    return requestJson(
+      '/config/reload',
+      configCatalogSchema,
+      jsonRequest(accessToken, 'POST', {}),
+    )
+  },
+
+  retryRuntime(accessToken) {
+    return requestJson(
+      '/config/runtime/retry',
+      runtimeStatusSchema,
+      jsonRequest(accessToken, 'POST', {}),
+    )
+  },
+
+  revertRuntime(accessToken) {
+    return requestJson(
+      '/config/runtime/revert',
+      runtimeStatusSchema,
+      jsonRequest(accessToken, 'POST', {}),
+    )
+  },
+
   replaceEntry({ accessToken, entryId, section, value }) {
     return requestJson(
       entryPath(section, entryId),
@@ -268,6 +329,8 @@ export type {
   ConfigValue,
   RemovedEntry,
   RemovedSecret,
+  RuntimeComponent,
+  RuntimeRecovery,
   SavedEntry,
   SavedSection,
   Secret,

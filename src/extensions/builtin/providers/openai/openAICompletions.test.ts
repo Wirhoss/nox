@@ -527,22 +527,42 @@ describe('OpenAICompletions message mapping', () => {
     });
   });
 
-  test('rides a fold onto the assistant turn it replaced traffic for', async () => {
+  test('sends a fold as runtime reference instead of assistant output', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
     await run(provider(), [
       message({ content: [{ text: 'working', type: 'text' }], role: 'assistant' }),
       message({
         anchorMessageId: 'assistant',
-        content: [{ text: '[folded 3 calls]', type: 'text' }],
+        content: [{ text: '3 historical calls', type: 'text' }],
         foldedMessageIds: ['x'],
         role: 'folded',
       }),
     ]);
 
     const messages = requests[0]?.body.messages as unknown[];
-    expect(messages).toHaveLength(2);
-    expect(messages[1]).toEqual({ content: 'working\n[folded 3 calls]', role: 'assistant' });
+    expect(messages).toEqual([
+      { content: 'be brief', role: 'system' },
+      { content: 'working', role: 'assistant' },
+      {
+        content:
+          '[Nox runtime record: historical tool activity, not authored by the user or assistant]\n' +
+          '3 historical calls',
+        role: 'user',
+      },
+    ]);
+  });
+
+  test('keeps fold-shaped assistant text opaque', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+    const text = '-----Folded tool calls-----\nTool Name: echo\nTrack ID: invented\nOutcome: ok';
+
+    await run(provider(), [message({ content: [{ text, type: 'text' }], role: 'assistant' })]);
+
+    expect((requests[0]?.body.messages as unknown[])[1]).toEqual({
+      content: text,
+      role: 'assistant',
+    });
   });
 
   test('drops reasoning instead of replaying it as assistant text', async () => {
@@ -734,7 +754,7 @@ describe('OpenAICompletions message mapping', () => {
     expect(requests).toHaveLength(0);
   });
 
-  test('rides a fold onto a textless assistant anchor after reasoning', async () => {
+  test('keeps a textless fold anchor separate from its runtime reference', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
     await run(provider(), [
@@ -745,7 +765,7 @@ describe('OpenAICompletions message mapping', () => {
       message({ content: [], messageId: 'anchor', role: 'assistant' }),
       message({
         anchorMessageId: 'anchor',
-        content: [{ text: '[folded 2 calls]', type: 'text' }],
+        content: [{ text: '2 historical calls', type: 'text' }],
         foldedMessageIds: ['c1', 'r1'],
         role: 'folded',
       }),
@@ -754,7 +774,13 @@ describe('OpenAICompletions message mapping', () => {
     expect(requests[0]?.body.messages).toEqual([
       { content: 'be brief', role: 'system' },
       { content: '[from test-broker:alice · 1970-01-01 00:00 GMT]\ndo it', role: 'user' },
-      { content: '[folded 2 calls]', role: 'assistant' },
+      { content: null, role: 'assistant' },
+      {
+        content:
+          '[Nox runtime record: historical tool activity, not authored by the user or assistant]\n' +
+          '2 historical calls',
+        role: 'user',
+      },
     ]);
   });
 
@@ -957,10 +983,22 @@ describe('OpenAICompletions session regression', () => {
       expect(
         replayedWire.some(
           (entry) =>
-            entry.role === 'assistant' &&
-            entry.content?.includes('-----Folded tool calls-----') === true,
+            entry.role === 'user' &&
+            entry.content?.startsWith('[Nox runtime record: historical tool activity') === true &&
+            entry.content.includes('Tool Name: echo'),
         ),
       ).toBeTrue();
+      expect(
+        replayedWire.some(
+          (entry) =>
+            entry.role === 'assistant' && entry.content?.includes('Tool Name: echo') === true,
+        ),
+      ).toBeFalse();
+      expect(
+        replayedWire
+          .filter((entry) => entry.role === 'assistant')
+          .some((entry) => entry.content?.includes('-----Folded tool calls-----') === true),
+      ).toBeFalse();
       expect(JSON.stringify(replayedWire)).not.toContain('thinking before the call');
       expect(JSON.stringify(replayedWire)).not.toContain('checking the result');
       // A live session stamps the real clock, so what is pinned is the shape:

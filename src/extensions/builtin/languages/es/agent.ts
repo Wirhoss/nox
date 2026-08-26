@@ -12,7 +12,6 @@ const agentMessages = Object.freeze({
   'settings.agent.contextPressure': 'Presión de contexto',
   'settings.agent.contextWindow': 'Ventana de contexto',
   'settings.agent.customGate': 'Usar una política de puerta personalizada',
-  'settings.agent.defaultAgent': 'AGENTE PREDETERMINADO',
   'settings.agent.defaultVerdict': 'Veredicto predeterminado',
   'settings.agent.description': 'Descripción',
   'settings.agent.descriptionHint':
@@ -68,7 +67,7 @@ const agentMessages = Object.freeze({
   'settings.agent.removeQuestion': '¿Eliminar el plano del agente?',
   'settings.agent.removeToolSet': 'Eliminar {toolSet} de {channel}',
   'settings.agent.removeWarning':
-    'Nox rechazará eliminar su último agente o el agente configurado como predeterminado para la web.',
+    'Nox rechazará la eliminación mientras un bróker activo todavía enrute hacia este agente.',
   'settings.agent.reserveOutput': 'Reservar para la salida',
   'settings.agent.riskHeuristics': 'Activar heurísticas de riesgo',
   'settings.agent.routed': 'Enrutadas',
@@ -79,7 +78,6 @@ const agentMessages = Object.freeze({
   'settings.agent.runtimeTuning': 'AJUSTE DEL ENTORNO',
   'settings.agent.save': 'Guardar agente',
   'settings.agent.saved': 'Plano del agente guardado',
-  'settings.agent.savedBody': 'Reinicia Nox para componer este agente desde el plano guardado.',
   'settings.agent.searchToolSets': 'Buscar conjuntos de herramientas configurados',
   'settings.agent.searchToolSetsPlaceholder': 'Nombre, tipo o descripción',
   'settings.agent.searchTools': 'Buscar herramientas',

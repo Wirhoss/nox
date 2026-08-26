@@ -26,27 +26,42 @@ function assertBrokerReferences(
 
   const problems: string[] = [];
   const blueprints = context.config.get('blueprints');
-  if (brokerId === 'web') {
-    problems.push('"web" is reserved for Nox\'s built-in HTTP chat surface');
+  const isWeb = brokerId === 'web' && broker.type === 'web';
+  if (brokerId === 'web' && !isWeb) {
+    problems.push('the built-in "web" broker must keep type "web"');
+  } else if (broker.type === 'web' && brokerId !== 'web') {
+    problems.push('the built-in Web broker must use ID "web"');
   }
-  if (!Object.hasOwn(blueprints, broker.agent)) {
+  if (!isWeb && broker.agent === undefined) {
+    problems.push('a base agent is required for a transport that cannot ask the sender to choose');
+  } else if (broker.agent !== undefined && !Object.hasOwn(blueprints, broker.agent)) {
     problems.push(`blueprints configures no base agent "${broker.agent}"`);
   }
 
-  validateGrants(brokerId, 'base route', broker.grants, context, problems);
+  if (isWeb && Object.keys(broker.grants).length > 0) {
+    problems.push('Web authority comes from the authenticated owner; configure no sender grants');
+  } else {
+    validateGrants(brokerId, 'base route', broker.grants, context, problems);
+  }
   for (const [conversationId, override] of Object.entries(broker.conversations)) {
     if (override.agent !== undefined && !Object.hasOwn(blueprints, override.agent)) {
       problems.push(
         `conversation "${conversationId}" names agent "${override.agent}", which no blueprint defines`,
       );
     }
-    validateGrants(
-      brokerId,
-      `conversation "${conversationId}"`,
-      override.grants,
-      context,
-      problems,
-    );
+    if (isWeb && Object.keys(override.grants).length > 0) {
+      problems.push(
+        `conversation "${conversationId}" cannot replace authenticated-owner authority with grants`,
+      );
+    } else {
+      validateGrants(
+        brokerId,
+        `conversation "${conversationId}"`,
+        override.grants,
+        context,
+        problems,
+      );
+    }
   }
 
   if (problems.length > 0) throw new BrokerReferenceError(brokerId, problems);

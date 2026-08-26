@@ -45,6 +45,9 @@ const conversationTitle = computed(() => {
   return conversation.title ?? t('chat.conversation.withAgent', { agent: conversation.agentId })
 })
 const shortConversationId = computed(() => session.conversationId.slice(-8).toUpperCase())
+const needsAgentSelection = computed(
+  () => session.activeConversation === undefined && session.selectedAgentId === undefined,
+)
 
 onMounted(() => {
   void session.initialize()
@@ -91,6 +94,28 @@ onBeforeUnmount(() => {
           <NoxButton variant="secondary" @click="session.reconnect()">{{
             t('chat.notice.openNewStream')
           }}</NoxButton>
+        </NoxNotice>
+
+        <NoxNotice
+          v-if="needsAgentSelection"
+          class="surface__agent-selection"
+          :title="t('chat.agent.chooseTitle')"
+          :tone="session.agentIds.length === 0 ? 'danger' : 'info'"
+        >
+          <p v-if="session.agentIds.length === 0">{{ t('chat.agent.noneAvailable') }}</p>
+          <label v-else for="new-conversation-agent">
+            <span>{{ t('chat.agent.chooseHelp') }}</span>
+            <select
+              id="new-conversation-agent"
+              :value="session.selectedAgentId ?? ''"
+              @change="session.selectAgent(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="" disabled>{{ t('chat.agent.choosePlaceholder') }}</option>
+              <option v-for="agentId in session.agentIds" :key="agentId" :value="agentId">
+                {{ agentId }}
+              </option>
+            </select>
+          </label>
         </NoxNotice>
 
         <ChatTimeline />
@@ -170,7 +195,8 @@ onBeforeUnmount(() => {
   background: var(--nox-atmosphere), var(--nox-canvas);
 }
 
-.surface__notice {
+.surface__notice,
+.surface__agent-selection {
   position: absolute;
   z-index: var(--nox-layer-overlay);
   top: 6rem;
@@ -179,9 +205,26 @@ onBeforeUnmount(() => {
   box-shadow: var(--nox-shadow-panel);
 }
 
-.surface__notice :deep(.notice__body) {
+.surface__notice :deep(.notice__body),
+.surface__agent-selection :deep(.notice__body) {
   display: grid;
   gap: var(--nox-space-3);
+}
+
+.surface__agent-selection label {
+  display: grid;
+  gap: var(--nox-space-2);
+  color: var(--nox-text-secondary);
+  font-size: var(--nox-text-sm);
+}
+
+.surface__agent-selection select {
+  min-height: var(--nox-control-height);
+  padding: 0 var(--nox-space-3);
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-control);
+  color: var(--nox-text-primary);
+  background: var(--nox-surface-input);
 }
 
 .surface__composer {

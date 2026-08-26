@@ -48,11 +48,11 @@ class ApiConnectionError extends Error {
   }
 }
 
-async function requestJson<Output>(
+async function requestJson<Schema extends z.ZodTypeAny>(
   path: string,
-  schema: z.ZodType<Output>,
+  schema: Schema,
   init: RequestInit = {},
-): Promise<Output> {
+): Promise<z.output<Schema>> {
   const response = await request(path, init)
   const body = await readJson(response)
 

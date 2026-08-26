@@ -10,7 +10,7 @@ const secretMessages = Object.freeze({
   'settings.secrets.delete': 'Eliminar secreto',
   'settings.secrets.deleteQuestion': '¿Eliminar el secreto gestionado?',
   'settings.secrets.deleteWarning':
-    'El valor no se puede recuperar. Los consumidores en ejecución pueden conservar su copia actual, pero el próximo reinicio fallará si la configuración sigue haciendo referencia a este ID.',
+    'El valor no se puede recuperar. Los turnos en curso pueden terminar con su copia actual; las generaciones futuras no podrán resolver este ID mientras siga sin valor.',
   'settings.secrets.id': 'ID del secreto',
   'settings.secrets.idHint':
     'Referencia estable usada en la configuración, por ejemplo OPENAI_API_KEY.',
@@ -36,13 +36,13 @@ const secretMessages = Object.freeze({
   'settings.secrets.replaceValue': 'Reemplazar valor',
   'settings.secrets.runtimeReferences': 'REFERENCIAS DEL ENTORNO',
   'settings.secrets.runtimeReferencesHelp':
-    'Los consumidores que ya tienen un identificador conservan su copia hasta el reinicio.',
+    'Contribuciones que resolvieron este ID en el proceso actual. Los turnos en curso conservan copias inmutables mientras se activan generaciones nuevas.',
   'settings.secrets.store': 'Guardar secreto',
   'settings.secrets.storeCredential': 'Guardar credencial',
   'settings.secrets.storeStatus': 'ESTADO DE ALMACENAMIENTO',
   'settings.secrets.stored': 'ALMACENADO',
   'settings.secrets.storedRestart':
-    'Uno o más consumidores en ejecución conservarán el valor anterior hasta que Nox se reinicie.',
+    'Los turnos en curso pueden terminar con el valor anterior; las generaciones nuevas usan este.',
   'settings.secrets.storedTitle': 'Secreto guardado',
   'settings.secrets.updated': 'ACTUALIZADO',
   'settings.secrets.updatedAt': 'actualizado el {date}',

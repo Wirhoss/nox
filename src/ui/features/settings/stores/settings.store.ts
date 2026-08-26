@@ -57,18 +57,19 @@ const useSettingsStore = defineStore('settings', () => {
       const referenceKeys =
         sectionKey === 'blueprints'
           ? ['providers', 'toolSets']
-          : ['app', 'brokers'].includes(sectionKey)
+          : sectionKey === 'brokers'
             ? ['blueprints']
             : []
+      const nextCatalog = await settingsApi.listConfig(accessToken)
+      if (version !== loadVersion) return
+      catalog.value = nextCatalog
       const [
-        nextCatalog,
         nextSection,
         nextReferences,
         nextSecrets,
         nextToolSetInventory,
         nextToolSetTypes,
       ] = await Promise.all([
-          settingsApi.listConfig(accessToken),
           settingsApi.readSection(accessToken, sectionKey),
           Promise.all(
             referenceKeys.map(
@@ -86,7 +87,6 @@ const useSettingsStore = defineStore('settings', () => {
           sectionKey === 'toolSets' ? settingsApi.listToolSetTypes(accessToken) : [],
         ])
       if (version !== loadVersion) return
-      catalog.value = nextCatalog
       references.value = Object.fromEntries(nextReferences)
       if (nextSecrets !== undefined) secrets.value = nextSecrets
       toolSetInventory.value = nextToolSetInventory
@@ -121,6 +121,55 @@ const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function reloadConfiguration(): Promise<void> {
+    mutation.value = { type: 'saving' }
+    try {
+      catalog.value = await settingsApi.reloadConfiguration(requireAccessToken())
+      mutation.value = { restartRequired: false, type: 'saved' }
+    } catch (error) {
+      if (isUnauthorized(error)) auth.requireLogin()
+      mutation.value = { message: settingsErrorMessage(error, t), type: 'failed' }
+    }
+  }
+
+  async function retryRuntime(): Promise<void> {
+    mutation.value = { type: 'saving' }
+    try {
+      const recovery = await settingsApi.retryRuntime(requireAccessToken())
+      if (catalog.value !== undefined) {
+        catalog.value = {
+          ...catalog.value,
+          revertAvailable: recovery.revertAvailable,
+          runtime: recovery.components,
+        }
+      }
+      mutation.value = { restartRequired: false, type: 'saved' }
+    } catch (error) {
+      if (isUnauthorized(error)) auth.requireLogin()
+      mutation.value = { message: settingsErrorMessage(error, t), type: 'failed' }
+    }
+  }
+
+  async function revertRuntime(): Promise<void> {
+    mutation.value = { type: 'saving' }
+    try {
+      const recovery = await settingsApi.revertRuntime(requireAccessToken())
+      if (catalog.value !== undefined) {
+        catalog.value = {
+          ...catalog.value,
+          revertAvailable: recovery.revertAvailable,
+          runtime: recovery.components,
+        }
+      }
+      mutation.value = { restartRequired: false, type: 'saved' }
+      const sectionKey = section.value?.key
+      if (sectionKey !== undefined) await loadSection(sectionKey)
+    } catch (error) {
+      if (isUnauthorized(error)) auth.requireLogin()
+      mutation.value = { message: settingsErrorMessage(error, t), type: 'failed' }
+    }
+  }
+
   async function saveSection(sectionKey: string, value: ConfigValue): Promise<boolean> {
     return mutate(async () => {
       const saved = await settingsApi.replaceSection({
@@ -128,8 +177,9 @@ const useSettingsStore = defineStore('settings', () => {
         section: sectionKey,
         value,
       })
-      const { restartRequired, ...nextSection } = saved
+      const { restartRequired, revertAvailable, runtime, ...nextSection } = saved
       section.value = nextSection
+      updateRuntime(runtime, revertAvailable)
       return restartRequired
     })
   }
@@ -147,6 +197,7 @@ const useSettingsStore = defineStore('settings', () => {
         value,
       })
       updateEntry(entryId, saved.value)
+      updateRuntime(saved.runtime, saved.revertAvailable)
       return saved.restartRequired
     })
   }
@@ -164,6 +215,7 @@ const useSettingsStore = defineStore('settings', () => {
         value,
       })
       updateEntry(entryId, saved.value)
+      updateRuntime(saved.runtime, saved.revertAvailable)
       return saved.restartRequired
     })
   }
@@ -175,6 +227,7 @@ const useSettingsStore = defineStore('settings', () => {
         entryId,
         section: sectionKey,
       })
+      updateRuntime(removed.runtime, removed.revertAvailable)
       if (section.value !== undefined) {
         const nextValue = Object.fromEntries(
           Object.entries(section.value.value).filter(([candidateId]) => candidateId !== entryId),
@@ -225,6 +278,7 @@ const useSettingsStore = defineStore('settings', () => {
         ? await settingsApi.createEntry({ accessToken, entryId, section: sectionKey, value })
         : await settingsApi.replaceEntry({ accessToken, entryId, section: sectionKey, value })
       updateEntry(entryId, savedEntry.value)
+      updateRuntime(savedEntry.runtime, savedEntry.revertAvailable)
       return secretRestartRequired || savedEntry.restartRequired
     })
   }
@@ -270,6 +324,15 @@ const useSettingsStore = defineStore('settings', () => {
     ].sort((a, b) => a.secretId.localeCompare(b.secretId))
   }
 
+  function updateRuntime(
+    runtime: ConfigCatalog['runtime'],
+    revertAvailable: boolean,
+  ): void {
+    if (catalog.value !== undefined) {
+      catalog.value = { ...catalog.value, revertAvailable, runtime }
+    }
+  }
+
   function updateEntry(entryId: string, value: ConfigValue): void {
     if (section.value === undefined) return
     section.value = {
@@ -313,6 +376,9 @@ const useSettingsStore = defineStore('settings', () => {
     mutation: readonly(mutation),
     references: readonly(references),
     resource: readonly(resource),
+    reloadConfiguration,
+    retryRuntime,
+    revertRuntime,
     saveEntry,
     saveEntryWithSecrets,
     saveSecret,

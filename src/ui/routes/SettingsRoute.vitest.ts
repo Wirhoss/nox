@@ -17,7 +17,6 @@ describe('Settings route', () => {
         refreshTtlSeconds: 2_592_000,
         secureCookies: false,
       },
-      chat: { defaultAgent: 'nox' },
       database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
       logLevel: 'info',
       ui: { locale: 'en' },
@@ -27,7 +26,6 @@ describe('Settings route', () => {
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
-          defaultAgent: 'nox',
           sections: [
             sectionSummary('app', 'file', false, 'app.json', true),
             sectionSummary('blueprints', 'directory', true, 'blueprints', false),
@@ -62,15 +60,12 @@ describe('Settings route', () => {
     await renderAt('/settings/general')
 
     expect(await screen.findByRole('heading', { name: 'General' })).toBeTruthy()
+    expect(screen.getByText('HOT + RESTART-SCOPED')).toBeTruthy()
     expect(screen.getByLabelText(/^Bind host/)).toHaveProperty('value', '127.0.0.1')
-    expect(screen.getByLabelText(/^Default agent/)).toHaveProperty('value', 'nox')
     expect(screen.getByLabelText(/^Default language/)).toHaveProperty('value', 'en')
     expect(screen.getByLabelText(/^Database path/)).toHaveProperty('value', 'state/nox.db')
     expect(screen.getByLabelText(/^Maximum artifact bytes/)).toHaveProperty('value', '104857600')
-    expect(screen.getByLabelText(/^Artifact storage quota/)).toHaveProperty(
-      'value',
-      '10737418240',
-    )
+    expect(screen.getByLabelText(/^Artifact storage quota/)).toHaveProperty('value', '10737418240')
     expect(screen.getByRole('checkbox', { name: /Secure refresh cookies/ })).toHaveProperty(
       'checked',
       false,
@@ -83,7 +78,6 @@ describe('Settings route', () => {
       expect.stringContaining('"host": "0.0.0.0"'),
     )
     await fireEvent.click(screen.getByRole('button', { name: 'Form' }))
-    await fireEvent.update(screen.getByLabelText(/^Default agent/), 'support')
     await fireEvent.update(screen.getByLabelText(/^Default language/), 'es')
     await fireEvent.update(screen.getByLabelText(/^Log level/), 'debug')
     await fireEvent.update(screen.getByLabelText(/^Time zone/), 'America/Mexico_City')
@@ -93,6 +87,7 @@ describe('Settings route', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save general settings' }))
 
     expect(await screen.findByText('Application configuration saved')).toBeTruthy()
+    expect(screen.getByText('Restart Nox to activate this infrastructure change.')).toBeTruthy()
     expect(savedBody).toEqual({
       api: { host: '0.0.0.0', port: 8080 },
       artifacts: { maxArtifactBytes: 1_048_576, maxStorageBytes: 10_485_760 },
@@ -101,7 +96,6 @@ describe('Settings route', () => {
         refreshTtlSeconds: 2_592_000,
         secureCookies: true,
       },
-      chat: { defaultAgent: 'support' },
       database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
       logLevel: 'debug',
       timezone: 'America/Mexico_City',
@@ -114,7 +108,6 @@ describe('Settings route', () => {
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
-          defaultAgent: 'nox',
           sections: [sectionSummary('app', 'file', false, 'app.json', true)],
         }),
       ),
@@ -124,7 +117,6 @@ describe('Settings route', () => {
           value: {
             api: { host: '127.0.0.1', port: 8080 },
             auth: { accessTtlSeconds: 900, refreshTtlSeconds: 2_592_000, secureCookies: false },
-            chat: { defaultAgent: 'nox' },
             database: { busyTimeoutMs: 5000, path: 'state/nox.db', synchronous: 'normal' },
             logLevel: 'info',
             timezone: 'UTC',
@@ -163,7 +155,6 @@ describe('Settings route', () => {
         refreshTtlSeconds: 2_592_000,
         secureCookies: false,
       },
-      chat: {},
       database: { busyTimeoutMs: 5000, path: 'nox.db', synchronous: 'normal' },
       logLevel: 'info',
       ui: { locale: 'en' },
@@ -212,6 +203,75 @@ describe('Settings route', () => {
     expect(writes).toBe(0)
   })
 
+  it('keeps runtime recovery and mounted-file reload available in degraded Settings', async () => {
+    let reloads = 0
+    let retries = 0
+    let reverts = 0
+    const section = sectionSummary('app', 'file', false, 'app.json', true)
+    const failed = {
+      activeGeneration: 1,
+      desiredGeneration: 2,
+      error: 'candidate refused',
+      id: 'main',
+      kind: 'provider',
+      state: 'failed',
+    }
+    const catalog = () => ({
+      revertAvailable: true,
+      runtime: [failed],
+      sections: [section],
+    })
+
+    server.use(
+      ...authenticatedOperator(),
+      http.get('*/api/config', () => HttpResponse.json(catalog())),
+      http.get('*/api/config/app', () =>
+        HttpResponse.json({
+          ...section,
+          value: {
+            api: { host: '127.0.0.1', port: 8080 },
+            auth: { accessTtlSeconds: 900, refreshTtlSeconds: 2_592_000, secureCookies: false },
+            database: { busyTimeoutMs: 5000, path: 'nox.db', synchronous: 'normal' },
+            logLevel: 'info',
+            timezone: 'UTC',
+            ui: { locale: 'en' },
+          },
+        }),
+      ),
+      http.post('*/api/config/reload', () => {
+        reloads += 1
+        return HttpResponse.json(catalog())
+      }),
+      http.post('*/api/config/runtime/retry', () => {
+        retries += 1
+        return HttpResponse.json({ components: [failed], revertAvailable: true })
+      }),
+      http.post('*/api/config/runtime/revert', () => {
+        reverts += 1
+        return HttpResponse.json({ components: [], revertAvailable: false })
+      }),
+    )
+
+    await renderAt('/settings/general')
+
+    expect(await screen.findByText('candidate refused')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload mounted config' }))
+    await waitFor(() => {
+      expect(reloads).toBe(1)
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry activation' }))
+    await waitFor(() => {
+      expect(retries).toBe(1)
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Revert failed change' }))
+    await waitFor(() => {
+      expect(reverts).toBe(1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('candidate refused')).toBeNull()
+    })
+  })
+
   it('edits an agent through the curated form without dropping advanced configuration', async () => {
     let savedBody: unknown
     const blueprint = {
@@ -230,7 +290,6 @@ describe('Settings route', () => {
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
-          defaultAgent: 'nox',
           sections: [
             sectionSummary('app', 'file', false, 'app.json', true),
             sectionSummary('blueprints', 'directory', true, 'blueprints', false),
@@ -299,7 +358,7 @@ describe('Settings route', () => {
         savedBody = await request.json()
         return HttpResponse.json({
           entryId: 'nox',
-          restartRequired: true,
+          restartRequired: false,
           section: 'blueprints',
           value: savedBody,
         })
@@ -309,6 +368,8 @@ describe('Settings route', () => {
     await renderAt('/settings/agents/nox')
 
     expect(await screen.findByRole('heading', { name: 'nox' })).toBeTruthy()
+    expect(screen.getByText('HOT APPLY')).toBeTruthy()
+    expect(screen.queryByText('APPLIES ON RESTART')).toBeNull()
     expect(screen.getByLabelText(/^Provider REQ$/)).toHaveProperty('value', 'main')
     expect(screen.getByPlaceholderText('model-id')).toHaveProperty('value', 'qwen38-27b')
     expect(screen.getByPlaceholderText('You are...')).toHaveProperty('value', 'You are Nox.')
@@ -339,6 +400,8 @@ describe('Settings route', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save agent' }))
 
     expect(await screen.findByText('Agent blueprint saved')).toBeTruthy()
+    expect(screen.getByText('Nox reconciled this change without requiring a restart.')).toBeTruthy()
+    expect(screen.queryByText(/Restart Nox to compose this agent/)).toBeNull()
     expect(savedBody).toMatchObject({
       context: { foldMinReductionRatio: 0.25 },
       description: 'Primary personal agent',
@@ -390,7 +453,7 @@ describe('Settings route', () => {
               ],
               createdAt: 10,
               references: [{ location: 'providers.main.apiKey', secretId: 'LLAMA_API_KEY' }],
-              restartRequired: true,
+              restartRequired: false,
               secretId: 'LLAMA_API_KEY',
               stored: true,
               updatedAt: 20,
@@ -405,7 +468,7 @@ describe('Settings route', () => {
           consumers: [{ extensionId: 'nox.provider.openai', location: 'providers.main.apiKey' }],
           createdAt: 10,
           references: [{ location: 'providers.main.apiKey', secretId: 'LLAMA_API_KEY' }],
-          restartRequired: true,
+          restartRequired: false,
           secretId: 'LLAMA_API_KEY',
           stored: true,
           updatedAt: 30,
@@ -416,7 +479,7 @@ describe('Settings route', () => {
         providerBody = await request.json()
         return HttpResponse.json({
           entryId: 'main',
-          restartRequired: true,
+          restartRequired: false,
           section: 'providers',
           value: providerBody,
         })
@@ -426,6 +489,7 @@ describe('Settings route', () => {
     await renderAt('/settings/providers/main')
 
     expect(await screen.findByRole('heading', { name: 'main' })).toBeTruthy()
+    expect(document.querySelector('#provider-type')).toBeNull()
     expect(screen.getByPlaceholderText('model-id')).toHaveProperty('value', 'qwen38-27b')
     expect(screen.getByPlaceholderText('131072')).toHaveProperty('value', '131072')
     expect(screen.getByLabelText('API credential')).toHaveProperty('value', 'LLAMA_API_KEY')
@@ -498,7 +562,7 @@ describe('Settings route', () => {
         providerBody = await request.json()
         return HttpResponse.json({
           entryId: 'secondary',
-          restartRequired: true,
+          restartRequired: false,
           section: 'providers',
           value: providerBody,
         })
@@ -508,6 +572,7 @@ describe('Settings route', () => {
     await renderAt('/settings/providers?create=1')
 
     expect(await screen.findByRole('heading', { name: 'New provider' })).toBeTruthy()
+    expect(document.querySelector('#provider-type')).not.toBeNull()
     await fireEvent.update(screen.getByPlaceholderText('main'), 'secondary')
     await fireEvent.update(
       screen.getByPlaceholderText('https://api.example.com/v1'),
@@ -662,7 +727,7 @@ describe('Settings route', () => {
               references: [
                 { location: 'toolSets.internet.search.apiKey', secretId: 'SEARCH_API_KEY' },
               ],
-              restartRequired: true,
+              restartRequired: false,
               secretId: 'SEARCH_API_KEY',
               stored: true,
               updatedAt: 20,
@@ -688,7 +753,7 @@ describe('Settings route', () => {
         toolSetBody = await request.json()
         return HttpResponse.json({
           entryId: 'internet',
-          restartRequired: true,
+          restartRequired: false,
           section: 'toolSets',
           value: toolSetBody,
         })
@@ -830,7 +895,7 @@ describe('Settings route', () => {
               consumers: [{ extensionId: 'test.discord', location: 'brokers.relay.token' }],
               createdAt: 10,
               references: [{ location: 'brokers.relay.token', secretId: 'DISCORD_TOKEN' }],
-              restartRequired: true,
+              restartRequired: false,
               secretId: 'DISCORD_TOKEN',
               stored: true,
               updatedAt: 20,
@@ -845,7 +910,7 @@ describe('Settings route', () => {
           consumers: [],
           createdAt: 10,
           references: [{ location: 'brokers.relay.token', secretId: 'DISCORD_TOKEN' }],
-          restartRequired: true,
+          restartRequired: false,
           secretId: 'DISCORD_TOKEN',
           stored: true,
           updatedAt: 30,
@@ -856,7 +921,7 @@ describe('Settings route', () => {
         brokerBody = await request.json()
         return HttpResponse.json({
           entryId: 'relay',
-          restartRequired: true,
+          restartRequired: false,
           section: 'brokers',
           value: brokerBody,
         })
@@ -866,6 +931,13 @@ describe('Settings route', () => {
     await renderAt('/settings/brokers/relay')
 
     expect(await screen.findByRole('heading', { name: 'relay' })).toBeTruthy()
+    expect(document.querySelector('#broker-type')).toBeNull()
+    expect(screen.queryByLabelText('Broker type')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'JSON' }))
+    const brokerJson = screen.getByLabelText<HTMLTextAreaElement>('JSON object')
+    expect(brokerJson.value).not.toContain('"type"')
+    await fireEvent.update(brokerJson, JSON.stringify({ ...broker, type: 'hijacked' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Form' }))
     expect(screen.getByLabelText(/^Base agent/)).toHaveProperty('value', 'nox')
     expect(screen.getByText('STORED')).toBeTruthy()
     expect(screen.getByLabelText('Contribution JSON')).toHaveProperty(
@@ -902,12 +974,72 @@ describe('Settings route', () => {
     expect(JSON.stringify(brokerBody)).not.toContain('discord-token-v2')
   })
 
+  it('saves the built-in Web broker without treating its reserved ID as a new entry', async () => {
+    let brokerBody: unknown
+
+    server.use(
+      ...authenticatedOperator(),
+      http.get('*/api/config', () =>
+        HttpResponse.json({
+          sections: [
+            sectionSummary('blueprints', 'directory', true, 'blueprints', false),
+            sectionSummary('brokers', 'contribution', true, 'brokers.json', true),
+          ],
+        }),
+      ),
+      http.get('*/api/config/brokers', () =>
+        HttpResponse.json({
+          ...sectionSummary('brokers', 'contribution', true, 'brokers.json', true),
+          value: {
+            web: {
+              agent: 'nox',
+              conversations: {},
+              enabled: true,
+              grants: {},
+              type: 'web',
+            },
+          },
+        }),
+      ),
+      http.get('*/api/config/blueprints', () =>
+        HttpResponse.json({
+          ...sectionSummary('blueprints', 'directory', true, 'blueprints', false),
+          value: {
+            nox: { model: 'main', provider: 'main', systemPrompt: 'Primary' },
+            support: { model: 'main', provider: 'main', systemPrompt: 'Support' },
+          },
+        }),
+      ),
+      http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
+      http.put('*/api/config/brokers/web', async ({ request }) => {
+        brokerBody = await request.json()
+        return HttpResponse.json({
+          entryId: 'web',
+          restartRequired: false,
+          section: 'brokers',
+          value: brokerBody,
+        })
+      }),
+    )
+
+    await renderAt('/settings/brokers/web')
+
+    expect(await screen.findByRole('heading', { name: 'web' })).toBeTruthy()
+    expect(document.querySelector('#broker-type')).toBeNull()
+    await fireEvent.update(screen.getByLabelText(/^Base agent/), 'support')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save broker' }))
+
+    await waitFor(() => {
+      expect(brokerBody).toMatchObject({ agent: 'support', type: 'web' })
+    })
+    expect(await screen.findByText('Broker configuration saved')).toBeTruthy()
+  })
+
   it('restores a deep-linked write-only secret without exposing its value', async () => {
     server.use(
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
-          defaultAgent: 'nox',
           sections: [
             {
               applies: 'restart',
@@ -931,7 +1063,7 @@ describe('Settings route', () => {
               ],
               createdAt: 10,
               references: [],
-              restartRequired: true,
+              restartRequired: false,
               secretId: 'OPENAI_API_KEY',
               stored: true,
               updatedAt: 20,
@@ -974,7 +1106,15 @@ function sectionSummary(
   name: string,
   writable: boolean,
 ) {
-  return { applies: 'restart', entries, key, kind, loaded: true, name, writable }
+  return {
+    applies: key === 'app' ? 'restart' : 'hot',
+    entries,
+    key,
+    kind,
+    loaded: true,
+    name,
+    writable,
+  }
 }
 
 /**

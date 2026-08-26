@@ -98,6 +98,7 @@ const selectedValue = computed<ConfigValue>(() => {
   return isConfigValue(value) ? value : newBrokerTemplate()
 })
 const agents = computed(() => Object.keys(props.blueprintSection?.value ?? {}))
+const isWeb = computed(() => common.value.type === 'web' && props.entryId === 'web')
 const title = computed(() =>
   props.creating
     ? t('settings.broker.titleNew')
@@ -141,7 +142,7 @@ function resetEditor(): void {
   jsonError.value = undefined
   confirmingDelete.value = false
   pendingSecrets.value = {}
-  jsonSource.value = JSON.stringify(selectedValue.value, undefined, 2)
+  jsonSource.value = JSON.stringify(editableBrokerConfig(selectedValue.value), undefined, 2)
   originalJsonSignature.value = JSON.stringify(selectedValue.value)
   originalSignature.value = formSignature()
 }
@@ -168,7 +169,7 @@ function formSignature(): string {
   })
 }
 
-function setCommon(field: 'agent' | 'type', value: string): void {
+function setCommon(field: 'agent', value: string): void {
   common.value = { ...common.value, [field]: value }
   clearFeedback(field)
 }
@@ -350,7 +351,7 @@ function switchMode(nextMode: EditorMode): void {
   if (nextMode === 'json') {
     const value = buildFormValue(true)
     if (value === undefined) return
-    jsonSource.value = JSON.stringify(value, undefined, 2)
+    jsonSource.value = JSON.stringify(editableBrokerConfig(value), undefined, 2)
     jsonError.value = undefined
     mode.value = nextMode
     return
@@ -364,7 +365,9 @@ function switchMode(nextMode: EditorMode): void {
 
 function formatJson(): void {
   const parsed = parseJson(true)
-  if (parsed !== undefined) jsonSource.value = JSON.stringify(parsed, undefined, 2)
+  if (parsed !== undefined) {
+    jsonSource.value = JSON.stringify(editableBrokerConfig(parsed), undefined, 2)
+  }
 }
 
 function formatTransportJson(): void {
@@ -395,7 +398,7 @@ async function save(): Promise<void> {
     }
     return
   }
-  if (commonEnabled(value) && nextEntryId === 'web') {
+  if (props.creating && nextEntryId === 'web') {
     fieldErrors.value = {
       ...fieldErrors.value,
       entryId: t('settings.broker.validation.webReserved'),
@@ -422,8 +425,8 @@ async function save(): Promise<void> {
  *
  * An enabled broker with an unstored credential is refused rather than saved:
  * unlike a provider's optional key, a transport that needs a token cannot
- * connect without one, and saving would leave a broker that fails at the next
- * restart for a reason this form already knew.
+ * connect without one, and saving would request a broker generation that fails
+ * for a reason this form already knew.
  */
 function collectSecretWrites(
   value: ConfigValue,
@@ -473,21 +476,23 @@ async function remove(): Promise<void> {
 
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (common.value.type.trim().length === 0)
-    errors.type = t('settings.broker.validation.typeRequired')
-  if (common.value.agent.trim().length === 0) {
+  if (!isWeb.value && common.value.agent.trim().length === 0) {
     errors.agent = t('settings.broker.validation.baseAgentRequired')
-  } else if (common.value.enabled && !agents.value.includes(common.value.agent)) {
+  } else if (
+    common.value.agent.trim().length > 0 &&
+    common.value.enabled &&
+    !agents.value.includes(common.value.agent)
+  ) {
     errors.agent = t('settings.broker.validation.agentAvailable')
   }
   if (props.creating && !validEntryId(entryIdInput.value.trim())) {
     errors.entryId = t('settings.validation.entryId')
   }
-  if (props.creating && common.value.enabled && entryIdInput.value.trim() === 'web') {
+  if (props.creating && entryIdInput.value.trim() === 'web') {
     errors.entryId = t('settings.broker.validation.webReserved')
   }
 
-  validateGrantList(baseGrants.value, errors)
+  if (!isWeb.value) validateGrantList(baseGrants.value, errors)
   const conversationIds = new Set<string>()
   conversations.value.forEach((conversation, index) => {
     const prefix = `conversation.${String(index)}`
@@ -505,7 +510,7 @@ function validateForm(): boolean {
     ) {
       errors[`${prefix}.agent`] = t('settings.broker.validation.agentAvailable')
     }
-    validateGrantList(conversation.grants, errors, index)
+    if (!isWeb.value) validateGrantList(conversation.grants, errors, index)
   })
 
   fieldErrors.value = errors
@@ -551,19 +556,19 @@ function buildFormValue(report: boolean): ConfigValue | undefined {
   if (payload === undefined) return undefined
   return {
     ...payload,
-    agent: common.value.agent.trim(),
+    ...(common.value.agent.trim().length === 0 ? {} : { agent: common.value.agent.trim() }),
     conversations: Object.fromEntries(
       conversations.value.map((conversation) => [
         conversation.conversationId.trim(),
         {
           ...conversation.extra,
           ...(conversation.agent.length === 0 ? {} : { agent: conversation.agent }),
-          grants: grantsRecord(conversation.grants),
+          grants: isWeb.value ? {} : grantsRecord(conversation.grants),
         },
       ]),
     ),
     enabled: common.value.enabled,
-    grants: grantsRecord(baseGrants.value),
+    grants: isWeb.value ? {} : grantsRecord(baseGrants.value),
     type: common.value.type.trim(),
   }
 }
@@ -600,7 +605,7 @@ function parseJson(report: boolean): ConfigValue | undefined {
       return undefined
     }
     if (report) jsonError.value = undefined
-    return parsed
+    return { ...editableBrokerConfig(parsed), type: common.value.type }
   } catch {
     if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
@@ -652,6 +657,11 @@ function newCommonTemplate(): BrokerCommonDraft {
 
 function newBrokerTemplate(): ConfigValue {
   return { agent: '', conversations: {}, enabled: true, grants: {}, type: '' }
+}
+
+/** The discriminator selects the contribution's schema; it is metadata, not editable config. */
+function editableBrokerConfig(value: ConfigValue): ConfigValue {
+  return withoutProperty(value, 'type')
 }
 
 function transportPayload(value: ConfigValue): ConfigValue {
@@ -766,9 +776,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
           >
             {{ common.enabled ? t('common.enabled') : t('common.disabled') }}
           </span>
-          <span class="broker-editor__badge--restart">{{
-            t('settings.editor.appliesOnRestart')
-          }}</span>
+          <span>{{ t('settings.editor.hotApply') }}</span>
         </div>
         <div class="broker-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
@@ -787,7 +795,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         :title="t('settings.broker.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>{{ t('settings.broker.savedBody') }}</p>
+        <p>
+          {{
+            t(
+              settings.mutation.restartRequired
+                ? 'settings.editor.savedRestart'
+                : 'settings.editor.savedImmediate',
+            )
+          }}
+        </p>
       </NoxNotice>
 
       <NoxNotice
@@ -818,23 +834,13 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             <span>{{ t('settings.broker.transportRouteHelp') }}</span>
           </div>
           <div class="broker-editor__fields">
-            <NoxTextField
-              id="broker-type"
-              :model-value="common.type"
-              :error="fieldErrors.type"
-              :hint="t('settings.broker.typeHint')"
-              :label="t('settings.broker.type')"
-              placeholder="discord"
-              required
-              @update:model-value="setCommon('type', $event)"
-            />
             <div
               class="broker-editor__field"
               :class="{ 'broker-editor__field--invalid': fieldErrors.agent }"
             >
               <label for="broker-agent"
                 >{{ t('settings.broker.baseAgent') }}
-                <small>{{ t('common.requiredShort') }}</small></label
+                <small v-if="!isWeb">{{ t('common.requiredShort') }}</small></label
               >
               <select
                 id="broker-agent"
@@ -842,7 +848,13 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 :aria-invalid="fieldErrors.agent !== undefined"
                 @change="setCommon('agent', ($event.target as HTMLSelectElement).value)"
               >
-                <option value="" disabled>{{ t('settings.broker.selectAgent') }}</option>
+                <option value="" :disabled="!isWeb">
+                  {{
+                    isWeb
+                      ? t('settings.broker.askAgentOnNewConversation')
+                      : t('settings.broker.selectAgent')
+                  }}
+                </option>
                 <option v-for="agentId in agents" :key="agentId" :value="agentId">
                   {{ agentId }}
                 </option>
@@ -867,7 +879,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
           </div>
         </section>
 
-        <section class="broker-editor__section" aria-labelledby="broker-grants-title">
+        <section v-if="!isWeb" class="broker-editor__section" aria-labelledby="broker-grants-title">
           <div class="broker-editor__section-copy">
             <p>02 // {{ t('settings.broker.authorization') }}</p>
             <h3 id="broker-grants-title">{{ t('settings.broker.baseGrants') }}</h3>
@@ -1005,7 +1017,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   </p>
                 </div>
               </div>
-              <div class="broker-editor__nested-grants">
+              <div v-if="!isWeb" class="broker-editor__nested-grants">
                 <article
                   v-for="(principal, principalIndex) in conversation.grants"
                   :key="principalIndex"
@@ -1193,7 +1205,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         ></option>
       </datalist>
 
-      <NoxNotice v-if="confirmingDelete" :title="t('settings.broker.removeQuestion')" tone="danger">
+      <NoxNotice
+        v-if="confirmingDelete && !isWeb"
+        :title="t('settings.broker.removeQuestion')"
+        tone="danger"
+      >
         <div class="broker-editor__delete-confirmation">
           <p>{{ t('settings.broker.removeWarning') }}</p>
           <div>
@@ -1210,7 +1226,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
     <footer class="broker-editor__actions">
       <NoxButton
-        v-if="props.entryId !== undefined && !props.creating"
+        v-if="props.entryId !== undefined && !props.creating && !isWeb"
         variant="ghost"
         @click="confirmingDelete = true"
       >
@@ -1297,8 +1313,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   color: var(--nox-status-success);
 }
 
-.broker-editor__badges .broker-editor__badge--held,
-.broker-editor__badges .broker-editor__badge--restart {
+.broker-editor__badges .broker-editor__badge--held {
   color: var(--nox-status-warning);
 }
 

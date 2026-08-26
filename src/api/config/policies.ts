@@ -1,13 +1,10 @@
-import { assertAppReferences } from './app';
 import {
   assertBlueprintReferences,
   type BlueprintContext,
-  blueprintRemovalReasons,
   instanceRemovalReasons,
 } from './blueprints';
 import { assertBrokerReferences, brokerAgentRemovalReasons } from './brokers';
 
-import type { AppConfig } from '../../config/app';
 import type { Blueprint } from '../../config/blueprint';
 import type { ConfigKey } from '../../config/sections';
 import type { BrokerConfig } from '../../extensions/contribution-points/brokers';
@@ -53,20 +50,16 @@ function configPolicies(context: BlueprintContext): SectionPolicies {
   const { config } = context;
 
   return {
-    app: {
-      validateSection: (value) => {
-        assertAppReferences(value as AppConfig, config);
-      },
-    },
     blueprints: {
-      reasonsToKeep: (agentId) => [
-        ...blueprintRemovalReasons(config, agentId),
-        ...brokerAgentRemovalReasons(context, agentId),
-      ],
+      reasonsToKeep: (agentId) => brokerAgentRemovalReasons(context, agentId),
       validate: async (agentId, value) =>
         assertBlueprintReferences(agentId, value as Blueprint, context),
     },
     brokers: {
+      reasonsToKeep: (brokerId) =>
+        brokerId === 'web'
+          ? ['The built-in Web broker is part of the control plane; disable it instead.']
+          : [],
       validate: (brokerId, value) => {
         assertBrokerReferences(brokerId, value as BrokerConfig, context);
       },

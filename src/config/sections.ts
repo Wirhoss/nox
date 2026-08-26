@@ -19,24 +19,24 @@ const sections = {
     schema: appConfigSchema,
   }),
   blueprints: directorySection({
-    applies: 'restart',
+    applies: 'hot',
     entrySchema: blueprintSchema,
     name: 'blueprints',
   }),
   brokers: contributionSection({
-    applies: 'restart',
+    applies: 'hot',
     baseSchema: brokerConfigSchema,
     name: 'brokers.json',
     point: brokers,
   }),
   providers: contributionSection({
-    applies: 'restart',
+    applies: 'hot',
     baseSchema: providerConfigSchema,
     name: 'providers.json',
     point: providers,
   }),
   toolSets: contributionSection({
-    applies: 'restart',
+    applies: 'hot',
     baseSchema: toolSetConfigSchema,
     name: 'toolsets.json',
     point: toolSets,

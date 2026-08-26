@@ -6,6 +6,8 @@ import {
   acceptedDecisionSchema,
   type AcceptedMessage,
   acceptedMessageSchema,
+  type AgentCatalog,
+  agentCatalogSchema,
   type ChatCommand,
   type ChatContentPart,
   type ChatConversation,
@@ -39,6 +41,7 @@ interface ReadHistoryInput extends ConversationInput {
 }
 
 interface SendMessageInput extends ConversationInput {
+  readonly agentId?: string
   readonly content?: readonly ChatContentPart[]
   readonly messageId: string
   readonly text: string
@@ -57,6 +60,7 @@ interface SubmitDecisionInput extends ConversationInput {
 }
 
 interface ChatApi {
+  listAgents(accessToken: string): Promise<AgentCatalog>
   listCommands(accessToken: string): Promise<readonly ChatCommand[]>
   listConversations(accessToken: string): Promise<readonly ChatConversation[]>
   openStream(options: ChatStreamOptions): Promise<void>
@@ -80,6 +84,12 @@ function postJson(accessToken: string, value: unknown): RequestInit {
 }
 
 const chatApi: ChatApi = {
+  listAgents(accessToken) {
+    return requestJson('/chat/agents', agentCatalogSchema, {
+      headers: authorization(accessToken),
+    })
+  },
+
   async listCommands(accessToken) {
     const response = await requestJson('/chat/commands', commandsSchema, {
       headers: authorization(accessToken),
@@ -114,21 +124,27 @@ const chatApi: ChatApi = {
     return requestJson(path, chatHistorySchema, { headers: authorization(accessToken) })
   },
 
-  sendMessage({ accessToken, content, conversationId, messageId, text }) {
+  sendMessage({ accessToken, agentId, content, conversationId, messageId, text }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/messages`
     return requestJson(
       path,
       acceptedMessageSchema,
-      postJson(accessToken, content === undefined ? { messageId, text } : { content, messageId }),
+      postJson(
+        accessToken,
+        content === undefined ? { agentId, messageId, text } : { agentId, content, messageId },
+      ),
     )
   },
 
-  sendSteer({ accessToken, content, conversationId, messageId, text }) {
+  sendSteer({ accessToken, agentId, content, conversationId, messageId, text }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/steer`
     return requestJson(
       path,
       acceptedMessageSchema,
-      postJson(accessToken, content === undefined ? { messageId, text } : { content, messageId }),
+      postJson(
+        accessToken,
+        content === undefined ? { agentId, messageId, text } : { agentId, content, messageId },
+      ),
     )
   },
 

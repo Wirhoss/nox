@@ -775,15 +775,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
       <div class="agent-editor__header-side">
         <div class="agent-editor__badges">
           <span>{{ sourceName }}</span>
-          <span
-            v-if="settings.catalog?.defaultAgent === props.entryId"
-            class="agent-editor__badge--default"
-          >
-            {{ t('settings.agent.defaultAgent') }}
-          </span>
-          <span class="agent-editor__badge--restart">{{
-            t('settings.editor.appliesOnRestart')
-          }}</span>
+          <span>{{ t('settings.editor.hotApply') }}</span>
         </div>
         <div class="agent-editor__modes" :aria-label="t('settings.editor.mode')">
           <button :aria-pressed="mode === 'form'" type="button" @click="switchMode('form')">
@@ -802,7 +794,15 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         :title="t('settings.agent.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>{{ t('settings.agent.savedBody') }}</p>
+        <p>
+          {{
+            t(
+              settings.mutation.restartRequired
+                ? 'settings.editor.savedRestart'
+                : 'settings.editor.savedImmediate',
+            )
+          }}
+        </p>
       </NoxNotice>
 
       <NoxNotice
@@ -1463,10 +1463,6 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
   color: var(--nox-action-primary);
 }
 
-.agent-editor__badges .agent-editor__badge--restart {
-  border-color: color-mix(in srgb, var(--nox-status-warning) 45%, var(--nox-border-subtle));
-  color: var(--nox-status-warning);
-}
 
 .agent-editor__modes {
   padding: var(--nox-space-1);

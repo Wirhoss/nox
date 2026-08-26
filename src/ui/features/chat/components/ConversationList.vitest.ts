@@ -37,6 +37,7 @@ beforeEach(async () => {
         )
       }),
   )
+  vi.spyOn(chatApi, 'listAgents').mockResolvedValue({ agents: ['analyst'], defaultAgent: 'analyst' })
   vi.spyOn(chatApi, 'listCommands').mockResolvedValue([])
 })
 

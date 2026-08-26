@@ -26,6 +26,9 @@ const NO_CONVERSATION = { error: 'conversation_not_found' } as const;
 /** A command name that is not in the catalog. */
 const NO_COMMAND = { error: 'unknown_command' } as const;
 
+/** A selected route that is not currently available. */
+const unknownAgent = (agentId: string) => ({ agentId, error: 'unknown_agent' }) as const;
+
 /** An artifact ID that is missing or belongs to another account. */
 const INVALID_ARTIFACT = { error: 'invalid_artifact' } as const;
 
@@ -50,6 +53,8 @@ const permissionParamsSchema = conversationParamsSchema.extend({
 
 const messageSchema = z
   .object({
+    /** Explicit route selected for a new Web conversation. */
+    agentId: z.string().trim().min(1).max(64).optional(),
     /** Structured content is canonical; `text` keeps older text clients compatible. */
     content: speechContentSchema.optional(),
     /**
@@ -137,6 +142,17 @@ function createChatRoutes(options: ChatRoutesOptions) {
     new Elysia({ name: 'nox.api.chat.routes' })
       .use(authGuard(store))
 
+      /** Routes the Web surface may bind a new conversation to. */
+      .get(
+        '/chat/agents',
+        ({ status }) => {
+          const transport = hub.transport;
+          if (transport === undefined) return status(503, UNAVAILABLE);
+          return transport.listAgents();
+        },
+        { authenticated: true },
+      )
+
       /**
        * Every command this Nox offers, with the schema of what each takes. A
        * client builds its palette, its slash commands or its buttons out of
@@ -220,7 +236,8 @@ function createChatRoutes(options: ChatRoutesOptions) {
           const submitted = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
           const content = await canonicalContent(submitted, account.accountId);
           if (content === undefined) return status(400, INVALID_ARTIFACT);
-          transport.submitMessage({
+          const rejection = transport.submitMessage({
+            ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
             content,
             conversationId: params.conversationId,
             messageId,
@@ -228,7 +245,16 @@ function createChatRoutes(options: ChatRoutesOptions) {
             text: textFromContent(content).trim(),
           });
 
-          return status(202, { messageId });
+          switch (rejection?.reason) {
+            case undefined:
+              return status(202, { messageId });
+            case 'agentRequired':
+              return status(409, { agents: rejection.agents, error: 'agent_selection_required' });
+            case 'unknownAgent':
+              return status(409, unknownAgent(rejection.agentId));
+            case 'unavailable':
+              return status(503, UNAVAILABLE);
+          }
         },
         { authenticated: true, body: messageSchema, params: conversationParamsSchema },
       )
@@ -252,7 +278,8 @@ function createChatRoutes(options: ChatRoutesOptions) {
           const submitted = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
           const content = await canonicalContent(submitted, account.accountId);
           if (content === undefined) return status(400, INVALID_ARTIFACT);
-          transport.submitSteer({
+          const rejection = transport.submitSteer({
+            ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
             content,
             conversationId: params.conversationId,
             messageId,
@@ -260,7 +287,16 @@ function createChatRoutes(options: ChatRoutesOptions) {
             text: textFromContent(content).trim(),
           });
 
-          return status(202, { messageId });
+          switch (rejection?.reason) {
+            case undefined:
+              return status(202, { messageId });
+            case 'agentRequired':
+              return status(409, { agents: rejection.agents, error: 'agent_selection_required' });
+            case 'unknownAgent':
+              return status(409, unknownAgent(rejection.agentId));
+            case 'unavailable':
+              return status(503, UNAVAILABLE);
+          }
         },
         { authenticated: true, body: messageSchema, params: conversationParamsSchema },
       )

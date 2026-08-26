@@ -162,15 +162,18 @@ type TimelineItem =
 const useActiveSessionStore = defineStore('active-session', () => {
   const auth = useAuthStore()
   const { t } = useI18n()
+  const agentIds = ref<readonly string[]>([])
   const catalog = ref<ChatResourceState>({ type: 'loading' })
   const commands = ref<readonly ChatCommand[]>([])
   const connection = ref<ChatConnection>({ type: 'disconnected' })
   const contextUsage = ref<ChatContextUsage>()
   const conversationId = ref(createId('web'))
   const conversations = ref<readonly ChatConversation[]>([])
+  const defaultAgentId = ref<string>()
   const history = ref<ChatResourceState>({ type: 'ready' })
   const items = ref<TimelineItem[]>([])
   const run = ref<ChatRunStatus>({ type: 'idle' })
+  const selectedAgentId = ref<string>()
   const sendError = ref<string>()
 
   const activeConversation = computed(() =>
@@ -179,7 +182,10 @@ const useActiveSessionStore = defineStore('active-session', () => {
     ),
   )
   const canSend = computed(
-    () => connection.value.type === 'connected' && run.value.type !== 'sending',
+    () =>
+      connection.value.type === 'connected' &&
+      selectedAgentId.value !== undefined &&
+      run.value.type !== 'sending',
   )
   const sendMode = computed<'message' | 'steer'>(() =>
     run.value.type === 'running' || run.value.type === 'waiting-permission' ? 'steer' : 'message',
@@ -222,10 +228,16 @@ const useActiveSessionStore = defineStore('active-session', () => {
 
     catalog.value = { type: 'loading' }
     try {
-      const [availableCommands, availableConversations] = await Promise.all([
+      const [availableAgents, availableCommands, availableConversations] = await Promise.all([
+        chatApi.listAgents(accessToken),
         chatApi.listCommands(accessToken),
         chatApi.listConversations(accessToken),
       ])
+      agentIds.value = availableAgents.agents
+      defaultAgentId.value = availableAgents.defaultAgent
+      selectedAgentId.value =
+        defaultAgentId.value ??
+        (availableAgents.agents.length === 1 ? availableAgents.agents[0] : undefined)
       commands.value = availableCommands
       conversations.value = withLiveTitles(availableConversations)
       catalog.value = { type: 'ready' }
@@ -284,6 +296,8 @@ const useActiveSessionStore = defineStore('active-session', () => {
     selectionVersion += 1
     eventBuffer = undefined
     conversationId.value = createId('web')
+    selectedAgentId.value =
+      defaultAgentId.value ?? (agentIds.value.length === 1 ? agentIds.value[0] : undefined)
     contextUsage.value = undefined
     history.value = { type: 'ready' }
     items.value = []
@@ -301,9 +315,11 @@ const useActiveSessionStore = defineStore('active-session', () => {
     const buffer = eventBuffer ?? []
     eventBuffer = buffer
     conversationId.value = nextConversationId
-    contextUsage.value = conversations.value.find(
+    const selectedConversation = conversations.value.find(
       (conversation) => conversation.conversationId === nextConversationId,
-    )?.contextUsage
+    )
+    selectedAgentId.value = selectedConversation?.agentId
+    contextUsage.value = selectedConversation?.contextUsage
     history.value = { type: 'loading' }
     items.value = []
     run.value = { type: 'idle' }
@@ -332,6 +348,12 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (eventBuffer === buffer) eventBuffer = undefined
     if (version !== selectionVersion) return
     replayBufferedEvents(buffer, loaded)
+  }
+
+  function selectAgent(agentId: string): void {
+    if (activeConversation.value !== undefined || !agentIds.value.includes(agentId)) return
+    selectedAgentId.value = agentId
+    sendError.value = undefined
   }
 
   function connect(): void {
@@ -473,6 +495,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     try {
       const input = {
         accessToken,
+        agentId: selectedAgentId.value,
         content,
         conversationId: conversationId.value,
         messageId,
@@ -1023,6 +1046,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
 
   return {
     activeConversation,
+    agentIds: readonly(agentIds),
     applyEvent,
     canSend,
     catalog: readonly(catalog),
@@ -1044,6 +1068,8 @@ const useActiveSessionStore = defineStore('active-session', () => {
     reconnect,
     refreshConversations,
     run: readonly(run),
+    selectAgent,
+    selectedAgentId: readonly(selectedAgentId),
     send,
     sendContent,
     sendError: readonly(sendError),

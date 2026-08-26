@@ -25,9 +25,10 @@ const brokerGrantsSchema = z.record(
 );
 
 /**
- * A named conversation replaces authority with a secure default; only the
- * agent falls back to the broker's required base route. Transport-level ingress
- * filtering belongs to the concrete broker and never reaches this schema.
+ * A named conversation replaces authority with a secure default; its agent may
+ * fall back to the broker's base route. A selectable surface such as Web may omit
+ * both and require an explicit choice when a conversation is first bound.
+ * Transport-level ingress filtering belongs to the concrete broker.
  */
 const brokerConversationOverrideSchema = z.object({
   agent: z.string().min(1).optional(),
@@ -40,8 +41,9 @@ const brokerConversationsSchema = z.record(
 );
 
 /**
- * Configuration shared by every contributed broker kind. `agent` is the routing:
- * every conversation this broker carries is answered by that agent.
+ * Configuration shared by every contributed broker kind. `agent` is its optional
+ * base route. Most transports require one; a surface able to ask the operator to
+ * choose may omit it and carry that explicit choice with the first message.
  *
  * There is exactly one configured instance per transport, and that is not a
  * convention — a bot holds one connection per credential, so a second instance
@@ -59,7 +61,7 @@ const brokerConversationsSchema = z.record(
  * its ingress filtering before it emits an event; that is not Gate policy.
  */
 const brokerBaseConfigSchema = z.object({
-  agent: z.string().min(1),
+  agent: z.string().min(1).optional(),
   /**
    * Removed rather than ignored. It used to name people who could answer any
    * escalation on this transport; approval is now the originator's alone, and a

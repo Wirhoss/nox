@@ -7,7 +7,7 @@ import type { ContributionReader } from '../../extensions/contribution';
 import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
 
 /**
- * A blueprint that would not survive the restart it asks for. Saving one is how
+ * A blueprint that could not activate as a replacement generation. Saving one is how
  * a surface bricks an installation politely: the file passes its own schema,
  * the write succeeds, and the next boot — or the next session — fails naming
  * something the operator has to read a log to find.
@@ -85,26 +85,6 @@ async function assertBlueprintReferences(
 }
 
 /**
- * Why this agent cannot be removed, if it cannot. Bootstrap refuses to compose a
- * Nox with no agent at all, and refuses one whose configured default agent no
- * blueprint defines — so both are answered here, where the operator is still
- * looking at the change that caused it, rather than at a restart they may not
- * perform until much later.
- */
-function blueprintRemovalReasons(config: Config, agentId: string): readonly string[] {
-  const reasons: string[] = [];
-
-  if (Object.keys(config.get('blueprints')).length === 1) {
-    reasons.push('Nox composes no agent from an empty blueprints directory.');
-  }
-  if (config.get('app').chat.defaultAgent === agentId) {
-    reasons.push(`Web chat names "${agentId}" as its default agent; change app.json first.`);
-  }
-
-  return reasons;
-}
-
-/**
  * Why this configured instance cannot be removed, if it cannot: the blueprints
  * that name it. Same failure as a blueprint that cannot be saved, seen from the
  * other side — the file that would break is not the one being written.
@@ -133,11 +113,6 @@ function names(blueprint: Blueprint, key: 'providers' | 'toolSets', instanceId: 
     .includes(instanceId);
 }
 
-export {
-  assertBlueprintReferences,
-  BlueprintReferenceError,
-  blueprintRemovalReasons,
-  instanceRemovalReasons,
-};
+export { assertBlueprintReferences, BlueprintReferenceError, instanceRemovalReasons };
 
 export type { BlueprintContext };

@@ -8,6 +8,10 @@ import type { Config, ConfigUpdate, ContributionKey, DirectoryKey } from '../../
 import type { ConfigApply, ConfigSection } from '../../config/section';
 import type { ContributionReader } from '../../extensions/contribution';
 import type { ToolSetCatalog, ToolSetInventory } from '../../extensions/toolSetCatalog';
+import type {
+  ConfigurationRuntime,
+  RuntimeComponentStatus,
+} from '../../runtime/configurationRuntime';
 import type { BlueprintContext } from './blueprints';
 
 /**
@@ -27,6 +31,7 @@ type EntryKey = ContributionKey | DirectoryKey;
  */
 interface SectionSummary {
   readonly applies: ConfigApply;
+  readonly error?: string;
   /** Whether it is addressed one entry at a time. */
   readonly entries: boolean;
   readonly key: ConfigKey;
@@ -48,6 +53,16 @@ interface SectionSummary {
  * refused by the loader with the operator holding a form that had said it was
  * fine.
  */
+interface ConfigStoreOptions extends BlueprintContext {
+  readonly runtime?: ConfigurationRuntime;
+}
+
+interface RevertChange {
+  readonly entryId?: string;
+  readonly key: ConfigKey;
+  readonly previous: unknown;
+}
+
 interface ToolSetTypeDescriptor {
   readonly extensionId: string;
   /** JSON Schema of one configured entry, in the form a client writes. */
@@ -57,9 +72,10 @@ interface ToolSetTypeDescriptor {
 
 /** A contributed instance keeps the schema it was created under. */
 class ContributionTypeChangeError extends Error {
-  constructor(entryId: string, currentType: string, nextType: string) {
+  constructor(key: ConfigKey, entryId: string, currentType: string, nextType: string) {
     super(
-      `"${entryId}" is a "${currentType}" tool set. Remove it before replacing it with "${nextType}".`,
+      `"${entryId}" in ${sections[key].name} has immutable contribution type ` +
+        `"${currentType}"; it cannot be replaced with "${nextType}".`,
     );
     this.name = 'ContributionTypeChangeError';
   }
@@ -97,21 +113,26 @@ function sorted(record: Record<string, unknown>): Record<string, unknown> {
  * from these.
  */
 class ConfigStore {
+  readonly #activeApp: unknown;
   readonly #config: Config;
   readonly #contributions: ContributionReader;
   readonly #policies: SectionPolicies;
+  readonly #runtime?: ConfigurationRuntime;
   readonly #toolSets: ToolSetCatalog;
 
-  constructor(options: BlueprintContext) {
+  #revert?: RevertChange;
+
+  constructor(options: ConfigStoreOptions) {
+    this.#activeApp = options.config.get('app');
     this.#config = options.config;
     this.#contributions = options.contributions;
     this.#policies = configPolicies(options);
+    this.#runtime = options.runtime;
     this.#toolSets = options.toolSets;
   }
 
-  /** The agent a new web conversation uses, when the installation names one. */
-  public get defaultAgent(): string | undefined {
-    return this.#config.get('app').chat.defaultAgent;
+  public get revertAvailable(): boolean {
+    return this.#revert !== undefined;
   }
 
   /** Every section Nox has, in a stable order. */
@@ -130,8 +151,10 @@ class ConfigStore {
 
   public summary(key: ConfigKey): SectionSummary {
     const section = sections[key] as ConfigSection;
+    const error = this.#config.problems.find((problem) => problem.key === key)?.error;
     return Object.freeze({
       applies: section.applies,
+      ...(error === undefined ? {} : { error }),
       entries: section.kind !== 'file',
       key,
       kind: section.kind,
@@ -185,10 +208,113 @@ class ConfigStore {
   }
 
   public async write(key: ConfigKey, next: unknown): Promise<ConfigUpdate<unknown>> {
+    const previous = this.#config.loaded.includes(key) ? this.#config.get(key) : undefined;
+    assertContributionTypesUnchanged(key, previous, next);
     const validate = this.#policy(key).validateSection;
-    return this.#config.update(key, next as never, async (value) => {
+    const saved = await this.#config.update(key, next as never, async (value) => {
       await validate?.(value);
     });
+    await this.#runtime?.reconcile();
+    this.#rememberFailure({ key, previous });
+    return {
+      ...saved,
+      restartRequired:
+        key === 'app' ? appRestartRequired(this.#activeApp, saved.value) : saved.restartRequired,
+    };
+  }
+
+  /** Desired-vs-active state for every independently composed component. */
+  public runtimeStatuses(): readonly RuntimeComponentStatus[] {
+    const runtime = [...(this.#runtime?.statuses() ?? [])];
+    const desiredGeneration = Math.max(2, ...runtime.map((status) => status.desiredGeneration + 1));
+    if (appRestartRequired(this.#activeApp, this.#config.get('app'))) {
+      runtime.push({
+        activeGeneration: desiredGeneration - 1,
+        desiredGeneration,
+        id: 'app',
+        kind: 'application',
+        state: 'restartRequired',
+      });
+    }
+    for (const problem of this.#config.problems) {
+      const kind = problemKind(problem.key);
+      runtime.push({
+        ...(this.#config.loaded.includes(problem.key)
+          ? { activeGeneration: desiredGeneration - 1 }
+          : {}),
+        desiredGeneration,
+        error: problem.error,
+        id: problem.key,
+        kind,
+        state: this.#config.loaded.includes(problem.key) ? 'failed' : 'unavailable',
+      });
+    }
+    return Object.freeze(
+      runtime.sort((left, right) => {
+        const byKind = left.kind.localeCompare(right.kind);
+        return byKind === 0 ? left.id.localeCompare(right.id) : byKind;
+      }),
+    );
+  }
+
+  public async retryRuntime(): Promise<void> {
+    await this.#runtime?.reconcile();
+    if (
+      !this.runtimeStatuses().some(
+        (status) => status.state === 'failed' || status.state === 'unavailable',
+      )
+    ) {
+      this.#revert = undefined;
+    }
+  }
+
+  /** Re-reads explicitly mounted configuration and reconciles every valid changed section. */
+  public async reloadConfiguration(): Promise<void> {
+    const previous = new Map<ConfigKey, unknown>();
+    for (const key of this.#config.loaded) previous.set(key, this.#config.get(key));
+
+    const reloaded = await this.#config.reload();
+    await this.#runtime?.reconcile();
+    for (const key of reloaded.changed) {
+      this.#rememberFailure({ key, previous: previous.get(key) });
+    }
+    if (
+      !this.runtimeStatuses().some(
+        (status) => status.state === 'failed' || status.state === 'unavailable',
+      )
+    ) {
+      this.#revert = undefined;
+    }
+  }
+
+  /** Restores the desired value that preceded the most recent failed activation. */
+  public async revertRuntime(): Promise<void> {
+    const change = this.#revert;
+    if (change === undefined) return;
+
+    if (change.entryId === undefined && sections[change.key].kind === 'directory') {
+      const key = change.key as DirectoryKey;
+      const current = this.#config.get(key) as Record<string, unknown>;
+      const previous = change.previous as Record<string, unknown>;
+      for (const entryId of Object.keys(current)) {
+        if (!Object.hasOwn(previous, entryId)) await this.#config.removeEntry(key, entryId);
+      }
+      for (const [entryId, value] of Object.entries(previous)) {
+        await this.#config.updateEntry(key, entryId, value);
+      }
+    } else if (change.entryId === undefined) {
+      await this.#config.update(change.key, change.previous as never);
+    } else if (sections[change.key].kind === 'directory') {
+      const key = change.key as DirectoryKey;
+      if (change.previous === undefined) await this.#config.removeEntry(key, change.entryId);
+      else await this.#config.updateEntry(key, change.entryId, change.previous);
+    } else {
+      const key = change.key as ContributionKey;
+      if (change.previous === undefined) await this.#config.removeInstance(key, change.entryId);
+      else await this.#config.updateInstance(key, change.entryId, change.previous);
+    }
+    await this.#runtime?.reconcile();
+    this.#revert = undefined;
   }
 
   public readEntry(key: EntryKey, entryId: string): unknown {
@@ -206,23 +332,21 @@ class ConfigStore {
     entryId: string,
     next: unknown,
   ): Promise<ConfigUpdate<unknown>> {
-    if (key === 'toolSets') {
-      const current = this.readEntry(key, entryId);
-      const currentType = configType(current);
-      const nextType = configType(next);
-      if (currentType !== undefined && nextType !== undefined && currentType !== nextType) {
-        throw new ContributionTypeChangeError(entryId, currentType, nextType);
-      }
-    }
+    const previous = this.readEntry(key, entryId);
+    assertContributionTypeUnchanged(key, entryId, previous, next);
 
     const validate = this.#policy(key).validate;
     const judge = async (value: unknown): Promise<void> => {
       await validate?.(entryId, value);
     };
 
-    return sections[key].kind === 'directory'
-      ? this.#config.updateEntry(key as DirectoryKey, entryId, next, judge)
-      : this.#config.updateInstance(key as ContributionKey, entryId, next, judge);
+    const saved =
+      sections[key].kind === 'directory'
+        ? await this.#config.updateEntry(key as DirectoryKey, entryId, next, judge)
+        : await this.#config.updateInstance(key as ContributionKey, entryId, next, judge);
+    await this.#runtime?.reconcile();
+    this.#rememberFailure({ entryId, key, previous });
+    return saved;
   }
 
   /**
@@ -232,12 +356,42 @@ class ConfigStore {
    * and they are answered the same way.
    */
   public async removeEntry(key: EntryKey, entryId: string): Promise<boolean> {
+    const previous = this.readEntry(key, entryId);
     const reasons = this.#policy(key).reasonsToKeep?.(entryId) ?? [];
     if (reasons.length > 0) throw new EntryInUseError(key, entryId, reasons);
 
-    return sections[key].kind === 'directory'
-      ? this.#config.removeEntry(key as DirectoryKey, entryId)
-      : this.#config.removeInstance(key as ContributionKey, entryId);
+    const removed =
+      sections[key].kind === 'directory'
+        ? await this.#config.removeEntry(key as DirectoryKey, entryId)
+        : await this.#config.removeInstance(key as ContributionKey, entryId);
+    if (removed) {
+      await this.#runtime?.reconcile();
+      this.#rememberFailure({ entryId, key, previous });
+    }
+    return removed;
+  }
+
+  #rememberFailure(change: RevertChange): void {
+    if (change.entryId === undefined && change.previous === undefined) return;
+    const kind =
+      change.key === 'app' || change.key === 'blueprints'
+        ? 'agent'
+        : change.key === 'providers'
+          ? 'provider'
+          : change.key === 'toolSets'
+            ? 'toolSet'
+            : 'broker';
+    const failed = this.runtimeStatuses().some(
+      (status) =>
+        (status.state === 'failed' || status.state === 'unavailable') &&
+        status.kind === kind &&
+        (change.entryId === undefined || status.id === change.entryId),
+    );
+    if (failed) {
+      this.#revert = change;
+    } else if (this.#revert?.key === change.key && this.#revert.entryId === change.entryId) {
+      this.#revert = undefined;
+    }
   }
 
   /** A section with nothing to insist on has no row, which is not a special case. */
@@ -246,11 +400,60 @@ class ConfigStore {
   }
 }
 
+function problemKind(key: ConfigKey): RuntimeComponentStatus['kind'] {
+  if (key === 'app') return 'application';
+  if (key === 'brokers') return 'broker';
+  if (key === 'providers') return 'provider';
+  if (key === 'toolSets') return 'toolSet';
+  return 'agent';
+}
+
+function appRestartRequired(previous: unknown, next: unknown): boolean {
+  if (typeof previous !== 'object' || previous === null) return true;
+  if (typeof next !== 'object' || next === null) return true;
+  const withoutHot = (value: object): Record<string, unknown> => {
+    const {
+      logLevel: _logLevel,
+      timezone: _timezone,
+      ui: _ui,
+      ...rest
+    } = value as Record<string, unknown>;
+    return rest;
+  };
+  return JSON.stringify(withoutHot(previous)) !== JSON.stringify(withoutHot(next));
+}
+
+function assertContributionTypesUnchanged(key: ConfigKey, current: unknown, next: unknown): void {
+  if (sections[key].kind !== 'contribution' || !isRecord(current) || !isRecord(next)) return;
+  for (const [entryId, currentEntry] of Object.entries(current)) {
+    if (!Object.hasOwn(next, entryId)) continue;
+    assertContributionTypeUnchanged(key, entryId, currentEntry, next[entryId]);
+  }
+}
+
+function assertContributionTypeUnchanged(
+  key: ConfigKey,
+  entryId: string,
+  current: unknown,
+  next: unknown,
+): void {
+  if (sections[key].kind !== 'contribution') return;
+  const currentType = configType(current);
+  const nextType = configType(next);
+  if (currentType !== undefined && nextType !== undefined && currentType !== nextType) {
+    throw new ContributionTypeChangeError(key, entryId, currentType, nextType);
+  }
+}
+
 function configType(value: unknown): string | undefined {
-  if (typeof value !== 'object' || value === null || !('type' in value)) return undefined;
+  if (!isRecord(value) || !('type' in value)) return undefined;
   return typeof value.type === 'string' ? value.type : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export { ConfigStore, ContributionTypeChangeError, EntryInUseError };
 
-export type { EntryKey, SectionSummary, ToolSetTypeDescriptor };
+export type { ConfigStoreOptions, EntryKey, SectionSummary, ToolSetTypeDescriptor };

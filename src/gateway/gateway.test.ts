@@ -304,6 +304,7 @@ class TestToolSet extends ToolSet {
 class TestBroker implements Broker {
   public readonly capabilities: BrokerCapabilities;
   public readonly delivered: OutboundEvent[] = [];
+  public starts = 0;
   public stopped = false;
 
   #host?: BrokerHost;
@@ -320,6 +321,8 @@ class TestBroker implements Broker {
 
   public start(host: BrokerHost): Promise<void> {
     this.#host = host;
+    this.starts += 1;
+    this.stopped = false;
     return Promise.resolve();
   }
 
@@ -412,6 +415,22 @@ class TestBroker implements Broker {
   #requireHost(): BrokerHost {
     if (this.#host === undefined) throw new Error('The broker was never started.');
     return this.#host;
+  }
+}
+
+class FailingBroker extends TestBroker {
+  public override start(_host: BrokerHost): Promise<void> {
+    return Promise.reject(new Error('candidate cannot connect'));
+  }
+}
+
+class StopFailingBroker extends TestBroker {
+  #fails = true;
+
+  public override stop(): Promise<void> {
+    if (!this.#fails) return super.stop();
+    this.#fails = false;
+    return Promise.reject(new Error('transport cannot stop'));
   }
 }
 
@@ -734,6 +753,39 @@ describe('Gateway', () => {
     expect(application.sessions.map(({ agentId }) => agentId).sort()).toEqual(['admin', 'reader']);
   });
 
+  test('uses a conversation route without demanding a selectable broker default', async () => {
+    const database = await openDatabase();
+    const broker = new TestBroker();
+    const application = new NoxApplication();
+    applications.push(application);
+    await application.start();
+    application.addAgent(
+      new Agent(database, new SayingProvider('admin reply'), MODEL, {
+        agentId: 'admin',
+        authorities: catalog,
+        systemPrompt: 'system',
+      }),
+    );
+    const gateway = new Gateway(application, {
+      brokers: [
+        {
+          broker,
+          brokerId: 'test',
+          conversations: { admin: { agentId: 'admin' } },
+          selectableAgent: true,
+        },
+      ],
+      database,
+    });
+    application.setGateway(gateway);
+    await gateway.start();
+
+    broker.say('admin', 'hola');
+    await settle({ application, broker, gateway });
+
+    expect(broker.texts('message')).toEqual(['admin reply']);
+  });
+
   test('drops a delivery the transport already made', async () => {
     const broker = new TestBroker();
     const harnessed = await harness(await openDatabase(), broker);
@@ -758,6 +810,62 @@ describe('Gateway', () => {
     broker.say('chat-1', 'hola');
     await harnessed.gateway.drain();
     expect(broker.delivered).toEqual([]);
+  });
+
+  test('hot-replaces a broker and rejects the retired generation', async () => {
+    const first = new TestBroker();
+    const harnessed = await harness(await openDatabase(), first);
+    const second = new TestBroker();
+
+    first.say('chat-1', 'before');
+    await settle(harnessed);
+    await harnessed.gateway.replaceBroker({
+      agentId: 'assistant',
+      authorization: new GrantAuthorizationProvider('test', { someone: ['*'] }, catalog),
+      broker: second,
+      brokerId: 'test',
+    });
+
+    expect(first.stopped).toBeTrue();
+    expect(harnessed.gateway.brokerIds).toEqual(['test']);
+    first.say('chat-1', 'retired');
+    second.say('chat-1', 'after');
+    await settle(harnessed);
+
+    expect(first.texts('message')).toEqual(['hola mundo']);
+    expect(second.texts('message')).toEqual(['hola mundo']);
+  });
+
+  test('retains the prior route when broker removal cannot stop it', async () => {
+    const broker = new StopFailingBroker();
+    const harnessed = await harness(await openDatabase(), broker);
+
+    expect(harnessed.gateway.removeBroker('test')).rejects.toThrow('cannot stop');
+    expect(harnessed.gateway.brokerIds).toEqual(['test']);
+
+    broker.say('chat-1', 'still here');
+    await settle(harnessed);
+    expect(broker.texts('message')).toEqual(['hola mundo']);
+  });
+
+  test('restores the prior broker when a replacement cannot start', async () => {
+    const first = new TestBroker();
+    const harnessed = await harness(await openDatabase(), first);
+
+    expect(
+      harnessed.gateway.replaceBroker({
+        agentId: 'assistant',
+        authorization: new GrantAuthorizationProvider('test', { someone: ['*'] }, catalog),
+        broker: new FailingBroker(),
+        brokerId: 'test',
+      }),
+    ).rejects.toThrow('cannot connect');
+
+    expect(first.starts).toBe(2);
+    expect(first.stopped).toBeFalse();
+    first.say('chat-1', 'still here');
+    await settle(harnessed);
+    expect(first.texts('message')).toEqual(['hola mundo']);
   });
 
   describe('permissions', () => {

@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { isConfigError } from '../../config/error';
 import { entryIdSchema } from '../../config/loader';
 import { authGuard } from '../auth/guard';
-import { AppReferenceError } from './app';
 import { BlueprintReferenceError } from './blueprints';
 import { BrokerReferenceError } from './brokers';
 import { type ConfigStore, ContributionTypeChangeError, EntryInUseError } from './store';
@@ -67,11 +66,7 @@ function refusal(error: unknown): Refusal | undefined {
   if (error instanceof ContributionTypeChangeError) {
     return { body: { detail: error.message, error: 'contribution_type_change' }, status: 409 };
   }
-  if (
-    error instanceof AppReferenceError ||
-    error instanceof BlueprintReferenceError ||
-    error instanceof BrokerReferenceError
-  ) {
+  if (error instanceof BlueprintReferenceError || error instanceof BrokerReferenceError) {
     return {
       body: { detail: error.message, error: 'unknown_reference', problems: error.problems },
       status: 422,
@@ -89,6 +84,16 @@ function refusal(error: unknown): Refusal | undefined {
 }
 
 /** A section holding one document has no entries to address. */
+function runtime(config: ConfigStore): {
+  readonly revertAvailable?: boolean;
+  readonly runtime?: ReturnType<ConfigStore['runtimeStatuses']>;
+} {
+  const statuses = config.runtimeStatuses();
+  return statuses.length === 0 && !config.revertAvailable
+    ? {}
+    : { revertAvailable: config.revertAvailable, runtime: statuses };
+}
+
 function notEntried(section: string): Record<string, string> {
   return {
     detail: `The ${section} section holds one document, not named entries.`,
@@ -103,11 +108,9 @@ function notEntried(section: string): Record<string, string> {
  * a second route onto the same files is a second set of checks to keep in step
  * with this one.
  *
- * Every write reports `restartRequired` from the section itself rather than
- * assuming it. Today every section applies at restart and every answer says so,
- * but the flag is the section's own — a `hot` section added later reports
- * honestly here without this file changing, which is the whole reason `applies`
- * lives on the section rather than in the surface.
+ * Every write reports `restartRequired` from the section or field-level runtime
+ * policy rather than assuming it. Hot generations and infrastructure changes
+ * therefore share one surface without either being mislabeled.
  *
  * Authenticated throughout. A blueprint is the whole of what an agent will do,
  * providers name the endpoints Nox talks to, tool sets decide what tools exist
@@ -130,13 +133,70 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
        * that reads this knows which sections it may write whole, which hold
        * entries, and which cannot be read yet — without hardcoding the set.
        *
-       * `defaultAgent` rides along because it is the one cross-section fact a
-       * client needs before it can render anything: which agent a new
-       * conversation uses. It lives in `app.json` and is only repeated here.
        */
-      .get('/config', () => ({ defaultAgent: config.defaultAgent, sections: config.sections() }), {
-        authenticated: true,
-      })
+      .get(
+        '/config',
+        () => ({
+          revertAvailable: config.revertAvailable,
+          runtime: config.runtimeStatuses(),
+          sections: config.sections(),
+        }),
+        {
+          authenticated: true,
+        },
+      )
+
+      /** Desired configuration compared with the generations actually serving work. */
+      .get(
+        '/config/runtime',
+        () => ({
+          components: config.runtimeStatuses(),
+          revertAvailable: config.revertAvailable,
+        }),
+        {
+          authenticated: true,
+        },
+      )
+
+      /** Re-reads mounted files explicitly, retaining each last valid section on failure. */
+      .post(
+        '/config/reload',
+        async () => {
+          await config.reloadConfiguration();
+          return {
+            revertAvailable: config.revertAvailable,
+            runtime: config.runtimeStatuses(),
+            sections: config.sections(),
+          };
+        },
+        { authenticated: true },
+      )
+
+      /** Retries every failed or unavailable candidate without rewriting configuration. */
+      .post(
+        '/config/runtime/retry',
+        async () => {
+          await config.retryRuntime();
+          return {
+            components: config.runtimeStatuses(),
+            revertAvailable: config.revertAvailable,
+          };
+        },
+        { authenticated: true },
+      )
+
+      /** Restores the desired document that preceded the latest failed activation. */
+      .post(
+        '/config/runtime/revert',
+        async () => {
+          await config.revertRuntime();
+          return {
+            components: config.runtimeStatuses(),
+            revertAvailable: config.revertAvailable,
+          };
+        },
+        { authenticated: true },
+      )
 
       /**
        * Runtime capability inventory for blueprint editors. This is deliberately
@@ -197,7 +257,12 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
 
           try {
             const saved = await config.write(key, body);
-            return { ...summary, restartRequired: saved.restartRequired, value: saved.value };
+            return {
+              ...summary,
+              restartRequired: saved.restartRequired,
+              ...runtime(config),
+              value: saved.value,
+            };
           } catch (error) {
             const refused = refusal(error);
             if (refused === undefined) throw error;
@@ -246,6 +311,7 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
             return status(201, {
               entryId: params.entryId,
               restartRequired: saved.restartRequired,
+              ...runtime(config),
               section: key,
               value: saved.value,
             });
@@ -277,6 +343,7 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
             return {
               entryId: params.entryId,
               restartRequired: saved.restartRequired,
+              ...runtime(config),
               section: key,
               value: saved.value,
             };
@@ -308,6 +375,7 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
             return {
               entryId: params.entryId,
               restartRequired: config.summary(key).applies === 'restart',
+              ...runtime(config),
               section: key,
             };
           } catch (error) {

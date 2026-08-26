@@ -1,4 +1,14 @@
 const settingsMessages = Object.freeze({
+  'settings.runtime.degraded': 'Runtime configuration needs attention',
+  'settings.runtime.degradedHelp':
+    'Desired configuration was saved, but these components could not activate. The last working generation remains in service where one exists.',
+  'settings.runtime.reload': 'Reload mounted config',
+  'settings.runtime.restartRequired': 'Restart required',
+  'settings.runtime.restartRequiredHelp':
+    'Infrastructure settings differ from the running process and will activate on restart.',
+  'settings.runtime.retry': 'Retry activation',
+  'settings.runtime.revert': 'Revert failed change',
+  'settings.runtime.unavailable': 'No active generation is available.',
   'settings.confirm.discardAgent': 'Discard the unsaved agent changes?',
   'settings.confirm.discardBroker': 'Discard the unsaved broker changes?',
   'settings.confirm.discardConfiguration': 'Discard the unsaved configuration changes?',
@@ -19,6 +29,7 @@ const settingsMessages = Object.freeze({
   'settings.editor.json': 'JSON',
   'settings.editor.jsonObject': 'JSON object',
   'settings.editor.metadata': 'Configuration metadata',
+  'settings.editor.mixedApply': 'HOT + RESTART-SCOPED',
   'settings.editor.mode': 'Editor mode',
   'settings.editor.removeEntry': 'Remove entry',
   'settings.editor.removeEntryQuestion': 'Remove configuration entry?',
@@ -27,8 +38,9 @@ const settingsMessages = Object.freeze({
   'settings.editor.removeNamed': 'Remove {entry}',
   'settings.editor.saveChanges': 'Save changes',
   'settings.editor.saved': 'Configuration saved',
-  'settings.editor.savedImmediate': 'The running node accepted this change immediately.',
-  'settings.editor.savedRestart': 'The document is on disk. Restart Nox to activate this change.',
+  'settings.editor.savedImmediate': 'Nox reconciled this change without requiring a restart.',
+  'settings.editor.savedRestart':
+    'The desired document is saved. Restart Nox to activate its infrastructure changes.',
   'settings.editor.unsavedChanges': 'UNSAVED CHANGES',
   'settings.entries.activation': 'ACTIVATION',
   'settings.entries.configured': 'CONFIGURED',
@@ -81,8 +93,6 @@ const settingsMessages = Object.freeze({
     'Nox will refuse this operation while an agent blueprint still names this provider.',
   'settings.provider.save': 'Save provider',
   'settings.provider.saved': 'Provider configuration saved',
-  'settings.provider.savedBody':
-    'Restart Nox to compose this provider from the saved configuration.',
   'settings.provider.titleFallback': 'Provider',
   'settings.provider.titleNew': 'New provider',
   'settings.provider.validation.configurationObject':
@@ -142,8 +152,6 @@ const settingsMessages = Object.freeze({
     'Nox will refuse this operation while an agent blueprint still grants this tool set.',
   'settings.toolSet.save': 'Save tool set',
   'settings.toolSet.saved': 'Tool-set configuration saved',
-  'settings.toolSet.savedBody':
-    'Restart Nox to compose this capability bundle from the saved configuration.',
   'settings.toolSet.titleFallback': 'Tool set',
   'settings.toolSet.titleNew': 'New tool set',
   'settings.toolSet.validation.chooseSecretId':

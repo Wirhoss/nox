@@ -20,7 +20,7 @@ describe('App auth entry', () => {
 
     expect(await screen.findByRole('heading', { name: 'Claim this machine' })).toBeTruthy()
     expect(screen.getByLabelText(/^Claim code/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Claim this Nox' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Claim' })).toBeTruthy()
   })
 
   it('opens login when the node is claimed but no browser session survives', async () => {

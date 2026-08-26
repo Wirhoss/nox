@@ -8,6 +8,8 @@ const DEFAULT_UI_DIR = '/app/ui';
 
 const envConfigSchema = z.object({
   configDir: z.string().min(1),
+  configWatch: z.boolean(),
+  configWatchDebounceMs: z.number().int().min(50).max(60_000),
   dataDir: z.string().min(1),
   environment: z.enum(['development', 'production', 'test']),
   uiDir: z.string().min(1),
@@ -20,6 +22,8 @@ type EnvSource = Readonly<Record<string, string | undefined>>;
 function readEnvConfig(env: EnvSource = process.env): EnvConfig {
   return parseOrThrow(envConfigSchema, {
     configDir: env.CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
+    configWatch: env.CONFIG_WATCH === '1' || env.CONFIG_WATCH === 'true',
+    configWatchDebounceMs: Number(env.CONFIG_WATCH_DEBOUNCE_MS ?? 250),
     dataDir: env.DATA_DIR ?? DEFAULT_DATA_DIR,
     environment: env.NODE_ENV ?? 'development',
     uiDir: env.UI_DIR ?? DEFAULT_UI_DIR,

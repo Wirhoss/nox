@@ -122,7 +122,6 @@ function authorityCatalog(contributions: ContributionRegistry): AuthorityCatalog
 }
 
 interface NoxOptions {
-  app?: unknown;
   blueprints?: Record<string, unknown>;
 }
 
@@ -154,10 +153,6 @@ async function blueprintNox(options: NoxOptions = {}): Promise<BlueprintNox> {
       narrow: { enabledTools: ['fetch'], type: 'fake_tools' },
     }),
   );
-  if (options.app !== undefined) {
-    await writeFile(join(directory, 'app.json'), JSON.stringify(options.app));
-  }
-
   const config = await Config.load(readEnvConfig({ CONFIG_DIR: directory, NODE_ENV: 'test' }), {
     logger: silentLogger,
   });
@@ -225,7 +220,6 @@ afterEach(async () => {
 describe('reading blueprints', () => {
   test('lists every configured agent by ID, in a stable order', async () => {
     const nox = await blueprintNox({
-      app: { chat: { defaultAgent: 'nox' } },
       blueprints: { nox: NOX, watcher: { ...NOX, systemPrompt: 'watch' }, archivist: NOX },
     });
 
@@ -234,12 +228,6 @@ describe('reading blueprints', () => {
 
     expect(response.status).toBe(200);
     expect(Object.keys(body.value)).toEqual(['archivist', 'nox', 'watcher']);
-
-    // Which agent web chat defaults to is `app.json`'s answer, not the
-    // blueprints section's; the surface repeats it once, where a client reads
-    // everything else it needs before rendering.
-    const index = await fetch(`${nox.url}/config`, { headers: nox.headers });
-    expect(((await index.json()) as { defaultAgent?: string }).defaultAgent).toBe('nox');
   });
 
   test('reads one back with the defaults the schema resolved', async () => {
@@ -278,7 +266,7 @@ describe('reading blueprints', () => {
 });
 
 describe('writing blueprints', () => {
-  test('creates one, writes the file, and says the change waits for a restart', async () => {
+  test('creates one, writes the file, and reports hot activation', async () => {
     const nox = await blueprintNox();
 
     const response = await fetch(`${nox.url}/config/blueprints/watcher`, {
@@ -292,7 +280,7 @@ describe('writing blueprints', () => {
     };
 
     expect(response.status).toBe(201);
-    expect(body.restartRequired).toBeTrue();
+    expect(body.restartRequired).toBeFalse();
     expect(body.value.systemPrompt).toBe('watch');
 
     // Written through the loader, so the file holds the resolved document a
@@ -540,14 +528,14 @@ describe('removing blueprints', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       entryId: 'watcher',
-      restartRequired: true,
+      restartRequired: false,
       section: 'blueprints',
     });
     expect(Object.keys(nox.config.get('blueprints'))).toEqual(['nox']);
     expect(await onDisk(nox.directory, 'watcher').catch(() => 'gone')).toBe('gone');
   });
 
-  test('refuses to remove the only agent there is', async () => {
+  test('allows the last agent to be removed while the control plane stays repairable', async () => {
     const nox = await blueprintNox();
 
     const response = await fetch(`${nox.url}/config/blueprints/nox`, {
@@ -555,33 +543,8 @@ describe('removing blueprints', () => {
       method: 'DELETE',
     });
 
-    const body = (await response.json()) as { error: string; reasons: string[] };
-
-    // Bootstrap will not compose a Nox from an empty blueprints directory, and
-    // a 409 here is a refusal the operator can still read. It is the same answer
-    // a provider still named by a blueprint gets, because it is the same event.
-    expect(response.status).toBe(409);
-    expect(body.error).toBe('entry_in_use');
-    expect(body.reasons).toEqual(['Nox composes no agent from an empty blueprints directory.']);
-    expect(Object.keys(nox.config.get('blueprints'))).toEqual(['nox']);
-  });
-
-  test('refuses to remove the agent web chat defaults to', async () => {
-    const nox = await blueprintNox({
-      app: { chat: { defaultAgent: 'nox' } },
-      blueprints: { nox: NOX, watcher: { ...NOX, systemPrompt: 'watch' } },
-    });
-
-    const response = await fetch(`${nox.url}/config/blueprints/nox`, {
-      headers: nox.headers,
-      method: 'DELETE',
-    });
-
-    const body = (await response.json()) as { error: string; reasons: string[] };
-
-    expect(response.status).toBe(409);
-    expect(body.error).toBe('entry_in_use');
-    expect(body.reasons[0]).toContain('names "nox" as its default agent');
+    expect(response.status).toBe(200);
+    expect(Object.keys(nox.config.get('blueprints'))).toEqual([]);
   });
 
   test('answers 404 for an agent nothing defines', async () => {

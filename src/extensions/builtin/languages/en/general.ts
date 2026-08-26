@@ -21,14 +21,10 @@ const generalMessages = Object.freeze({
   'settings.general.configuredAgents.one': '{count} configured Agent.',
   'settings.general.configuredAgents.other': '{count} configured Agents.',
   'settings.general.controlPlane': 'CONTROL PLANE',
-  'settings.general.conversationEntrypoint': 'Conversation entrypoint',
-  'settings.general.conversationEntrypointHelp':
-    'Agent assigned to new browser conversations. Nox can infer it only while exactly one Agent exists.',
   'settings.general.dataPlane': 'DATA PLANE',
   'settings.general.databasePath': 'Database path',
   'settings.general.databasePathHint':
     'Absolute path or a path relative to the configured data directory.',
-  'settings.general.defaultAgent': 'Default agent',
   'settings.general.diagnostics': 'DIAGNOSTICS',
   'settings.general.durability.extra': 'Extra',
   'settings.general.durability.full': 'Full',
@@ -50,7 +46,7 @@ const generalMessages = Object.freeze({
     'Default language for this installation. The public access screen can keep a browser-specific choice.',
   'settings.general.locale': 'Default language',
   'settings.general.localeHint':
-    'Applied immediately in this browser and used by default after Nox restarts.',
+    'Applied immediately in this browser and as the installation default.',
   'settings.general.logLevel': 'Log level',
   'settings.general.machineControl': 'MACHINE CONTROL // APPLICATION',
   'settings.general.refreshTtl': 'Refresh session TTL (seconds)',
@@ -63,11 +59,8 @@ const generalMessages = Object.freeze({
   'settings.general.timezoneHint':
     'IANA zone, such as UTC or America/Mexico_City. Agents read every message timestamp in it.',
   'settings.general.saved': 'Application configuration saved',
-  'settings.general.savedBody':
-    'The document is on disk. Restart Nox to apply the machine-level changes.',
   'settings.general.secureCookies': 'Secure refresh cookies',
   'settings.general.secureCookiesHelp': 'Send the refresh cookie only over HTTPS.',
-  'settings.general.selectDefaultAgent': 'Select a default agent',
   'settings.general.sessionSecurity': 'Session security',
   'settings.general.sessionSecurityHelp':
     'Short-lived access tokens authorize requests; the refresh session keeps an operator signed in and remains revocable.',
@@ -78,10 +71,6 @@ const generalMessages = Object.freeze({
     'Storage quota must be at least the maximum artifact size.',
   'settings.general.validation.configurationObject':
     'Application configuration must be one JSON object.',
-  'settings.general.validation.defaultAgentExists':
-    'Choose an agent that exists in the blueprint directory.',
-  'settings.general.validation.defaultAgentRequired':
-    'Choose the agent used to open new web conversations.',
   'settings.general.validation.durabilityMode': 'Choose a supported SQLite durability mode.',
   'settings.general.validation.hostRequired': 'A bind host is required.',
   'settings.general.validation.locale': 'Choose an installed language.',

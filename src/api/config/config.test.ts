@@ -35,6 +35,10 @@ import { ConfigStore } from './store';
 
 import type { Broker } from '../../gateway/broker';
 import type { ChatProvider } from '../../provider/provider';
+import type {
+  ConfigurationRuntime,
+  RuntimeComponentStatus,
+} from '../../runtime/configurationRuntime';
 
 const databases: Database[] = [];
 const directories: string[] = [];
@@ -116,6 +120,7 @@ interface NoxOptions {
   brokers?: Record<string, unknown>;
   /** Left unresolved, the contributed sections have no value to administer. */
   resolve?: boolean;
+  runtime?: (config: Config) => ConfigurationRuntime;
 }
 
 interface ConfigNox {
@@ -123,6 +128,41 @@ interface ConfigNox {
   readonly directory: string;
   readonly headers: Record<string, string>;
   readonly url: string;
+}
+
+/** Deterministic failing candidate used to exercise API retry/revert semantics. */
+class ProviderRuntime implements ConfigurationRuntime {
+  readonly #config: Config;
+
+  #generation = 0;
+  #statuses: readonly RuntimeComponentStatus[] = [];
+
+  constructor(config: Config) {
+    this.#config = config;
+  }
+
+  public reconcile(): Promise<void> {
+    const generation = ++this.#generation;
+    const entry = this.#config.get('providers').main;
+    this.#statuses =
+      entry?.baseUrl === 'https://broken.test'
+        ? [
+            {
+              activeGeneration: Math.max(1, generation - 1),
+              desiredGeneration: generation,
+              error: 'candidate refused',
+              id: 'main',
+              kind: 'provider',
+              state: 'failed',
+            },
+          ]
+        : [];
+    return Promise.resolve();
+  }
+
+  public statuses(): readonly RuntimeComponentStatus[] {
+    return this.#statuses;
+  }
 }
 
 /** A claimed Nox with one account logged in and the config routes mounted. */
@@ -164,6 +204,7 @@ async function configNox(options: NoxOptions = {}): Promise<ConfigNox> {
       authorities: () => AuthorityCatalog.from([...CORE_AUTHORITIES]),
       config,
       contributions,
+      runtime: options.runtime?.(config),
       toolSets: new ToolSetCatalog({
         configured: () => config.get('toolSets'),
         contributions,
@@ -341,7 +382,7 @@ describe('reading configuration', () => {
 });
 
 describe('writing a whole section', () => {
-  test('replaces the document and says the change waits for a restart', async () => {
+  test('applies hot app fields without claiming a restart', async () => {
     const nox = await configNox();
 
     const response = await fetch(`${nox.url}/config/app`, {
@@ -355,49 +396,38 @@ describe('writing a whole section', () => {
     };
 
     expect(response.status).toBe(200);
-    expect(body.restartRequired).toBeTrue();
+    expect(body.restartRequired).toBeFalse();
     expect(body.value.logLevel).toBe('debug');
     expect(await onDisk(nox.directory, 'app.json')).toMatchObject({ logLevel: 'debug' });
     expect(nox.config.get('app').logLevel).toBe('debug');
   });
 
-  test('refuses a web-chat default that cannot compose on restart', async () => {
-    const nox = await configNox({
-      blueprints: {
-        nox: NOX,
-        spare: { ...NOX, systemPrompt: 'be spare' },
-      },
-    });
+  test('keeps infrastructure changes restart-scoped across later hot edits', async () => {
+    const nox = await configNox();
 
-    const missing = await fetch(`${nox.url}/config/app`, {
-      body: JSON.stringify({ logLevel: 'debug' }),
+    const changed = await fetch(`${nox.url}/config/app`, {
+      body: JSON.stringify({ database: { path: 'next.db' }, logLevel: 'debug' }),
       headers: nox.headers,
       method: 'PUT',
     });
-    expect(missing.status).toBe(422);
-    expect((await missing.json()) as { problems: string[] }).toMatchObject({
-      problems: ['chat.defaultAgent is required when 2 agents are configured'],
-    });
+    const first = (await changed.json()) as {
+      restartRequired: boolean;
+      runtime: RuntimeComponentStatus[];
+    };
 
-    const unknown = await fetch(`${nox.url}/config/app`, {
-      body: JSON.stringify({ chat: { defaultAgent: 'ghost' } }),
+    expect(first.restartRequired).toBeTrue();
+    expect(
+      first.runtime.some(
+        (status) => status.kind === 'application' && status.state === 'restartRequired',
+      ),
+    ).toBeTrue();
+
+    const hotEdit = await fetch(`${nox.url}/config/app`, {
+      body: JSON.stringify({ database: { path: 'next.db' }, logLevel: 'trace' }),
       headers: nox.headers,
       method: 'PUT',
     });
-    expect(unknown.status).toBe(422);
-    expect((await unknown.json()) as { problems: string[] }).toMatchObject({
-      problems: ['chat.defaultAgent names "ghost", but blueprints configures no such agent'],
-    });
-
-    const valid = await fetch(`${nox.url}/config/app`, {
-      body: JSON.stringify({ chat: { defaultAgent: 'spare' } }),
-      headers: nox.headers,
-      method: 'PUT',
-    });
-    expect(valid.status).toBe(200);
-    expect(await onDisk(nox.directory, 'app.json')).toMatchObject({
-      chat: { defaultAgent: 'spare' },
-    });
+    expect(((await hotEdit.json()) as { restartRequired: boolean }).restartRequired).toBeTrue();
   });
 
   test('refuses a document its schema rejects, leaving the file alone', async () => {
@@ -447,6 +477,100 @@ describe('writing a whole section', () => {
   });
 });
 
+describe('runtime recovery', () => {
+  test('keeps a failed desired entry, then reverts to the last valid document', async () => {
+    const nox = await configNox({ runtime: (config) => new ProviderRuntime(config) });
+
+    const failed = await fetch(`${nox.url}/config/providers/main`, {
+      body: JSON.stringify({ baseUrl: 'https://broken.test', type: 'fake_provider' }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+    const failedBody = (await failed.json()) as {
+      revertAvailable: boolean;
+      runtime: RuntimeComponentStatus[];
+    };
+
+    expect(failed.status).toBe(200);
+    expect(nox.config.get('providers').main?.baseUrl).toBe('https://broken.test');
+    expect(failedBody.revertAvailable).toBeTrue();
+    expect(
+      failedBody.runtime.some(
+        (status) => status.id === 'main' && status.kind === 'provider' && status.state === 'failed',
+      ),
+    ).toBeTrue();
+
+    const reverted = await fetch(`${nox.url}/config/runtime/revert`, {
+      body: '{}',
+      headers: nox.headers,
+      method: 'POST',
+    });
+    const revertedBody = (await reverted.json()) as { revertAvailable: boolean };
+
+    expect(reverted.status).toBe(200);
+    expect(revertedBody.revertAvailable).toBeFalse();
+    expect(nox.config.get('providers').main?.baseUrl).toBe('https://main.test');
+  });
+
+  test('reloads mounted files independently and retains a valid active document on failure', async () => {
+    const nox = await configNox({ runtime: (config) => new ProviderRuntime(config) });
+    const providersPath = join(nox.directory, 'providers.json');
+    await writeFile(
+      providersPath,
+      JSON.stringify({ main: { baseUrl: 'https://mounted.test', type: 'fake_provider' } }),
+    );
+
+    const loaded = await fetch(`${nox.url}/config/reload`, {
+      body: '{}',
+      headers: nox.headers,
+      method: 'POST',
+    });
+    expect(loaded.status).toBe(200);
+    expect(nox.config.get('providers').main?.baseUrl).toBe('https://mounted.test');
+
+    await writeFile(providersPath, '{ broken');
+    const degraded = await fetch(`${nox.url}/config/reload`, {
+      body: '{}',
+      headers: nox.headers,
+      method: 'POST',
+    });
+    const degradedBody = (await degraded.json()) as {
+      runtime: RuntimeComponentStatus[];
+      sections: { error?: string; key: string }[];
+    };
+
+    expect(degraded.status).toBe(200);
+    expect(nox.config.get('providers').main?.baseUrl).toBe('https://mounted.test');
+    expect(degradedBody.sections.find((section) => section.key === 'providers')?.error).toContain(
+      'valid JSON',
+    );
+    expect(
+      degradedBody.runtime.some(
+        (status) =>
+          status.id === 'providers' && status.kind === 'provider' && status.state === 'failed',
+      ),
+    ).toBeTrue();
+
+    await writeFile(
+      providersPath,
+      JSON.stringify({ main: { baseUrl: 'https://broken.test', type: 'fake_provider' } }),
+    );
+    const failed = await fetch(`${nox.url}/config/reload`, {
+      body: '{}',
+      headers: nox.headers,
+      method: 'POST',
+    });
+    expect(((await failed.json()) as { revertAvailable: boolean }).revertAvailable).toBeTrue();
+
+    await fetch(`${nox.url}/config/runtime/revert`, {
+      body: '{}',
+      headers: nox.headers,
+      method: 'POST',
+    });
+    expect(nox.config.get('providers').main?.baseUrl).toBe('https://mounted.test');
+  });
+});
+
 describe('writing one entry', () => {
   test('creates one without disturbing the instances already in the file', async () => {
     const nox = await configNox();
@@ -459,7 +583,7 @@ describe('writing one entry', () => {
     const body = (await response.json()) as { entryId: string; restartRequired: boolean };
 
     expect(response.status).toBe(201);
-    expect(body).toMatchObject({ entryId: 'spare', restartRequired: true });
+    expect(body).toMatchObject({ entryId: 'spare', restartRequired: false });
 
     // The whole point of an instance route: one file, and the other instance
     // survived the write untouched.
@@ -523,6 +647,58 @@ describe('writing one entry', () => {
     expect(await response.json()).toMatchObject({ error: 'contribution_type_change' });
     expect(await onDisk(nox.directory, 'toolsets.json')).toEqual({
       internet: { type: 'fake_tools' },
+    });
+  });
+
+  test('refuses to change the contributed schema of an existing provider', async () => {
+    const nox = await configNox();
+
+    const response = await fetch(`${nox.url}/config/providers/main`, {
+      body: JSON.stringify({ baseUrl: 'https://main.test', type: 'some_other_provider' }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'contribution_type_change' });
+    expect(await onDisk(nox.directory, 'providers.json')).toMatchObject({
+      main: { type: 'fake_provider' },
+    });
+  });
+
+  test('refuses to change the contributed schema of an existing broker', async () => {
+    const nox = await configNox({
+      brokers: { relay: { agent: 'nox', type: 'fake_broker' } },
+    });
+
+    const response = await fetch(`${nox.url}/config/brokers/relay`, {
+      body: JSON.stringify({ agent: 'nox', type: 'some_other_broker' }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'contribution_type_change' });
+    expect(await onDisk(nox.directory, 'brokers.json')).toMatchObject({
+      relay: { agent: 'nox', type: 'fake_broker' },
+    });
+  });
+
+  test('also protects broker schema identity during whole-document writes', async () => {
+    const nox = await configNox({
+      brokers: { relay: { agent: 'nox', type: 'fake_broker' } },
+    });
+
+    const response = await fetch(`${nox.url}/config/brokers`, {
+      body: JSON.stringify({ relay: { agent: 'nox', type: 'some_other_broker' } }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'contribution_type_change' });
+    expect(await onDisk(nox.directory, 'brokers.json')).toMatchObject({
+      relay: { agent: 'nox', type: 'fake_broker' },
     });
   });
 

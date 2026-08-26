@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
+import { AuthStore } from './api/auth/store';
 import { ApiServer } from './api/server';
 import { ArtifactStorageQuotaError } from './artifact/error';
 import { bootstrap } from './bootstrap';
@@ -24,6 +25,7 @@ import type { NoxApplication } from './application';
 import type { EnvSource } from './config/env';
 
 const directories: string[] = [];
+const PASSWORD = 'correct-horse-battery';
 let booted: NoxApplication | undefined;
 
 /** What a working installation looks like: one blueprint, one provider. */
@@ -61,6 +63,7 @@ interface BootOptions {
   app?: unknown;
   blueprints?: Record<string, unknown>;
   brokers?: unknown;
+  configWatch?: boolean;
   dataDir?: string;
   providers?: unknown;
   secrets?: Readonly<Record<string, string>>;
@@ -90,11 +93,20 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
     )) {
       await store.set(secretId, value);
     }
+    const auth = await AuthStore.open({ database, dataDirectory: dataDir });
+    await auth.register('esteban', PASSWORD);
   } finally {
     await database.close();
   }
 
-  return { CONFIG_DIR: configDir, DATA_DIR: dataDir, NODE_ENV: 'test' };
+  return {
+    CONFIG_DIR: configDir,
+    ...(options.configWatch === true
+      ? { CONFIG_WATCH: 'true', CONFIG_WATCH_DEBOUNCE_MS: '50' }
+      : {}),
+    DATA_DIR: dataDir,
+    NODE_ENV: 'test',
+  };
 }
 
 async function boot(options: BootOptions = {}): Promise<NoxApplication> {
@@ -102,16 +114,17 @@ async function boot(options: BootOptions = {}): Promise<NoxApplication> {
   return booted;
 }
 
-/** Resolves with the error bootstrap rejected with, or undefined if it booted. */
-async function failure(options: BootOptions): Promise<unknown> {
-  const result: unknown = await bootstrap({
-    env: await seed(options),
-    logger: silentLogger,
-  }).catch((error: unknown) => error);
-  if (result instanceof Error) return result;
-
-  booted = result as NoxApplication;
-  return undefined;
+async function login(url: string): Promise<Record<string, string>> {
+  const response = await fetch(`${url}/api/auth/login`, {
+    body: JSON.stringify({ password: PASSWORD, username: 'esteban' }),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  const body = (await response.json()) as { accessToken: string };
+  return {
+    authorization: `Bearer ${body.accessToken}`,
+    'content-type': 'application/json',
+  };
 }
 
 describe('bootstrap', () => {
@@ -205,7 +218,7 @@ describe('bootstrap', () => {
     // Two agents over one configured instance, which is the case the allowlist
     // exists for: the instance is shared, so the cut cannot live on it.
     const application = await boot({
-      app: { api: { port: 0 }, chat: { defaultAgent: 'nox' } },
+      app: { api: { port: 0 } },
       blueprints: {
         nox: { ...NOX, toolSets: { direct: [{ id: 'internet', tools: ['web_search'] }] } },
         typo: { ...NOX, toolSets: { direct: [{ id: 'internet', tools: ['web_crawl'] }] } },
@@ -231,7 +244,7 @@ describe('bootstrap', () => {
 
   test('registers one agent per file in the blueprints directory', async () => {
     const application = await boot({
-      app: { api: { port: 0 }, chat: { defaultAgent: 'nox' } },
+      app: { api: { port: 0 } },
       blueprints: {
         mailroom: { ...NOX, systemPrompt: 'read the mail' },
         nox: NOX,
@@ -409,8 +422,8 @@ describe('bootstrap', () => {
     expect(stream.status).toBe(401);
   });
 
-  test('requires a web default only when more than one agent exists', async () => {
-    const error = await failure({
+  test('starts with multiple agents and lets Web ask which one to use', async () => {
+    const application = await boot({
       app: { api: { port: 0 } },
       blueprints: {
         mailroom: { ...NOX, systemPrompt: 'read the mail' },
@@ -418,88 +431,286 @@ describe('bootstrap', () => {
       },
     });
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain('app.chat.defaultAgent');
-  });
-
-  test('releases the port when composing fails, rather than holding it', async () => {
-    const api = { host: '127.0.0.1', port: 39_518 };
-
-    expect(await failure({ app: { api }, blueprints: {} })).toBeInstanceOf(Error);
-
-    // A boot that threw left nothing running, so the next one can listen where
-    // the last one did.
-    const application = await boot({ app: { api } });
     expect(application.state).toBe('running');
+    expect(application.agentIds).toEqual(['mailroom', 'watcher']);
   });
 
-  test('refuses to boot with no blueprint at all, saying where they go', async () => {
-    const error = await failure({ blueprints: {} });
+  test('drops Web’s implicit default when a second agent hot-activates', async () => {
+    const api = { host: '127.0.0.1', port: 39_520 };
+    const application = await boot({ app: { api } });
+    const url = `http://${api.host}:${String(api.port)}`;
+    const headers = await login(url);
 
-    expect(String(error)).toContain('blueprints');
+    const before = (await (await fetch(`${url}/api/chat/agents`, { headers })).json()) as {
+      agents: string[];
+      defaultAgent?: string;
+    };
+    expect(before).toEqual({ agents: ['nox'], defaultAgent: 'nox' });
+
+    const created = await fetch(`${url}/api/config/blueprints/support`, {
+      body: JSON.stringify({ ...NOX, systemPrompt: 'support' }),
+      headers,
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    expect(application.agentIds).toEqual(['nox', 'support']);
+
+    const after = (await (await fetch(`${url}/api/chat/agents`, { headers })).json()) as {
+      agents: string[];
+      defaultAgent?: string;
+    };
+    expect(after).toEqual({ agents: ['nox', 'support'] });
+
+    const removedSupport = await fetch(`${url}/api/config/blueprints/support`, {
+      headers,
+      method: 'DELETE',
+    });
+    expect(removedSupport.status).toBe(200);
+    expect(
+      (await (await fetch(`${url}/api/chat/agents`, { headers })).json()) as {
+        agents: string[];
+        defaultAgent?: string;
+      },
+    ).toEqual({ agents: ['nox'], defaultAgent: 'nox' });
+
+    const removedLast = await fetch(`${url}/api/config/blueprints/nox`, {
+      headers,
+      method: 'DELETE',
+    });
+    expect(removedLast.status).toBe(200);
+    expect(application.agentIds).toEqual([]);
+    expect(
+      (await (await fetch(`${url}/api/chat/agents`, { headers })).json()) as {
+        agents: string[];
+        defaultAgent?: string;
+      },
+    ).toEqual({ agents: [] });
   });
 
-  test('refuses to boot when a blueprint names an unconfigured provider', async () => {
-    const error = await failure({ blueprints: { nox: { ...NOX, provider: 'missing' } } });
+  test('hot-applies blueprints, timezone, logging and the installation locale', async () => {
+    const api = { host: '127.0.0.1', port: 39_515 };
+    const application = await boot({ app: { api } });
+    const url = `http://${api.host}:${String(api.port)}`;
+    const headers = await login(url);
+    const firstAgent = application.getAgent('nox');
 
-    expect(String(error)).toContain('missing');
-    expect(String(error)).toContain('main');
+    const blueprint = await fetch(`${url}/api/config/blueprints/nox`, {
+      body: JSON.stringify({ ...NOX, systemPrompt: 'changed now' }),
+      headers,
+      method: 'PUT',
+    });
+    expect(blueprint.status).toBe(200);
+    expect(((await blueprint.json()) as { restartRequired: boolean }).restartRequired).toBeFalse();
+    expect(application.getAgent('nox')?.systemPrompt).toBe('changed now');
+    expect(application.getAgent('nox')).not.toBe(firstAgent);
+
+    const app = await fetch(`${url}/api/config/app`, {
+      body: JSON.stringify({
+        api,
+        logLevel: 'error',
+        timezone: 'America/Mexico_City',
+        ui: { locale: 'es' },
+      }),
+      headers,
+      method: 'PUT',
+    });
+    expect(app.status).toBe(200);
+    expect(((await app.json()) as { restartRequired: boolean }).restartRequired).toBeFalse();
+    expect(application.getAgent('nox')).not.toBe(firstAgent);
+
+    const beforeSecretRotation = application.getAgent('nox');
+    await application.services.get(secretStoreService).set('OPENAI_API_KEY', 'sk-rotated');
+    expect(application.getAgent('nox')).not.toBe(beforeSecretRotation);
+
+    const languages = await fetch(`${url}/api/i18n/languages`);
+    expect((await languages.json()) as { configuredLocale?: string }).toMatchObject({
+      configuredLocale: 'es',
+    });
   });
 
-  test('refuses to boot when a blueprint names an unconfigured tool set', async () => {
-    const error = await failure({
+  test('optionally reloads mounted configuration after a debounce', async () => {
+    const env = await seed({ configWatch: true });
+    const configDir = env.CONFIG_DIR;
+    if (configDir === undefined) throw new Error('Expected a config directory.');
+    booted = await bootstrap({ env, logger: silentLogger });
+
+    writeFileSync(
+      join(configDir, 'blueprints', 'nox.json'),
+      JSON.stringify({ ...NOX, systemPrompt: 'watched change' }),
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (booted.getAgent('nox')?.systemPrompt === 'watched change') break;
+      await Bun.sleep(10);
+    }
+
+    expect(booted.getAgent('nox')?.systemPrompt).toBe('watched change');
+  });
+
+  test('hot-disables and restores the Web broker', async () => {
+    const api = { host: '127.0.0.1', port: 39_516 };
+    await boot({ app: { api } });
+    const url = `http://${api.host}:${String(api.port)}`;
+    const headers = await login(url);
+
+    const disabled = await fetch(`${url}/api/config/brokers/web`, {
+      body: JSON.stringify({ enabled: false, type: 'web' }),
+      headers,
+      method: 'PUT',
+    });
+    expect(disabled.status).toBe(200);
+    expect(((await disabled.json()) as { restartRequired: boolean }).restartRequired).toBeFalse();
+    expect((await fetch(`${url}/api/chat/agents`, { headers })).status).toBe(503);
+
+    const enabled = await fetch(`${url}/api/config/brokers/web`, {
+      body: JSON.stringify({ type: 'web' }),
+      headers,
+      method: 'PUT',
+    });
+    expect(enabled.status).toBe(200);
+    expect((await fetch(`${url}/api/chat/agents`, { headers })).status).toBe(200);
+  });
+
+  test('keeps the repair API listening when agent composition fails', async () => {
+    const api = { host: '127.0.0.1', port: 39_518 };
+    const degraded = await boot({
+      app: { api },
+      blueprints: { nox: { ...NOX, provider: 'missing' } },
+    });
+
+    expect(degraded.state).toBe('running');
+    expect(degraded.agentIds).toEqual([]);
+    expect((await fetch(`http://${api.host}:${String(api.port)}/api/health/live`)).status).toBe(
+      200,
+    );
+
+    await degraded.stop();
+    booted = undefined;
+    const repaired = await boot({ app: { api } });
+    expect(repaired.state).toBe('running');
+  });
+
+  test('retains a routed agent when a mounted blueprint removal cannot activate', async () => {
+    const api = { host: '127.0.0.1', port: 39_521 };
+    const env = await seed({
+      app: { api },
+      brokers: { web: { agent: 'nox', type: 'web' } },
+    });
+    const configDir = env.CONFIG_DIR;
+    if (configDir === undefined) throw new Error('Expected a config directory.');
+    booted = await bootstrap({ env, logger: silentLogger });
+    const url = `http://${api.host}:${String(api.port)}`;
+    const headers = await login(url);
+
+    rmSync(join(configDir, 'blueprints', 'nox.json'));
+    const reloaded = await fetch(`${url}/api/config/reload`, {
+      body: '{}',
+      headers,
+      method: 'POST',
+    });
+    const degraded = (await reloaded.json()) as {
+      revertAvailable: boolean;
+      runtime: { error?: string; id: string; kind: string; state: string }[];
+    };
+
+    expect(booted.getAgent('nox')).toBeDefined();
+    expect(degraded.revertAvailable).toBeTrue();
+    expect(
+      degraded.runtime.some(
+        (status) =>
+          status.id === 'nox' &&
+          status.kind === 'agent' &&
+          status.state === 'failed' &&
+          typeof status.error === 'string' &&
+          status.error.includes('still routes'),
+      ),
+    ).toBeTrue();
+
+    const reverted = await fetch(`${url}/api/config/runtime/revert`, {
+      body: '{}',
+      headers,
+      method: 'POST',
+    });
+    expect(reverted.status).toBe(200);
+    expect(booted.getAgent('nox')).toBeDefined();
+  });
+
+  test('keeps the control plane running with no blueprint configured', async () => {
+    const application = await boot({ blueprints: {} });
+
+    expect(application.state).toBe('running');
+    expect(application.agentIds).toEqual([]);
+  });
+
+  test('keeps running when a blueprint names an unconfigured provider', async () => {
+    const application = await boot({ blueprints: { nox: { ...NOX, provider: 'missing' } } });
+
+    expect(application.state).toBe('running');
+    expect(application.agentIds).toEqual([]);
+  });
+
+  test('keeps running when a blueprint names an unconfigured tool set', async () => {
+    const application = await boot({
       blueprints: {
         nox: { ...NOX, toolSets: { direct: ['missing'], routed: [] } },
       },
     });
 
-    expect(String(error)).toContain('missing');
-    expect(String(error)).toContain('toolsets.json');
+    expect(application.state).toBe('running');
+    expect(application.agentIds).toEqual([]);
   });
 
-  test('rejects a tool-set kind nobody contributed', async () => {
-    const error = await failure({
-      toolSets: { internet: { type: 'ghost' } },
-    });
+  test('isolates a tool-set kind nobody contributed', async () => {
+    const application = await boot({ toolSets: { internet: { type: 'ghost' } } });
+    const config = application.services.get(configService);
 
-    expect(String(error)).toContain('toolsets.json');
-    expect(String(error)).toContain('web');
+    expect(application.state).toBe('running');
+    expect(config.problems.find((problem) => problem.key === 'toolSets')?.error).toContain(
+      'toolsets.json',
+    );
   });
 
-  test('rejects a blueprint missing what the schema requires', async () => {
-    const error = await failure({ blueprints: { nox: { provider: 'main' } } });
+  test('isolates a blueprint missing what its schema requires', async () => {
+    const application = await boot({ blueprints: { nox: { provider: 'main' } } });
+    const config = application.services.get(configService);
 
-    expect(String(error)).toContain('nox.json');
-    expect(String(error)).toContain('model');
+    expect(application.state).toBe('running');
+    expect(config.problems.find((problem) => problem.key === 'blueprints')?.error).toContain(
+      'model',
+    );
   });
 
-  test('rejects a provider entry of a kind nobody contributed, listing the kinds', async () => {
-    const error = await failure({
+  test('isolates a provider kind nobody contributed', async () => {
+    const application = await boot({
       providers: { main: { baseUrl: 'https://api.example.test/v1', type: 'anthropic' } },
     });
+    const config = application.services.get(configService);
 
-    expect(String(error)).toContain('providers.json');
-    expect(String(error)).toContain('openai_completions');
+    expect(application.state).toBe('running');
+    expect(config.problems.find((problem) => problem.key === 'providers')?.error).toContain(
+      'openai_completions',
+    );
   });
 
-  test('rejects a provider entry missing what its own schema requires', async () => {
-    const error = await failure({ providers: { main: { type: 'openai_completions' } } });
+  test('isolates a provider entry missing what its schema requires', async () => {
+    const application = await boot({ providers: { main: { type: 'openai_completions' } } });
+    const config = application.services.get(configService);
 
-    // `baseUrl` is required by the adapter schema, and the adapter is the only
-    // thing that knows that, which is why it hands the schema over.
-    expect(String(error)).toContain('baseUrl');
+    expect(application.state).toBe('running');
+    expect(config.problems.find((problem) => problem.key === 'providers')?.error).toContain(
+      'baseUrl',
+    );
   });
 
-  test('refuses a plaintext credential in ordinary configuration', async () => {
-    // The position is declared by the adapter's schema as a reference and only a
-    // reference, so a literal is rejected by the same parse that validates the
-    // rest of the entry.
-    const error = await failure({
+  test('isolates a plaintext credential in ordinary configuration', async () => {
+    const application = await boot({
       providers: { main: { ...PROVIDERS.main, apiKey: 'plaintext' } },
     });
+    const config = application.services.get(configService);
+    const problem = config.problems.find((candidate) => candidate.key === 'providers')?.error;
 
-    expect(String(error)).toContain('apiKey');
-    expect(String(error)).toContain('$secret');
+    expect(application.state).toBe('running');
+    expect(problem).toContain('apiKey');
+    expect(problem).toContain('$secret');
   });
 
   test('boots when configuration names a credential nobody has stored yet', async () => {

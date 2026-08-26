@@ -16,7 +16,7 @@ const brokerMessages = Object.freeze({
   'settings.broker.brokerJsonHelp':
     'Full fidelity access to routing, authorization and contribution fields. Credentials must remain $secret references.',
   'settings.broker.changeRefused': 'Broker change refused',
-  'settings.broker.composeOnRestart': 'Compose on restart',
+  'settings.broker.composeOnRestart': 'Enable broker',
   'settings.broker.composeOnRestartHelp':
     'Disabled entries remain configured but open no connection, route or secret.',
   'settings.broker.contribution': 'CONTRIBUTION',
@@ -48,12 +48,12 @@ const brokerMessages = Object.freeze({
   'settings.broker.remove': 'Remove broker',
   'settings.broker.removeQuestion': 'Remove broker?',
   'settings.broker.removeWarning':
-    'The external transport will stop being composed after Nox restarts.',
+    'The transport will stop after its current conversation turns settle.',
   'settings.broker.routing': 'ROUTING',
   'settings.broker.save': 'Save broker',
   'settings.broker.saved': 'Broker configuration saved',
-  'settings.broker.savedBody': 'Restart Nox to compose this transport and its conversation routes.',
   'settings.broker.secretValueHint': 'Blank preserves an existing value.',
+  'settings.broker.askAgentOnNewConversation': 'Ask when a new conversation starts',
   'settings.broker.selectAgent': 'Select an agent',
   'settings.broker.sender': 'SENDER',
   'settings.broker.senderId': 'Sender ID',
@@ -67,8 +67,6 @@ const brokerMessages = Object.freeze({
   'settings.broker.transportRoute': 'Transport route',
   'settings.broker.transportRouteHelp':
     'Every conversation enters through a contributed transport and falls back to one base agent.',
-  'settings.broker.type': 'Broker type',
-  'settings.broker.typeHint': 'Discriminator registered by the installed broker extension.',
   'settings.broker.typeUnset': 'TYPE UNSET',
   'settings.broker.useBaseAgent': 'Use {agent}',
   'settings.broker.validation.agentAvailable': 'Choose an agent blueprint available on this Nox.',
@@ -88,7 +86,6 @@ const brokerMessages = Object.freeze({
   'settings.broker.validation.senderIdUnique': 'Sender IDs must be unique inside this route.',
   'settings.broker.validation.storeBeforeEnabling':
     'Store a value before enabling this broker reference.',
-  'settings.broker.validation.typeRequired': 'Contributed broker type is required.',
   'settings.broker.validation.webReserved': 'The ID "web" is reserved for Nox chat.',
 } as const);
 

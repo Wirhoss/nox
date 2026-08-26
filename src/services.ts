@@ -1,5 +1,6 @@
 import { createServiceToken } from './extensions/service';
 
+import type { ChatHub } from './api/chat';
 import type { ArtifactPipeline } from './artifact/pipeline';
 import type { Config } from './config/config';
 import type { SecretStore } from './config/secrets';
@@ -12,6 +13,7 @@ import type { ScheduledRunHost } from './scheduler/scheduledRun';
  * implementation, so declaring these keeps the kernel free of concrete imports.
  */
 const artifactPipelineService = createServiceToken<ArtifactPipeline>('nox.artifact-pipeline');
+const chatHubService = createServiceToken<ChatHub>('nox.chat-hub');
 const configService = createServiceToken<Config>('nox.config');
 const databaseService = createServiceToken<Database>('nox.database');
 const loggerService = createServiceToken<Logger>('nox.logger');
@@ -20,6 +22,7 @@ const secretStoreService = createServiceToken<SecretStore>('nox.secret-store');
 
 export {
   artifactPipelineService,
+  chatHubService,
   configService,
   databaseService,
   loggerService,

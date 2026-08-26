@@ -40,16 +40,16 @@ interface SecretRoutesOptions {
  * `references` and `consumers` are close but not the same, and the difference is
  * the point. A reference is a fact about the configuration as it stands, known
  * whether or not anything has been composed from it. A consumer is something
- * holding a snapshot of the value right now, which is the only thing that can
- * make a replacement wait for a restart.
+ * known to have resolved a snapshot in this process, which identifies what a
+ * replacement generation may need to recompose.
  *
  * A row with references and `stored: false` is the case this surface exists to
  * make visible: configuration names a credential nobody has supplied yet.
  *
- * `restartRequired` is the honest answer rather than a cautious one. Resolved
- * secrets are snapshots: whoever already holds a handle keeps the old value
- * until it is composed again, so replacing a secret nothing has resolved takes
- * effect immediately, and replacing one a provider is using does not.
+ * Resolved handles remain immutable for in-flight turns, while the secret store
+ * asks the configuration runtime to compose a new generation before the write
+ * returns. A failed candidate is visible in runtime status and keeps the last
+ * working generation; it never turns credential rotation into a process restart.
  */
 function describe(
   summary: SecretSummary,
@@ -58,7 +58,7 @@ function describe(
   return {
     consumers: [...consumers].sort((a, b) => a.location.localeCompare(b.location)),
     references: [...summary.references],
-    restartRequired: consumers.length > 0,
+    restartRequired: false,
     secretId: summary.secretId,
     stored: summary.stored,
     ...(summary.createdAt === undefined ? {} : { createdAt: summary.createdAt }),
@@ -72,10 +72,9 @@ function describe(
  * hands the value only to the code composing a contribution, so this surface
  * exists to write and to account for them, not to read them back.
  *
- * Consumers are reported everywhere they are known because they are the whole of
- * what an operator needs to judge a change: a secret nothing has resolved can be
- * rewritten freely, and one three providers hold is a restart. They are what
- * this process has resolved since it started, not a promise about the next one.
+ * Consumers are reported everywhere they are known because they explain which
+ * configured contributions have resolved this ID. They are historical for this
+ * process, not a claim that an old generation is still serving work.
  *
  * Authenticated throughout, which barely needs saying: these are the credentials
  * every outbound call Nox makes is authorized with.
@@ -165,7 +164,7 @@ function createSecretRoutes(options: SecretRoutesOptions) {
           return {
             consumers: [...consumers].sort((a, b) => a.location.localeCompare(b.location)),
             references: [...references],
-            restartRequired: consumers.length > 0,
+            restartRequired: false,
             secretId: params.secretId,
           };
         },

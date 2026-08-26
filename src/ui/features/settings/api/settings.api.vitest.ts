@@ -13,7 +13,6 @@ describe('settings API', () => {
       http.get('*/api/config', ({ request }) => {
         expect(request.headers.get('authorization')).toBe(`Bearer ${TOKEN}`)
         return HttpResponse.json({
-          defaultAgent: 'nox',
           sections: [
             {
               applies: 'restart',
@@ -31,7 +30,6 @@ describe('settings API', () => {
 
     const catalog = await settingsApi.listConfig(TOKEN)
 
-    expect(catalog.defaultAgent).toBe('nox')
     expect(catalog.sections[0]).toMatchObject({ entries: true, key: 'blueprints' })
   })
 

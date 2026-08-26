@@ -436,6 +436,7 @@ describe('active chat surface integration', () => {
     })
     await auth.login({ password: 'secret', username: 'operator' })
 
+    vi.spyOn(chatApi, 'listAgents').mockResolvedValue({ agents: ['nox'], defaultAgent: 'nox' })
     vi.spyOn(chatApi, 'openStream').mockImplementation(
       ({ opened, signal }) =>
         new Promise<void>((resolve) => {

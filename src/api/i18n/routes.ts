@@ -9,7 +9,7 @@ import {
 import type { ContributionReader } from '../../extensions/contribution';
 
 interface LanguageRoutesOptions {
-  readonly configuredLocale?: string;
+  readonly configuredLocale?: (() => string | undefined) | string;
   readonly contributions: ContributionReader;
 }
 
@@ -46,6 +46,10 @@ function availablePacks(contributions: ContributionReader): readonly LanguagePac
 
 function catalog(options: LanguageRoutesOptions): LanguageCatalog {
   const packs = availablePacks(options.contributions);
+  const requestedLocale =
+    typeof options.configuredLocale === 'function'
+      ? options.configuredLocale()
+      : options.configuredLocale;
   const defaults = packs.filter((pack) => pack.default === true);
   if (defaults.length > 1) {
     throw new Error(
@@ -55,8 +59,8 @@ function catalog(options: LanguageRoutesOptions): LanguageCatalog {
   const fallback = defaults[0] ?? packs[0];
   if (fallback === undefined) throw new Error('No extension contributed a language pack.');
 
-  const configuredLocale = packs.some((pack) => pack.locale === options.configuredLocale)
-    ? options.configuredLocale
+  const configuredLocale = packs.some((pack) => pack.locale === requestedLocale)
+    ? requestedLocale
     : undefined;
   return Object.freeze({
     ...(configuredLocale === undefined ? {} : { configuredLocale }),

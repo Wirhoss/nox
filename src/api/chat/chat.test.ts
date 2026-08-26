@@ -22,6 +22,7 @@ import {
   ChatHub,
   type ChatListener,
   type ChatMessageInput,
+  type ChatMessageRejection,
   type ChatTransport,
 } from './transport';
 
@@ -45,6 +46,7 @@ class RecordingTransport implements ChatTransport {
 
   /** What the gateway would refuse with, set by whichever test cares. */
   public rejection: ChatCommandRejection | undefined;
+  public messageRejection: ChatMessageRejection | undefined;
 
   /** What the gateway would answer with, set by whichever test cares. */
   public commands: readonly ChatCommand[] = [];
@@ -54,6 +56,10 @@ class RecordingTransport implements ChatTransport {
   public emit(event: ChatEvent): void {
     const eventId = ++this.#nextEventId;
     for (const listener of this.listeners) listener(event, eventId);
+  }
+
+  public listAgents(): { readonly agents: readonly string[] } {
+    return { agents: ['nox'] };
   }
 
   public listCommands(): readonly ChatCommand[] {
@@ -78,12 +84,14 @@ class RecordingTransport implements ChatTransport {
     this.decisions.push(input);
   }
 
-  public submitMessage(input: ChatMessageInput): void {
+  public submitMessage(input: ChatMessageInput): ChatMessageRejection | undefined {
     this.messages.push(input);
+    return this.messageRejection;
   }
 
-  public submitSteer(input: ChatMessageInput): void {
+  public submitSteer(input: ChatMessageInput): ChatMessageRejection | undefined {
     this.steers.push(input);
+    return this.messageRejection;
   }
 
   public subscribe(listener: ChatListener): () => void {

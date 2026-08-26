@@ -107,17 +107,29 @@ class NoxApplication {
    * like that — an extension already activated would see the set move.
    */
   public addAgent(agent: Agent): this {
+    if (this.#agents.has(agent.agentId)) {
+      throw new Error(`An agent is already registered as ${agent.agentId}.`);
+    }
+    return this.replaceAgent(agent);
+  }
+
+  /**
+   * Atomically publishes a new generation for future sessions. Existing sessions
+   * keep their immutable snapshot until the gateway retires them after their
+   * current turn.
+   */
+  public replaceAgent(agent: Agent): this {
     if (this.#state === 'stopped' || this.#state === 'stopping') {
-      throw new Error(`Cannot add an agent while Nox is ${this.#state}.`);
+      throw new Error(`Cannot replace an agent while Nox is ${this.#state}.`);
     }
-    // The agent names itself, because its sessions are stored under that name.
-    // A registry key of its own could disagree with what the transcripts say.
-    const { agentId } = agent;
-    if (this.#agents.has(agentId)) {
-      throw new Error(`An agent is already registered as ${agentId}.`);
-    }
-    this.#agents.set(agentId, agent);
+    this.#agents.set(agent.agentId, agent);
     return this;
+  }
+
+  /** Removes the route for future sessions; already-open snapshots remain valid. */
+  public removeAgent(agentId: string): boolean {
+    if (this.#state === 'stopped' || this.#state === 'stopping') return false;
+    return this.#agents.delete(agentId);
   }
 
   /**

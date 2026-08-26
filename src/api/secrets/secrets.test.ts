@@ -157,7 +157,7 @@ describe('reading secrets', () => {
     expect(JSON.stringify(body)).not.toContain('"a"');
   });
 
-  test('reports who resolved one, and that they keep the old value until a restart', async () => {
+  test('reports who resolved one while hot replacement keeps old handles immutable', async () => {
     const nox = await secretNox();
     await write(nox, 'TOKEN', 'value');
 
@@ -173,9 +173,9 @@ describe('reading secrets', () => {
       { extensionId: 'test.extension', location: 'providers.main.apiKey' },
     ]);
 
-    // A resolved secret is a snapshot: whoever holds a handle keeps the old
-    // value, so a replacement genuinely does wait for a restart.
-    expect(body.restartRequired).toBeTrue();
+    // Existing handles remain snapshots for in-flight turns while future
+    // generations reconcile before the write returns.
+    expect(body.restartRequired).toBeFalse();
   });
 
   test('answers 404 for a secret nothing stores', async () => {
@@ -276,7 +276,7 @@ describe('removing secrets', () => {
     // impossible to remove without restarting first.
     expect(response.status).toBe(200);
     expect(body.consumers).toHaveLength(1);
-    expect(body.restartRequired).toBeTrue();
+    expect(body.restartRequired).toBeFalse();
     expect(await nox.secrets.has('TOKEN')).toBeFalse();
   });
 

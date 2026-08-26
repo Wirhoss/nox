@@ -1,5 +1,10 @@
 import { z } from 'zod'
 
+const agentCatalogSchema = z.object({
+  agents: z.array(z.string().min(1)),
+  defaultAgent: z.string().min(1).optional(),
+})
+
 const artifactRefSchema = z.object({
   artifactId: z.string(),
   filename: z.string().optional(),
@@ -223,6 +228,7 @@ const acceptedCommandSchema = z.object({ command: z.string().min(1) })
 const acceptedMessageSchema = z.object({ messageId: z.string().min(1) })
 const acceptedDecisionSchema = z.object({ requestId: z.string().min(1) })
 
+type AgentCatalog = z.infer<typeof agentCatalogSchema>
 type ArtifactRef = z.infer<typeof artifactRefSchema>
 type AcceptedCommand = z.infer<typeof acceptedCommandSchema>
 type AcceptedDecision = z.infer<typeof acceptedDecisionSchema>
@@ -243,6 +249,7 @@ export {
   acceptedCommandSchema,
   acceptedDecisionSchema,
   acceptedMessageSchema,
+  agentCatalogSchema,
   artifactRefSchema,
   chatEventSchema,
   chatHistorySchema,
@@ -256,6 +263,7 @@ export type {
   AcceptedCommand,
   AcceptedDecision,
   AcceptedMessage,
+  AgentCatalog,
   ArtifactRef,
   ChatCommand,
   ChatContentPart,

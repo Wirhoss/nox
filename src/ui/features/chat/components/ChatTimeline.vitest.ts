@@ -17,6 +17,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   auth = useAuthStore()
   session = useActiveSessionStore()
+  vi.spyOn(chatApi, 'listAgents').mockResolvedValue({ agents: ['nox'], defaultAgent: 'nox' })
 })
 
 afterEach(() => {

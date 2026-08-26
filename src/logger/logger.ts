@@ -12,6 +12,8 @@ interface LoggerOptions {
 
 interface Logger {
   child(name: string): Logger;
+  /** Changes the shared threshold for this logger and every child already created. */
+  setLevel?(level: LogLevel): void;
   debug(fields: LogFields, message: string): void;
   error(fields: LogFields, message: string): void;
   info(fields: LogFields, message: string): void;
@@ -79,21 +81,27 @@ function formatFields(fields: LogFields): string {
 }
 
 class ConsoleLogger implements Logger {
-  readonly #level: LogLevel;
   readonly #module: string;
-  readonly #write: (line: string) => void;
+  readonly #state: { level: LogLevel; write: (line: string) => void };
 
-  constructor(module: string, options: LoggerOptions = {}) {
+  constructor(
+    module: string,
+    options: LoggerOptions = {},
+    state?: { level: LogLevel; write: (line: string) => void },
+  ) {
     this.#module = module;
-    this.#level = options.level ?? 'info';
-    this.#write = options.write ?? writeToStderr;
+    this.#state = state ?? {
+      level: options.level ?? 'info',
+      write: options.write ?? writeToStderr,
+    };
   }
 
   public child(name: string): Logger {
-    return new ConsoleLogger(`${this.#module}:${name}`, {
-      level: this.#level,
-      write: this.#write,
-    });
+    return new ConsoleLogger(`${this.#module}:${name}`, {}, this.#state);
+  }
+
+  public setLevel(level: LogLevel): void {
+    this.#state.level = level;
   }
 
   public debug(fields: LogFields, message: string): void {
@@ -117,11 +125,13 @@ class ConsoleLogger implements Logger {
   }
 
   private log(level: LogLevel, fields: LogFields, message: string): void {
-    if (LEVEL_RANK[level] < LEVEL_RANK[this.#level]) return;
+    if (LEVEL_RANK[level] < LEVEL_RANK[this.#state.level]) return;
 
     const time = formatTime(new Date());
     const single = message.replace(/\s+/gu, ' ').trim();
-    this.#write(`${time} ${LEVEL_LABEL[level]} ${this.#module} ${single}${formatFields(fields)}\n`);
+    this.#state.write(
+      `${time} ${LEVEL_LABEL[level]} ${this.#module} ${single}${formatFields(fields)}\n`,
+    );
   }
 }
 
@@ -130,6 +140,7 @@ const silentLogger: Logger = {
   debug: (): void => undefined,
   error: (): void => undefined,
   info: (): void => undefined,
+  setLevel: (): void => undefined,
   trace: (): void => undefined,
   warn: (): void => undefined,
 };

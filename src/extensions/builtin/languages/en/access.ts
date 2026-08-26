@@ -62,7 +62,7 @@ const accessMessages = Object.freeze({
   'auth.registration.identityHint': 'Letters, digits, dots, dashes and underscores only.',
   'auth.registration.passwordPlaceholder': '8 characters minimum',
   'auth.registration.rejected': 'Claim rejected',
-  'auth.registration.submit': 'Claim this Nox',
+  'auth.registration.submit': 'Claim',
   'auth.validation.claimCodeRequired': 'Enter the claim code printed by the Nox container.',
   'auth.validation.confirmPasswordRequired': 'Confirm the password.',
   'auth.validation.identityCharacters': 'Use letters, digits, dots, dashes or underscores.',

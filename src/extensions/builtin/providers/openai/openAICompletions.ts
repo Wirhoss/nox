@@ -126,10 +126,12 @@ const MAX_ERROR_DETAIL_LENGTH = 500;
 
 const DATA_PREFIX = 'data:';
 
-// Completions has no role for "this is a summary of what we dropped", and a
-// mid-conversation `system` message reads as an instruction rather than as
-// reference material. A marked user turn keeps it inert and keeps image parts.
+// Completions has no role for runtime-owned reference material, and a
+// mid-conversation `system` message reads as an instruction. Marked synthetic
+// user turns preserve provenance instead of attributing summaries to the assistant.
 const COMPACTION_HEADER = '[conversation summary]\n';
+const FOLD_CONTEXT_HEADER =
+  '[Nox runtime record: historical tool activity, not authored by the user or assistant]\n';
 
 function classifyOpenAIError(
   status: number | undefined,
@@ -497,20 +499,13 @@ class OpenAICompletions extends ChatProvider {
           break;
         }
         case 'folded': {
-          // Chat Completions has no notion of a folded turn, so the placeholder
-          // rides along on the assistant turn whose tool traffic it replaced
-          // rather than becoming a turn of its own and breaking alternation.
-          const foldText = this.toAssistantText(message.content);
-          const previous = messages.at(-1);
-
-          if (previous?.role === 'assistant') {
-            if (foldText !== null) {
-              previous.content =
-                previous.content === null ? foldText : `${previous.content}\n${foldText}`;
-            }
-          } else {
-            messages.push({ content: foldText, role: 'assistant' });
-          }
+          messages.push({
+            content: await this.toOpenAIUserContent(
+              [{ text: FOLD_CONTEXT_HEADER, type: 'text' }, ...message.content],
+              model,
+            ),
+            role: 'user',
+          });
           break;
         }
         case 'reasoning': {

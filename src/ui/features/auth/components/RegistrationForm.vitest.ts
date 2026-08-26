@@ -47,7 +47,7 @@ describe('RegistrationForm', () => {
     await fireEvent.update(screen.getByLabelText(/^Identity/), 'operator')
     await fireEvent.update(screen.getByLabelText(/^Password/), 'night-machine')
     await fireEvent.update(screen.getByLabelText(/^Confirm password/), 'night-machine')
-    await fireEvent.click(screen.getByRole('button', { name: 'Claim this Nox' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Claim' }))
 
     await waitFor(() => {
       expect(auth.state.type).toBe('authenticated')

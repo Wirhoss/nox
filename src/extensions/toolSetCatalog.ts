@@ -1,4 +1,5 @@
 import { composeWithSecrets, type SecretStore } from '../config/secrets';
+import { stableStringify } from '../utils/json';
 import { type ToolSetConfig, toolSets } from './contribution-points/toolsets';
 
 import type { ToolSetGrantConfig } from '../config/blueprint';
@@ -30,6 +31,8 @@ interface ToolSetCatalogOptions {
    */
   readonly configured: () => Record<string, ToolSetConfig>;
   readonly contributions: ContributionReader;
+  /** Runtime inputs captured by factories but not present in one configured entry. */
+  readonly runtimeSignature?: () => unknown;
   readonly secretStore: SecretStore;
 }
 
@@ -42,9 +45,9 @@ interface ToolSetCatalogOptions {
  * allowlist onto the grant — the instance is common property, so a cut stored on
  * it would be a cut for everyone.
  *
- * Instances are cached for the life of the process, which is exactly as long as
- * their configuration is guaranteed to hold: `toolsets.json` applies on restart,
- * so nothing can change what an open instance should have been.
+ * Instances are cached by desired-configuration signature. A changed entry is
+ * built beside its previous generation and replaces it only after construction
+ * succeeds; sessions already holding the old object remain internally consistent.
  *
  * It exists as its own thing, rather than inside whatever composes the agents,
  * because asking what a configured tool set actually exposes is a question worth
@@ -55,12 +58,15 @@ interface ToolSetCatalogOptions {
 class ToolSetCatalog {
   readonly #configured: () => Record<string, ToolSetConfig>;
   readonly #contributions: ContributionReader;
-  readonly #opened = new Map<string, ToolSet>();
+  readonly #opened = new Map<string, { readonly signature: string; readonly toolSet: ToolSet }>();
+  readonly #problems = new Map<string, string>();
+  readonly #runtimeSignature?: () => unknown;
   readonly #secretStore: SecretStore;
 
   constructor(options: ToolSetCatalogOptions) {
     this.#configured = options.configured;
     this.#contributions = options.contributions;
+    this.#runtimeSignature = options.runtimeSignature;
     this.#secretStore = options.secretStore;
   }
 
@@ -121,11 +127,37 @@ class ToolSetCatalog {
     );
   }
 
-  /** Opens one configured instance, or returns the one already open. */
-  public async open(toolSetId: string): Promise<ToolSet> {
-    const existing = this.#opened.get(toolSetId);
-    if (existing !== undefined) return existing;
+  /** Last failure to activate the desired configuration of one instance. */
+  public problem(toolSetId: string): string | undefined {
+    return this.#problems.get(toolSetId);
+  }
 
+  /**
+   * Reconciles every configured instance independently. A broken replacement
+   * leaves its previous object alive for sessions that already use it and does
+   * not prevent unrelated tool sets from activating.
+   */
+  public async refresh(): Promise<void> {
+    const configuredIds = new Set(this.configuredIds);
+    await Promise.all(
+      [...configuredIds].map(async (toolSetId) => {
+        try {
+          await this.open(toolSetId);
+        } catch {
+          // `open` recorded the actionable problem; one entry never hides peers.
+        }
+      }),
+    );
+    for (const toolSetId of this.#opened.keys()) {
+      if (!configuredIds.has(toolSetId)) this.#opened.delete(toolSetId);
+    }
+    for (const toolSetId of this.#problems.keys()) {
+      if (!configuredIds.has(toolSetId)) this.#problems.delete(toolSetId);
+    }
+  }
+
+  /** Opens the desired instance, retaining but never returning stale state after a failed change. */
+  public async open(toolSetId: string): Promise<ToolSet> {
     const configured = this.#configured();
     const entry = configured[toolSetId];
     if (entry === undefined) {
@@ -138,6 +170,14 @@ class ToolSetCatalog {
       );
     }
 
+    const signature = stableStringify({
+      entry,
+      runtime: this.#runtimeSignature?.(),
+      secretRevision: this.#secretStore.revision,
+    });
+    const existing = this.#opened.get(toolSetId);
+    if (existing?.signature === signature) return existing.toolSet;
+
     const contribution = this.#contributions.get(toolSets, entry.type);
     if (contribution === undefined) {
       throw new Error(
@@ -145,15 +185,20 @@ class ToolSetCatalog {
       );
     }
 
-    const toolSet = await composeWithSecrets(
-      entry,
-      this.#secretStore,
-      { extensionId: contribution.extensionId, location: `toolSets.${toolSetId}` },
-      (config) => contribution.value.create(config),
-    );
-    this.#opened.set(toolSetId, toolSet);
-
-    return toolSet;
+    try {
+      const toolSet = await composeWithSecrets(
+        entry,
+        this.#secretStore,
+        { extensionId: contribution.extensionId, location: `toolSets.${toolSetId}` },
+        (config) => contribution.value.create(config),
+      );
+      this.#opened.set(toolSetId, { signature, toolSet });
+      this.#problems.delete(toolSetId);
+      return toolSet;
+    } catch (error) {
+      this.#problems.set(toolSetId, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   /**

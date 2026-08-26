@@ -212,7 +212,6 @@ describe('config files', () => {
       api: apiDefaults,
       artifacts: artifactDefaults,
       auth: authDefaults,
-      chat: {},
       database: databaseDefaults,
       logLevel: 'info',
       timezone: 'UTC',
@@ -232,7 +231,6 @@ describe('config files', () => {
       api: apiDefaults,
       artifacts: artifactDefaults,
       auth: authDefaults,
-      chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
       timezone: 'UTC',
@@ -285,7 +283,6 @@ describe('config files', () => {
       api: apiDefaults,
       artifacts: artifactDefaults,
       auth: authDefaults,
-      chat: {},
       database: databaseDefaults,
       logLevel: 'warn',
       timezone: 'UTC',
@@ -471,7 +468,7 @@ describe('config directories', () => {
 });
 
 describe('config directory entries through Config', () => {
-  test('reflects a written entry in the value it hands out, and says a restart is due', async () => {
+  test('reflects a hot written entry in the value it hands out', async () => {
     const dir = await configDir();
     const config = await loadedConfig(dir);
 
@@ -481,10 +478,9 @@ describe('config directory entries through Config', () => {
       systemPrompt: 'watch',
     });
 
-    // Blueprints apply on restart: agents are registered once, while Nox
-    // composes itself, so the value held here is the next start's and not this
-    // one's. A caller that could not tell would show the edit as if it were live.
-    expect(saved.restartRequired).toBeTrue();
+    // Agent generations reconcile after the write; the desired document does
+    // not require the process itself to restart.
+    expect(saved.restartRequired).toBeFalse();
     expect(saved.value.systemPrompt).toBe('watch');
     expect(Object.keys(config.get('blueprints'))).toEqual(['watcher']);
 
@@ -542,7 +538,6 @@ describe('Config', () => {
       api: apiDefaults,
       artifacts: artifactDefaults,
       auth: authDefaults,
-      chat: {},
       database: databaseDefaults,
       logLevel: 'info',
       timezone: 'UTC',
@@ -559,7 +554,6 @@ describe('Config', () => {
       api: apiDefaults,
       artifacts: artifactDefaults,
       auth: authDefaults,
-      chat: {},
       database: databaseDefaults,
       logLevel: 'debug',
       timezone: 'UTC',
@@ -583,7 +577,6 @@ describe('Config', () => {
           api: apiDefaults,
           artifacts: artifactDefaults,
           auth: authDefaults,
-          chat: {},
           database: databaseDefaults,
           logLevel,
           timezone: 'UTC',
@@ -609,7 +602,6 @@ describe('Config', () => {
       api: apiDefaults,
       artifacts: artifactDefaults,
       auth: authDefaults,
-      chat: {},
       database: databaseDefaults,
       logLevel: 'error',
       timezone: 'UTC',
@@ -738,7 +730,7 @@ describe('contributed sections', () => {
       },
     });
 
-    expect(result.restartRequired).toBeTrue();
+    expect(result.restartRequired).toBeFalse();
     expect(await read(dir, 'providers.json')).toEqual(result.value);
   });
 
@@ -759,6 +751,8 @@ describe('readEnvConfig', () => {
   test('falls back to the installation defaults', () => {
     expect(readEnvConfig({})).toEqual({
       configDir: '/etc/nox/config',
+      configWatch: false,
+      configWatchDebounceMs: 250,
       dataDir: '/var/lib/nox',
       environment: 'development',
       uiDir: '/app/ui',

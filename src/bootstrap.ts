@@ -1,10 +1,9 @@
+import { watch } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
-import { Agent } from './agent/agent';
 import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
-import { WEB_BROKER_ID } from './api/chat/id';
 import { ChatHub } from './api/chat/transport';
 import { ConfigStore } from './api/config/store';
 import { type ApiAuth, ApiServer } from './api/server';
@@ -17,7 +16,7 @@ import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
-import { WebBroker } from './extensions/builtin/brokers/web/webBroker';
+import { WEB_BROKER_ID, webBrokerExtension } from './extensions/builtin/brokers/web/extension';
 import { englishLanguageExtension } from './extensions/builtin/languages/en/extension';
 import { spanishLanguageExtension } from './extensions/builtin/languages/es/extension';
 import { sharpImageExtension } from './extensions/builtin/processors/sharp/extension';
@@ -26,14 +25,18 @@ import { cronJobsExtension } from './extensions/builtin/toolsets/cronjobs/extens
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { authorities } from './extensions/contribution-points/authorities';
 import { brokers } from './extensions/contribution-points/brokers';
-import { type ProviderConfig, providers } from './extensions/contribution-points/providers';
 import { toDisposable } from './extensions/disposable';
 import { ToolSetCatalog } from './extensions/toolSetCatalog';
-import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gateway/gateway';
+import { type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
+import {
+  ConfigurationRuntimeController,
+  ConfigurationRuntimeRelay,
+} from './runtime/configurationRuntime';
 import { ScheduledRunRelay } from './scheduler/scheduledRun';
 import {
   artifactPipelineService,
+  chatHubService,
   configService,
   databaseService,
   loggerService,
@@ -43,9 +46,6 @@ import {
 
 import type { AuthConfig } from './api/auth/config';
 import type { ApiConfig } from './api/serverConfig';
-import type { Blueprint, TaskModelConfig } from './config/blueprint';
-import type { ModelConfig } from './provider/config';
-import type { ChatProvider } from './provider/provider';
 
 interface BootstrapOptions {
   env?: EnvSource;
@@ -71,6 +71,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   const config = await Config.load(env, { logger: options.logger ?? createLogger('nox') });
   const appConfig = config.get('app');
   const logger = options.logger ?? createLogger('nox', { level: appConfig.logLevel });
+  const configurationRuntime = new ConfigurationRuntimeRelay();
 
   await mkdir(env.dataDir, { recursive: true });
   const database = await Database.open({
@@ -92,6 +93,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       maxStorageBytes: appConfig.artifacts.maxStorageBytes,
     });
     secretStore = await SecretStore.open({
+      changed: () => configurationRuntime.reconcile(),
       dataDirectory: env.dataDir,
       database,
       logger: logger.child('secrets'),
@@ -112,6 +114,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     extensions: [
       englishLanguageExtension,
       spanishLanguageExtension,
+      webBrokerExtension,
       sharpImageExtension,
       openAIExtension,
       cronJobsExtension,
@@ -120,6 +123,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     logger,
   })
     .provide(artifactPipelineService, artifactPipeline)
+    .provide(chatHubService, chat)
     .provide(configService, config)
     .provide(databaseService, database)
     .provide(loggerService, logger)
@@ -137,26 +141,29 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   const toolSetCatalog = new ToolSetCatalog({
     configured: () => config.get('toolSets'),
     contributions: application.contributions,
+    runtimeSignature: () => ({ timeZone: config.get('app').timezone }),
     secretStore,
   });
 
   // Registered after the database and therefore released before it: the socket
   // stops answering while the storage its answers came from is still open.
   const auth = await openAuth(appConfig.auth, database, env.dataDir, logger);
+  const configuration = new ConfigStore({
+    authorities: () => buildAuthorityCatalog(application),
+    config,
+    contributions: application.contributions,
+    runtime: configurationRuntime,
+    toolSets: toolSetCatalog,
+  });
   const api = application.own(
     openApi(
       application,
       appConfig.api,
-      appConfig.ui.locale,
+      () => config.get('app').ui.locale,
       auth,
       artifactPipeline,
       chat,
-      new ConfigStore({
-        authorities: () => buildAuthorityCatalog(application),
-        config,
-        contributions: application.contributions,
-        toolSets: toolSetCatalog,
-      }),
+      configuration,
       database,
       secretStore,
       env.uiDir,
@@ -164,37 +171,54 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     ),
   );
 
-  try {
-    const catalog = await composeAgents(
-      application,
-      artifactPipeline,
-      config,
-      database,
+  // Registered last so it is silenced before the API, storage, and services it
+  // may reconcile during shutdown.
+  if (env.configWatch) {
+    const watcher = openConfigWatcher(
       env.configDir,
+      configuration,
       logger,
-      secretStore,
-      toolSetCatalog,
+      env.configWatchDebounceMs,
+      application.signal,
     );
-    await openGateway(
+    if (watcher !== undefined) application.own(watcher);
+  }
+
+  try {
+    const catalog = await activateConfiguration(application, config, logger);
+    const runtime = new ConfigurationRuntimeController({
       application,
+      artifacts: artifactPipeline,
+      authorities: catalog,
       config,
-      catalog,
-      chat,
-      appConfig.chat.defaultAgent,
+      contributions: application.contributions,
+      createBroker: (brokerId) =>
+        composeBrokerGrant(application, config, catalog, brokerId, secretStore),
       database,
       logger,
-      scheduledRuns,
       secretStore,
-    );
+      toolSets: toolSetCatalog,
+    });
+    configurationRuntime.connect(runtime);
 
-    // Last, and inside the same guard as everything above: a port that is
-    // answering means the runtime behind it is composed, and a Nox that failed
-    // to compose never opened one.
+    // The control plane comes up before optional runtime components. A broken
+    // provider, agent or broker must remain repairable from a headless install.
     await api.listen();
+
+    await openGateway(application, database, logger, runtime, scheduledRuns)
+      .then((gateway) => {
+        runtime.connectGateway(gateway);
+      })
+      .catch((error: unknown) => {
+        logger.error({ err: error }, 'Message gateway configuration did not activate.');
+      });
+
+    await runtime.reconcile().catch((error: unknown) => {
+      logger.error({ err: error }, 'Runtime configuration reconciliation failed.');
+    });
   } catch (error) {
-    // Everything above is already open. A bootstrap that throws leaves nothing
-    // running — a half-composed Nox holding a port and a database file is worse
-    // than one that never started.
+    // Critical control-plane composition failed. Once the API is listening,
+    // optional runtime failures are caught above and never reach this guard.
     await application.stop();
     throw error;
   }
@@ -203,15 +227,13 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
 }
 
 /**
- * The HTTP surface, assembled here and opened last. Readiness still reports on
- * what it depends on rather than assuming it: everything below was up when the
- * port opened, and a database that goes away afterwards is exactly what the
- * probe is for.
+ * The HTTP surface and repair plane. It opens once storage, authentication and
+ * contributed schemas are available; agents and transports reconcile afterwards.
  */
 function openApi(
   application: NoxApplication,
   config: ApiConfig,
-  locale: string,
+  locale: () => string | undefined,
   auth: ApiAuth,
   artifacts: ArtifactPipeline,
   chat: ChatHub,
@@ -279,285 +301,194 @@ function buildAuthorityCatalog(application: NoxApplication): AuthorityCatalog {
   return AuthorityCatalog.from([...CORE_AUTHORITIES, ...contributed]);
 }
 
-/** Activates the extensions and registers one agent per blueprint on disk. */
-async function composeAgents(
+/** Activates extensions, resolves contributed schemas and materializes built-in entries. */
+async function activateConfiguration(
   application: NoxApplication,
-  artifacts: ArtifactPipeline,
   config: Config,
-  database: Database,
-  configDir: string,
   logger: Logger,
-  secretStore: SecretStore,
-  toolSetCatalog: ToolSetCatalog,
 ): Promise<AuthorityCatalog> {
   await application.start();
 
   // Only now do contributed config sections have schemas: each is the union of
   // what the extensions just contributed, and before activation there was
   // nothing to validate them against.
-  await config.resolve(application.contributions);
+  await config.resolveAvailable(application.contributions);
+
+  // Web existed before brokers were configurable. Materialize its built-in entry
+  // for a fresh or pre-contribution configuration; operators may disable it, but
+  // it remains addressable and visible beside every other broker. A malformed
+  // mounted brokers document is left untouched and repairable through reload.
+  if (config.loaded.includes('brokers') && config.get('brokers')[WEB_BROKER_ID] === undefined) {
+    try {
+      await config.updateInstance('brokers', WEB_BROKER_ID, { type: 'web' });
+    } catch (error) {
+      // A read-only mounted document may not be materializable. Web chat stays
+      // unavailable, but the API and Settings remain up so the mount can be repaired.
+      logger.error({ err: error }, 'The built-in Web broker could not be materialized.');
+    }
+  }
 
   // Likewise the catalog: an authority an extension has not contributed yet does
   // not exist, and a tool naming one fails here rather than at call time.
   const catalog = buildAuthorityCatalog(application);
 
-  const blueprints = config.get('blueprints');
-  if (Object.keys(blueprints).length === 0) {
-    throw new Error(`No agent is configured. Add a blueprint to ${join(configDir, 'blueprints')}.`);
-  }
-
-  const configuredProviders = config.get('providers');
-  const openedProviders = new Map<string, ChatProvider>();
-  for (const [agentId, blueprint] of Object.entries(blueprints)) {
-    const provider = await openProvider(
-      application,
-      configuredProviders,
-      openedProviders,
-      blueprint.provider,
-      secretStore,
-    );
-    const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
-    const openTask = (task: TaskModelConfig | undefined): Promise<TaskModel> =>
-      openTaskModel(task, { model, provider }, (providerId) =>
-        openProvider(application, configuredProviders, openedProviders, providerId, secretStore),
-      );
-    const compactionModel = await openTask(blueprint.taskModels.compaction);
-    const titleModel = await openTask(blueprint.taskModels.title);
-    const directToolSets = await toolSetCatalog.grant(blueprint.toolSets.direct);
-    const routedToolSets = await toolSetCatalog.grant(blueprint.toolSets.routed);
-
-    application.addAgent(
-      new Agent(database, provider, model, {
-        agentId,
-        artifacts,
-        authorities: catalog,
-        compactionModel: compactionModel.model,
-        compactionProvider: compactionModel.provider,
-        context: blueprint.context,
-        directToolSets,
-        gate: blueprint.gate,
-        logger,
-        maxIterations: blueprint.maxIterations,
-        routedToolSets,
-        systemPrompt: blueprint.systemPrompt,
-        timeZone: config.get('app').timezone,
-        titleModel: titleModel.model,
-        titleProvider: titleModel.provider,
-      }),
-    );
-  }
-
   return catalog;
 }
 
-/** The agent a new browser conversation uses until the UI offers a picker. */
-function webAgentFor(application: NoxApplication, configured: string | undefined): string {
-  if (configured !== undefined) {
-    if (application.getAgent(configured) === undefined) {
-      throw new Error(
-        `Web chat names default agent "${configured}", which no blueprint defines. ` +
-          `Defined: ${application.agentIds.join(', ')}.`,
-      );
-    }
-    return configured;
-  }
-
-  const [only] = application.agentIds;
-  if (application.agentIds.length === 1 && only !== undefined) return only;
-
-  throw new Error(
-    'Web chat needs a default agent because more than one blueprint is configured. ' +
-      'Set app.chat.defaultAgent.',
-  );
-}
-
-/**
- * Opens the message gateway over Nox's own web surface and any externally
- * configured brokers. The web transport is infrastructure: it is always first,
- * always named `web`, and never appears in brokers.json.
- */
-async function openGateway(
+/** Composes one immutable broker generation from its current desired entry. */
+async function composeBrokerGrant(
   application: NoxApplication,
   config: Config,
   catalog: AuthorityCatalog,
-  chat: ChatHub,
-  defaultWebAgent: string | undefined,
-  database: Database,
-  logger: Logger,
-  scheduledRuns: ScheduledRunRelay,
+  brokerId: string,
   secretStore: SecretStore,
-): Promise<void> {
-  const configured = config.get('brokers');
-  const grants: BrokerGrant[] = [
-    Object.freeze({
-      agentId: webAgentFor(application, defaultWebAgent),
-      authorization: new OwnerAuthorizationProvider(WEB_BROKER_ID),
-      broker: new WebBroker(chat),
-      brokerId: WEB_BROKER_ID,
-      conversations: Object.freeze({}),
-    }),
-  ];
+): Promise<BrokerGrant> {
+  const entry = config.get('brokers')[brokerId];
+  if (entry === undefined) throw new Error(`Broker "${brokerId}" is not configured.`);
 
-  for (const [brokerId, entry] of Object.entries(configured)) {
-    if (entry.enabled === false) continue;
-    if (brokerId === WEB_BROKER_ID) {
-      throw new Error('Broker ID "web" is reserved for Nox\'s built-in HTTP chat surface.');
-    }
-
-    const contribution = application.contributions.get(brokers, entry.type);
-    if (contribution === undefined) {
-      throw new Error(
-        `Broker "${brokerId}" is of type "${entry.type}", which no extension contributed.`,
-      );
-    }
-    if (application.getAgent(entry.agent) === undefined) {
-      throw new Error(
-        `Broker "${brokerId}" answers as agent "${entry.agent}", which no blueprint defines.`,
-      );
-    }
-
-    const conversationGrants = Object.fromEntries(
-      Object.entries(entry.conversations).map(([conversationId, override]) => {
-        const agentId = override.agent ?? entry.agent;
-        if (application.getAgent(agentId) === undefined) {
-          throw new Error(
-            `Conversation "${conversationId}" on broker "${brokerId}" answers as agent ` +
-              `"${agentId}", which no blueprint defines.`,
-          );
-        }
-
-        const resolved: BrokerConversationGrant = Object.freeze({
-          agentId,
-          authorization: new GrantAuthorizationProvider(
-            brokerId,
-            override.grants,
-            catalog,
-            `grants:${brokerId}:${conversationId}`,
-          ),
-        });
-        return [conversationId, resolved] as const;
-      }),
-    );
-
-    grants.push(
-      Object.freeze({
-        agentId: entry.agent,
-        // Built once per base route and configured conversation. Every grant is
-        // checked against the global catalog now rather than becoming a silent
-        // permission that can never match.
-        authorization: new GrantAuthorizationProvider(
-          brokerId,
-          entry.grants,
-          catalog,
-          `grants:${brokerId}`,
-        ),
-        broker: await composeWithSecrets(
-          entry,
-          secretStore,
-          { extensionId: contribution.extensionId, location: `brokers.${brokerId}` },
-          (resolved) => contribution.value.create(resolved),
-        ),
-        brokerId,
-        conversations: Object.freeze(conversationGrants),
-      }),
+  const contribution = application.contributions.get(brokers, entry.type);
+  if (contribution === undefined) {
+    throw new Error(
+      `Broker "${brokerId}" is of type "${entry.type}", which no extension contributed.`,
     );
   }
 
+  const isWeb = brokerId === WEB_BROKER_ID && entry.type === 'web';
+  if (entry.type === 'web' && !isWeb) {
+    throw new Error(`The built-in Web broker must use the reserved ID "${WEB_BROKER_ID}".`);
+  }
+  if (isWeb && Object.keys(entry.grants).length > 0) {
+    throw new Error('Web authority comes from the authenticated owner, not configured grants.');
+  }
+
+  const availableDesiredAgents = Object.keys(config.get('blueprints')).filter(
+    (agentId) => application.getAgent(agentId) !== undefined,
+  );
+  const onlyAgent = availableDesiredAgents.length === 1 ? availableDesiredAgents[0] : undefined;
+  const agentId = entry.agent ?? (isWeb ? onlyAgent : undefined);
+  if (agentId !== undefined && application.getAgent(agentId) === undefined) {
+    throw new Error(
+      `Broker "${brokerId}" answers as agent "${agentId}", which no blueprint defines.`,
+    );
+  }
+  if (!isWeb && agentId === undefined) {
+    throw new Error(`Broker "${brokerId}" requires a base agent.`);
+  }
+
+  const conversationGrants = Object.fromEntries(
+    Object.entries(entry.conversations).map(([conversationId, override]) => {
+      const conversationAgentId = override.agent ?? agentId;
+      if (
+        conversationAgentId !== undefined &&
+        application.getAgent(conversationAgentId) === undefined
+      ) {
+        throw new Error(
+          `Conversation "${conversationId}" on broker "${brokerId}" answers as agent ` +
+            `"${conversationAgentId}", which no blueprint defines.`,
+        );
+      }
+      if (isWeb && Object.keys(override.grants).length > 0) {
+        throw new Error(
+          `Web conversation "${conversationId}" cannot replace owner authority with grants.`,
+        );
+      }
+
+      return [
+        conversationId,
+        Object.freeze({
+          ...(conversationAgentId === undefined ? {} : { agentId: conversationAgentId }),
+          authorization: isWeb
+            ? new OwnerAuthorizationProvider(brokerId)
+            : new GrantAuthorizationProvider(
+                brokerId,
+                override.grants,
+                catalog,
+                `grants:${brokerId}:${conversationId}`,
+              ),
+        }),
+      ] as const;
+    }),
+  );
+
+  return Object.freeze({
+    ...(agentId === undefined ? {} : { agentId }),
+    authorization: isWeb
+      ? new OwnerAuthorizationProvider(brokerId)
+      : new GrantAuthorizationProvider(brokerId, entry.grants, catalog, `grants:${brokerId}`),
+    broker: await composeWithSecrets(
+      entry,
+      secretStore,
+      { extensionId: contribution.extensionId, location: `brokers.${brokerId}` },
+      (resolved) => contribution.value.create(resolved),
+    ),
+    brokerId,
+    conversations: Object.freeze(conversationGrants),
+    ...(isWeb ? { selectableAgent: true } : {}),
+  });
+}
+
+/** Opens the stable gateway host; configured broker generations reconcile into it afterwards. */
+async function openGateway(
+  application: NoxApplication,
+  database: Database,
+  logger: Logger,
+  runtime: ConfigurationRuntimeController,
+  scheduledRuns: ScheduledRunRelay,
+): Promise<Gateway> {
   const gateway = new Gateway(application, {
-    brokers: grants,
+    brokers: [],
+    brokerStatus: (brokerId, state, error) => {
+      runtime.reportBroker(brokerId, state, error);
+    },
     database,
     logger: logger.child('gateway'),
   });
   application.setGateway(gateway);
   await gateway.start();
   scheduledRuns.connect(gateway);
+  return gateway;
 }
 
-/**
- * Builds the provider instance a blueprint talks through, once per configured
- * instance: two agents naming the same one share the adapter, and the connection
- * settings behind it, rather than opening it twice.
- */
-async function openProvider(
-  application: NoxApplication,
-  configured: Record<string, ProviderConfig>,
-  opened: Map<string, ChatProvider>,
-  providerId: string,
-  secretStore: SecretStore,
-): Promise<ChatProvider> {
-  const existing = opened.get(providerId);
-  if (existing !== undefined) return existing;
-
-  const entry = configured[providerId];
-  if (entry === undefined) {
-    const known = Object.keys(configured);
-    throw new Error(
-      `A blueprint names provider "${providerId}", which providers.json does not ` +
-        (known.length === 0 ? 'configure at all.' : `configure. Configured: ${known.join(', ')}.`),
-    );
+/** Optional assistance for mounted files; explicit `/config/reload` remains authoritative. */
+function openConfigWatcher(
+  configDirectory: string,
+  configuration: ConfigStore,
+  logger: Logger,
+  debounceMs: number,
+  signal: AbortSignal,
+): ReturnType<typeof toDisposable> | undefined {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const watcher = watch(configDirectory, { recursive: true }, () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        void configuration.reloadConfiguration().catch((error: unknown) => {
+          logger.error({ err: error }, 'Watched configuration reload failed.');
+        });
+      }, debounceMs);
+    });
+    (
+      watcher as unknown as {
+        on(event: 'error', listener: (error: Error) => void): void;
+      }
+    ).on('error', (error) => {
+      logger.error({ err: error }, 'Configuration watcher failed.');
+    });
+    let closed = false;
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      signal.removeEventListener('abort', close);
+      watcher.close();
+    };
+    signal.addEventListener('abort', close, { once: true });
+    return toDisposable(close);
+  } catch (error) {
+    logger.error({ err: error }, 'Configuration watcher could not start.');
+    return undefined;
   }
-
-  const contribution = application.contributions.get(providers, entry.type);
-  if (contribution === undefined) {
-    throw new Error(
-      `Provider "${providerId}" is of type "${entry.type}", which no extension contributed.`,
-    );
-  }
-
-  const provider = await composeWithSecrets(
-    entry,
-    secretStore,
-    { extensionId: contribution.extensionId, location: `providers.${providerId}` },
-    (config) => contribution.value.create(config),
-  );
-  opened.set(providerId, provider);
-  return provider;
-}
-
-/**
- * The model an agent runs on. Its budget comes from the provider entry that
- * declared it — `contextWindow` is a property of a model, and Law 2 needs it to
- * fold before it compacts — so a model the configuration never described runs
- * without one rather than with a guess.
- */
-/** One internal task's provider and model, resolved against the agent's own. */
-interface TaskModel {
-  readonly model: ModelConfig;
-  readonly provider: ChatProvider;
-}
-
-/**
- * What an internal task runs on. A blueprint that named nothing for it runs on
- * the agent's own provider and model; one that named only a model stays on the
- * agent's provider, which is the usual case — a cheaper model on the endpoint
- * already configured, rather than a second endpoint nobody asked for.
- *
- * The agent's `generation` settings are deliberately not carried over: they are
- * tuned for how the agent should answer people, and compaction and titling are
- * not the agent answering anybody.
- */
-async function openTaskModel(
-  task: TaskModelConfig | undefined,
-  agent: TaskModel,
-  open: (providerId: string) => Promise<ChatProvider>,
-): Promise<TaskModel> {
-  if (task === undefined) return agent;
-
-  const provider = task.provider === undefined ? agent.provider : await open(task.provider);
-  return { model: modelConfigFor(provider, task.model), provider };
-}
-
-function modelConfigFor(
-  provider: ChatProvider,
-  modelId: string,
-  generation: Blueprint['generation'] = {},
-): ModelConfig {
-  const configured = provider.getModelConfig(modelId) ?? {
-    inputModalities: ['text'] as const,
-    modelId,
-    outputModalities: ['text'] as const,
-  };
-  return { ...configured, ...generation };
 }
 
 export { bootstrap };

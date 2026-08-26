@@ -55,7 +55,7 @@ interface ApiServerOptions extends ApiConfigInput {
    */
   config?: ConfigStore;
   /** Installation language preference exposed publicly with the language catalog. */
-  locale?: string;
+  locale?: (() => string | undefined) | string;
   /** Language packs and extension-owned translation fragments exposed to the UI. */
   languages?: ContributionReader;
   logger?: Logger;

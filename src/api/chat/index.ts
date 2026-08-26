@@ -3,6 +3,7 @@ export { ChatHub } from './transport';
 
 export type { ChatRoutesOptions } from './routes';
 export type {
+  ChatAgentCatalog,
   ChatBody,
   ChatCommand,
   ChatCommandInput,
@@ -21,6 +22,7 @@ export type {
   ChatListener,
   ChatMessageEvent,
   ChatMessageInput,
+  ChatMessageRejection,
   ChatPermissionEvent,
   ChatPermissionOutcome,
   ChatPermissionRequest,
