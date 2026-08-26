@@ -5,57 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1787323764956,
-      "tag": "0000_jazzy_fabian_cortez",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1787345815532,
-      "tag": "0001_breezy_the_captain",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1787347916107,
-      "tag": "0002_great_jack_murdock",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1787409018715,
-      "tag": "0003_clear_placeholder_titles",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1787496251477,
-      "tag": "0004_safe_dagger",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1787498524824,
-      "tag": "0005_milky_morbius",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1787505497343,
-      "tag": "0006_lucky_otto_octavius",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1787691063585,
-      "tag": "0007_medical_jubilee",
+      "when": 1787708618526,
+      "tag": "0000_hard_korath",
       "breakpoints": true
     }
   ]

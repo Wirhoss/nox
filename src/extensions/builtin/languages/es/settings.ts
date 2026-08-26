@@ -115,7 +115,7 @@ const settingsMessages = Object.freeze({
   'settings.sections.toolSets.plural': 'Conjuntos de herramientas',
   'settings.toolSet.capabilitySurface': 'Superficie de capacidades',
   'settings.toolSet.capabilitySurfaceHelp':
-    'La implementación aportada y las herramientas exactas que se exponen cuando un agente recibe este conjunto.',
+    'Configura las herramientas expuestas por esta contribución; su implementación y esquema son fijos.',
   'settings.toolSet.configured': 'CONFIGURADO',
   'settings.toolSet.credentialValue': 'Valor de la credencial',
   'settings.toolSet.credentialValueHint':
@@ -132,7 +132,6 @@ const settingsMessages = Object.freeze({
     'La configuración del conjunto de herramientas guardará este ID, nunca su valor.',
   'settings.toolSet.slotOffline': 'SIN CONFIGURAR',
   'settings.toolSet.surface': 'SUPERFICIE',
-  'settings.toolSet.type': 'Tipo de conjunto de herramientas',
   'settings.toolSet.changeRefused': 'Cambio de conjunto de herramientas rechazado',
   'settings.toolSet.confirmDiscard':
     '¿Descartar los cambios del conjunto de herramientas sin guardar?',

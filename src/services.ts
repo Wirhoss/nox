@@ -5,6 +5,7 @@ import type { Config } from './config/config';
 import type { SecretStore } from './config/secrets';
 import type { Database } from './database/database';
 import type { Logger } from './logger/logger';
+import type { ScheduledRunHost } from './scheduler/scheduledRun';
 
 /**
  * The host services a contribution may ask for. Types only — a token carries no
@@ -14,6 +15,7 @@ const artifactPipelineService = createServiceToken<ArtifactPipeline>('nox.artifa
 const configService = createServiceToken<Config>('nox.config');
 const databaseService = createServiceToken<Database>('nox.database');
 const loggerService = createServiceToken<Logger>('nox.logger');
+const scheduledRunHostService = createServiceToken<ScheduledRunHost>('nox.scheduled-run-host');
 const secretStoreService = createServiceToken<SecretStore>('nox.secret-store');
 
 export {
@@ -21,5 +23,6 @@ export {
   configService,
   databaseService,
   loggerService,
+  scheduledRunHostService,
   secretStoreService,
 };

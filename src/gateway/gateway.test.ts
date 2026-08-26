@@ -8,7 +8,9 @@ import { z } from 'zod';
 import { Agent } from '../agent/agent';
 import { NoxApplication } from '../application';
 import { GrantAuthorizationProvider } from '../auth/authorization';
+import { SYSTEM_CRON } from '../auth/principal';
 import { Database } from '../database/database';
+import { SessionStore } from '../database/sessionStore';
 import { ChatProvider } from '../provider/provider';
 import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
 import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
@@ -511,6 +513,57 @@ describe('Gateway', () => {
     expect(broker.texts('message')).toEqual(['hola mundo']);
     expect(broker.texts('fragment')).toEqual([]);
     expect(harnessed.application.sessions).toHaveLength(1);
+  });
+
+  test('runs cron in a fresh agent session and delivers only the result to a channel', async () => {
+    const broker = new TestBroker({ runs: true });
+    const database = await openDatabase();
+    const harnessed = await harness(database, broker);
+    harnessed.application.addAgent(
+      new Agent(database, new SayingProvider('selected agent result'), MODEL, {
+        agentId: 'cron-specialist',
+        authorities: catalog,
+        systemPrompt: 'specialized cron prompt',
+      }),
+    );
+    broker.say('chat-1', 'initial');
+    await settle(harnessed);
+    const conversation = harnessed.application.sessions[0]?.session;
+    expect(conversation).toBeDefined();
+
+    const result = await harnessed.gateway.runScheduledAgent({
+      agentId: 'cron-specialist',
+      causeId: 'cron-run-1',
+      delivery: { brokerId: 'test', channelId: 'alerts-channel' },
+      name: 'Morning automation',
+      prompt: 'scheduled prompt',
+      sessionId: 'fresh-cron-session',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      content: [{ text: 'selected agent result', type: 'text' }],
+      sessionId: 'fresh-cron-session',
+      status: 'completed',
+    });
+    expect(result.deliveredAt).toBeInstanceOf(Date);
+    expect(harnessed.application.sessions).toHaveLength(1);
+    expect(conversation?.getTranscript().filter((message) => message.role === 'user')).toHaveLength(
+      1,
+    );
+    const stored = await new SessionStore(database).load('fresh-cron-session');
+    expect(stored?.session.agentId).toBe('cron-specialist');
+    expect(stored?.messages.find((message) => message.role === 'user')).toMatchObject({
+      content: [{ text: 'scheduled prompt', type: 'text' }],
+      origin: { principal: SYSTEM_CRON, transportMessageId: 'cron-run-1' },
+    });
+    expect(
+      broker.delivered.filter(
+        (event) => event.type === 'message' && event.conversationId === 'alerts-channel',
+      ),
+    ).toMatchObject([{ content: [{ text: 'selected agent result', type: 'text' }] }]);
+    const starts = broker.delivered.filter((event) => event.type === 'runStarted');
+    expect(starts.map((event) => event.trigger)).toEqual(['user']);
   });
 
   test('preserves structured media from broker ingress through transcript and history', async () => {

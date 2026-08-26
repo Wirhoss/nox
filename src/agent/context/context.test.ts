@@ -449,7 +449,9 @@ describe('Context compaction', () => {
     // Lossless where it could be: the summary was never asked for, and every
     // byte the fold replaced is still in the transcript.
     expect(provider.requests).toHaveLength(0);
-    expect(bytes(context.getFullHistory())).toContain(messageToString(toolResponse('r1', 't1', heavy)));
+    expect(bytes(context.getFullHistory())).toContain(
+      messageToString(toolResponse('r1', 't1', heavy)),
+    );
   });
 
   test('compaction stops at the in-flight boundary instead of eating an unread result', async () => {

@@ -22,6 +22,7 @@ import { englishLanguageExtension } from './extensions/builtin/languages/en/exte
 import { spanishLanguageExtension } from './extensions/builtin/languages/es/extension';
 import { sharpImageExtension } from './extensions/builtin/processors/sharp/extension';
 import { openAIExtension } from './extensions/builtin/providers/openai/extension';
+import { cronJobsExtension } from './extensions/builtin/toolsets/cronjobs/extension';
 import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
 import { authorities } from './extensions/contribution-points/authorities';
 import { brokers } from './extensions/contribution-points/brokers';
@@ -30,11 +31,13 @@ import { toDisposable } from './extensions/disposable';
 import { ToolSetCatalog } from './extensions/toolSetCatalog';
 import { type BrokerConversationGrant, type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
+import { ScheduledRunRelay } from './scheduler/scheduledRun';
 import {
   artifactPipelineService,
   configService,
   databaseService,
   loggerService,
+  scheduledRunHostService,
   secretStoreService,
 } from './services';
 
@@ -103,6 +106,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   // dial external services, its existence is part of Nox rather than deployment
   // configuration; bootstrap puts both halves together exactly once.
   const chat = new ChatHub();
+  const scheduledRuns = new ScheduledRunRelay();
 
   const application = new NoxApplication({
     extensions: [
@@ -110,6 +114,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       spanishLanguageExtension,
       sharpImageExtension,
       openAIExtension,
+      cronJobsExtension,
       webToolsExtension,
     ],
     logger,
@@ -118,11 +123,13 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     .provide(configService, config)
     .provide(databaseService, database)
     .provide(loggerService, logger)
+    .provide(scheduledRunHostService, scheduledRuns)
     .provide(secretStoreService, secretStore);
 
   // Owned before anything activates, so it is released last: an extension handed
   // the database as a service lets go of it before the file closes.
   application.own(toDisposable(() => database.close()));
+  application.own(scheduledRuns);
 
   // One catalog for the whole process: the agents are composed from it, and the
   // surface that validates a blueprint asks it the same question the agents
@@ -176,6 +183,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       appConfig.chat.defaultAgent,
       database,
       logger,
+      scheduledRuns,
       secretStore,
     );
 
@@ -376,6 +384,7 @@ async function openGateway(
   defaultWebAgent: string | undefined,
   database: Database,
   logger: Logger,
+  scheduledRuns: ScheduledRunRelay,
   secretStore: SecretStore,
 ): Promise<void> {
   const configured = config.get('brokers');
@@ -461,6 +470,7 @@ async function openGateway(
   });
   application.setGateway(gateway);
   await gateway.start();
+  scheduledRuns.connect(gateway);
 }
 
 /**

@@ -55,6 +55,16 @@ interface ToolSetTypeDescriptor {
   readonly type: string;
 }
 
+/** A contributed instance keeps the schema it was created under. */
+class ContributionTypeChangeError extends Error {
+  constructor(entryId: string, currentType: string, nextType: string) {
+    super(
+      `"${entryId}" is a "${currentType}" tool set. Remove it before replacing it with "${nextType}".`,
+    );
+    this.name = 'ContributionTypeChangeError';
+  }
+}
+
 /** An entry nothing may remove yet, and the reasons an operator can act on. */
 class EntryInUseError extends Error {
   public readonly reasons: readonly string[];
@@ -196,6 +206,15 @@ class ConfigStore {
     entryId: string,
     next: unknown,
   ): Promise<ConfigUpdate<unknown>> {
+    if (key === 'toolSets') {
+      const current = this.readEntry(key, entryId);
+      const currentType = configType(current);
+      const nextType = configType(next);
+      if (currentType !== undefined && nextType !== undefined && currentType !== nextType) {
+        throw new ContributionTypeChangeError(entryId, currentType, nextType);
+      }
+    }
+
     const validate = this.#policy(key).validate;
     const judge = async (value: unknown): Promise<void> => {
       await validate?.(entryId, value);
@@ -227,6 +246,11 @@ class ConfigStore {
   }
 }
 
-export { ConfigStore, EntryInUseError };
+function configType(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || !('type' in value)) return undefined;
+  return typeof value.type === 'string' ? value.type : undefined;
+}
+
+export { ConfigStore, ContributionTypeChangeError, EntryInUseError };
 
 export type { EntryKey, SectionSummary, ToolSetTypeDescriptor };

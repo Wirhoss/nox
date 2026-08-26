@@ -9,10 +9,11 @@ import { ConversationParticipants } from '../auth/conversation';
 import { ARTIFACT_ATTACH_AUTHORITY, ARTIFACT_READ_AUTHORITY } from '../auth/coreAuthorities';
 import {
   messageAuthority,
-  type PrincipalRef,
   type RunAuthority,
   samePrincipal,
+  SYSTEM_CRON,
   SYSTEM_ISSUER,
+  systemAuthority,
 } from '../auth/principal';
 import { isProviderError, type ProviderError } from '../provider/error';
 import {
@@ -28,7 +29,7 @@ import { freezeMessage, freezeValue } from './context/immutable';
 import type { ArtifactContentReader, ArtifactOutputHost } from '../artifact/output';
 import type { ArtifactRef } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
-import type { AuthorityCatalog } from '../auth/authority';
+import type { AuthorityCatalog, GrantPattern } from '../auth/authority';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
 import type { ChatProvider } from '../provider/provider';
@@ -52,6 +53,8 @@ import type {
 import type { AgentEvent, RunStatus, RunTrigger } from './events';
 
 const DEFAULT_MAX_ITERATIONS = 90;
+/** Cron is a trusted system ingress; the selected blueprint remains its tool boundary. */
+const SYSTEM_CRON_GRANTS: readonly GrantPattern[] = Object.freeze(['*']);
 
 type RunnerState = 'idle' | 'running' | 'stopped';
 
@@ -62,6 +65,9 @@ interface RunnerOptions {
 }
 
 interface RunnerConstructionOptions extends RunnerOptions {
+  /** The agent and gateway metadata exposed to host-executed tools. */
+  agentId: string;
+  metadata?: Readonly<Record<string, unknown>>;
   /** The zone this installation reads clocks in; timestamps shown to the model use it. */
   timeZone?: string;
   /** Host-bound file output. Absent for internal or deliberately text-only sessions. */
@@ -93,6 +99,8 @@ interface RunnerConstructionOptions extends RunnerOptions {
  */
 interface QueuedMessage {
   readonly authority: RunAuthority;
+  /** Run-local grants carried only by trusted scheduled ingress. */
+  readonly authorityGrants?: readonly GrantPattern[];
   readonly message: Message;
   readonly responseAttachments?: readonly ArtifactRef[];
   readonly trigger: RunTrigger;
@@ -102,6 +110,7 @@ type PendingOperationState = 'awaitingApproval' | 'discarded' | 'executing' | 's
 
 interface PendingOwnedOperation {
   readonly authority: RunAuthority;
+  readonly authorityGrants?: readonly GrantPattern[];
   readonly call: ToolCallMessage;
   readonly execution: ToolExecution;
   readonly pendingResponseId: string;
@@ -132,6 +141,19 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
   return maxIterations;
 }
 
+/** Human turns may absorb more speech from the same principal; system causes never merge. */
+function sameRunOwner(left: RunAuthority, right: RunAuthority): boolean {
+  if (!samePrincipal(left.principal, right.principal)) return false;
+  if (left.source.type === 'system' || right.source.type === 'system') {
+    return (
+      left.source.type === 'system' &&
+      right.source.type === 'system' &&
+      left.source.causeId === right.source.causeId
+    );
+  }
+  return true;
+}
+
 /**
  * The engine of a session: one long-lived runner, one queue, one run at a time.
  *
@@ -143,6 +165,7 @@ function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): nu
  * wake anything.
  */
 class Runner {
+  readonly #agentId: string;
   readonly #artifactOutputs?: ArtifactOutputHost;
   readonly #artifactReader?: ArtifactContentReader;
   readonly #timeZone?: string;
@@ -154,6 +177,7 @@ class Runner {
   readonly #gate?: SessionGate;
   readonly #logger?: Logger;
   readonly #maxIterations: number;
+  readonly #metadata: Readonly<Record<string, unknown>>;
   readonly #model: ModelConfig;
   readonly #participants: ConversationParticipants;
   readonly #pendingOperations = new Map<string, PendingOwnedOperation>();
@@ -171,6 +195,7 @@ class Runner {
   #idle: Promise<void> = Promise.resolve();
   #resolveIdle?: () => void;
   #runAuthority?: RunAuthority;
+  #runAuthorityGrants?: readonly GrantPattern[];
   #runId?: string;
   #state: RunnerState = 'idle';
 
@@ -181,6 +206,7 @@ class Runner {
     model: ModelConfig,
     options: RunnerConstructionOptions,
   ) {
+    this.#agentId = options.agentId;
     this.#artifactOutputs = options.artifactOutputs;
     this.#artifactReader = options.artifactReader;
     this.#timeZone = options.timeZone;
@@ -194,6 +220,7 @@ class Runner {
     this.#gate = options.gate;
     this.#logger = options.logger;
     this.#maxIterations = resolveMaxIterations(options.maxIterations);
+    this.#metadata = Object.freeze({ ...options.metadata });
     this.#participants =
       options.participants ??
       new ConversationParticipants(
@@ -255,6 +282,17 @@ class Runner {
     return Promise.resolve();
   }
 
+  /** Wakes this fresh session as Nox's cron principal. */
+  public schedule(message: UserMessage, causeId: string): void {
+    this.#participants.observe(SYSTEM_CRON);
+    this.#enqueue({
+      authority: systemAuthority(SYSTEM_CRON, causeId),
+      authorityGrants: SYSTEM_CRON_GRANTS,
+      message,
+      trigger: 'cron',
+    });
+  }
+
   /**
    * Ends the session for good: the run in flight is aborted, background work is
    * cancelled and the event log closes. A runner cannot be restarted.
@@ -286,11 +324,11 @@ class Runner {
    * middle, because the transcript is a record of a conversation and reordering
    * who spoke when to suit whose turn it is would make it a false one.
    */
-  #drainOwn(principal: PrincipalRef): void {
+  #drainOwn(authority: RunAuthority): void {
     let owned = 0;
     while (owned < this.#queue.length) {
       const entry = this.#queue[owned];
-      if (entry === undefined || !samePrincipal(entry.authority.principal, principal)) break;
+      if (entry === undefined || !sameRunOwner(entry.authority, authority)) break;
       owned += 1;
     }
 
@@ -310,9 +348,9 @@ class Runner {
   }
 
   /** Whether the queue starts with something this run may still take. */
-  #hasOwnQueued(principal: PrincipalRef): boolean {
+  #hasOwnQueued(authority: RunAuthority): boolean {
     const next = this.#queue[0];
-    return next !== undefined && samePrincipal(next.authority.principal, principal);
+    return next !== undefined && sameRunOwner(next.authority, authority);
   }
 
   #enqueue(entry: QueuedMessage): void {
@@ -352,14 +390,14 @@ class Runner {
 
     try {
       for (let next = this.#queue[0]; next !== undefined; next = this.#queue[0]) {
-        const status = await this.#runTurn(next.authority, next.trigger);
+        const status = await this.#runTurn(next.authority, next.trigger, next.authorityGrants);
         if (this.#session.signal.aborted) break;
 
         if (status === 'aborted') {
           // Abort cancels the current owner's turn, not unrelated work already
           // requested by another principal. Same-owner messages that arrived in
           // the interrupted turn are recorded without silently restarting it.
-          this.#drainOwn(next.authority.principal);
+          this.#drainOwn(next.authority);
         }
         // A provider failure is local to its run. The next queued item explicitly
         // requested its own run and must not be consumed as collateral damage.
@@ -369,6 +407,7 @@ class Runner {
       // append-only transcript, but a stopped runner starts no further work.
       this.#drainAll();
       this.#runAuthority = undefined;
+      this.#runAuthorityGrants = undefined;
       this.#runId = undefined;
       this.#state = this.#session.signal.aborted ? 'stopped' : 'idle';
       this.#resolveIdle?.();
@@ -376,7 +415,11 @@ class Runner {
   }
 
   /** One run, under one authority, from one entry on the queue. */
-  async #runTurn(authority: RunAuthority, trigger: RunTrigger): Promise<RunStatus> {
+  async #runTurn(
+    authority: RunAuthority,
+    trigger: RunTrigger,
+    authorityGrants?: readonly GrantPattern[],
+  ): Promise<RunStatus> {
     this.#run = new AbortController();
     this.#responseAttachments.clear();
 
@@ -384,6 +427,7 @@ class Runner {
     // Fixed here and read by every tool call this run makes. Nothing that lands
     // in the queue afterwards can move it.
     this.#runAuthority = authority;
+    this.#runAuthorityGrants = authorityGrants;
     this.#runId = runId;
     const startedAt = new Date();
     const usage: Usage = { cacheReadTokens: 0, inputTokens: 0, outputTokens: 0 };
@@ -557,10 +601,10 @@ class Runner {
   }
 
   async #runLoop(usage: Usage): Promise<RunStatus> {
-    const { principal } = this.#authority();
+    const authority = this.#authority();
 
     for (let iteration = 0; iteration < this.#maxIterations; iteration++) {
-      this.#drainOwn(principal);
+      this.#drainOwn(authority);
       await this.#context.compact();
 
       const responses = await this.#requestWithinBudget(usage);
@@ -581,7 +625,7 @@ class Runner {
         // the transcript — and a fold that reclaims too little to pay for the
         // head rewrite is rejected inside the context.
         await this.#context.fold();
-        if (!this.#hasOwnQueued(principal)) return 'completed';
+        if (!this.#hasOwnQueued(authority)) return 'completed';
       }
     }
 
@@ -690,7 +734,7 @@ class Runner {
         // operation is approved. The ack and the result that follow are not new
         // executions and are never authorized again.
         const { ack, result } = await execution.run(toolContext);
-        this.#trackDeferred(call, result, this.#authority(), subject);
+        this.#trackDeferred(call, result, this.#authority(), this.#runAuthorityGrants, subject);
         this.#logger?.debug(
           { durationMs: Date.now() - startedAt, toolName: call.name },
           'Deferred tool acknowledged.',
@@ -792,6 +836,12 @@ class Runner {
       ...(artifactReader === undefined ? {} : { artifactReader }),
       ...(artifacts === undefined ? {} : { artifacts }),
       ...(responseAttachments === undefined ? {} : { responseAttachments }),
+      session: {
+        agentId: this.#agentId,
+        metadata: this.#metadata,
+        sessionId: this.#sessionId,
+      },
+      toolSetId: subject.toolSetId,
     };
   }
 
@@ -851,22 +901,26 @@ class Runner {
     runAuthority: RunAuthority,
     runId: string,
     signal: AbortSignal,
+    authorityGrants = this.#runAuthorityGrants,
   ): Promise<AuthorizationDecision> {
-    const decision = await authorize(
-      {
-        authority: subject.authority,
-        principal: runAuthority.principal,
-        runId,
-        sessionId: this.#sessionId,
-        toolName: subject.toolName,
-        toolSetId: subject.toolSetId,
-        trackId: call.trackId,
-      },
-      this.#authorization,
-      this.#authorities,
-      signal,
-      this.#logger,
-    );
+    const scheduled = this.#scheduledAuthorization(subject, runAuthority, authorityGrants);
+    const decision =
+      scheduled ??
+      (await authorize(
+        {
+          authority: subject.authority,
+          principal: runAuthority.principal,
+          runId,
+          sessionId: this.#sessionId,
+          toolName: subject.toolName,
+          toolSetId: subject.toolSetId,
+          trackId: call.trackId,
+        },
+        this.#authorization,
+        this.#authorities,
+        signal,
+        this.#logger,
+      ));
 
     // Written whichever way it went. A deny never reaches the Gate, so this is
     // the only record that the call was ever attempted. An approved detached
@@ -897,6 +951,40 @@ class Runner {
       type: 'authorizationDecided',
     });
     return decision;
+  }
+
+  /** Cron may call registered tools exposed by the selected agent's blueprint. */
+  #scheduledAuthorization(
+    subject: ToolExecutionSubject,
+    runAuthority: RunAuthority,
+    grants: readonly GrantPattern[] | undefined,
+  ): AuthorizationDecision | undefined {
+    if (grants === undefined || !samePrincipal(runAuthority.principal, SYSTEM_CRON))
+      return undefined;
+
+    if (this.#authorities?.has(subject.authority) !== true) {
+      return {
+        allowed: false,
+        decidedBy: 'system-cron',
+        reason: `Authority "${subject.authority}" is not registered.`,
+      };
+    }
+
+    const matched = this.#authorities.covers(grants, subject.authority);
+    if (matched === undefined) {
+      return {
+        allowed: false,
+        decidedBy: 'system-cron',
+        reason: `Cron is not granted "${subject.authority}".`,
+      };
+    }
+
+    return {
+      allowed: true,
+      decidedBy: 'system-cron',
+      matchedGrant: matched,
+      reason: 'The builtin cron principal may use tools exposed by the selected agent.',
+    };
   }
 
   async #gateCall(
@@ -1008,6 +1096,7 @@ class Runner {
     });
     const operation: PendingOwnedOperation = {
       authority,
+      authorityGrants: this.#runAuthorityGrants,
       call,
       execution,
       pendingResponseId: response.messageId,
@@ -1072,6 +1161,7 @@ class Runner {
       operation.authority,
       operation.runId,
       this.#session.signal,
+      operation.authorityGrants,
     );
     if (!this.#isOperationExecuting(operation)) return;
     if (this.#sessionAborted()) {
@@ -1154,6 +1244,7 @@ class Runner {
     this.#pendingOperations.delete(operation.pendingResponseId);
     this.#enqueue({
       authority: operation.authority,
+      authorityGrants: operation.authorityGrants,
       message,
       ...(operation.responseAttachments.size === 0
         ? {}
@@ -1174,6 +1265,7 @@ class Runner {
     this.#pendingOperations.delete(responseId);
     this.#enqueue({
       authority: operation.authority,
+      authorityGrants: operation.authorityGrants,
       message: completion,
       ...(operation.responseAttachments.size === 0
         ? {}
@@ -1317,6 +1409,7 @@ class Runner {
     call: ToolCallMessage,
     result: Promise<MessageContent[]>,
     authority: RunAuthority,
+    authorityGrants: readonly GrantPattern[] | undefined,
     subject: ToolExecutionSubject,
   ): void {
     void result.then(
@@ -1324,6 +1417,7 @@ class Runner {
         this.#logger?.debug({ toolName: call.name }, 'Deferred tool result received.');
         this.#enqueue({
           authority,
+          authorityGrants,
           message: this.#toolOutputResponse(call, 'deferredResult', response, subject),
           trigger: 'deferredResult',
         });
@@ -1333,6 +1427,7 @@ class Runner {
         this.#logger?.error({ err: error, toolName: call.name }, 'Deferred tool failed.');
         this.#enqueue({
           authority,
+          authorityGrants,
           message: this.#noxResponse(
             call,
             'deferredResult',

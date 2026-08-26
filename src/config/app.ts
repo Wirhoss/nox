@@ -32,7 +32,7 @@ const uiConfigSchema = z.object({
  * here: a typo is a configuration error worth catching at load, and the set of
  * real zones is not ours to enumerate.
  */
-const timezoneSchema = z
+const ianaTimeZoneSchema = z
   .string()
   .trim()
   .min(1)
@@ -43,8 +43,9 @@ const timezoneSchema = z
     } catch {
       return false;
     }
-  }, 'Use an IANA time zone name, such as UTC or America/Mexico_City.')
-  .default('UTC');
+  }, 'Use an IANA time zone name, such as UTC or America/Mexico_City.');
+
+const timezoneSchema = ianaTimeZoneSchema.default('UTC');
 
 const appConfigSchema = z.object({
   api: apiConfigSchema.prefault({}),
@@ -59,6 +60,6 @@ const appConfigSchema = z.object({
 
 type AppConfig = z.infer<typeof appConfigSchema>;
 
-export { appConfigSchema };
+export { appConfigSchema, ianaTimeZoneSchema, timezoneSchema };
 
 export type { AppConfig };

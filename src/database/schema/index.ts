@@ -4,6 +4,7 @@ import { artifactRenditions } from './artifactRenditions';
 import { artifacts } from './artifacts';
 import { authSessions } from './authSessions';
 import { conversations } from './conversations';
+import { cronJobs, cronRuns } from './cronJobs';
 import { decisions } from './decisions';
 import { messages } from './messages';
 import { secrets } from './secrets';
@@ -18,6 +19,8 @@ const schema = {
   artifacts,
   authSessions,
   conversations,
+  cronJobs,
+  cronRuns,
   decisions,
   messages,
   secrets,
@@ -30,6 +33,13 @@ export { artifactRenditions } from './artifactRenditions';
 export { artifacts } from './artifacts';
 export { authSessions } from './authSessions';
 export { conversations } from './conversations';
+export {
+  CRON_JOB_KINDS,
+  CRON_JOB_STATUSES,
+  CRON_RUN_STATUSES,
+  cronJobs,
+  cronRuns,
+} from './cronJobs';
 export { decisions } from './decisions';
 export { messages } from './messages';
 export { schema };
@@ -42,6 +52,15 @@ export type { ArtifactRenditionRow, ArtifactRenditionRowInsert } from './artifac
 export type { ArtifactRow, ArtifactRowInsert } from './artifacts';
 export type { AuthSessionRow, AuthSessionRowInsert } from './authSessions';
 export type { ConversationRow, ConversationRowInsert } from './conversations';
+export type {
+  CronJobKind,
+  CronJobRow,
+  CronJobRowInsert,
+  CronJobStatus,
+  CronRunRow,
+  CronRunRowInsert,
+  CronRunStatus,
+} from './cronJobs';
 export type { DecisionRow, DecisionRowInsert } from './decisions';
 export type { MessageRow, MessageRowInsert } from './messages';
 export type { SecretRow, SecretRowInsert } from './secrets';

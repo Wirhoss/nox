@@ -1,4 +1,4 @@
-import { principalKey, type PrincipalRef } from './principal';
+import { principalKey, type PrincipalRef, SYSTEM_ISSUER } from './principal';
 
 /**
  * The sticky security state of one session's shared transcript.
@@ -32,7 +32,7 @@ class ConversationParticipants {
   }
 
   public observe(principal: PrincipalRef): void {
-    if (this.#shared) return;
+    if (this.#shared || principal.issuer === SYSTEM_ISSUER) return;
 
     this.#principals.add(principalKey(principal));
     if (this.#principals.size > 1) {

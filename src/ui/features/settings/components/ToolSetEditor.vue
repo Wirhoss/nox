@@ -43,10 +43,9 @@ interface Props {
 }
 
 /**
- * What every tool set has, whatever kind it is: the kind itself, and the cut of
- * its tools this instance exposes. The editor frames these rather than treating
- * them as two more schema fields, because they mean the same thing for every
- * contribution — and everything else on screen comes from the kind's own schema.
+ * `type` is the immutable discriminator that selected this contribution's schema,
+ * never a setting. `enabledTools` is rendered as the capability grid; everything
+ * else on screen comes from that already-selected schema.
  */
 const FRAMED = ['enabledTools', 'type']
 const NEW_SECRET = '__new_secret__'
@@ -129,7 +128,7 @@ function resetEditor(): void {
   confirmingDelete.value = false
   parked.value = {}
   syncCredentials()
-  jsonSource.value = JSON.stringify(draft.value, undefined, 2)
+  jsonSource.value = JSON.stringify(editableConfig(draft.value), undefined, 2)
   originalJsonSignature.value = JSON.stringify(draft.value)
   originalSignature.value = formSignature()
 }
@@ -164,17 +163,6 @@ function newToolSetTemplate(): ConfigLike {
   const first = types.value[0]
   if (first === undefined) return { type: '' }
   return { ...defaultsFor(formNodes(first.schema, FRAMED)), type: first.type }
-}
-
-function setType(value: string): void {
-  const chosen = types.value.find((candidate) => candidate.type === value)
-  draft.value =
-    chosen === undefined
-      ? { ...draft.value, type: value }
-      : { ...defaultsFor(formNodes(chosen.schema, FRAMED)), type: value }
-  parked.value = {}
-  syncCredentials()
-  clearFeedback('type')
 }
 
 /**
@@ -276,7 +264,7 @@ function humanize(name: string): string {
 function switchMode(nextMode: EditorMode): void {
   if (mode.value === nextMode) return
   if (nextMode === 'json') {
-    jsonSource.value = JSON.stringify(draft.value, undefined, 2)
+    jsonSource.value = JSON.stringify(editableConfig(draft.value), undefined, 2)
     jsonError.value = undefined
     mode.value = nextMode
     return
@@ -295,7 +283,7 @@ function switchMode(nextMode: EditorMode): void {
 
 function formatJson(): void {
   const parsed = parseJson(true)
-  if (parsed !== undefined) jsonSource.value = JSON.stringify(parsed, undefined, 2)
+  if (parsed !== undefined) jsonSource.value = JSON.stringify(editableConfig(parsed), undefined, 2)
 }
 
 async function save(): Promise<void> {
@@ -451,7 +439,7 @@ function parseJson(report: boolean): ConfigLike | undefined {
       return undefined
     }
     if (report) jsonError.value = undefined
-    return parsed
+    return { ...editableConfig(parsed), type: draft.value.type }
   } catch {
     if (report) jsonError.value = t('settings.validation.invalidJson')
     return undefined
@@ -480,6 +468,10 @@ function canLeave(): boolean {
 
 onBeforeRouteLeave(canLeave)
 onBeforeRouteUpdate(canLeave)
+
+function editableConfig(value: ConfigLike): ConfigLike {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'type'))
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -569,29 +561,6 @@ function validHttpUrl(value: string): boolean {
             <span>{{ copy('capabilitySurfaceHelp') }}</span>
           </div>
           <div class="tool-set-editor__fields">
-            <div
-              class="tool-set-editor__field"
-              :class="{ 'tool-set-editor__field--invalid': fieldErrors.type }"
-            >
-              <label for="tool-set-type"
-                >{{ copy('type') }} <small>{{ t('common.requiredShort') }}</small></label
-              >
-              <select
-                id="tool-set-type"
-                :value="draft.type"
-                :aria-invalid="fieldErrors.type !== undefined"
-                @change="setType(($event.target as HTMLSelectElement).value)"
-              >
-                <option v-for="kind in types" :key="kind.type" :value="kind.type">
-                  {{ kind.type }} · {{ kind.extensionId }}
-                </option>
-                <option v-if="descriptor === undefined" :value="draft.type">
-                  {{ draft.type }} · {{ t('common.contributed') }}
-                </option>
-              </select>
-              <p v-if="fieldErrors.type" class="tool-set-editor__error">{{ fieldErrors.type }}</p>
-            </div>
-
             <div v-if="inventory" class="tool-set-editor__tool-grid">
               <label
                 v-for="tool in inventory.tools"

@@ -7,7 +7,7 @@ import { authGuard } from '../auth/guard';
 import { AppReferenceError } from './app';
 import { BlueprintReferenceError } from './blueprints';
 import { BrokerReferenceError } from './brokers';
-import { type ConfigStore, EntryInUseError } from './store';
+import { type ConfigStore, ContributionTypeChangeError, EntryInUseError } from './store';
 
 import type { ConfigKey } from '../../config/sections';
 import type { AuthStore } from '../auth/store';
@@ -63,6 +63,9 @@ function refusal(error: unknown): Refusal | undefined {
       body: { detail: error.message, error: 'entry_in_use', reasons: error.reasons },
       status: 409,
     };
+  }
+  if (error instanceof ContributionTypeChangeError) {
+    return { body: { detail: error.message, error: 'contribution_type_change' }, status: 409 };
   }
   if (
     error instanceof AppReferenceError ||

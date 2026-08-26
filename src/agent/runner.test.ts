@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { SYSTEM_CRON } from '../auth/principal';
 import { ProviderError } from '../provider/error';
 import { ChatProvider } from '../provider/provider';
 import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
@@ -146,6 +147,16 @@ function user(text: string, subject = 'alice'): UserMessage {
   };
 }
 
+function scheduledMessage(text: string, causeId: string): UserMessage {
+  return {
+    content: [{ text, type: 'text' }],
+    createdAt: new Date(),
+    messageId: `scheduled-${causeId}`,
+    origin: { principal: SYSTEM_CRON, transportMessageId: causeId },
+    role: 'user',
+  };
+}
+
 function setup(
   scripts: Script[],
   tools: Tool[] = [],
@@ -166,6 +177,7 @@ function setup(
   });
   const events = new EventLog<AgentEvent>();
   const runner = new Runner(context, events, provider, MODEL, {
+    agentId: 'test-agent',
     ...(artifactOutputs === undefined ? {} : { artifactOutputs }),
     ...(artifactReader === undefined ? {} : { artifactReader }),
     authorities: testCatalog(),
@@ -200,6 +212,69 @@ describe('Runner', () => {
     expect(events.snapshot()[0]).toMatchObject({ modelId: 'test-model', trigger: 'user' });
     expect(events.snapshot().at(-1)).toMatchObject({ status: 'completed' });
     expect(runner.state).toBe('idle');
+  });
+
+  test('a scheduled turn runs under the builtin cron authority', async () => {
+    let executions = 0;
+    const { events, runner } = setup(
+      [calls('echo', 'track-cron'), says('done')],
+      [
+        immediateTool('echo', () => {
+          executions += 1;
+          return Promise.resolve([{ text: 'echoed', type: 'text' }]);
+        }),
+      ],
+    );
+
+    runner.schedule(scheduledMessage('scheduled work', 'job-1'), 'job-1');
+    await runner.idle;
+
+    expect(executions).toBe(1);
+    expect(events.snapshot()[0]).toMatchObject({
+      authority: { principal: SYSTEM_CRON, source: { causeId: 'job-1', type: 'system' } },
+      trigger: 'cron',
+      type: 'runStarted',
+    });
+    expect(events.snapshot().find((event) => event.type === 'authorizationDecided')).toMatchObject({
+      decision: { allowed: true, decidedBy: 'system-cron', matchedGrant: '*' },
+    });
+  });
+
+  test('two queued cron causes retain separate system identities', async () => {
+    let executions = 0;
+    const echo = immediateTool('echo', () => {
+      executions += 1;
+      return Promise.resolve([{ text: 'echoed', type: 'text' }]);
+    });
+    const { events, runner } = setup(
+      [
+        calls('echo', 'track-first'),
+        says('first done'),
+        calls('echo', 'track-second'),
+        says('second done'),
+      ],
+      [echo],
+    );
+
+    runner.schedule(scheduledMessage('first', 'job-1'), 'job-1');
+    runner.schedule(scheduledMessage('second', 'job-2'), 'job-2');
+    await runner.idle;
+
+    expect(executions).toBe(2);
+    const starts = events.snapshot().filter((event) => event.type === 'runStarted');
+    expect(starts).toHaveLength(2);
+    expect(starts.map((event) => event.authority.source)).toEqual([
+      { causeId: 'job-1', type: 'system' },
+      { causeId: 'job-2', type: 'system' },
+    ]);
+    const decisions = events
+      .snapshot()
+      .filter((event) => event.type === 'authorizationDecided')
+      .map((event) => event.decision);
+    expect(decisions).toMatchObject([
+      { allowed: true, decidedBy: 'system-cron', matchedGrant: '*' },
+      { allowed: true, decidedBy: 'system-cron', matchedGrant: '*' },
+    ]);
   });
 
   test('a tool call feeds the next request and the run ends when nothing is left', async () => {

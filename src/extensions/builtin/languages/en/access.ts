@@ -22,7 +22,7 @@ const accessMessages = Object.freeze({
   'access.frame.webAccess': 'Web access',
   'access.registration.description':
     'Create the single operator identity that will own this installation.',
-  'access.registration.eyebrow': 'NOX // FIRST CLAIM',
+  'access.registration.eyebrow': 'NOX // CLAIM',
   'access.registration.status': 'Unclaimed node',
   'access.registration.title': 'Claim this machine',
   'access.signedOut.description': 'Identify yourself to enter this local Nox installation.',

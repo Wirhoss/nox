@@ -147,7 +147,6 @@ installTestLanguage(
     'settings.toolSet.slotOffline': 'NOT CONFIGURED',
     'settings.toolSet.surface': 'SURFACE',
     'settings.toolSet.toolSetJson': 'Tool-set JSON',
-    'settings.toolSet.type': 'Tool-set type',
     'settings.validation.integerRange': 'Use a whole number from {minimum} to {maximum}.',
   },
   'en',

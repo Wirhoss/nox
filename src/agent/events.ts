@@ -12,7 +12,7 @@ type RunStatus = 'aborted' | 'completed' | 'failed' | 'maxIterations';
  * What put the run on the queue. With deferred results waking an idle runner,
  * a consumer cannot otherwise tell a reply from the agent moving on its own.
  */
-type RunTrigger = 'deferredResult' | 'steer' | 'user';
+type RunTrigger = 'cron' | 'deferredResult' | 'steer' | 'user';
 
 /**
  * Everything an observer of a session can see.

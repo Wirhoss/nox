@@ -8,6 +8,12 @@ import type {
 } from '../artifact/output';
 import type { z } from 'zod';
 
+interface ToolSessionContext {
+  readonly agentId: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly sessionId: string;
+}
+
 interface ToolContext {
   abortSignal: AbortSignal;
   /** Bounded access available only to the core artifact-reading tool. */
@@ -16,6 +22,10 @@ interface ToolContext {
   artifacts?: ArtifactOutputPublisher;
   /** Explicit user-facing response outbox, used by the core attachment tool. */
   responseAttachments?: ArtifactResponseAttacher;
+  /** Present on host-executed calls; optional so prepared tools remain independently testable. */
+  session?: ToolSessionContext;
+  /** The configured instance this concrete call was granted from. */
+  toolSetId?: string;
 }
 
 type ToolEffect =
@@ -282,6 +292,7 @@ export type {
   ToolResource,
   ToolResourceKind,
   ToolRisk,
+  ToolSessionContext,
   ToolSetClass,
   ToolSetFactory,
   ToolSetGrant,

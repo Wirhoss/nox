@@ -112,7 +112,7 @@ const settingsMessages = Object.freeze({
   'settings.sections.toolSets.plural': 'Tool Sets',
   'settings.toolSet.capabilitySurface': 'Capability surface',
   'settings.toolSet.capabilitySurfaceHelp':
-    'The contributed implementation and the exact tools exposed when an agent receives this set.',
+    'Configure the tools exposed by this contribution; its implementation and schema are fixed.',
   'settings.toolSet.configured': 'CONFIGURED',
   'settings.toolSet.credentialValue': 'Credential value',
   'settings.toolSet.credentialValueHint':
@@ -128,7 +128,6 @@ const settingsMessages = Object.freeze({
   'settings.toolSet.secretIdHint': 'The tool-set config will store this ID, never its value.',
   'settings.toolSet.slotOffline': 'NOT CONFIGURED',
   'settings.toolSet.surface': 'SURFACE',
-  'settings.toolSet.type': 'Tool-set type',
   'settings.toolSet.changeRefused': 'Tool-set change refused',
   'settings.toolSet.confirmDiscard': 'Discard the unsaved tool-set changes?',
   'settings.toolSet.header': 'TOOL SET',

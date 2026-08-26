@@ -698,6 +698,7 @@ describe('Settings route', () => {
     await renderAt('/settings/tool-sets/internet')
 
     expect(await screen.findByRole('heading', { name: 'internet' })).toBeTruthy()
+    expect(document.querySelector('#tool-set-type')).toBeNull()
 
     // Every field on screen came from the schema the server validates against,
     // in the order that schema declares its slots.
@@ -746,7 +747,7 @@ describe('Settings route', () => {
     expect(JSON.stringify(toolSetBody)).not.toContain('extract-key')
   })
 
-  it('keeps a tool-set kind no extension contributes on the JSON surface', async () => {
+  it('keeps an unavailable tool set editable without exposing its schema discriminator', async () => {
     server.use(
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
@@ -773,7 +774,7 @@ describe('Settings route', () => {
     expect(screen.getByRole('button', { name: 'JSON' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByLabelText('JSON object')).toHaveProperty(
       'value',
-      '{\n  "root": "/srv/shared",\n  "type": "filesystem"\n}',
+      '{\n  "root": "/srv/shared"\n}',
     )
     expect(screen.queryByLabelText(/^Service URL/)).toBeNull()
   })

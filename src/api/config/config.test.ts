@@ -510,6 +510,22 @@ describe('writing one entry', () => {
     expect(await response.json()).toEqual({ error: 'entry_not_found' });
   });
 
+  test('refuses to change the schema of an existing tool set', async () => {
+    const nox = await configNox();
+
+    const response = await fetch(`${nox.url}/config/toolSets/internet`, {
+      body: JSON.stringify({ type: 'some_other_tools' }),
+      headers: nox.headers,
+      method: 'PUT',
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'contribution_type_change' });
+    expect(await onDisk(nox.directory, 'toolsets.json')).toEqual({
+      internet: { type: 'fake_tools' },
+    });
+  });
+
   test('refuses an instance whose kind no extension registered', async () => {
     const nox = await configNox();
 

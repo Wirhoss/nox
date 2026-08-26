@@ -65,7 +65,7 @@ function systemPrincipal(subject: string): PrincipalRef {
   return principal(SYSTEM_ISSUER, subject);
 }
 
-/** Scheduled work. No cron exists yet; the abstraction simply never lacks one. */
+/** Scheduled work, authorized only by the grants carried by its durable job. */
 const SYSTEM_CRON = systemPrincipal('cron');
 
 /** Nox acting for its own machinery — compaction handoffs and the like. */

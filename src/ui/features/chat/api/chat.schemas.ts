@@ -127,7 +127,7 @@ const chatEventSchema = z.discriminatedUnion('type', [
   eventBase.extend({
     modelId: z.string(),
     startedAt: z.string().datetime(),
-    trigger: z.enum(['deferredResult', 'steer', 'user']),
+    trigger: z.enum(['cron', 'deferredResult', 'steer', 'user']),
     type: z.literal('runStarted'),
   }),
   eventBase.extend({ title: z.string(), type: z.literal('title') }),

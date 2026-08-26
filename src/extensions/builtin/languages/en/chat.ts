@@ -28,6 +28,7 @@ const chatMessages = Object.freeze({
   'chat.activity.tools.one': '{count} tool',
   'chat.activity.tools.other': '{count} tools',
   'chat.activity.trigger': 'Trigger',
+  'chat.activity.triggerValue.cron': 'Scheduled job',
   'chat.activity.triggerValue.deferredResult': 'Deferred result',
   'chat.activity.triggerValue.steer': 'Steer',
   'chat.activity.triggerValue.user': 'User message',

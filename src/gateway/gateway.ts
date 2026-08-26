@@ -16,11 +16,17 @@ import {
 } from './command';
 
 import type { Message, MessageContent } from '../agent/context/message';
+import type { AgentEvent, RunStatus } from '../agent/events';
 import type { Session } from '../agent/session';
 import type { NoxApplication } from '../application';
 import type { AuthorizationProvider } from '../auth/authorization';
 import type { MessageOrigin } from '../auth/principal';
 import type { Database } from '../database/database';
+import type {
+  ScheduledRunHost,
+  ScheduledRunRequest,
+  ScheduledRunResult,
+} from '../scheduler/scheduledRun';
 import type {
   Broker,
   BrokerCapabilities,
@@ -100,6 +106,36 @@ function keyOf(brokerId: string, conversationId: string): string {
 
 function textOf(content: readonly MessageContent[]): string {
   return textFromContent(content).trim();
+}
+
+interface ScheduledCompletion {
+  readonly completedAt: Date;
+  readonly error?: string;
+  readonly runId: string;
+  readonly startedAt: Date;
+  readonly status: RunStatus;
+}
+
+async function scheduledCompletion(
+  events: AsyncIterable<AgentEvent>,
+): Promise<ScheduledCompletion> {
+  let error: string | undefined;
+  let started: Extract<AgentEvent, { type: 'runStarted' }> | undefined;
+  for await (const event of events) {
+    if (event.type === 'error') error = event.error.message;
+    if (event.type === 'runStarted') started = event;
+    if (event.type === 'runCompleted') {
+      if (started === undefined) throw new Error('Scheduled run completed before it started.');
+      return {
+        completedAt: new Date(started.startedAt.getTime() + event.durationMs),
+        ...(error === undefined ? {} : { error }),
+        runId: event.runId,
+        startedAt: started.startedAt,
+        status: event.status,
+      };
+    }
+  }
+  throw new Error('Scheduled session closed without a run result.');
 }
 
 /**
@@ -205,7 +241,7 @@ function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | un
  * Work is serialized per conversation. Two messages arriving together are two
  * turns of one session, never two sessions racing to be the one that chat is.
  */
-class Gateway implements MessageGateway {
+class Gateway implements MessageGateway, ScheduledRunHost {
   readonly #application: NoxApplication;
   readonly #commands: CommandCatalog;
   readonly #conversations = new Map<string, Conversation>();
@@ -213,6 +249,8 @@ class Gateway implements MessageGateway {
   readonly #logger: Logger;
   /** Permission prompts in flight, with the originating turn they must retain. */
   readonly #pending = new Map<string, PendingDelivery>();
+  readonly #scheduledAbort = new AbortController();
+  readonly #scheduledWork = new Set<Promise<ScheduledRunResult>>();
   readonly #store: ConversationStore;
   /**
    * Transcripts of conversations that are not open. Read-only by construction:
@@ -294,6 +332,7 @@ class Gateway implements MessageGateway {
   public async stop(): Promise<void> {
     if (this.#state === 'stopped') return;
     this.#state = 'stopped';
+    this.#scheduledAbort.abort(new Error('The gateway stopped.'));
 
     for (const grant of [...this.#grants].reverse()) {
       try {
@@ -302,6 +341,7 @@ class Gateway implements MessageGateway {
         this.#logger.error({ brokerId: grant.brokerId, err: error }, 'Broker failed to stop.');
       }
     }
+    await Promise.allSettled([...this.#scheduledWork]);
 
     this.#conversations.clear();
     this.#pending.clear();
@@ -311,6 +351,115 @@ class Gateway implements MessageGateway {
   public async drain(): Promise<void> {
     while (this.#work.size > 0) {
       await Promise.all([...this.#work.values()]);
+    }
+  }
+
+  public agentIds(signal: AbortSignal): Promise<readonly string[]> {
+    signal.throwIfAborted();
+    if (this.#state !== 'running') {
+      return Promise.reject(new Error('The runtime is not available for scheduled work.'));
+    }
+    return Promise.resolve(this.#application.agentIds);
+  }
+
+  public deliveryBrokerIds(signal: AbortSignal): Promise<readonly string[]> {
+    signal.throwIfAborted();
+    if (this.#state !== 'running') {
+      return Promise.reject(new Error('The runtime is not available for scheduled work.'));
+    }
+    return Promise.resolve(this.brokerIds);
+  }
+
+  /** Runs one occurrence in a new session and optionally posts its final response to a channel. */
+  public runScheduledAgent(request: ScheduledRunRequest): Promise<ScheduledRunResult> {
+    request.signal.throwIfAborted();
+    if (this.#state !== 'running') {
+      return Promise.reject(new Error('The runtime is not available for scheduled work.'));
+    }
+
+    const execution = this.#executeScheduledAgent(request);
+    this.#scheduledWork.add(execution);
+    void execution.then(
+      () => {
+        this.#scheduledWork.delete(execution);
+      },
+      () => {
+        this.#scheduledWork.delete(execution);
+      },
+    );
+    return execution;
+  }
+
+  async #executeScheduledAgent(request: ScheduledRunRequest): Promise<ScheduledRunResult> {
+    const session = await this.#application.openSession(request.agentId, {
+      metadata: { cronRunId: request.causeId, trigger: 'cron' },
+      sessionId: request.sessionId,
+      title: request.name,
+    });
+    const abort = (): void => {
+      void session.abort();
+    };
+    request.signal.addEventListener('abort', abort, { once: true });
+    this.#application.signal.addEventListener('abort', abort, { once: true });
+    this.#scheduledAbort.signal.addEventListener('abort', abort, { once: true });
+
+    try {
+      request.signal.throwIfAborted();
+      this.#application.signal.throwIfAborted();
+      this.#scheduledAbort.signal.throwIfAborted();
+      session.schedule(request.prompt, request.causeId);
+      const completed = await scheduledCompletion(session.events);
+      await session.idle;
+      const content =
+        session
+          .getTranscript()
+          .filter((message) => message.role === 'assistant')
+          .at(-1)?.content ?? [];
+
+      let deliveredAt: Date | undefined;
+      let deliveryError: string | undefined;
+      if (request.delivery !== undefined) {
+        const grant = this.#grants.find(
+          (candidate) => candidate.brokerId === request.delivery?.brokerId,
+        );
+        if (!hasUsableContent(content)) {
+          deliveryError = 'The scheduled agent produced no response to deliver.';
+        } else if (grant === undefined) {
+          deliveryError = `Scheduled delivery names unknown broker "${request.delivery.brokerId}".`;
+        } else if (this.#state !== 'running' || this.#application.signal.aborted) {
+          deliveryError = 'The runtime stopped before the scheduled response could be delivered.';
+        } else {
+          try {
+            await grant.broker.deliver({
+              content,
+              conversationId: request.delivery.channelId,
+              text: textOf(content),
+              turnId: completed.runId,
+              type: 'message',
+            });
+            deliveredAt = new Date();
+          } catch (error) {
+            deliveryError = error instanceof Error ? error.message : String(error);
+          }
+        }
+      }
+
+      return {
+        completedAt: completed.completedAt,
+        content,
+        ...(deliveredAt === undefined ? {} : { deliveredAt }),
+        ...(deliveryError === undefined ? {} : { deliveryError }),
+        ...(completed.error === undefined ? {} : { error: completed.error }),
+        runId: completed.runId,
+        sessionId: session.sessionId,
+        startedAt: completed.startedAt,
+        status: completed.status,
+      };
+    } finally {
+      request.signal.removeEventListener('abort', abort);
+      this.#application.signal.removeEventListener('abort', abort);
+      this.#scheduledAbort.signal.removeEventListener('abort', abort);
+      await this.#application.closeSession(session.sessionId);
     }
   }
 

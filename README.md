@@ -165,6 +165,51 @@ authorities, so an agent can be granted a browser it may look at and not touch,
 and clicking and typing are recorded as irreversible network writes. An instance
 that should expose fewer of them lists the ones it keeps in `enabledTools`.
 
+### Scheduled jobs
+
+The builtin `cronjobs` tool-set runs durable automations in fresh sessions of selected configured
+agents. Configure one instance in `toolsets.json` and grant its management tools directly:
+
+```json
+{
+  "automation": {
+    "type": "cronjobs",
+    "maxJobs": 100
+  }
+}
+```
+
+```json
+{
+  "toolSets": {
+    "direct": ["automation"],
+    "routed": ["internet"]
+  }
+}
+```
+
+It exposes `cron_agents`, `cron_create`, `cron_list`, `cron_get`, `cron_update`, `cron_delete`, and
+`cron_run`. Every job names an `agentId`. Each occurrence opens a new session with that agent's model,
+system prompt, and selected tools; no authoring-chat history enters the run and no run history enters
+the next occurrence. An optional delivery target names a configured broker and channel:
+
+```json
+{
+  "agentId": "mail-assistant",
+  "delivery": { "brokerId": "discord", "channelId": "mail-alerts" }
+}
+```
+
+A schedule is either one future ISO 8601 instant (`at`) or a recurring five-field cron expression
+(`cron`). Recurring jobs may name an IANA time zone; otherwise the application time zone is used. Jobs and their independent run records persist in SQLite. A
+one-time job is retained disabled after it runs. Occurrences missed while Nox was stopped are recorded
+as `skipped`, never replayed in a catch-up burst.
+
+A firing acts as `nox.system:cron`, not as the person who created it. That builtin principal may use
+the tools exposed by the selected agent's blueprint; it does not inherit the author's permissions or
+add capabilities absent from that agent. The normal Gate still evaluates each call, and a system run
+cannot approve an escalation on a human's behalf.
+
 Model modalities are explicit metadata. A model is text-only until its exact configuration declares
 additional inputs; model IDs are never used as a capability database:
 

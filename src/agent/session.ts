@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 
 import { ArtifactOutputSink } from '../artifact/output';
 import { ConversationParticipants } from '../auth/conversation';
+import { type MessageOrigin, type PrincipalRef, SYSTEM_CRON } from '../auth/principal';
 import { type DecisionRecord, SessionStore } from '../database/sessionStore';
 import {
   type GateEvaluator,
@@ -20,7 +21,6 @@ import type { ArtifactScope } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
 import type { AuthorizationProvider } from '../auth/authorization';
-import type { MessageOrigin, PrincipalRef } from '../auth/principal';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ModelConfig } from '../provider/config';
@@ -173,6 +173,7 @@ class Session {
         ? undefined
         : new ArtifactOutputSink(options.artifacts, options.artifactScope);
     this.#runner = new Runner(this.#context, this.#events, provider, model, {
+      agentId: options.agentId,
       ...(artifactOutputs === undefined
         ? {}
         : { artifactOutputs, artifactReader: artifactOutputs }),
@@ -182,6 +183,7 @@ class Session {
       gate: this.#gate,
       logger: options.logger,
       maxIterations: options.maxIterations,
+      metadata: options.metadata,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
       participants,
       sessionId,
@@ -324,6 +326,14 @@ class Session {
 
   public steer(content: UserMessageInput, origin: MessageOrigin): Promise<void> {
     return this.#runner.steer(toUserMessage(content, origin, 'steer'));
+  }
+
+  /** Internal scheduled ingress, attributed and authorized as Nox's cron principal. */
+  public schedule(content: UserMessageInput, causeId: string): void {
+    this.#runner.schedule(
+      toUserMessage(content, { principal: SYSTEM_CRON, transportMessageId: causeId }, 'message'),
+      causeId,
+    );
   }
 
   /** Ends the session and waits for what it wrote to reach storage. */
