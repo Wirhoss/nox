@@ -1,51 +1,82 @@
+import { isAbsolute } from 'node:path';
+
+import {
+  EXTENSION_API_VERSION,
+  type ExtensionManifest,
+  identifierSchema,
+} from '@nox/extension-api';
 import { satisfies, valid, validRange } from 'semver';
 import { z } from 'zod';
 
 import { parseOrThrow } from '../utils/validate';
-import { identifierSchema } from './identifier';
+
+const EXTENSION_MANIFEST_FILENAME = 'nox-extension.json';
+
+const semanticVersionSchema = z
+  .string()
+  .refine((value) => valid(value) !== null, 'Expected a valid semantic version.');
 
 const semanticVersionRangeSchema = z
   .string()
   .refine((value) => validRange(value) !== null, 'Expected a valid semantic version range.');
 
+const extensionMainSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => !isAbsolute(value), 'The extension entry point must be relative.')
+  .refine(
+    (value) => !value.replaceAll('\\', '/').split('/').includes('..'),
+    'The extension entry point cannot leave its package directory.',
+  );
+
 /**
- * Identity and compatibility, and nothing else. `version`, `apiVersion` and the
- * dependency graph stay with the deferred machinery: they describe how an extension
- * is *distributed*, and nothing is distributed yet. A compatibility range is
- * different — it is what an extension asserts about the runtime it was written for,
- * and adding it later would break every manifest at once.
+ * Distribution identity and compatibility. Both compatibility declarations are
+ * semver ranges: an extension may support a family of Nox/API releases. Its own
+ * `version` is exact because it identifies the installed artifact.
  */
 const extensionManifestSchema = z.strictObject({
-  engines: z.strictObject({ nox: semanticVersionRangeSchema }),
+  engines: z.strictObject({
+    extensionApi: semanticVersionRangeSchema,
+    nox: semanticVersionRangeSchema,
+  }),
   id: identifierSchema,
+  main: extensionMainSchema,
+  schemaVersion: z.literal(1),
+  version: semanticVersionSchema,
 });
-
-type ExtensionManifest = z.infer<typeof extensionManifestSchema>;
 
 function parseExtensionManifest(input: unknown): ExtensionManifest {
   const manifest = parseOrThrow(extensionManifestSchema, input);
   return Object.freeze({ ...manifest, engines: Object.freeze({ ...manifest.engines }) });
 }
 
-/**
- * A prerelease *inside* the range satisfies it: a runtime at `0.2.1-rc.1` still
- * runs an extension that asked for `^0.2.0`. Without this every release candidate
- * would read as incompatible with every extension. Note this does not reach
- * backwards — `0.2.0-rc.1` precedes `0.2.0` and does not satisfy `^0.2.0`,
- * which is correct: that extension was written for a release that has not shipped.
- */
-function isCompatible(manifest: ExtensionManifest, noxVersion: string): boolean {
-  return satisfies(noxVersion, manifest.engines.nox, { includePrerelease: true });
+function satisfiesRange(version: string, range: string): boolean {
+  return satisfies(version, range, { includePrerelease: true });
 }
 
-/** Guards the other side: a runtime version that is not a version makes every
- *  extension look incompatible for a reason nobody would find. */
+function isCompatible(manifest: ExtensionManifest, noxVersion: string): boolean {
+  return satisfiesRange(noxVersion, manifest.engines.nox);
+}
+
+function isExtensionApiCompatible(manifest: ExtensionManifest): boolean {
+  return satisfiesRange(EXTENSION_API_VERSION, manifest.engines.extensionApi);
+}
+
+/** Guards the other side: an invalid runtime/API version makes every extension misleadingly fail. */
 function assertVersion(value: string, kind: string): void {
   if (valid(value) === null) {
     throw new TypeError(`Invalid ${kind} "${value}": expected a semantic version.`);
   }
 }
 
-export { assertVersion, extensionManifestSchema, isCompatible, parseExtensionManifest };
-
-export type { ExtensionManifest };
+export {
+  assertVersion,
+  EXTENSION_MANIFEST_FILENAME,
+  extensionManifestSchema,
+  isCompatible,
+  isExtensionApiCompatible,
+  parseExtensionManifest,
+  semanticVersionRangeSchema,
+  semanticVersionSchema,
+};

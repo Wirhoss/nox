@@ -1,48 +1,48 @@
+import {
+  type Broker,
+  type BrokerCapabilities,
+  type BrokerCommandSpec,
+  type BrokerHistory,
+  type BrokerHistoryEntry,
+  type BrokerHistoryOptions,
+  type BrokerSession,
+  type CommandInvocation,
+  type CommandRejection,
+  hasUsableContent,
+  type InboundEvent,
+  type InboundMessage,
+  type InboundPermission,
+  type InboundRejection,
+  type InboundSteer,
+  type Message,
+  type MessageBody,
+  type MessageContent,
+  type MessageOrigin,
+  type OutboundBody,
+  type OutboundEvent,
+  type ScheduledRunHost,
+  type ScheduledRunRequest,
+  type ScheduledRunResult,
+  textFromContent,
+} from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import { artifactConversationScope } from '../artifact/output';
-import { hasUsableContent, textFromContent } from '../content/content';
 import { type ConversationKey, ConversationStore } from '../database/conversationStore';
 import { SessionStore } from '../database/sessionStore';
 import { type Logger, silentLogger } from '../logger/logger';
 import {
   type BrokerCommand,
-  type BrokerCommandSpec,
   BUILTIN_COMMANDS,
   CommandCatalog,
   type CommandContext,
-  type CommandInvocation,
-  type CommandRejection,
 } from './command';
 
-import type { Message, MessageContent } from '../agent/context/message';
 import type { AgentEvent, RunStatus } from '../agent/events';
 import type { Session } from '../agent/session';
 import type { NoxApplication } from '../application';
 import type { AuthorizationProvider } from '../auth/authorization';
-import type { MessageOrigin } from '../auth/principal';
 import type { Database } from '../database/database';
-import type {
-  ScheduledRunHost,
-  ScheduledRunRequest,
-  ScheduledRunResult,
-} from '../scheduler/scheduledRun';
-import type {
-  Broker,
-  BrokerCapabilities,
-  BrokerHistory,
-  BrokerHistoryEntry,
-  BrokerHistoryOptions,
-  BrokerSession,
-  InboundEvent,
-  InboundMessage,
-  InboundPermission,
-  InboundRejection,
-  InboundSteer,
-  MessageBody,
-  OutboundBody,
-  OutboundEvent,
-} from './broker';
 
 /** How many transport message ids one conversation remembers for deduplication. */
 const SEEN_LIMIT = 256;
@@ -655,9 +655,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
    * deduplicated and serialized in exactly the same way.
    */
   async #handleSpeech(grant: BrokerGrant, message: InboundMessage | InboundSteer): Promise<void> {
-    const content = message.content ?? [
-      { text: message.text?.trim() ?? '', type: 'text' as const },
-    ];
+    const { content } = message;
     if (!hasUsableContent(content)) return;
 
     const binding = this.#bindingFor(grant, message.conversationId);

@@ -2,13 +2,23 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  ChatProvider,
+  type Message,
+  type MessageContent,
+  type ModelConfig,
+  type ProviderSourceEvent,
+  type TextGenerateOptions,
+  type Tool,
+  ToolSet,
+  type ToolSetGrant,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { AuthorityCatalog } from '../auth/authority';
 import { CORE_AUTHORITIES } from '../auth/coreAuthorities';
 import { Database } from '../database/database';
-import { ChatProvider } from '../provider/provider';
 import {
   isInternalRequest,
   permissiveAuthorization,
@@ -17,13 +27,9 @@ import {
   testOrigin,
   testPrincipal,
 } from '../testFixtures';
-import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
 
-import type { ModelConfig, TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
 import type { PermissionRequest } from '../tool/gate';
-import type { Message, MessageContent } from './context/message';
 import type { Session } from './session';
 
 const MODEL: ModelConfig = {

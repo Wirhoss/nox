@@ -1,4 +1,4 @@
-import type { ContributionPoint } from '../extensions/contribution';
+import type { ContributionPoint } from '@nox/extension-api';
 import type { z } from 'zod';
 
 type ConfigApply = 'hot' | 'restart';

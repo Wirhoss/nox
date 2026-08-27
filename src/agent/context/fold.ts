@@ -8,7 +8,7 @@ import type {
   Message,
   ToolCallMessage,
   ToolResponseMessage,
-} from './message';
+} from '@nox/extension-api';
 
 interface FoldResult {
   events: FoldedMessage[];

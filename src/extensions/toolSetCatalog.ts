@@ -1,27 +1,16 @@
+import {
+  type ContributionReader,
+  type ToolSet,
+  type ToolSetConfig,
+  type ToolSetGrant,
+  type ToolSetInventory,
+  toolSets,
+} from '@nox/extension-api';
+
 import { composeWithSecrets, type SecretStore } from '../config/secrets';
 import { stableStringify } from '../utils/json';
-import { type ToolSetConfig, toolSets } from './contribution-points/toolsets';
 
 import type { ToolSetGrantConfig } from '../config/blueprint';
-import type { ToolSet, ToolSetGrant } from '../tool/tool';
-import type { ContributionReader } from './contribution';
-
-interface ToolInventory {
-  readonly authority: string;
-  readonly description: string;
-  readonly name: string;
-}
-
-interface ToolSetInventory {
-  readonly available: boolean;
-  readonly description?: string;
-  readonly extensionId?: string;
-  readonly id: string;
-  readonly name?: string;
-  readonly problem?: string;
-  readonly tools: readonly ToolInventory[];
-  readonly type: string;
-}
 
 interface ToolSetCatalogOptions {
   /**
@@ -228,4 +217,4 @@ class ToolSetCatalog {
 
 export { ToolSetCatalog };
 
-export type { ToolInventory, ToolSetCatalogOptions, ToolSetInventory };
+export type { ToolSetCatalogOptions };

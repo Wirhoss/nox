@@ -1,14 +1,10 @@
+import { type SecretConsumer, secretIdSchema, type SecretSummary } from '@nox/extension-api';
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import {
-  type SecretConsumer,
-  secretIdSchema,
-  type SecretStore,
-  type SecretSummary,
-} from '../../config/secrets';
 import { authGuard } from '../auth/guard';
 
+import type { SecretStore } from '../../config/secrets';
 import type { AuthStore } from '../auth/store';
 
 /** No secret is filed under that ID. */

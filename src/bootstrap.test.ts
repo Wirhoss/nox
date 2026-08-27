@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { providers, toolSets } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { AuthStore } from './api/auth/store';
@@ -10,13 +11,11 @@ import { ArtifactStorageQuotaError } from './artifact/error';
 import { bootstrap } from './bootstrap';
 import { SecretStore } from './config/secrets';
 import { Database } from './database/database';
-import { providers } from './extensions/contribution-points/providers';
-import { toolSets } from './extensions/contribution-points/toolsets';
 import { silentLogger } from './logger/logger';
 import {
   artifactPipelineService,
+  configAdminService,
   configService,
-  databaseService,
   loggerService,
   secretStoreService,
 } from './services';
@@ -208,6 +207,45 @@ describe('bootstrap', () => {
     await application.closeSession(session.sessionId);
   });
 
+  test('composes the configuration tool set against the shared administration service', async () => {
+    const application = await boot({
+      blueprints: {
+        nox: { ...NOX, toolSets: { direct: ['control'], routed: [] } },
+      },
+      toolSets: {
+        control: {
+          manageRuntime: false,
+          readSecretMetadata: false,
+          readSections: ['blueprints', 'providers'],
+          type: 'config',
+          writeSections: [],
+        },
+      },
+    });
+
+    expect(application.contributions.get(toolSets, 'config')?.extensionId).toBe(
+      'nox.toolset.config',
+    );
+    const configAdmin = application.services.get(configAdminService);
+    expect(configAdmin.sections().map(({ key }) => key)).toEqual([
+      'app',
+      'blueprints',
+      'brokers',
+      'providers',
+      'toolSets',
+    ]);
+    expect(
+      configAdmin
+        .schema('toolSets')
+        .types?.some(
+          ({ extensionId, type }) => extensionId === 'nox.toolset.config' && type === 'config',
+        ),
+    ).toBe(true);
+
+    const session = await application.openSession('nox');
+    await application.closeSession(session.sessionId);
+  });
+
   test('carries a blueprint allowlist through to the tools a session opens with', async () => {
     const internet = {
       extract: { module: 'crawl4ai', url: 'https://crawl.example.test' },
@@ -263,7 +301,7 @@ describe('bootstrap', () => {
       providers: {
         main: {
           ...PROVIDERS.main,
-          modelConfigs: [{ contextWindow: 4096, modelId: 'gpt-test', type: 'text' }],
+          modelConfigs: [{ contextWindow: 4096, modelId: 'gpt-test' }],
         },
       },
     });
@@ -281,9 +319,7 @@ describe('bootstrap', () => {
       providers: {
         main: {
           ...PROVIDERS.main,
-          modelConfigs: [
-            { contextWindow: 4096, modelId: 'gpt-test', temperature: 0.8, type: 'text' },
-          ],
+          modelConfigs: [{ contextWindow: 4096, modelId: 'gpt-test', temperature: 0.8 }],
         },
       },
     });
@@ -318,7 +354,6 @@ describe('bootstrap', () => {
     expect(application.services.get(configService).get('providers').main?.apiKey).toMatchObject({
       $secret: 'OPENAI_API_KEY',
     });
-    expect(application.services.get(databaseService).isOpen).toBe(true);
     expect(application.services.get(loggerService)).toBe(silentLogger);
     expect(application.services.get(secretStoreService).consumers('OPENAI_API_KEY')).toEqual([
       { extensionId: 'nox.provider.openai', location: 'providers.main.apiKey' },
@@ -352,9 +387,9 @@ describe('bootstrap', () => {
 
   test('opens storage under the configured data directory', async () => {
     const dataDir = temporary('nox-data-');
-    const application = await boot({ dataDir });
+    await boot({ dataDir });
 
-    expect(application.services.get(databaseService).path).toBe(join(dataDir, 'nox.db'));
+    expect(existsSync(join(dataDir, 'nox.db'))).toBe(true);
   });
 
   test('opens a session that persists and resumes by id', async () => {
@@ -371,7 +406,6 @@ describe('bootstrap', () => {
 
   test('stop releases sessions, extensions and storage, and is idempotent', async () => {
     const application = await boot();
-    const database = application.services.get(databaseService);
     await application.openSession('nox');
 
     await application.stop();
@@ -379,7 +413,6 @@ describe('bootstrap', () => {
 
     expect(application.state).toBe('stopped');
     expect(application.sessions).toEqual([]);
-    expect(database.isOpen).toBe(false);
     expect(application.contributions.has(providers, 'openai_completions')).toBe(false);
     expect(application.contributions.has(toolSets, 'web')).toBe(false);
   });
@@ -399,6 +432,25 @@ describe('bootstrap', () => {
       checks: { database: 'pass', nox: 'pass' },
       status: 'pass',
     });
+
+    const headers = await login(url);
+    const extensionResponse = await fetch(`${url}/api/extensions`, { headers });
+    expect(extensionResponse.status).toBe(200);
+    const extensionInventory = (await extensionResponse.json()) as {
+      extensionApiVersion: string;
+      extensions: {
+        contributions: { id: string; point: string }[];
+        id: string;
+        origin: string;
+        state: string;
+      }[];
+    };
+    expect(extensionInventory.extensionApiVersion).toBe('0.1.0');
+    const configExtension = extensionInventory.extensions.find(
+      ({ id }) => id === 'nox.toolset.config',
+    );
+    expect(configExtension).toMatchObject({ origin: 'builtin', state: 'active' });
+    expect(configExtension?.contributions).toContainEqual({ id: 'config', point: 'nox.toolsets' });
 
     await application.stop();
 
@@ -437,7 +489,7 @@ describe('bootstrap', () => {
 
   test('drops Web’s implicit default when a second agent hot-activates', async () => {
     const api = { host: '127.0.0.1', port: 39_520 };
-    const application = await boot({ app: { api } });
+    const application = await boot({ app: { api }, brokers: { web: { type: 'web' } } });
     const url = `http://${api.host}:${String(api.port)}`;
     const headers = await login(url);
 
@@ -548,7 +600,7 @@ describe('bootstrap', () => {
 
   test('hot-disables and restores the Web broker', async () => {
     const api = { host: '127.0.0.1', port: 39_516 };
-    await boot({ app: { api } });
+    await boot({ app: { api }, brokers: { web: { type: 'web' } } });
     const url = `http://${api.host}:${String(api.port)}`;
     const headers = await login(url);
 

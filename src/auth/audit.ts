@@ -1,6 +1,5 @@
 import type { GateAuditSink, PermissionResolution, RiskSignal } from '../tool/gate/types';
-import type { ToolRisk } from '../tool/tool';
-import type { PrincipalRef } from './principal';
+import type { PrincipalRef, ToolRisk } from '@nox/extension-api';
 
 /**
  * One authorization decision, kept whether it allowed or denied. A deny never

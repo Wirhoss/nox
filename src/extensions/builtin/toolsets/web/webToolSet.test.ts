@@ -3,10 +3,13 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { SecretHandle } from '../../../../config/secrets';
 import { WebToolSet } from './webToolSet';
 
-import type { MessageContent } from '../../../../agent/context/message';
 import type { ArtifactOutputInput, ArtifactOutputPublisher } from '../../../../artifact/output';
-import type { ContentArtifact } from '../../../../content/content';
-import type { ToolContext, ToolExecution } from '../../../../tool/tool';
+import type {
+  ContentArtifact,
+  MessageContent,
+  ToolContext,
+  ToolExecution,
+} from '@nox/extension-api';
 
 const realFetch = globalThis.fetch;
 

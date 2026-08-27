@@ -1,12 +1,22 @@
+import {
+  bindTool,
+  ChatProvider,
+  type Message,
+  type MessageContent,
+  type ModelConfig,
+  ProviderError,
+  type ProviderSourceEvent,
+  type TextGenerateOptions,
+  type Tool,
+  type ToolContext,
+  type UserMessage,
+} from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { SYSTEM_CRON } from '../auth/principal';
-import { ProviderError } from '../provider/error';
-import { ChatProvider } from '../provider/provider';
 import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { ToolRouter } from '../tool/router';
-import { bindTool, type Tool, type ToolContext } from '../tool/tool';
 import { EventLog } from '../utils/eventLog';
 import { attachArtifactTool, readArtifactTool } from './artifactTool';
 import { Context } from './context/context';
@@ -17,9 +27,6 @@ import type {
   ArtifactOutputHost,
   ArtifactOutputProvenance,
 } from '../artifact/output';
-import type { ModelConfig, TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
-import type { Message, MessageContent, UserMessage } from './context/message';
 import type { AgentEvent } from './events';
 
 const MODEL: ModelConfig = {

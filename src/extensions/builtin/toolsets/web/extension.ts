@@ -1,10 +1,12 @@
-import { authorities } from '../../../contribution-points/authorities';
 import {
+  authorities,
+  defineExtension,
   defineTranslationFragment,
+  toolSetContribution,
+  toolSets,
   translationFragments,
-} from '../../../contribution-points/languages';
-import { toolSetContribution, toolSets } from '../../../contribution-points/toolsets';
-import { defineExtension } from '../../../extension';
+} from '@nox/extension-api';
+
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
 import {
@@ -18,7 +20,6 @@ import { WebToolSet } from './webToolSet';
 
 /** Contributes the builtin web tool set: search, extraction and a browser. */
 const webToolsExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'nox.toolset.web' },
   activate(context) {
     context.contributions.register(
       translationFragments,
@@ -74,4 +75,5 @@ const webToolsExtension = defineExtension({
   },
 });
 
+export default webToolsExtension;
 export { webToolsExtension };

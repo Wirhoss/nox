@@ -1,26 +1,39 @@
-import { type ContributionReader, ContributionRegistry } from './extensions/contribution';
-import { type Disposable, DisposableStore } from './extensions/disposable';
+import { ContributionRegistry } from './extensions/contribution';
+import { DisposableStore } from './extensions/disposable';
 import {
   DuplicateExtensionError,
   ExtensionActivationError,
   ExtensionCompatibilityError,
 } from './extensions/error';
-import { assertVersion, type ExtensionManifest, isCompatible } from './extensions/manifest';
-import { ServiceCollection, type ServiceContainer, type ServiceToken } from './extensions/service';
+import { assertVersion, isCompatible } from './extensions/manifest';
+import { ServiceCollection } from './extensions/service';
+import {
+  type ExtensionStorageProvider,
+  MemoryExtensionStorageProvider,
+} from './extensions/storage';
 import { type Logger, silentLogger } from './logger/logger';
 import { NOX_VERSION } from './version';
 
 import type { Agent, OpenSessionOptions } from './agent/agent';
 import type { Session } from './agent/session';
-import type { ExtensionContext, NoxExtension } from './extensions/extension';
+import type { NoxExtension } from './extensions/extension';
 import type { MessageGateway } from './gateway/gateway';
+import type {
+  ContributionReader,
+  Disposable,
+  ExtensionContext,
+  ExtensionManifest,
+  ServiceContainer,
+  ServiceToken,
+} from '@nox/extension-api';
 
 type ApplicationState = 'created' | 'running' | 'starting' | 'stopped' | 'stopping';
 
 interface NoxApplicationOptions {
+  extensions?: Iterable<NoxExtension>;
   logger?: Logger;
   noxVersion?: string;
-  extensions?: Iterable<NoxExtension>;
+  storage?: ExtensionStorageProvider;
 }
 
 /** A conversation that is still alive, and the agent it is being held with. */
@@ -39,6 +52,7 @@ interface LiveSession {
  */
 class NoxApplication {
   readonly #abortController = new AbortController();
+  readonly #activatedExtensions = new Set<string>();
   readonly #agents = new Map<string, Agent>();
   readonly #contributions = new ContributionRegistry();
   readonly #logger: Logger;
@@ -47,6 +61,7 @@ class NoxApplication {
   readonly #resources = new DisposableStore();
   readonly #services = new ServiceCollection();
   readonly #sessions = new Map<string, LiveSession>();
+  readonly #storage: ExtensionStorageProvider;
 
   #gateway?: MessageGateway;
   #state: ApplicationState = 'created';
@@ -54,6 +69,7 @@ class NoxApplication {
   constructor(options: NoxApplicationOptions = {}) {
     this.#logger = options.logger ?? silentLogger;
     this.#noxVersion = options.noxVersion ?? NOX_VERSION;
+    this.#storage = options.storage ?? new MemoryExtensionStorageProvider();
     assertVersion(this.#noxVersion, 'Nox version');
 
     for (const extension of options.extensions ?? []) {
@@ -242,8 +258,9 @@ class NoxApplication {
       this.#sessions.clear();
 
       for (const extension of [...this.#extensions.values()].reverse()) {
-        await this.#deactivate(extension);
+        if (this.#activatedExtensions.has(extension.manifest.id)) await this.#deactivate(extension);
       }
+      this.#activatedExtensions.clear();
       await this.#resources.dispose();
     } finally {
       this.#state = 'stopped';
@@ -260,6 +277,7 @@ class NoxApplication {
       extension: extension.manifest,
       services: this.#services,
       signal: this.#abortController.signal,
+      storage: this.#storage.forExtension(id),
       subscriptions: Object.freeze({
         add: <T extends Disposable>(resource: T): T => resources.add(resource),
       }),
@@ -267,7 +285,21 @@ class NoxApplication {
 
     try {
       await extension.activate(context);
+      this.#activatedExtensions.add(id);
+      extension.observer?.activated?.();
     } catch (error) {
+      try {
+        await resources.dispose();
+      } catch (disposeError) {
+        this.#logger.error(
+          { err: disposeError, extensionId: id },
+          'Failed extension resources did not dispose cleanly.',
+        );
+      }
+      if (extension.observer?.activationFailed !== undefined) {
+        extension.observer.activationFailed(error);
+        return;
+      }
       throw new ExtensionActivationError(id, error);
     }
   }

@@ -3,20 +3,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
 
 import { Database } from '../../../../database/database';
-import { cronJobs } from '../../../../database/schema';
 import { silentLogger } from '../../../../logger/logger';
+import { DatabaseExtensionStorageProvider } from '../../../storage';
 import { CronScheduler } from './scheduler';
 import { CronJobStore } from './store';
 
+import type { CronJob, CronJobPolicy } from './model';
 import type {
+  ExtensionStorage,
   ScheduledRunHost,
   ScheduledRunRequest,
   ScheduledRunResult,
-} from '../../../../scheduler/scheduledRun';
-import type { CronJobPolicy } from './model';
+} from '@nox/extension-api';
 
 const POLICY: CronJobPolicy = { maxJobs: 10, timeZone: 'America/Mexico_City' };
 
@@ -81,20 +81,24 @@ interface Harness {
   readonly directory: string;
   readonly host: RecordingHost;
   readonly scheduler: CronScheduler;
+  readonly storage: ExtensionStorage;
   readonly store: CronJobStore;
 }
 
 async function harness(host = new RecordingHost()): Promise<Harness> {
   const directory = mkdtempSync(join(tmpdir(), 'nox-cron-'));
   const database = await Database.open({ path: join(directory, 'nox.db') });
-  const store = new CronJobStore(database);
+  const storage = new DatabaseExtensionStorageProvider(database).forExtension(
+    'nox.toolset.cronjobs',
+  );
+  const store = new CronJobStore(storage);
   const scheduler = new CronScheduler({
     host,
     logger: silentLogger,
     policyFor: (toolSetId) => (toolSetId === SCOPE.toolSetId ? POLICY : undefined),
     store,
   });
-  return { database, directory, host, scheduler, store };
+  return { database, directory, host, scheduler, storage, store };
 }
 
 function removeDirectory(directory: string): void {
@@ -317,13 +321,15 @@ describe('CronScheduler', () => {
       const created = await createJob(state);
       await state.scheduler.dispose();
 
-      const past = Date.now() - 60_000;
-      await state.database.exclusive((database) => {
-        database
-          .update(cronJobs)
-          .set({ nextRunAt: past, oneShotAt: past })
-          .where(eq(cronJobs.jobId, created.jobId))
-          .run();
+      const past = new Date(Date.now() - 60_000).toISOString();
+      await state.storage.transact((transaction) => {
+        const job = transaction.get('jobs', created.jobId, (value) => value as CronJob);
+        if (job === undefined) throw new Error('Expected the persisted cron job.');
+        transaction.set('jobs', job.jobId, {
+          ...job,
+          nextRunAt: past,
+          schedule: { at: past, type: 'at' },
+        });
       });
 
       replacement = new CronScheduler({
@@ -364,12 +370,13 @@ describe('CronScheduler', () => {
       );
       await state.scheduler.dispose();
 
-      await state.database.exclusive((database) => {
-        database
-          .update(cronJobs)
-          .set({ nextRunAt: Date.now() - 120_000 })
-          .where(eq(cronJobs.jobId, created.jobId))
-          .run();
+      await state.storage.transact((transaction) => {
+        const job = transaction.get('jobs', created.jobId, (value) => value as CronJob);
+        if (job === undefined) throw new Error('Expected the persisted cron job.');
+        transaction.set('jobs', job.jobId, {
+          ...job,
+          nextRunAt: new Date(Date.now() - 120_000).toISOString(),
+        });
       });
 
       replacement = new CronScheduler({

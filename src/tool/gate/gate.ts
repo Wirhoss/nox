@@ -1,11 +1,6 @@
 import { nanoid } from 'nanoid';
 
-import {
-  principalKey,
-  type PrincipalRef,
-  samePrincipal,
-  SYSTEM_ISSUER,
-} from '../../auth/principal';
+import { principalKey, samePrincipal, SYSTEM_ISSUER } from '../../auth/principal';
 import { raceWithAbort } from '../../utils/abort';
 import { stableStringify } from '../../utils/json';
 import { parseOrThrow } from '../../utils/validate';
@@ -23,6 +18,7 @@ import type {
   PermissionRequest,
   PermissionResolution,
 } from './types';
+import type { PrincipalRef } from '@nox/extension-api';
 
 interface SessionGateOptions {
   readonly audit?: GateAuditSink;

@@ -2,12 +2,20 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  ChatProvider,
+  type Message,
+  type MessageContent,
+  type ModelConfig,
+  type ProviderSourceEvent,
+  type TextGenerateOptions,
+  type Tool,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
-import { ChatProvider } from '../provider/provider';
 import {
   isInternalRequest,
   permissiveAuthorization,
@@ -17,10 +25,6 @@ import {
 } from '../testFixtures';
 import { Session } from './session';
 
-import type { ModelConfig, TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
-import type { Tool } from '../tool/tool';
-import type { Message, MessageContent } from './context/message';
 import type { AgentEvent } from './events';
 
 const MODEL: ModelConfig = {
@@ -326,13 +330,13 @@ describe('Session', () => {
   test('a session stored before attribution is adopted by whoever resumes it', async () => {
     const database = await openDatabase();
     // What an upgrade finds on disk: rows written when the column did not exist.
-    await new SessionStore(database).create('legacy');
+    await new SessionStore(database).create('resumed-session');
 
     const resumed = await Session.open(database, new ScriptedProvider([]), MODEL, {
       agentId: 'writer',
       authorities: testCatalog(),
       authorization: permissiveAuthorization,
-      sessionId: 'legacy',
+      sessionId: 'resumed-session',
       systemPrompt: 'system',
     });
 

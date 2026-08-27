@@ -2,6 +2,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  authorities,
+  type ChatProvider,
+  providerBaseConfigSchema,
+  providerContribution,
+  providers,
+  type Tool,
+  ToolSet,
+  toolSetBaseConfigSchema,
+  toolSetContribution,
+  toolSets,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -12,24 +24,13 @@ import { readEnvConfig } from '../../config/env';
 import { SecretStore } from '../../config/secrets';
 import { Database } from '../../database/database';
 import { ContributionRegistry } from '../../extensions/contribution';
-import { authorities } from '../../extensions/contribution-points/authorities';
-import { providerContribution, providers } from '../../extensions/contribution-points/providers';
-import {
-  toolSetBaseConfigSchema,
-  toolSetContribution,
-  toolSets,
-} from '../../extensions/contribution-points/toolsets';
 import { DisposableStore } from '../../extensions/disposable';
 import { ToolSetCatalog } from '../../extensions/toolSetCatalog';
 import { silentLogger } from '../../logger/logger';
-import { providerBaseConfigSchema } from '../../provider/config';
-import { type Tool, ToolSet } from '../../tool/tool';
 import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
 import { ConfigStore } from './store';
-
-import type { ChatProvider } from '../../provider/provider';
 
 const databases: Database[] = [];
 const directories: string[] = [];

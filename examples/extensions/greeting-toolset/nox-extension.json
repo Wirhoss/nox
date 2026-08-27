@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "example.greeting",
+  "version": "1.0.0",
+  "main": "dist/extension.js",
+  "engines": {
+    "nox": "^0.1.0",
+    "extensionApi": "^0.1.0"
+  }
+}

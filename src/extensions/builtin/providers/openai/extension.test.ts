@@ -1,13 +1,26 @@
+import { providers, translationFragments } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../../../../application';
-import { translationFragments } from '../../../contribution-points/languages';
-import { providers } from '../../../contribution-points/providers';
+import { bindExtensionManifest } from '../../../extension';
 import { openAIExtension } from './extension';
 import { OpenAICompletions } from './openAICompletions';
 
 async function started(): Promise<NoxApplication> {
-  const app = new NoxApplication({ extensions: [openAIExtension] });
+  const app = new NoxApplication({
+    extensions: [
+      bindExtensionManifest(
+        {
+          engines: { extensionApi: '*', nox: '*' },
+          id: 'nox.provider.openai',
+          main: 'extension.js',
+          schemaVersion: 1,
+          version: '0.1.0',
+        },
+        openAIExtension,
+      ),
+    ],
+  });
   await app.start();
   return app;
 }

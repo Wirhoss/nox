@@ -1,10 +1,12 @@
-import { artifactPipelineService } from '../../../../services';
 import {
+  artifactPipelineService,
+  defineExtension,
   defineTranslationFragment,
+  providerContribution,
+  providers,
   translationFragments,
-} from '../../../contribution-points/languages';
-import { providerContribution, providers } from '../../../contribution-points/providers';
-import { defineExtension } from '../../../extension';
+} from '@nox/extension-api';
+
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
 import { OpenAICompletions } from './openAICompletions';
@@ -31,7 +33,6 @@ import { OpenAICompletions } from './openAICompletions';
  * required would make every such deployment look permanently misconfigured.
  */
 const openAIExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'nox.provider.openai' },
   activate(context) {
     context.contributions.register(
       translationFragments,
@@ -66,4 +67,5 @@ const openAIExtension = defineExtension({
   },
 });
 
+export default openAIExtension;
 export { openAIExtension };

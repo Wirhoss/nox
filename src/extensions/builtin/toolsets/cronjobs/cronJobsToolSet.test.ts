@@ -2,8 +2,6 @@ import { describe, expect, test } from 'bun:test';
 
 import { CronJobsToolSet } from './cronJobsToolSet';
 
-import type { MessageContent } from '../../../../agent/context/message';
-import type { ToolExecution } from '../../../../tool/tool';
 import type {
   CreateCronJobInput,
   CronJob,
@@ -12,6 +10,7 @@ import type {
   CronRunSubmission,
 } from './model';
 import type { CronJobManager } from './scheduler';
+import type { MessageContent, ToolExecution } from '@nox/extension-api';
 
 const SESSION = { agentId: 'author-agent', metadata: {}, sessionId: 'session-a' } as const;
 

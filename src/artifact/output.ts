@@ -2,8 +2,8 @@ import { ArtifactRepresentationUnavailableError } from './error';
 import { type ArtifactPipeline, artifactRef } from './pipeline';
 import { type ArtifactByteSource, type ArtifactScope, artifactScopeSchema } from './types';
 
-import type { ContentArtifact } from '../content/content';
 import type { RepresentationProfile } from './representation';
+import type { ContentArtifact } from '@nox/extension-api';
 
 const ARTIFACT_TEXT_READ_PROFILE = Object.freeze({
   id: 'nox.agent.text-read',

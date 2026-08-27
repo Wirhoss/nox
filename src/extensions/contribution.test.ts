@@ -1,6 +1,7 @@
+import { createContributionPoint } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
-import { ContributionRegistry, createContributionPoint } from './contribution';
+import { ContributionRegistry } from './contribution';
 import { DisposableStore } from './disposable';
 import { DuplicateContributionError } from './error';
 

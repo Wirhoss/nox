@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b587d589-a79a-403a-be2b-bead9abb7627",
+  "id": "b2244dbb-ce2a-49fe-8512-843e035e875e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "accounts": {
@@ -1077,6 +1077,62 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "extension_state": {
+      "name": "extension_state",
+      "columns": {
+        "collection": {
+          "name": "collection",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "extension_id": {
+          "name": "extension_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "extension_state_collection_idx": {
+          "name": "extension_state_collection_idx",
+          "columns": [
+            "extension_id",
+            "collection"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "extension_state_extension_id_collection_key_pk": {
+          "columns": [
+            "extension_id",
+            "collection",
+            "key"
+          ],
+          "name": "extension_state_extension_id_collection_key_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

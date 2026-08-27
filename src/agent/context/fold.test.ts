@@ -3,7 +3,9 @@ import { describe, expect, test } from 'bun:test';
 import { testOrigin } from '../../testFixtures';
 import { applyFold, foldHistory } from './fold';
 import { freezeMessage } from './immutable';
-import { type FoldedMessage, type Message, messageToString } from './message';
+import { messageToString } from './message';
+
+import type { FoldedMessage, Message } from '@nox/extension-api';
 
 const CREATED_AT = new Date('2025-01-01T00:00:00.000Z');
 

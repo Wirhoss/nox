@@ -2,6 +2,21 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  ChatProvider,
+  type Message,
+  type MessageContent,
+  type MessageOrigin,
+  type ModelConfig,
+  type ProviderSourceEvent,
+  type TextGenerateOptions,
+  type Tool,
+  type ToolEffect,
+  type ToolResponseMessage,
+  ToolSet,
+  type ToolSetGrant,
+  userContentForModel,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -9,23 +24,13 @@ import { artifactConversationScope } from '../artifact/output';
 import { ArtifactPipeline } from '../artifact/pipeline';
 import { type AuthorizationProvider, GrantAuthorizationProvider } from '../auth/authorization';
 import { TOOL_CALL_AUTHORITY, TOOL_SEARCH_AUTHORITY } from '../auth/coreAuthorities';
-import { type MessageOrigin, SYSTEM_CRON } from '../auth/principal';
+import { SYSTEM_CRON } from '../auth/principal';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
-import { ChatProvider } from '../provider/provider';
 import { isInternalRequest, TEST_AUTHORITY, testCatalog, testPrincipal } from '../testFixtures';
 import { ToolRouter } from '../tool/router';
-import { type Tool, type ToolEffect, ToolSet, type ToolSetGrant } from '../tool/tool';
 import { Agent } from './agent';
-import {
-  type Message,
-  type MessageContent,
-  type ToolResponseMessage,
-  userContentForModel,
-} from './context/message';
 
-import type { ModelConfig, TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
 import type { Session } from './session';
 

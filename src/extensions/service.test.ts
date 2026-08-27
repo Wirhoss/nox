@@ -1,7 +1,8 @@
+import { createServiceToken } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { DuplicateServiceError, MissingServiceError } from './error';
-import { createServiceToken, ServiceCollection } from './service';
+import { ServiceCollection } from './service';
 
 interface Clock {
   now(): number;

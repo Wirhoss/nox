@@ -1,8 +1,8 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 
-import type { ToolEffect, ToolResource } from '../tool';
 import type { GatePolicy } from './config';
 import type { GateEvaluation, GateEvaluator, GateRequest, RiskSignal } from './types';
+import type { ToolEffect, ToolResource } from '@nox/extension-api';
 
 const MUTATING_EFFECTS = new Set<ToolEffect>([
   'authentication',

@@ -1,4 +1,6 @@
-import { principalKey, type PrincipalRef, SYSTEM_ISSUER } from './principal';
+import { principalKey, SYSTEM_ISSUER } from './principal';
+
+import type { PrincipalRef } from '@nox/extension-api';
 
 /**
  * The sticky security state of one session's shared transcript.

@@ -2,20 +2,22 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  ChatProvider,
+  type Message,
+  type ModelConfig,
+  type ProviderSourceEvent,
+  type TextGenerateOptions,
+  type Tool,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
-import { ChatProvider } from '../provider/provider';
 import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { COMPACT_PROMPT } from './context/prompt';
 import { Session } from './session';
-
-import type { ModelConfig, TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
-import type { Tool } from '../tool/tool';
-import type { Message } from './context/message';
 
 const MODEL: ModelConfig = {
   inputModalities: ['text'],

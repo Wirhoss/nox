@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type ScheduledRunHost, ScheduledRunRelay, type ScheduledRunRequest } from './scheduledRun';
+import { ScheduledRunRelay } from './scheduledRun';
+
+import type { ScheduledRunHost, ScheduledRunRequest } from '@nox/extension-api';
 
 function request(signal: AbortSignal): ScheduledRunRequest {
   return {

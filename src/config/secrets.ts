@@ -2,8 +2,16 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+  type SecretConsumer,
+  type SecretHandle as SecretHandleContract,
+  secretIdSchema,
+  type SecretRef,
+  type SecretReference,
+  secretRefSchema,
+  type SecretSummary,
+} from '@nox/extension-api';
 import { asc, eq } from 'drizzle-orm';
-import { z } from 'zod';
 
 import { type SecretRow, secrets } from '../database/schema';
 import { type Logger, silentLogger } from '../logger/logger';
@@ -16,82 +24,12 @@ const NONCE_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const ENVELOPE_VERSION = 1;
 
-const secretIdSchema = z
-  .string()
-  .max(128, 'Secret IDs cannot exceed 128 characters.')
-  .regex(
-    /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
-    'Use letters, digits, dots, dashes or underscores; paths are not secret IDs.',
-  );
-
-/**
- * A safe value for ordinary configuration: it names a secret but never contains
- * one.
- *
- * Putting this in a contribution's `configSchema` is how that contribution
- * declares where a credential may go, and the declaration is enforced by the
- * same parse that validates everything else: a `{"$secret":"..."}` written
- * anywhere the schema does not allow it fails validation, so an extension cannot
- * quietly read a credential from a position it never declared.
- *
- * Which secret fills the position is the operator's answer, not the extension's,
- * and it has to be: two instances of one provider kind routinely talk to two
- * services with two credentials, and an ID fixed by the extension would force
- * them to share one.
- */
-const secretRefSchema = z
-  .object(
-    { $secret: secretIdSchema },
-    { error: 'Use a secret reference such as {"$secret":"OPENAI_API_KEY"}.' },
-  )
-  .readonly()
-  .brand<'SecretRef'>();
-
-type SecretRef = z.infer<typeof secretRefSchema>;
-
-/**
- * One place configuration names a secret.
- *
- * This is what makes a credential visible before anything uses it. References
- * are read from the configuration as it stands, so a secret named by an entry
- * that has not been composed — a tool set no agent was granted, an entry saved
- * a moment ago — is as knowable as one a running provider already holds.
- */
-interface SecretReference {
-  /** Config location, for example `providers.main.apiKey`. */
-  readonly location: string;
-  readonly secretId: string;
-}
-
 type SecretErrorCode = 'missing' | 'unreadable';
-
-/** Something that resolved a secret in this process, with the position it read it from. */
-interface SecretConsumer {
-  readonly extensionId: string;
-  /** Config location, for example `providers.main.apiKey`. */
-  readonly location: string;
-}
 
 interface SecretMetadata {
   readonly createdAt: number;
   readonly secretId: string;
   readonly updatedAt: number;
-}
-
-/**
- * One known secret ID, whether or not a value was ever written for it.
- *
- * A secret is a name before it is a value: configuration can name one that
- * nobody has supplied yet, and that is the ordinary state of a fresh install
- * rather than an error. `stored` is the difference, and the timestamps exist
- * only on the stored side, because a reference has no history of its own.
- */
-interface SecretSummary {
-  readonly createdAt?: number;
-  readonly references: readonly SecretReference[];
-  readonly secretId: string;
-  readonly stored: boolean;
-  readonly updatedAt?: number;
 }
 
 interface SecretStoreOptions {
@@ -149,7 +87,7 @@ class SecretError extends Error {
  * An opaque runtime capability. The private value is neither enumerable nor JSON
  * serializable; using it requires an explicit call at the network boundary.
  */
-class SecretHandle {
+class SecretHandle implements SecretHandleContract {
   readonly #value: string;
 
   public readonly id: string;
@@ -685,19 +623,7 @@ export {
   resolveSecrets,
   SecretError,
   SecretHandle,
-  secretIdSchema,
-  secretRefSchema,
   SecretStore,
 };
 
-export type {
-  ResolvedEntry,
-  ResolvedSecrets,
-  SecretConsumer,
-  SecretErrorCode,
-  SecretMetadata,
-  SecretRef,
-  SecretReference,
-  SecretStoreOptions,
-  SecretSummary,
-};
+export type { ResolvedEntry, ResolvedSecrets, SecretErrorCode, SecretMetadata, SecretStoreOptions };

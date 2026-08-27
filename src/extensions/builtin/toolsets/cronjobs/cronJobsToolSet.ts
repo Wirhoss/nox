@@ -1,7 +1,5 @@
-import { z } from 'zod';
+import { ToolSet, toolSetBaseConfigSchema, z } from '@nox/extension-api';
 
-import { ToolSet } from '../../../../tool/tool';
-import { toolSetBaseConfigSchema } from '../../../contribution-points/toolsets';
 import { cronTools } from './tools';
 
 import type { CronJobPolicy } from './model';

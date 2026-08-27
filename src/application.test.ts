@@ -1,18 +1,17 @@
+import { createContributionPoint, createServiceToken, defineExtension } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from './application';
-import { createContributionPoint } from './extensions/contribution';
 import {
   DuplicateExtensionError,
   ExtensionActivationError,
   ExtensionCompatibilityError,
 } from './extensions/error';
-import { defineExtension, type NoxExtension } from './extensions/extension';
-import { createServiceToken } from './extensions/service';
 
 import type { Agent, OpenSessionOptions } from './agent/agent';
 import type { RunnerState } from './agent/runner';
 import type { Session } from './agent/session';
+import type { NoxExtension } from './extensions/extension';
 
 interface Greeter {
   greet(): string;
@@ -58,7 +57,13 @@ function stubAgent(agentId: string, order: string[]): Agent {
 /** Records its lifecycle into a shared log so ordering is observable. */
 function tracer(id: string, order: string[]): NoxExtension {
   return defineExtension({
-    manifest: { engines: { nox: '*' }, id },
+    manifest: {
+      engines: { extensionApi: '*', nox: '*' },
+      id,
+      main: 'embedded.js',
+      schemaVersion: 1,
+      version: '0.0.0',
+    },
     activate(context) {
       order.push(`activate:${id}`);
       context.subscriptions.add({
@@ -99,7 +104,13 @@ describe('NoxApplication', () => {
     const app = new NoxApplication({
       extensions: [
         defineExtension({
-          manifest: { engines: { nox: '*' }, id: 'nox.hello' },
+          manifest: {
+            engines: { extensionApi: '*', nox: '*' },
+            id: 'nox.hello',
+            main: 'embedded.js',
+            schemaVersion: 1,
+            version: '0.0.0',
+          },
           activate(context) {
             context.contributions.register(greeters, 'english', { greet: () => 'hello' });
           },
@@ -121,7 +132,13 @@ describe('NoxApplication', () => {
 
     app.register(
       defineExtension({
-        manifest: { engines: { nox: '*' }, id: 'nox.reader' },
+        manifest: {
+          engines: { extensionApi: '*', nox: '*' },
+          id: 'nox.reader',
+          main: 'embedded.js',
+          schemaVersion: 1,
+          version: '0.0.0',
+        },
         activate(context) {
           seen = { id: context.extension.id, now: context.services.get(clockService).now() };
         },
@@ -137,7 +154,13 @@ describe('NoxApplication', () => {
     const app = new NoxApplication({
       extensions: [
         defineExtension({
-          manifest: { engines: { nox: '*' }, id: 'nox.watcher' },
+          manifest: {
+            engines: { extensionApi: '*', nox: '*' },
+            id: 'nox.watcher',
+            main: 'embedded.js',
+            schemaVersion: 1,
+            version: '0.0.0',
+          },
           activate(context) {
             expect(context.signal.aborted).toBe(false);
             context.subscriptions.add({
@@ -169,7 +192,13 @@ describe('NoxApplication', () => {
       extensions: [
         tracer('nox.good', order),
         defineExtension({
-          manifest: { engines: { nox: '*' }, id: 'nox.broken' },
+          manifest: {
+            engines: { extensionApi: '*', nox: '*' },
+            id: 'nox.broken',
+            main: 'embedded.js',
+            schemaVersion: 1,
+            version: '0.0.0',
+          },
           activate() {
             throw new Error('missing credentials');
           },
@@ -193,7 +222,13 @@ describe('NoxApplication', () => {
       extensions: [
         tracer('nox.fine', order),
         defineExtension({
-          manifest: { engines: { nox: '^0.1.0' }, id: 'nox.stale' },
+          manifest: {
+            engines: { extensionApi: '*', nox: '^0.1.0' },
+            id: 'nox.stale',
+            main: 'embedded.js',
+            schemaVersion: 1,
+            version: '0.0.0',
+          },
           activate() {
             order.push('activate:nox.stale');
           },
@@ -217,7 +252,13 @@ describe('NoxApplication', () => {
       noxVersion: '0.2.1-rc.1',
       extensions: [
         defineExtension({
-          manifest: { engines: { nox: '^0.2.0' }, id: 'nox.current' },
+          manifest: {
+            engines: { extensionApi: '*', nox: '^0.2.0' },
+            id: 'nox.current',
+            main: 'embedded.js',
+            schemaVersion: 1,
+            version: '0.0.0',
+          },
           activate() {
             order.push('activate:nox.current');
           },

@@ -1,12 +1,16 @@
+import {
+  bindTool,
+  InvalidToolParamsError,
+  type MessageContent,
+  type Tool,
+  type ToolContext,
+  UnknownToolError,
+} from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { TEST_AUTHORITY } from '../testFixtures';
-import { InvalidToolParamsError, UnknownToolError } from './error';
 import { ToolRouter } from './router';
-import { bindTool, type Tool, type ToolContext } from './tool';
-
-import type { MessageContent } from '../agent/context/message';
 
 function text(value: string): MessageContent[] {
   return [{ text: value, type: 'text' }];

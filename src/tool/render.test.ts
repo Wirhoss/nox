@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { ARTIFACT_OUTPUT_NOTICE, renderTool, toolDescription } from './render';
 
-import type { Tool } from './tool';
+import type { Tool } from '@nox/extension-api';
 
 function tool(artifacts: boolean): Tool {
   return {

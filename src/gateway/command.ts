@@ -1,9 +1,14 @@
 import { z } from 'zod';
 
 import type { Session } from '../agent/session';
-import type { PrincipalRef } from '../auth/principal';
 import type { Logger } from '../logger/logger';
-import type { JsonSchema } from '../utils/jsonSchema';
+import type {
+  BrokerCommandSpec,
+  CommandInvocation,
+  CommandRejection,
+  JsonSchema,
+  PrincipalRef,
+} from '@nox/extension-api';
 
 /**
  * What a command is handed. One conversation, and who invoked it — never the
@@ -50,39 +55,6 @@ interface BrokerCommand<T extends z.ZodObject = z.ZodObject> {
 function brokerCommand<T extends z.ZodObject>(definition: BrokerCommand<T>): BrokerCommand<T> {
   return definition;
 }
-
-/**
- * A command as a transport sees it: enough to draw a form, fill a palette or
- * register a slash command, and nothing that only means something inside Nox.
- * The schema is the same conversion a model is handed for a tool.
- */
-interface BrokerCommandSpec {
-  readonly description: string;
-  readonly name: string;
-  readonly parameters: JsonSchema;
-}
-
-/** One invocation, as a transport states it. */
-interface CommandInvocation {
-  readonly arguments?: Readonly<Record<string, unknown>>;
-  readonly command: string;
-  readonly conversationId: string;
-  /** Who the transport authenticated. It asserts identity; it grants nothing. */
-  readonly senderId: string;
-}
-
-/**
- * Why an invocation never reached the conversation. These are the refusals a
- * client can do something about — a command that does not exist, arguments that
- * do not fit, a Nox that is shutting down. What a command then does with a
- * conversation is not one of them: it is queued behind whatever else that chat
- * has going, exactly like a message, and reporting on it would mean holding a
- * request open across a run.
- */
-type CommandRejection =
-  | { readonly detail: string; readonly reason: 'invalidArguments' }
-  | { readonly reason: 'unavailable' }
-  | { readonly reason: 'unknownCommand' };
 
 /** A validated invocation, or the reason it was refused. */
 type CommandCheck =
@@ -183,11 +155,4 @@ function toSpec(command: BrokerCommand): BrokerCommandSpec {
 
 export { brokerCommand, BUILTIN_COMMANDS, CommandCatalog, stopCommand };
 
-export type {
-  BrokerCommand,
-  BrokerCommandSpec,
-  CommandCheck,
-  CommandContext,
-  CommandInvocation,
-  CommandRejection,
-};
+export type { BrokerCommand, CommandCheck, CommandContext };

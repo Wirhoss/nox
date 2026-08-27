@@ -4,7 +4,7 @@ import { testOrigin } from '../../testFixtures';
 import { applyCompaction, seekSafeCut } from './compact';
 import { freezeMessage } from './immutable';
 
-import type { CompactedMessage, Message } from './message';
+import type { CompactedMessage, Message } from '@nox/extension-api';
 
 const CREATED_AT = new Date('2025-01-01T00:00:00.000Z');
 

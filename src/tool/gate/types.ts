@@ -1,5 +1,5 @@
-import type { PrincipalRef, RunAuthority } from '../../auth/principal';
-import type { ToolRisk } from '../tool';
+import type { RunAuthority } from '../../auth/principal';
+import type { PrincipalRef, ToolRisk } from '@nox/extension-api';
 
 interface RiskSignal {
   readonly code: string;

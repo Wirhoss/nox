@@ -6,6 +6,7 @@ import { artifactRoutes } from './artifacts/routes';
 import { authRoutes } from './auth/routes';
 import { chatRoutes } from './chat/routes';
 import { configRoutes } from './config/routes';
+import { extensionRoutes } from './extensions/routes';
 import { health, type ReadinessChecks } from './health';
 import { languageRoutes } from './i18n/routes';
 import { API_PREFIX } from './prefix';
@@ -15,12 +16,12 @@ import { ui } from './ui';
 
 import type { ArtifactPipeline } from '../artifact/pipeline';
 import type { SecretStore } from '../config/secrets';
-import type { ContributionReader } from '../extensions/contribution';
-import type { Disposable } from '../extensions/disposable';
+import type { ExtensionCatalog } from '../extensions/catalog';
 import type { RegistrationWindow } from './auth/registration';
 import type { AuthStore } from './auth/store';
 import type { ChatHub } from './chat/transport';
 import type { ConfigStore } from './config/store';
+import type { ContributionReader, Disposable } from '@nox/extension-api';
 
 /** The two halves of authentication a composed Nox hands in: who exists, and who may still claim it. */
 interface ApiAuth {
@@ -54,6 +55,10 @@ interface ApiServerOptions extends ApiConfigInput {
    * those reasons.
    */
   config?: ConfigStore;
+  /** Registry used to attribute contribution inventory to discovered packages. */
+  contributions?: ContributionReader;
+  /** Discovered package health and contribution inventory. Requires `auth`. */
+  extensions?: ExtensionCatalog;
   /** Installation language preference exposed publicly with the language catalog. */
   locale?: (() => string | undefined) | string;
   /** Language packs and extension-owned translation fragments exposed to the UI. */
@@ -133,6 +138,15 @@ class ApiServer implements Disposable {
       }
       if (options.config !== undefined) {
         api.use(configRoutes({ config: options.config, store: options.auth.store }));
+      }
+      if (options.extensions !== undefined && options.contributions !== undefined) {
+        api.use(
+          extensionRoutes({
+            catalog: options.extensions,
+            contributions: options.contributions,
+            store: options.auth.store,
+          }),
+        );
       }
       if (options.secrets !== undefined) {
         api.use(secretRoutes({ secrets: options.secrets, store: options.auth.store }));

@@ -4,7 +4,7 @@ idk_yet/
 .git/
 node_modules/
 coverage/
-dist/
+**/dist/
 out/
 src/database/migrations/
 src/ui/

@@ -2,6 +2,8 @@ import { watch } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
+import { authorities, brokers } from '@nox/extension-api';
+
 import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
 import { ChatHub } from './api/chat/transport';
@@ -16,16 +18,9 @@ import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
-import { WEB_BROKER_ID, webBrokerExtension } from './extensions/builtin/brokers/web/extension';
-import { englishLanguageExtension } from './extensions/builtin/languages/en/extension';
-import { spanishLanguageExtension } from './extensions/builtin/languages/es/extension';
-import { sharpImageExtension } from './extensions/builtin/processors/sharp/extension';
-import { openAIExtension } from './extensions/builtin/providers/openai/extension';
-import { cronJobsExtension } from './extensions/builtin/toolsets/cronjobs/extension';
-import { webToolsExtension } from './extensions/builtin/toolsets/web/extension';
-import { authorities } from './extensions/contribution-points/authorities';
-import { brokers } from './extensions/contribution-points/brokers';
 import { toDisposable } from './extensions/disposable';
+import { discoverExtensions } from './extensions/loader';
+import { DatabaseExtensionStorageProvider } from './extensions/storage';
 import { ToolSetCatalog } from './extensions/toolSetCatalog';
 import { type BrokerGrant, Gateway } from './gateway/gateway';
 import { createLogger, type Logger } from './logger/logger';
@@ -37,15 +32,19 @@ import { ScheduledRunRelay } from './scheduler/scheduledRun';
 import {
   artifactPipelineService,
   chatHubService,
+  configAdminService,
   configService,
-  databaseService,
   loggerService,
   scheduledRunHostService,
   secretStoreService,
 } from './services';
+import { NOX_VERSION } from './version';
 
 import type { AuthConfig } from './api/auth/config';
 import type { ApiConfig } from './api/serverConfig';
+import type { ExtensionCatalog } from './extensions/catalog';
+
+const BUILTIN_EXTENSIONS_DIRECTORY = join(import.meta.dir, 'extensions', 'builtin');
 
 interface BootstrapOptions {
   env?: EnvSource;
@@ -56,10 +55,10 @@ interface BootstrapOptions {
 /**
  * The composition root of the process: the one place allowed to name concrete
  * capabilities. It reads the environment, loads configuration, opens storage,
- * hands all three to the application as services, activates the builtin
- * extensions, builds the providers that were configured from what those
- * extensions contributed, and registers one agent per blueprint on disk.
- * Nothing below it imports a builtin.
+ * hands all three to the application as services, discovers builtin and
+ * installed extension packages through one loader, builds configured runtime
+ * components from their contributions, and registers one agent per blueprint.
+ * Nothing below it imports a concrete extension.
  *
  * What comes back is the running Nox itself — the process holds one object, and
  * stopping it stops everything this function opened.
@@ -73,7 +72,10 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   const logger = options.logger ?? createLogger('nox', { level: appConfig.logLevel });
   const configurationRuntime = new ConfigurationRuntimeRelay();
 
-  await mkdir(env.dataDir, { recursive: true });
+  await Promise.all([
+    mkdir(env.dataDir, { recursive: true }),
+    mkdir(env.extensionsDir, { recursive: true }),
+  ]);
   const database = await Database.open({
     ...appConfig.database,
     logger,
@@ -110,28 +112,30 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   const chat = new ChatHub();
   const scheduledRuns = new ScheduledRunRelay();
 
-  const application = new NoxApplication({
-    extensions: [
-      englishLanguageExtension,
-      spanishLanguageExtension,
-      webBrokerExtension,
-      sharpImageExtension,
-      openAIExtension,
-      cronJobsExtension,
-      webToolsExtension,
+  const discovered = await discoverExtensions({
+    directories: [
+      { directory: BUILTIN_EXTENSIONS_DIRECTORY, origin: 'builtin' },
+      { directory: env.extensionsDir, origin: 'installed' },
     ],
+    logger: logger.child('extensions'),
+    noxVersion: NOX_VERSION,
+  });
+
+  const application = new NoxApplication({
+    extensions: discovered.extensions,
     logger,
+    noxVersion: NOX_VERSION,
+    storage: new DatabaseExtensionStorageProvider(database),
   })
     .provide(artifactPipelineService, artifactPipeline)
     .provide(chatHubService, chat)
     .provide(configService, config)
-    .provide(databaseService, database)
     .provide(loggerService, logger)
     .provide(scheduledRunHostService, scheduledRuns)
     .provide(secretStoreService, secretStore);
 
-  // Owned before anything activates, so it is released last: an extension handed
-  // the database as a service lets go of it before the file closes.
+  // Owned before anything activates, so extension state and host services stop
+  // using the database before the file closes.
   application.own(toDisposable(() => database.close()));
   application.own(scheduledRuns);
 
@@ -155,6 +159,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     runtime: configurationRuntime,
     toolSets: toolSetCatalog,
   });
+  application.provide(configAdminService, configuration);
   const api = application.own(
     openApi(
       application,
@@ -166,6 +171,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       configuration,
       database,
       secretStore,
+      discovered.catalog,
       env.uiDir,
       logger,
     ),
@@ -185,7 +191,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   }
 
   try {
-    const catalog = await activateConfiguration(application, config, logger);
+    const catalog = await activateConfiguration(application, config);
     const runtime = new ConfigurationRuntimeController({
       application,
       artifacts: artifactPipeline,
@@ -240,6 +246,7 @@ function openApi(
   configuration: ConfigStore,
   database: Database,
   secrets: SecretStore,
+  extensions: ExtensionCatalog,
   uiDirectory: string,
   logger: Logger,
 ): ApiServer {
@@ -253,6 +260,8 @@ function openApi(
       nox: () => application.state === 'running',
     },
     config: configuration,
+    contributions: application.contributions,
+    extensions,
     languages: application.contributions,
     locale,
     logger: logger.child('api'),
@@ -301,11 +310,10 @@ function buildAuthorityCatalog(application: NoxApplication): AuthorityCatalog {
   return AuthorityCatalog.from([...CORE_AUTHORITIES, ...contributed]);
 }
 
-/** Activates extensions, resolves contributed schemas and materializes built-in entries. */
+/** Activates discovered extensions and resolves the schemas they contributed. */
 async function activateConfiguration(
   application: NoxApplication,
   config: Config,
-  logger: Logger,
 ): Promise<AuthorityCatalog> {
   await application.start();
 
@@ -314,25 +322,9 @@ async function activateConfiguration(
   // nothing to validate them against.
   await config.resolveAvailable(application.contributions);
 
-  // Web existed before brokers were configurable. Materialize its built-in entry
-  // for a fresh or pre-contribution configuration; operators may disable it, but
-  // it remains addressable and visible beside every other broker. A malformed
-  // mounted brokers document is left untouched and repairable through reload.
-  if (config.loaded.includes('brokers') && config.get('brokers')[WEB_BROKER_ID] === undefined) {
-    try {
-      await config.updateInstance('brokers', WEB_BROKER_ID, { type: 'web' });
-    } catch (error) {
-      // A read-only mounted document may not be materializable. Web chat stays
-      // unavailable, but the API and Settings remain up so the mount can be repaired.
-      logger.error({ err: error }, 'The built-in Web broker could not be materialized.');
-    }
-  }
-
   // Likewise the catalog: an authority an extension has not contributed yet does
   // not exist, and a tool naming one fails here rather than at call time.
-  const catalog = buildAuthorityCatalog(application);
-
-  return catalog;
+  return buildAuthorityCatalog(application);
 }
 
 /** Composes one immutable broker generation from its current desired entry. */
@@ -353,25 +345,26 @@ async function composeBrokerGrant(
     );
   }
 
-  const isWeb = brokerId === WEB_BROKER_ID && entry.type === 'web';
-  if (entry.type === 'web' && !isWeb) {
-    throw new Error(`The built-in Web broker must use the reserved ID "${WEB_BROKER_ID}".`);
+  const host = contribution.value.host;
+  if (host?.instanceId !== undefined && brokerId !== host.instanceId) {
+    throw new Error(`Broker type "${entry.type}" must use the reserved ID "${host.instanceId}".`);
   }
-  if (isWeb && Object.keys(entry.grants).length > 0) {
-    throw new Error('Web authority comes from the authenticated owner, not configured grants.');
+  const ownerAuthorized = host?.authorization === 'owner';
+  if (ownerAuthorized && Object.keys(entry.grants).length > 0) {
+    throw new Error('Owner-authenticated brokers cannot replace owner authority with grants.');
   }
 
   const availableDesiredAgents = Object.keys(config.get('blueprints')).filter(
     (agentId) => application.getAgent(agentId) !== undefined,
   );
   const onlyAgent = availableDesiredAgents.length === 1 ? availableDesiredAgents[0] : undefined;
-  const agentId = entry.agent ?? (isWeb ? onlyAgent : undefined);
+  const agentId = entry.agent ?? (host?.selectableAgent === true ? onlyAgent : undefined);
   if (agentId !== undefined && application.getAgent(agentId) === undefined) {
     throw new Error(
       `Broker "${brokerId}" answers as agent "${agentId}", which no blueprint defines.`,
     );
   }
-  if (!isWeb && agentId === undefined) {
+  if (host?.selectableAgent !== true && agentId === undefined) {
     throw new Error(`Broker "${brokerId}" requires a base agent.`);
   }
 
@@ -387,9 +380,9 @@ async function composeBrokerGrant(
             `"${conversationAgentId}", which no blueprint defines.`,
         );
       }
-      if (isWeb && Object.keys(override.grants).length > 0) {
+      if (ownerAuthorized && Object.keys(override.grants).length > 0) {
         throw new Error(
-          `Web conversation "${conversationId}" cannot replace owner authority with grants.`,
+          `Owner-authenticated conversation "${conversationId}" cannot replace owner authority with grants.`,
         );
       }
 
@@ -397,7 +390,7 @@ async function composeBrokerGrant(
         conversationId,
         Object.freeze({
           ...(conversationAgentId === undefined ? {} : { agentId: conversationAgentId }),
-          authorization: isWeb
+          authorization: ownerAuthorized
             ? new OwnerAuthorizationProvider(brokerId)
             : new GrantAuthorizationProvider(
                 brokerId,
@@ -412,7 +405,7 @@ async function composeBrokerGrant(
 
   return Object.freeze({
     ...(agentId === undefined ? {} : { agentId }),
-    authorization: isWeb
+    authorization: ownerAuthorized
       ? new OwnerAuthorizationProvider(brokerId)
       : new GrantAuthorizationProvider(brokerId, entry.grants, catalog, `grants:${brokerId}`),
     broker: await composeWithSecrets(
@@ -423,7 +416,7 @@ async function composeBrokerGrant(
     ),
     brokerId,
     conversations: Object.freeze(conversationGrants),
-    ...(isWeb ? { selectableAgent: true } : {}),
+    ...(host?.selectableAgent === true ? { selectableAgent: true } : {}),
   });
 }
 

@@ -21,7 +21,6 @@ export {
   messageAuthority,
   principal,
   principalKey,
-  principalToString,
   samePrincipal,
   SYSTEM_CRON,
   SYSTEM_INTERNAL,
@@ -42,4 +41,4 @@ export type {
   DecisionStage,
   StoredDecision,
 } from './audit';
-export type { MessageOrigin, PrincipalRef, RunAuthority, RunAuthoritySource } from './principal';
+export type { RunAuthority, RunAuthoritySource } from './principal';

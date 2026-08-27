@@ -1,9 +1,5 @@
-import { z } from 'zod';
+import { type MessageContent, stableStringify, type Tool, z } from '@nox/extension-api';
 
-import { stableStringify } from '../../../../../utils/json';
-
-import type { MessageContent } from '../../../../../agent/context/message';
-import type { Tool } from '../../../../../tool/tool';
 import type { SearchCapability } from '../capabilities';
 
 const WEB_SEARCH_AUTHORITY = 'nox.toolset.web.search';

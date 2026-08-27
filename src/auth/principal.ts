@@ -1,29 +1,4 @@
-/**
- * Who is acting, as two halves that only mean something together: the authority
- * that vouched for the identity, and the identity it vouched for. A Discord user
- * id is not a principal on its own — it is a principal *on that broker*, and the
- * same number on another transport is somebody else entirely.
- *
- * Nothing in Nox may treat an absent principal as a permissive one. Every run has
- * exactly one, and a surface that cannot name it does not get to act.
- */
-interface PrincipalRef {
-  readonly issuer: string;
-  readonly subject: string;
-}
-
-/**
- * Where a message came from, kept for attribution and audit — and so the model
- * can be told who said what in a shared conversation.
- *
- * This is provenance, never authority. The effective authority of an execution is
- * fixed when its run starts and is not recomputed from the transcript, because a
- * transcript in a shared channel contains other people's words.
- */
-interface MessageOrigin {
-  readonly principal: PrincipalRef;
-  readonly transportMessageId: string;
-}
+import type { MessageOrigin, PrincipalRef } from '@nox/extension-api';
 
 /**
  * What started a run. A human message names the message it came in on; anything
@@ -80,11 +55,6 @@ function samePrincipal(left: PrincipalRef, right: PrincipalRef): boolean {
   return left.issuer === right.issuer && left.subject === right.subject;
 }
 
-/** For logs, audit lines and anything a human reads. */
-function principalToString(reference: PrincipalRef): string {
-  return `${reference.issuer}:${reference.subject}`;
-}
-
 /**
  * The authority a message confers, taken at the moment it is queued. The
  * principal is copied rather than referenced: this is read on every tool call
@@ -109,7 +79,6 @@ export {
   messageAuthority,
   principal,
   principalKey,
-  principalToString,
   samePrincipal,
   SYSTEM_CRON,
   SYSTEM_INTERNAL,
@@ -117,4 +86,4 @@ export {
   systemAuthority,
 };
 
-export type { MessageOrigin, PrincipalRef, RunAuthority, RunAuthoritySource };
+export type { RunAuthority, RunAuthoritySource };

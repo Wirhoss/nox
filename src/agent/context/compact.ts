@@ -1,4 +1,4 @@
-import type { CompactedMessage, Message } from './message';
+import type { CompactedMessage, Message } from '@nox/extension-api';
 
 function isSafeCut(history: readonly Message[], index: number): boolean {
   if (index <= 0 || index >= history.length) return true;

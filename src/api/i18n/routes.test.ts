@@ -1,17 +1,27 @@
-import { describe, expect, test } from 'bun:test';
-
-import { NoxApplication } from '../../application';
 import {
+  defineExtension,
   defineLanguagePack,
   defineTranslationFragment,
   languagePacks,
   translationFragments,
-} from '../../extensions/contribution-points/languages';
-import { defineExtension } from '../../extensions/extension';
+} from '@nox/extension-api';
+import { describe, expect, test } from 'bun:test';
+
+import { NoxApplication } from '../../application';
 import { ApiServer } from '../server';
 
+function manifest(id: string) {
+  return {
+    engines: { extensionApi: '*', nox: '^0.1.0' },
+    id,
+    main: 'embedded.js',
+    schemaVersion: 1 as const,
+    version: '0.0.0',
+  };
+}
+
 const languageExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'test.language' },
+  manifest: manifest('test.language'),
   activate(context) {
     context.contributions.register(
       languagePacks,
@@ -28,7 +38,7 @@ const languageExtension = defineExtension({
 });
 
 const rogueTranslationExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'test.rogue' },
+  manifest: manifest('test.rogue'),
   activate(context) {
     context.contributions.register(
       translationFragments,
@@ -43,7 +53,7 @@ const rogueTranslationExtension = defineExtension({
 });
 
 const featureExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'test.feature' },
+  manifest: manifest('test.feature'),
   activate(context) {
     context.contributions.register(
       translationFragments,

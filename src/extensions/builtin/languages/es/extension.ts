@@ -1,10 +1,9 @@
-import { defineLanguagePack, languagePacks } from '../../../contribution-points/languages';
-import { defineExtension } from '../../../extension';
+import { defineExtension, defineLanguagePack, languagePacks } from '@nox/extension-api';
+
 import { messages } from './messages';
 
 /** Spanish translations for the extension-independent Nox UI. */
 const spanishLanguageExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'nox.language.es' },
   activate(context) {
     context.contributions.register(
       languagePacks,
@@ -19,4 +18,5 @@ const spanishLanguageExtension = defineExtension({
   },
 });
 
+export default spanishLanguageExtension;
 export { spanishLanguageExtension };

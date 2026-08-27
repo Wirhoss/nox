@@ -14,7 +14,7 @@ export default defineConfig([
     '.git/**',
     'coverage/**',
     'idk_yet/**',
-    'dist/**',
+    '**/dist/**',
     'node_modules/**',
     // The web UI is its own package, with its own parser, plugins and lint
     // script. Linting it from here merges two configurations that were never

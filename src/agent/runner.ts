@@ -1,3 +1,21 @@
+import {
+  type ChatProvider,
+  isProviderError,
+  type Message,
+  type MessageContent,
+  type ModelConfig,
+  prepareToolCall,
+  type ProviderError,
+  type ToolCallMessage,
+  type ToolContext,
+  type ToolExecution,
+  type ToolExecutionSubject,
+  type ToolOutputTrust,
+  type ToolResponseExecution,
+  type ToolResponseMessage,
+  type Usage,
+  type UserMessage,
+} from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import {
@@ -15,14 +33,6 @@ import {
   SYSTEM_ISSUER,
   systemAuthority,
 } from '../auth/principal';
-import { isProviderError, type ProviderError } from '../provider/error';
-import {
-  prepareToolCall,
-  type ToolContext,
-  type ToolExecution,
-  type ToolExecutionSubject,
-  type ToolOutputTrust,
-} from '../tool/tool';
 import { ATTACH_ARTIFACT_TOOL_NAME, READ_ARTIFACT_TOOL_NAME } from './artifactTool';
 import { freezeMessage, freezeValue } from './context/immutable';
 
@@ -31,9 +41,6 @@ import type { ArtifactRef } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog, GrantPattern } from '../auth/authority';
 import type { Logger } from '../logger/logger';
-import type { ModelConfig } from '../provider/config';
-import type { ChatProvider } from '../provider/provider';
-import type { Usage } from '../provider/stream';
 import type {
   GateRequest,
   PendingPermission,
@@ -42,14 +49,6 @@ import type {
 } from '../tool/gate';
 import type { EventLog } from '../utils/eventLog';
 import type { Context } from './context/context';
-import type {
-  Message,
-  MessageContent,
-  ToolCallMessage,
-  ToolResponseExecution,
-  ToolResponseMessage,
-  UserMessage,
-} from './context/message';
 import type { AgentEvent, RunStatus, RunTrigger } from './events';
 
 const DEFAULT_MAX_ITERATIONS = 90;

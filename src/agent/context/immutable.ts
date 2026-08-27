@@ -1,6 +1,6 @@
-import { type MessageOrigin, principal } from '../../auth/principal';
+import { principal } from '../../auth/principal';
 
-import type { Message, MessageContent } from './message';
+import type { Message, MessageContent, MessageOrigin } from '@nox/extension-api';
 
 const DATE_MUTATOR_NAMES = [
   'setDate',

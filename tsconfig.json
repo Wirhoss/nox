@@ -12,6 +12,9 @@
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "paths": {
+      "@nox/extension-api": ["./packages/extension-api/src/index.ts"]
+    },
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
@@ -27,6 +30,13 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "include": ["index.ts", "drizzle.config.ts", "examples/**/*.ts", "src/**/*.ts"],
+  "include": [
+    "index.ts",
+    "drizzle.config.ts",
+    "examples/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "scripts/**/*.ts",
+    "src/**/*.ts"
+  ],
   "exclude": ["ULTRA_OLD_DO_NOT_CHECK", "node_modules", "src/ui"]
 }

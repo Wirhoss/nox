@@ -1,4 +1,10 @@
 import type {
+  Broker,
+  BrokerCapabilities,
+  BrokerHistory,
+  BrokerHistoryEntry,
+  BrokerHost,
+  BrokerSession,
   ChatCommand,
   ChatCommandInput,
   ChatCommandRejection,
@@ -8,25 +14,18 @@ import type {
   ChatHistory,
   ChatHistoryEntry,
   ChatHistoryInput,
-  ChatHub,
   ChatListener,
   ChatMessageInput,
   ChatMessageRejection,
   ChatPermissionOutcome,
   ChatPermissionRequest,
   ChatSubscriptionOptions,
+  ChatSurfaceHub,
   ChatTransport,
-} from '../../../../api/chat';
-import type {
-  Broker,
-  BrokerCapabilities,
-  BrokerHistory,
-  BrokerHistoryEntry,
-  BrokerHost,
-  BrokerSession,
   OutboundEvent,
-} from '../../../../gateway/broker';
-import type { PermissionRequest, PermissionResolution } from '../../../../tool/gate';
+  PermissionRequest,
+  PermissionResolution,
+} from '@nox/extension-api';
 
 /** Enough completed traffic to repair an ordinary dropped browser connection. */
 const RECENT_EVENT_LIMIT = 10_000;
@@ -73,7 +72,7 @@ class WebBroker implements Broker, ChatTransport {
   });
 
   readonly #activeEvents = new Map<string, SequencedChatEvent[]>();
-  readonly #hub: ChatHub;
+  readonly #hub: ChatSurfaceHub;
   readonly #listeners = new Set<ChatListener>();
   readonly #recentEvents: SequencedChatEvent[] = [];
 
@@ -81,7 +80,7 @@ class WebBroker implements Broker, ChatTransport {
   #host: BrokerHost | undefined;
   #nextEventId = 0;
 
-  constructor(hub: ChatHub) {
+  constructor(hub: ChatSurfaceHub) {
     this.#hub = hub;
   }
 

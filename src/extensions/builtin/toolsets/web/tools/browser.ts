@@ -1,12 +1,15 @@
-import { z } from 'zod';
+import {
+  type ArtifactOutputPublisher,
+  httpUrlSchema,
+  type MessageContent,
+  stableStringify,
+  type Tool,
+  type ToolEffect,
+  z,
+} from '@nox/extension-api';
 
-import { httpUrlSchema } from '../../../../../config/url';
-import { stableStringify } from '../../../../../utils/json';
 import { publishBytes, publishText } from '../artifacts';
 
-import type { MessageContent } from '../../../../../agent/context/message';
-import type { ArtifactOutputPublisher } from '../../../../../artifact/output';
-import type { Tool, ToolEffect } from '../../../../../tool/tool';
 import type {
   BrowserAction,
   BrowserCapability,

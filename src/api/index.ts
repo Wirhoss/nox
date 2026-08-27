@@ -8,6 +8,7 @@ export {
   ConfigStore,
   EntryInUseError,
 } from './config';
+export { extensionRoutes } from './extensions';
 export { health } from './health';
 export { languageRoutes } from './i18n';
 export { secretRoutes } from './secrets';
@@ -16,24 +17,7 @@ export { apiConfigSchema } from './serverConfig';
 
 export type { ArtifactRoutesOptions } from './artifacts';
 export type { Account, AuthConfig, AuthConfigInput, Authenticated } from './auth';
-export type {
-  ChatContextChangeEvent,
-  ChatDecisionInput,
-  ChatEvent,
-  ChatListener,
-  ChatMessageInput,
-  ChatPermissionOutcome,
-  ChatPermissionRequest,
-  ChatReasoningEvent,
-  ChatRetryEvent,
-  ChatRoutesOptions,
-  ChatRunCompletedEvent,
-  ChatRunStartedEvent,
-  ChatToolCallEvent,
-  ChatToolResponseEvent,
-  ChatTransport,
-  ChatUsageEvent,
-} from './chat';
+export type { ChatRoutesOptions } from './chat';
 export type {
   BlueprintContext,
   ConfigRoutesOptions,
@@ -42,6 +26,7 @@ export type {
   SectionPolicy,
   SectionSummary,
 } from './config';
+export type { ExtensionRoutesOptions } from './extensions';
 export type { HealthOptions, ReadinessCheck, ReadinessChecks, ReadinessReport } from './health';
 export type { LanguageCatalog, LanguageDescriptor, LanguageRoutesOptions } from './i18n';
 export type { SecretRoutesOptions } from './secrets';

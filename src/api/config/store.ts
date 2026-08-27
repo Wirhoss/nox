@@ -1,17 +1,24 @@
+import {
+  type ConfigEntryKey,
+  type ConfigRevertTarget,
+  type ConfigSectionSchemaDescriptor,
+  type ConfigSectionSummary,
+  type ConfigTypeSchemaDescriptor,
+  type ConfigurationAdmin,
+  type ContributionReader,
+  isConfigurable,
+  type RuntimeComponentStatus,
+  type ToolSetInventory,
+} from '@nox/extension-api';
 import { z } from 'zod';
 
 import { type ConfigKey, sections } from '../../config/sections';
-import { toolSets } from '../../extensions/contribution-points/toolsets';
 import { configPolicies, type SectionPolicies, type SectionPolicy } from './policies';
 
 import type { Config, ConfigUpdate, ContributionKey, DirectoryKey } from '../../config/config';
-import type { ConfigApply, ConfigSection } from '../../config/section';
-import type { ContributionReader } from '../../extensions/contribution';
-import type { ToolSetCatalog, ToolSetInventory } from '../../extensions/toolSetCatalog';
-import type {
-  ConfigurationRuntime,
-  RuntimeComponentStatus,
-} from '../../runtime/configurationRuntime';
+import type { ConfigSection } from '../../config/section';
+import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
+import type { ConfigurationRuntime } from '../../runtime/configurationRuntime';
 import type { BlueprintContext } from './blueprints';
 
 /**
@@ -20,28 +27,8 @@ import type { BlueprintContext } from './blueprints';
  * same thing, and a surface that had to know the difference would be a surface
  * that breaks when a section changes how it is stored.
  */
-type EntryKey = ContributionKey | DirectoryKey;
-
-/**
- * A section as an administrable thing rather than as a loader input: what it is
- * called, when a change to it takes effect, whether it can be read yet, and
- * which of the two shapes of write it accepts. A surface builds its whole
- * navigation from this, which is why the flags are stated rather than left for
- * the client to infer from `kind`.
- */
-interface SectionSummary {
-  readonly applies: ConfigApply;
-  readonly error?: string;
-  /** Whether it is addressed one entry at a time. */
-  readonly entries: boolean;
-  readonly key: ConfigKey;
-  readonly kind: ConfigSection['kind'];
-  /** Deferred sections have no value until the extensions behind them activate. */
-  readonly loaded: boolean;
-  readonly name: string;
-  /** Whether the whole document may be replaced in one write. */
-  readonly writable: boolean;
-}
+type EntryKey = ConfigEntryKey;
+type SectionSummary = ConfigSectionSummary;
 
 /**
  * One kind of tool set an operator may configure, with the shape its entries
@@ -63,12 +50,7 @@ interface RevertChange {
   readonly previous: unknown;
 }
 
-interface ToolSetTypeDescriptor {
-  readonly extensionId: string;
-  /** JSON Schema of one configured entry, in the form a client writes. */
-  readonly schema: Readonly<Record<string, unknown>>;
-  readonly type: string;
-}
+type ToolSetTypeDescriptor = ConfigTypeSchemaDescriptor;
 
 /** A contributed instance keeps the schema it was created under. */
 class ContributionTypeChangeError extends Error {
@@ -112,7 +94,7 @@ function sorted(record: Record<string, unknown>): Record<string, unknown> {
  * onto the configuration files and no chance of a second one's checks drifting
  * from these.
  */
-class ConfigStore {
+class ConfigStore implements ConfigurationAdmin {
   readonly #activeApp: unknown;
   readonly #config: Config;
   readonly #contributions: ContributionReader;
@@ -133,6 +115,16 @@ class ConfigStore {
 
   public get revertAvailable(): boolean {
     return this.#revert !== undefined;
+  }
+
+  public get revertTarget(): ConfigRevertTarget | undefined {
+    const change = this.#revert;
+    return change === undefined
+      ? undefined
+      : Object.freeze({
+          ...(change.entryId === undefined ? {} : { entryId: change.entryId }),
+          key: change.key,
+        });
   }
 
   /** Every section Nox has, in a stable order. */
@@ -179,21 +171,44 @@ class ConfigStore {
    * or left is visible here without a restart of the surface.
    */
   public toolSetTypes(): readonly ToolSetTypeDescriptor[] {
-    return Object.freeze(
-      this.#contributions
-        .list(toolSets)
-        .map((contribution) =>
-          Object.freeze({
-            extensionId: contribution.extensionId,
-            schema: z.toJSONSchema(contribution.value.configSchema, {
-              io: 'input',
-              unrepresentable: 'any',
+    return this.schema('toolSets').types ?? [];
+  }
+
+  /**
+   * The exact schema a writer is judged against. Contribution sections expose
+   * one schema per registered discriminator because their union only exists at
+   * runtime; static sections expose their file or entry schema directly.
+   */
+  public schema(key: ConfigKey): ConfigSectionSchemaDescriptor {
+    const section = sections[key] as ConfigSection;
+    const base = { applies: section.applies, key, kind: section.kind } as const;
+
+    if (section.kind === 'contribution') {
+      const types = this.#contributions
+        .list(section.point)
+        .flatMap((contribution) => {
+          const configurable = contribution.value;
+          if (!isConfigurable(configurable)) return [];
+          return [
+            Object.freeze({
+              extensionId: contribution.extensionId,
+              schema: z.toJSONSchema(configurable.configSchema, {
+                io: 'input',
+                unrepresentable: 'any',
+              }),
+              type: contribution.id,
             }),
-            type: contribution.id,
-          }),
-        )
-        .sort((a, b) => a.type.localeCompare(b.type)),
-    );
+          ];
+        })
+        .sort((left, right) => left.type.localeCompare(right.type));
+      return Object.freeze({ ...base, types: Object.freeze(types) });
+    }
+
+    const source = section.kind === 'directory' ? section.entrySchema : section.schema;
+    return Object.freeze({
+      ...base,
+      schema: z.toJSONSchema(source, { io: 'input', unrepresentable: 'any' }),
+    });
   }
 
   /** Tools exposed by each configured capability, using the runtime factories' own answer. */
@@ -269,11 +284,16 @@ class ConfigStore {
   }
 
   /** Re-reads explicitly mounted configuration and reconciles every valid changed section. */
-  public async reloadConfiguration(): Promise<void> {
+  public async reloadConfiguration(
+    keys: readonly ConfigKey[] = Object.keys(sections) as ConfigKey[],
+  ): Promise<void> {
+    const selected = [...new Set(keys)];
     const previous = new Map<ConfigKey, unknown>();
-    for (const key of this.#config.loaded) previous.set(key, this.#config.get(key));
+    for (const key of selected) {
+      if (this.#config.loaded.includes(key)) previous.set(key, this.#config.get(key));
+    }
 
-    const reloaded = await this.#config.reload();
+    const reloaded = await this.#config.reload(selected);
     await this.#runtime?.reconcile();
     for (const key of reloaded.changed) {
       this.#rememberFailure({ key, previous: previous.get(key) });
@@ -288,9 +308,14 @@ class ConfigStore {
   }
 
   /** Restores the desired value that preceded the most recent failed activation. */
-  public async revertRuntime(): Promise<void> {
+  public async revertRuntime(expectedKey?: ConfigKey): Promise<void> {
     const change = this.#revert;
     if (change === undefined) return;
+    if (expectedKey !== undefined && change.key !== expectedKey) {
+      throw new Error(
+        `The revert target changed from "${expectedKey}" to "${change.key}" before it could be applied.`,
+      );
+    }
 
     if (change.entryId === undefined && sections[change.key].kind === 'directory') {
       const key = change.key as DirectoryKey;

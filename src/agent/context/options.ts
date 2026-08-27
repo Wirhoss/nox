@@ -3,9 +3,7 @@ import { z } from 'zod';
 import { parseOrThrow } from '../../utils/validate';
 
 import type { Logger } from '../../logger/logger';
-import type { ModelConfig } from '../../provider/config';
-import type { Tool } from '../../tool/tool';
-import type { Message } from './message';
+import type { Message, ModelConfig, Tool } from '@nox/extension-api';
 
 const DEFAULT_COMPACT_AT_RATIO = 0.8;
 const DEFAULT_COMPACT_GUARD_BEGINNING_RATIO = 0.1;

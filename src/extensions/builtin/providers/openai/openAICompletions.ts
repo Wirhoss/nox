@@ -1,34 +1,33 @@
-import { z } from 'zod';
-
-import {
-  type Message,
-  type MessageContent,
-  type ToolCallMessage,
-  userContentForModel,
-} from '../../../../agent/context/message';
-import { toolResponseContentForModel, untrustedFence } from '../../../../agent/context/untrusted';
 import {
   type ArtifactPipeline,
-  ArtifactProcessorOutputError,
   type ArtifactRef,
-  ArtifactRepresentationUnavailableError,
-  type RepresentationProfile,
-} from '../../../../artifact';
-import { modalitiesIn } from '../../../../content/content';
-import { type Logger, silentLogger } from '../../../../logger/logger';
-import {
+  ChatProvider,
+  isArtifactProcessorOutputError,
+  isArtifactRepresentationUnavailableError,
+  type Logger,
+  type Message,
+  type MessageContent,
+  modalitiesIn,
   modelAcceptsInput,
   type ModelConfig,
   providerBaseConfigSchema,
+  ProviderError,
+  type ProviderErrorCode,
   providerRuntimeConfigSchema,
+  type ProviderSourceEvent,
+  type RepresentationProfile,
+  silentLogger,
   type TextGenerateOptions,
-} from '../../../../provider/config';
-import { ProviderError, type ProviderErrorCode } from '../../../../provider/error';
-import { ChatProvider } from '../../../../provider/provider';
-import { toolDescription, toolParametersSchema } from '../../../../tool/render';
-
-import type { ProviderSourceEvent, ToolCallDraft } from '../../../../provider/stream';
-import type { Tool } from '../../../../tool/tool';
+  type Tool,
+  type ToolCallDraft,
+  type ToolCallMessage,
+  toolDescription,
+  toolParametersSchema,
+  toolResponseContentForModel,
+  untrustedFence,
+  userContentForModel,
+} from '@nox/extension-api';
+import { z } from 'zod';
 
 const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
   defaultModel: z.string().min(1).optional(),
@@ -645,14 +644,14 @@ class OpenAICompletions extends ChatProvider {
         mediaType: reference.mediaType,
         profileId: OPENAI_IMAGE_PROFILE.id,
       };
-      if (error instanceof ArtifactRepresentationUnavailableError) {
+      if (isArtifactRepresentationUnavailableError(error)) {
         this.logger.debug(
           fields,
           'No compatible visual rendition is available; sending the artifact descriptor only.',
         );
         return undefined;
       }
-      if (error instanceof ArtifactProcessorOutputError) {
+      if (isArtifactProcessorOutputError(error)) {
         this.logger.warn(
           { ...fields, err: error },
           'Visual rendition failed; sending the artifact descriptor only.',

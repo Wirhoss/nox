@@ -2,6 +2,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  type Broker,
+  type BrokerCapabilities,
+  type BrokerCommandSpec,
+  type BrokerHistory,
+  type BrokerHost,
+  type BrokerSession,
+  ChatProvider,
+  type CommandRejection,
+  type Message,
+  type MessageContent,
+  type ModelConfig,
+  type OutboundEvent,
+  type OutboundRunCompleted,
+  type ProviderSourceEvent,
+  type TextGenerateOptions,
+  type Tool,
+  ToolSet,
+  type ToolSetGrant,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -11,25 +31,11 @@ import { GrantAuthorizationProvider } from '../auth/authorization';
 import { SYSTEM_CRON } from '../auth/principal';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
-import { ChatProvider } from '../provider/provider';
 import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
-import { type Tool, ToolSet, type ToolSetGrant } from '../tool/tool';
-import { brokerCommand, type BrokerCommandSpec, type CommandRejection } from './command';
+import { brokerCommand } from './command';
 import { type BrokerConversationGrant, Gateway } from './gateway';
 
-import type { Message, MessageContent } from '../agent/context/message';
-import type { ModelConfig, TextGenerateOptions } from '../provider/config';
-import type { ProviderSourceEvent } from '../provider/stream';
 import type { GatePolicyInput } from '../tool/gate';
-import type {
-  Broker,
-  BrokerCapabilities,
-  BrokerHistory,
-  BrokerHost,
-  BrokerSession,
-  OutboundEvent,
-  OutboundRunCompleted,
-} from './broker';
 
 const MODEL: ModelConfig = {
   inputModalities: ['text'],
@@ -335,10 +341,10 @@ class TestBroker implements Broker {
   public say(conversationId: string, text: string, messageId?: string, senderId = 'someone'): void {
     this.#messages += 1;
     this.#host?.receive({
+      content: [{ text, type: 'text' }],
       conversationId,
       messageId: messageId ?? `m${String(this.#messages)}`,
       senderId,
-      text,
       type: 'message',
     });
   }
@@ -371,10 +377,10 @@ class TestBroker implements Broker {
   public steer(conversationId: string, text: string, senderId = 'someone'): void {
     this.#messages += 1;
     this.#host?.receive({
+      content: [{ text, type: 'text' }],
       conversationId,
       messageId: `s${String(this.#messages)}`,
       senderId,
-      text,
       type: 'steer',
     });
   }

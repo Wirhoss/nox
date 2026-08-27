@@ -17,6 +17,7 @@ import {
   ArtifactRepresentationUnavailableError,
   ArtifactStorageQuotaError,
   ArtifactTooLargeError,
+  isArtifactProcessorOutputError,
 } from './error';
 import { PROBE_BYTES, probeArtifact } from './probe';
 import {
@@ -180,7 +181,7 @@ async function* processorChunks(
       yield chunk;
     }
   } catch (error) {
-    if (signal?.aborted === true || error instanceof ArtifactProcessorOutputError) throw error;
+    if (signal?.aborted === true || isArtifactProcessorOutputError(error)) throw error;
     throw new ArtifactProcessorOutputError(processorId, 'failed while producing bytes.', {
       cause: error,
     });
@@ -495,7 +496,7 @@ class ArtifactPipeline {
         source: Object.freeze({ ...source, stream: sourceStream }),
       });
     } catch (error) {
-      if (signal?.aborted === true || error instanceof ArtifactProcessorOutputError) throw error;
+      if (signal?.aborted === true || isArtifactProcessorOutputError(error)) throw error;
       throw new ArtifactProcessorOutputError(processor.id, 'failed before producing bytes.', {
         cause: error,
       });

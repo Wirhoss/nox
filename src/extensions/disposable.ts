@@ -1,11 +1,4 @@
-interface Disposable {
-  dispose(): Promise<void> | void;
-}
-
-/** Write-only resource ownership: what a contribution may add, never inspect. */
-interface DisposableRegistry {
-  add<T extends Disposable>(disposable: T): T;
-}
+import type { Disposable } from '@nox/extension-api';
 
 type DisposeAction = () => Promise<void> | void;
 
@@ -64,4 +57,4 @@ class DisposableStore implements Disposable {
 
 export { DisposableStore, toDisposable };
 
-export type { Disposable, DisposableRegistry, DisposeAction };
+export type { DisposeAction };

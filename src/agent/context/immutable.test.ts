@@ -49,7 +49,7 @@ describe('freezeMessage', () => {
     expect(message.origin.principal.subject).toBe('alice');
   });
 
-  test('blocks every Date mutator, including legacy setYear', () => {
+  test('blocks every Date mutator, including setYear', () => {
     const message = freezeMessage({
       content: [{ text: 'text', type: 'text' }],
       createdAt: new Date('2025-01-01T00:00:00.000Z'),

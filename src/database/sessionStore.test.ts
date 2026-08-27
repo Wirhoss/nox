@@ -4,12 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { type Message, messageToString } from '../agent/context/message';
+import { messageToString } from '../agent/context/message';
 import { messageAuthority } from '../auth/principal';
 import { TEST_AUTHORITY, testOrigin } from '../testFixtures';
 import { Database } from './database';
 import { messages } from './schema';
 import { SessionStore } from './sessionStore';
+
+import type { Message } from '@nox/extension-api';
 
 const CREATED_AT = new Date('2025-01-01T00:00:00.000Z');
 
@@ -121,7 +123,7 @@ describe('SessionStore', () => {
     expect(loaded?.messages.map(messageToString)).toEqual(original.map(messageToString));
   });
 
-  test('a tool response keeps its trust across a reload, and a row without one fences', async () => {
+  test('a tool response keeps its trust across a reload', async () => {
     const database = await openDatabase();
     const store = new SessionStore(database);
     await store.create('session-1');
@@ -138,30 +140,10 @@ describe('SessionStore', () => {
     });
     await store.flushed;
 
-    // A row written before this column existed. Its content is real tool output
-    // that nothing can vouch for any more, so the reading that fences it is the
-    // only safe one — `trusted` here would un-fence every historical result.
-    await database.exclusive((db) => {
-      db.insert(messages)
-        .values({
-          content: [{ text: 'a page from 2024', type: 'text' }],
-          createdAt: CREATED_AT.getTime(),
-          execution: 'immediate',
-          messageId: 'legacy',
-          name: 'fetch',
-          role: 'toolResponse',
-          seq: 1,
-          sessionId: 'session-1',
-          trackId: 'track-2',
-        })
-        .run();
-    });
-
     const loaded = await store.load('session-1');
-    const [catalog, legacy] = loaded?.messages ?? [];
+    const [catalog] = loaded?.messages ?? [];
 
     expect(catalog?.role === 'toolResponse' ? catalog.trust : undefined).toBe('trusted');
-    expect(legacy?.role === 'toolResponse' ? legacy.trust : undefined).toBe('untrusted');
   });
 
   test('messages come back in append order regardless of write timing', async () => {

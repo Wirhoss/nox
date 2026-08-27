@@ -1,8 +1,7 @@
 import { isPrivateHost, publicUrl } from './http';
 
-import type { ArtifactOutputPublisher } from '../../../../artifact/output';
-import type { ContentArtifact } from '../../../../content/content';
 import type { PageBytes, PageImage } from './capabilities';
+import type { ArtifactOutputPublisher, ContentArtifact } from '@nox/extension-api';
 
 /**
  * Turning what a page is made of into files.

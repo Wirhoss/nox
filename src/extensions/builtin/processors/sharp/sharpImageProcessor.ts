@@ -1,18 +1,16 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 
+import {
+  type ArtifactProcessor,
+  type ArtifactProcessorInput,
+  type ArtifactProcessorOutput,
+  type ArtifactProcessorSource,
+  type RepresentationProfile,
+  stableStringify,
+} from '@nox/extension-api';
 import sharp from 'sharp';
 import { z } from 'zod';
-
-import { stableStringify } from '../../../../utils/json';
-
-import type {
-  ArtifactProcessor,
-  ArtifactProcessorInput,
-  ArtifactProcessorOutput,
-  ArtifactProcessorSource,
-} from '../../../../artifact/processor';
-import type { RepresentationProfile } from '../../../../artifact/representation';
 
 const SHARP_IMAGE_PROCESSOR_ID = 'nox.image.sharp';
 const SHARP_ENGINE_FINGERPRINT = createHash('sha256')

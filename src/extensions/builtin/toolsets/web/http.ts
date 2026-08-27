@@ -1,4 +1,4 @@
-import type { SecretHandle } from '../../../../config/secrets';
+import type { SecretHandle } from '@nox/extension-api';
 
 /**
  * What every module does to reach its service, in one place.

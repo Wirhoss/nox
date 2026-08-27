@@ -13,12 +13,10 @@ import type { AuthorityCatalog } from '../auth/authority';
 import type { AuthorizationProvider } from '../auth/authorization';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
-import type { ModelConfig } from '../provider/config';
-import type { ChatProvider } from '../provider/provider';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
-import type { ToolSetGrant } from '../tool/tool';
 import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
+import type { ChatProvider, ModelConfig, ToolSetGrant } from '@nox/extension-api';
 
 interface AgentOptions extends RunnerOptions {
   /**

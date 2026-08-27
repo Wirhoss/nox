@@ -16,6 +16,7 @@ WORKDIR /build
 COPY package.json bun.lock ./
 # Bun validates every declared workspace before installing. The UI build also
 # needs the workspace's development dependencies (Vite, Vue and Sass).
+COPY packages/extension-api/package.json ./packages/extension-api/package.json
 COPY src/ui/package.json ./src/ui/package.json
 RUN bun install --frozen-lockfile --ignore-scripts
 
@@ -28,6 +29,7 @@ FROM ${BUN_IMAGE} AS runtime-deps
 WORKDIR /build
 
 COPY package.json bun.lock ./
+COPY packages/extension-api/package.json ./packages/extension-api/package.json
 COPY src/ui/package.json ./src/ui/package.json
 RUN bun install --frozen-lockfile --ignore-scripts --linker=hoisted --omit peer --production --filter nox
 
@@ -38,14 +40,19 @@ WORKDIR /build
 
 COPY --from=deps /build/node_modules ./node_modules
 COPY package.json bun.lock tsconfig.json index.ts ./
+COPY packages ./packages
+COPY --from=deps /build/packages/extension-api/node_modules ./packages/extension-api/node_modules
+COPY scripts ./scripts
 COPY src ./src
 COPY --from=deps /build/src/ui/node_modules ./src/ui/node_modules
 
-RUN bun build ./index.ts \
+RUN bun run build:extensions \
+ && bun build ./index.ts \
       --target=bun \
       --outfile ./dist/nox.js \
       --external playwright \
       --external sharp \
+      --external zod \
       --minify-whitespace \
       --minify-syntax \
  && bun --cwd=src/ui run build-only \
@@ -75,6 +82,9 @@ RUN apk add --no-cache chromium \
 
 COPY --from=build --chown=root:root /build/dist/nox.js /app/nox.js
 COPY --from=runtime-deps --chown=root:root /build/node_modules /app/node_modules
+RUN rm -rf /app/node_modules/@nox/extension-api
+COPY --from=build --chown=root:root /build/dist/node_modules/@nox/extension-api /app/node_modules/@nox/extension-api
+COPY --from=build --chown=root:root /build/dist/extensions /app/extensions
 COPY --from=build --chown=root:root /build/dist/migrations /app/migrations
 COPY --from=build --chown=root:root /build/src/ui/dist /app/ui
 
@@ -83,8 +93,10 @@ COPY --from=build --chown=root:root /build/src/ui/dist /app/ui
 ENV NODE_ENV=production \
     CONFIG_DIR=/etc/nox/config \
     DATA_DIR=/var/lib/nox \
+    EXTENSIONS_DIR=/var/lib/nox/extensions \
     UI_DIR=/app/ui \
     HOME=/home/nox \
+    NODE_PATH=/app/node_modules \
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     TZ=UTC
 

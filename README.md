@@ -24,6 +24,7 @@ Individual steps: `bun run typecheck`, `bun run lint`, `bun run format`,
 ```bash
 export CONFIG_DIR=./.nox/config       # optional, see src/config/env.ts
 export DATA_DIR=./.nox/data           # optional: database and local secret key
+export EXTENSIONS_DIR=./.nox/extensions # optional: installed extension packages
 export UI_DIR=./src/ui/dist           # optional: output of `bun run build:ui`
 export NOX_SESSION_ID=my-session      # optional: resumes that session
 
@@ -43,6 +44,78 @@ The first run writes `app.json` into `CONFIG_DIR` with defaults and migrates a
 SQLite database into `DATA_DIR`. Type to talk; `/exit` or Ctrl-C ends the
 session. Replies stream to stdout and every log line goes to stderr, so
 `bun run start 2>/dev/null` gives you the conversation alone.
+
+## Extensions
+
+Nox discovers extension packages at startup from two roots:
+
+- The runtime-owned `extensions/builtin` directory beside Nox: packages shipped in the image. Its
+  location is intentionally not configurable.
+- `EXTENSIONS_DIR`: locally installed packages, defaulting to `DATA_DIR/extensions`.
+
+Origin is inventory metadata, not a different execution path. Both roots use the same manifest parser,
+compatibility checks, module loader, activation context, contribution registry and failure isolation.
+No concrete builtin is imported by `bootstrap.ts`. A broken or incompatible package is reported by the
+control plane without being activated, while healthy packages continue to start.
+
+An extension is one directory containing a manifest and a JavaScript entry module:
+
+```text
+example.toolset/
+├── nox-extension.json
+└── extension.js
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "example.toolset",
+  "version": "1.4.2",
+  "main": "extension.js",
+  "engines": {
+    "nox": "^0.1.0",
+    "extensionApi": ">=0.1.0 <0.2.0"
+  }
+}
+```
+
+`version` identifies one exact installed artifact. Both compatibility declarations are semver **ranges**:
+an extension can support a family of Nox and Extension API releases rather than naming one build.
+The entry module default-exports a definition created with the versioned `@nox/extension-api` package:
+
+```ts
+import { defineExtension } from '@nox/extension-api'
+
+export default defineExtension({
+  activate(context) {
+    // Register contributions and owned resources through context.
+  },
+})
+```
+
+The autonomous package source lives in `packages/extension-api`. It imports no kernel modules and its
+build emits ESM JavaScript plus TypeScript declarations under `dist`. Extension projects use it as a
+development dependency and keep `@nox/extension-api` external in their production bundle; Nox supplies
+the runtime selected by `engines.extensionApi`. Builtins obey the same boundary: production builtin
+code can import only its own package files and the public API. A complete independently compiled
+consumer is available at `examples/extensions/greeting-toolset`.
+
+The manifest owns identity; extension code does not duplicate or override it. Entry points are confined
+to their package directory, duplicate IDs disable every conflicting candidate, and activation failure
+rolls back that package's contributions. Each activation receives `context.storage`, an atomic durable
+JSON store isolated by extension ID; no extension receives Nox's database connection or schemas.
+Extensions are trusted native code, not a sandbox, and package changes currently require a Nox restart.
+
+Authenticated owners can inspect discovery and activation state through `GET /api/extensions`. The
+response includes Extension API version, package origin/version/state, sanitized errors and contributed
+IDs, but no absolute filesystem paths. Discovering a provider, broker or tool-set extension registers
+its **type**; it never silently creates a configured instance. Settings or configuration still creates
+and grants instances explicitly.
+
+`bun run build:extension-api` builds the publishable package directly. `bun run build:extensions` first
+builds that same package, then packages every builtin separately under `dist/extensions/builtin` and
+emits the runtime package under `dist/node_modules`. The container copies those outputs
+rather than compiling a static builtin registry into the kernel.
 
 Anything that speaks the OpenAI Chat Completions API works — point
 `OPENAI_BASE_URL` at it.
@@ -173,6 +246,51 @@ next click or keystroke addresses. Reading a page and acting on one are separate
 authorities, so an agent can be granted a browser it may look at and not touch,
 and clicking and typing are recorded as irreversible network writes. An instance
 that should expose fewer of them lists the ones it keeps in `enabledTools`.
+
+### Agent-managed configuration
+
+The builtin `config` tool-set lets an agent inspect and administer the same durable desired state as
+Settings. It does not edit files behind the runtime's back: reads, schemas, entry CRUD, mounted-file
+reload, activation retry and failed-change revert all pass through the shared configuration
+administration boundary, including reference policy and generation reconciliation.
+
+```json
+{
+  "control": {
+    "type": "config",
+    "readSections": ["app", "blueprints", "brokers", "providers", "toolSets"],
+    "writeSections": ["blueprints", "providers", "toolSets"],
+    "manageRuntime": true,
+    "readSecretMetadata": true
+  }
+}
+```
+
+Grant the configured instance from a blueprint like any other capability:
+
+```json
+{
+  "toolSets": { "direct": ["control"], "routed": [] }
+}
+```
+
+It exposes `config_status`, `config_schema`, `config_list`, `config_get`, `config_toolsets`,
+`config_secrets`, `config_update_app`, `config_create`, `config_replace`, `config_delete`,
+`config_reload`, `config_retry`, and `config_revert`, subject to that instance policy and ordinary
+`enabledTools`/blueprint cuts. Its separate authorities are `nox.toolset.config.read`,
+`nox.toolset.config.write`, and `nox.toolset.config.runtime`. Configuration mutations declare
+privilege and write risk, so the Gate can require explicit approval; deletion and runtime recovery
+also declare their irreversible effects.
+
+`config_secrets` returns IDs, storage state, references and consumers only. There is deliberately no
+tool that accepts a secret value: passing one as a model-generated tool argument would put the
+credential in provider input, transcript and audit data. An agent may configure a `{ "$secret":
+"ID" }` reference and report that its value is missing, but the operator supplies or rotates that
+value through the write-only Settings surface.
+
+The configuration snapshot held by a live session remains stable. An agent may change its own
+blueprint or remove this grant for future sessions; the current tool call finishes against the
+generation with which it started.
 
 ### Scheduled jobs
 
@@ -387,7 +505,7 @@ them requires a token:
 | Route | What it does |
 |---|---|
 | `GET /api/chat/stream` | Server-sent events for every conversation, named by event type |
-| `POST /api/chat/conversations/:conversationId/messages` | Says structured `content` (or legacy `text`); answers `202`, the reply arrives on the stream |
+| `POST /api/chat/conversations/:conversationId/messages` | Sends structured `content`; answers `202`, and the reply arrives on the stream |
 | `POST /api/chat/conversations/:conversationId/permissions/:requestId` | Answers a pending gate request with `{ "decision": "approve", "scope": "session" }` or `{ "decision": "deny" }` |
 
 A conversation is named by the client and bound to a session by the runtime on
@@ -615,6 +733,3 @@ src/config/         zod-validated configuration sections
 src/database/       Drizzle schema, migrations and the session store
 src/application.ts  the composition root
 ```
-
-`ULTRA_OLD_DO_NOT_CHECK/` and `idk_yet/` are previous generations, kept as
-reference while the port completes. Nothing in `src/` may import from them.

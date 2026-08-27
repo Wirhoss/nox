@@ -42,9 +42,8 @@ interface ReadHistoryInput extends ConversationInput {
 
 interface SendMessageInput extends ConversationInput {
   readonly agentId?: string
-  readonly content?: readonly ChatContentPart[]
+  readonly content: readonly ChatContentPart[]
   readonly messageId: string
-  readonly text: string
 }
 
 interface SubmitCommandInput extends ConversationInput {
@@ -124,27 +123,21 @@ const chatApi: ChatApi = {
     return requestJson(path, chatHistorySchema, { headers: authorization(accessToken) })
   },
 
-  sendMessage({ accessToken, agentId, content, conversationId, messageId, text }) {
+  sendMessage({ accessToken, agentId, content, conversationId, messageId }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/messages`
     return requestJson(
       path,
       acceptedMessageSchema,
-      postJson(
-        accessToken,
-        content === undefined ? { agentId, messageId, text } : { agentId, content, messageId },
-      ),
+      postJson(accessToken, { agentId, content, messageId }),
     )
   },
 
-  sendSteer({ accessToken, agentId, content, conversationId, messageId, text }) {
+  sendSteer({ accessToken, agentId, content, conversationId, messageId }) {
     const path = `/chat/conversations/${encodeURIComponent(conversationId)}/steer`
     return requestJson(
       path,
       acceptedMessageSchema,
-      postJson(
-        accessToken,
-        content === undefined ? { agentId, messageId, text } : { agentId, content, messageId },
-      ),
+      postJson(accessToken, { agentId, content, messageId }),
     )
   },
 

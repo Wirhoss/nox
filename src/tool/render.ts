@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { JsonSchema } from '../utils/jsonSchema';
-import type { Tool } from './tool';
+import type { Tool } from '@nox/extension-api';
 
 const MAX_DEPTH = 3;
 const ARTIFACT_OUTPUT_NOTICE =

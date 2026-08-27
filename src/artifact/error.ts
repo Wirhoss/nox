@@ -52,6 +52,27 @@ class ArtifactProcessorOutputError extends Error {
   }
 }
 
+function isArtifactProcessorOutputError(error: unknown): error is ArtifactProcessorOutputError {
+  return (
+    error instanceof ArtifactProcessorOutputError ||
+    (error instanceof Error &&
+      error.name === 'ArtifactProcessorOutputError' &&
+      typeof Reflect.get(error, 'processorId') === 'string')
+  );
+}
+
+function isArtifactRepresentationUnavailableError(
+  error: unknown,
+): error is ArtifactRepresentationUnavailableError {
+  return (
+    error instanceof ArtifactRepresentationUnavailableError ||
+    (error instanceof Error &&
+      error.name === 'ArtifactRepresentationUnavailableError' &&
+      typeof Reflect.get(error, 'artifactId') === 'string' &&
+      typeof Reflect.get(error, 'profileId') === 'string')
+  );
+}
+
 class ArtifactProcessorDeterminismError extends Error {
   public readonly processorId: string;
 
@@ -72,4 +93,6 @@ export {
   ArtifactRepresentationUnavailableError,
   ArtifactStorageQuotaError,
   ArtifactTooLargeError,
+  isArtifactProcessorOutputError,
+  isArtifactRepresentationUnavailableError,
 };

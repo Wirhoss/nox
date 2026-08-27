@@ -1,13 +1,17 @@
+import {
+  type MessageContent,
+  prepareTool,
+  type Tool,
+  type ToolExecution,
+  ToolSet,
+  UnknownToolError,
+} from '@nox/extension-api';
 import { z } from 'zod';
 
 import { TOOL_CALL_AUTHORITY, TOOL_SEARCH_AUTHORITY } from '../auth/coreAuthorities';
 import { BM25 } from '../utils/bm25';
 import { stableStringify } from '../utils/json';
-import { UnknownToolError } from './error';
 import { renderTool } from './render';
-import { prepareTool, type Tool, type ToolExecution, ToolSet } from './tool';
-
-import type { MessageContent } from '../agent/context/message';
 
 const ROUTER_TOOL_NAMES = Object.freeze(['call_tool', 'search_tool'] as const);
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);

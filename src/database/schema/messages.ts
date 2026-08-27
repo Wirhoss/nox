@@ -1,11 +1,11 @@
+import {
+  type MessageContent,
+  TOOL_OUTPUT_TRUST,
+  TOOL_RESPONSE_EXECUTIONS,
+} from '@nox/extension-api';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-import {
-  MESSAGE_ROLES,
-  type MessageContent,
-  TOOL_RESPONSE_EXECUTIONS,
-} from '../../agent/context/message';
-import { TOOL_OUTPUT_TRUST } from '../../tool/tool';
+import { MESSAGE_ROLES } from '../../agent/context/message';
 import { sessions } from './sessions';
 
 const messages = sqliteTable(
@@ -38,12 +38,7 @@ const messages = sqliteTable(
     trackId: text('track_id'),
     /** The transport's own ID for the message the principal sent. */
     transportMessageId: text('transport_message_id'),
-    /**
-     * Whose writing a tool response is, for the roles that have one. Nullable
-     * because no other role does, and because rows written before this column
-     * existed cannot say — both read back as `untrusted`, which is the reading
-     * that fences content rather than trusting it by default.
-     */
+    /** Whose writing a tool response is. Null for message roles that do not use it. */
     trust: text('trust', { enum: TOOL_OUTPUT_TRUST }),
   },
   (table) => [

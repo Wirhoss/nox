@@ -3,8 +3,8 @@ import { composeSessionTools } from '../../agent/tools';
 import type { AuthorityCatalog } from '../../auth/authority';
 import type { Blueprint, ToolSetGrantConfig } from '../../config/blueprint';
 import type { Config } from '../../config/config';
-import type { ContributionReader } from '../../extensions/contribution';
 import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
+import type { ContributionReader } from '@nox/extension-api';
 
 /**
  * A blueprint that could not activate as a replacement generation. Saving one is how

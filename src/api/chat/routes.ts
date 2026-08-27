@@ -1,13 +1,18 @@
+import {
+  type ChatEvent,
+  type ChatTransport,
+  type ContentPart,
+  speechContentSchema,
+} from '@nox/extension-api';
 import { Elysia } from 'elysia';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
-import { type ContentPart, speechContentSchema, textFromContent } from '../../content/content';
 import { authGuard } from '../auth/guard';
 
 import type { ArtifactPipeline } from '../../artifact/pipeline';
 import type { AuthStore } from '../auth/store';
-import type { ChatEvent, ChatHub, ChatTransport } from './transport';
+import type { ChatHub } from './transport';
 
 /**
  * How often the stream says something when the conversation does not. Nothing
@@ -51,23 +56,17 @@ const permissionParamsSchema = conversationParamsSchema.extend({
   requestId: z.string().trim().min(1).max(64),
 });
 
-const messageSchema = z
-  .object({
-    /** Explicit route selected for a new Web conversation. */
-    agentId: z.string().trim().min(1).max(64).optional(),
-    /** Structured content is canonical; `text` keeps older text clients compatible. */
-    content: speechContentSchema.optional(),
-    /**
-     * The client's own id for what it sent, so a retry after a lost response is
-     * the same message rather than a second turn. Optional: a client that does not
-     * retry has nothing to name.
-     */
-    messageId: z.string().trim().min(1).max(64).optional(),
-    text: z.string().min(1).max(32_000).optional(),
-  })
-  .refine((body) => body.content !== undefined || body.text !== undefined, {
-    message: 'Provide content or text.',
-  });
+const messageSchema = z.object({
+  /** Explicit route selected for a new Web conversation. */
+  agentId: z.string().trim().min(1).max(64).optional(),
+  content: speechContentSchema,
+  /**
+   * The client's own id for what it sent, so a retry after a lost response is
+   * the same message rather than a second turn. Optional: a client that does not
+   * retry has nothing to name.
+   */
+  messageId: z.string().trim().min(1).max(64).optional(),
+});
 
 const decisionSchema = z.object({
   decision: z.enum(['approve', 'deny']),
@@ -233,8 +232,7 @@ function createChatRoutes(options: ChatRoutesOptions) {
           if (transport === undefined) return status(503, UNAVAILABLE);
 
           const messageId = body.messageId ?? nanoid();
-          const submitted = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
-          const content = await canonicalContent(submitted, account.accountId);
+          const content = await canonicalContent(body.content, account.accountId);
           if (content === undefined) return status(400, INVALID_ARTIFACT);
           const rejection = transport.submitMessage({
             ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
@@ -242,7 +240,6 @@ function createChatRoutes(options: ChatRoutesOptions) {
             conversationId: params.conversationId,
             messageId,
             senderId: account.accountId,
-            text: textFromContent(content).trim(),
           });
 
           switch (rejection?.reason) {
@@ -275,8 +272,7 @@ function createChatRoutes(options: ChatRoutesOptions) {
           if (transport === undefined) return status(503, UNAVAILABLE);
 
           const messageId = body.messageId ?? nanoid();
-          const submitted = body.content ?? [{ text: body.text ?? '', type: 'text' as const }];
-          const content = await canonicalContent(submitted, account.accountId);
+          const content = await canonicalContent(body.content, account.accountId);
           if (content === undefined) return status(400, INVALID_ARTIFACT);
           const rejection = transport.submitSteer({
             ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
@@ -284,7 +280,6 @@ function createChatRoutes(options: ChatRoutesOptions) {
             conversationId: params.conversationId,
             messageId,
             senderId: account.accountId,
-            text: textFromContent(content).trim(),
           });
 
           switch (rejection?.reason) {

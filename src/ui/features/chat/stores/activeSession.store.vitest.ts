@@ -746,9 +746,7 @@ describe('active chat surface integration', () => {
     ]
     expect(await session.sendContent(content)).toBe(true)
 
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ content, text: 'Inspect this.' }),
-    )
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ content }))
     expect(session.items.find((item) => item.kind === 'user')).toMatchObject({
       media: [{ type: 'image' }],
       text: 'Inspect this.',
@@ -777,8 +775,8 @@ describe('active chat surface integration', () => {
     expect(await session.send('Change direction.')).toBe(true)
     expect(sendSteer).toHaveBeenCalledWith(
       expect.objectContaining({
+        content: [{ text: 'Change direction.', type: 'text' }],
         conversationId: session.conversationId,
-        text: 'Change direction.',
       }),
     )
     expect(session.items.find((item) => item.kind === 'user')).toMatchObject({

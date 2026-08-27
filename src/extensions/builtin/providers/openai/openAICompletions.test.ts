@@ -2,6 +2,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  isProviderError,
+  type Message,
+  type ModelConfig,
+  type ProviderErrorCode,
+  type ProviderStreamEvent,
+  type Tool,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -10,7 +18,6 @@ import { ArtifactPipeline, artifactRef } from '../../../../artifact/pipeline';
 import { ArtifactProcessorRegistry } from '../../../../artifact/processor';
 import { SecretHandle } from '../../../../config/secrets';
 import { Database } from '../../../../database/database';
-import { isProviderError, type ProviderErrorCode } from '../../../../provider/error';
 import {
   permissiveAuthorization,
   TEST_AUTHORITY,
@@ -19,11 +26,6 @@ import {
 } from '../../../../testFixtures';
 import { ARTIFACT_OUTPUT_NOTICE } from '../../../../tool/render';
 import { OpenAICompletions } from './openAICompletions';
-
-import type { Message } from '../../../../agent/context/message';
-import type { ModelConfig } from '../../../../provider/config';
-import type { ProviderStreamEvent } from '../../../../provider/stream';
-import type { Tool } from '../../../../tool/tool';
 
 interface RecordedRequest {
   body: Record<string, unknown>;

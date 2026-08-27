@@ -1,7 +1,12 @@
-import { z } from 'zod';
+import {
+  type ArtifactOutputPublisher,
+  httpUrlSchema,
+  type MessageContent,
+  stableStringify,
+  type Tool,
+  z,
+} from '@nox/extension-api';
 
-import { httpUrlSchema } from '../../../../../config/url';
-import { stableStringify } from '../../../../../utils/json';
 import {
   harvestImages,
   pageFilename,
@@ -10,9 +15,6 @@ import {
   publishText,
 } from '../artifacts';
 
-import type { MessageContent } from '../../../../../agent/context/message';
-import type { ArtifactOutputPublisher } from '../../../../../artifact/output';
-import type { Tool } from '../../../../../tool/tool';
 import type { ExtractCapability, ExtractedPage, PageCapture } from '../capabilities';
 
 const WEB_EXTRACT_AUTHORITY = 'nox.toolset.web.extract';

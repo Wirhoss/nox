@@ -1,9 +1,7 @@
 import type { AuthorizationDecision } from '../auth/authorization';
-import type { PrincipalRef, RunAuthority } from '../auth/principal';
-import type { ProviderError } from '../provider/error';
-import type { Usage } from '../provider/stream';
+import type { RunAuthority } from '../auth/principal';
 import type { PermissionRequest, PermissionResolution } from '../tool/gate';
-import type { Message } from './context/message';
+import type { Message, PrincipalRef, ProviderError, Usage } from '@nox/extension-api';
 
 /** How a run ended. `maxIterations` means the answer is probably truncated. */
 type RunStatus = 'aborted' | 'completed' | 'failed' | 'maxIterations';

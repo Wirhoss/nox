@@ -1,17 +1,15 @@
+import {
+  contentToString,
+  type Message,
+  type MessageContentText,
+  type ToolResponseMessage,
+} from '@nox/extension-api';
 import { z } from 'zod';
 
 import { BM25 } from '../../utils/bm25';
 import { parseOrThrow } from '../../utils/validate';
 import { freezeMessage } from './immutable';
-import {
-  contentToString,
-  type Message,
-  type MessageContentText,
-  messageIdentityToString,
-  messageToString,
-  type ToolResponseMessage,
-  trackedHeaderToString,
-} from './message';
+import { messageIdentityToString, messageToString, trackedHeaderToString } from './message';
 
 import type { Logger } from '../../logger/logger';
 

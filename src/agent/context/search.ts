@@ -1,7 +1,7 @@
+import { bindTool, type Tool, ToolSet } from '@nox/extension-api';
 import { z } from 'zod';
 
 import { HISTORY_READ_AUTHORITY, HISTORY_SEARCH_AUTHORITY } from '../../auth/coreAuthorities';
-import { bindTool, type Tool, ToolSet } from '../../tool/tool';
 
 import type { Transcript } from './transcript';
 

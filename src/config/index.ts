@@ -11,12 +11,9 @@ export {
   resolveSecrets,
   SecretError,
   SecretHandle,
-  secretIdSchema,
-  secretRefSchema,
   SecretStore,
 } from './secrets';
 export { sections } from './sections';
-export { httpUrlSchema } from './url';
 
 export type { AppConfig } from './app';
 export type { Blueprint, ToolSetGrantConfig } from './blueprint';
@@ -33,12 +30,8 @@ export type {
 export type {
   ResolvedEntry,
   ResolvedSecrets,
-  SecretConsumer,
   SecretErrorCode,
   SecretMetadata,
-  SecretRef,
-  SecretReference,
   SecretStoreOptions,
-  SecretSummary,
 } from './secrets';
 export type { ConfigKey, ConfigMap } from './sections';

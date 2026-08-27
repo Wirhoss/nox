@@ -1,22 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type ChatEvent, ChatHub } from '../../../../api/chat';
+import { ChatHub } from '../../../../api/chat';
 import { silentLogger } from '../../../../logger/logger';
 import { testPrincipal } from '../../../../testFixtures';
 import { WebBroker } from './webBroker';
 
 import type {
+  BrokerCommandSpec,
   BrokerHistory,
   BrokerHost,
   BrokerSession,
-  InboundEvent,
-} from '../../../../gateway/broker';
-import type {
-  BrokerCommandSpec,
+  ChatEvent,
   CommandInvocation,
   CommandRejection,
-} from '../../../../gateway/command';
-import type { PermissionRequest } from '../../../../tool/gate';
+  InboundEvent,
+  PermissionRequest,
+} from '@nox/extension-api';
 
 const CONVERSATION = 'nJ8xKqLm2p';
 
@@ -509,7 +508,6 @@ describe('the web broker', () => {
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
-      text: 'hola',
     });
 
     expect(received).toHaveLength(1);
@@ -559,7 +557,6 @@ describe('the web broker', () => {
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
-      text: 'hola',
     });
 
     expect(received).toBeEmpty();
@@ -573,7 +570,6 @@ describe('the web broker', () => {
       conversationId: CONVERSATION,
       messageId: 'm-1',
       senderId: 'account-1',
-      text: 'mejor no',
     });
 
     // Steering and ordinary speech reach the gateway the same way, but the

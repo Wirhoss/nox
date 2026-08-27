@@ -5,12 +5,12 @@ import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
 import { ConfigError } from './error';
 import { type LoaderContext, loadSection, removeEntry, updateEntry, updateSection } from './loader';
-import { findSecretReferences, type SecretReference } from './secrets';
+import { findSecretReferences } from './secrets';
 import { type ConfigKey, type ConfigMap, sections, type Sections } from './sections';
 
-import type { ContributionReader } from '../extensions/contribution';
 import type { EnvConfig } from './env';
 import type { ConfigSection, ContributionSection, DirectorySection } from './section';
+import type { ContributionReader, SecretReference } from '@nox/extension-api';
 
 interface ConfigOptions {
   logger?: Logger;
@@ -189,8 +189,10 @@ class Config {
   }
 
   /** Re-reads mounted files, preserving each last valid in-memory document independently. */
-  public reload(): Promise<ConfigReloadResult> {
-    return this.#updates.run(() => this.#reloadKeys(Object.keys(sections) as ConfigKey[]));
+  public reload(
+    keys: readonly ConfigKey[] = Object.keys(sections) as ConfigKey[],
+  ): Promise<ConfigReloadResult> {
+    return this.#updates.run(() => this.#reloadKeys([...new Set(keys)]));
   }
 
   /**

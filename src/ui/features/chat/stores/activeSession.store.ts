@@ -496,10 +496,9 @@ const useActiveSessionStore = defineStore('active-session', () => {
       const input = {
         accessToken,
         agentId: selectedAgentId.value,
-        content,
+        content: content ?? [{ text, type: 'text' as const }],
         conversationId: conversationId.value,
         messageId,
-        text,
       }
       if (mode === 'steer') await chatApi.sendSteer(input)
       else await chatApi.sendMessage(input)

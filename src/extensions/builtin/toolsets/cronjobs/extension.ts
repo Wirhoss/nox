@@ -1,11 +1,14 @@
-import { configService, databaseService, scheduledRunHostService } from '../../../../services';
-import { authorities } from '../../../contribution-points/authorities';
 import {
+  authorities,
+  configService,
+  defineExtension,
   defineTranslationFragment,
+  scheduledRunHostService,
+  toolSetContribution,
+  toolSets,
   translationFragments,
-} from '../../../contribution-points/languages';
-import { toolSetContribution, toolSets } from '../../../contribution-points/toolsets';
-import { defineExtension } from '../../../extension';
+} from '@nox/extension-api';
+
 import { cronJobsConfigSchema, CronJobsToolSet, policyFrom } from './cronJobsToolSet';
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
@@ -15,7 +18,6 @@ import { CRON_READ_AUTHORITY, CRON_RUN_AUTHORITY, CRON_WRITE_AUTHORITY } from '.
 
 /** Contributes persistent scheduled prompts and the timer wheel that submits them. */
 const cronJobsExtension = defineExtension({
-  manifest: { engines: { nox: '^0.1.0' }, id: 'nox.toolset.cronjobs' },
   activate(context) {
     context.contributions.register(
       translationFragments,
@@ -60,7 +62,7 @@ const cronJobsExtension = defineExtension({
             const parsed = cronJobsConfigSchema.safeParse(entry);
             return parsed.success ? policyFrom(parsed.data, config.get('app').timezone) : undefined;
           },
-          store: new CronJobStore(context.services.get(databaseService)),
+          store: new CronJobStore(context.storage),
         }),
       );
       void scheduler.start().catch((error: unknown) => {
@@ -85,4 +87,5 @@ const cronJobsExtension = defineExtension({
   },
 });
 
+export default cronJobsExtension;
 export { cronJobsExtension };

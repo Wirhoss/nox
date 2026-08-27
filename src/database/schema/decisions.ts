@@ -4,7 +4,7 @@ import { sessions } from './sessions';
 
 import type { DecisionStage } from '../../auth/audit';
 import type { PermissionResolution, RiskSignal } from '../../tool/gate';
-import type { ToolRisk } from '../../tool/tool';
+import type { ToolRisk } from '@nox/extension-api';
 
 /**
  * Every decision that stood between a tool call and its execution, in one table.

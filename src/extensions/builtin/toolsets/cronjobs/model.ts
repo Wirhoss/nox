@@ -1,11 +1,22 @@
+import {
+  ianaTimeZoneSchema,
+  type MessageContent,
+  type ScheduledRunDelivery,
+  z,
+} from '@nox/extension-api';
 import { Cron } from 'croner';
-import { z } from 'zod';
 
-import { ianaTimeZoneSchema } from '../../../../config/app';
-
-import type { MessageContent } from '../../../../agent/context/message';
-import type { CronJobStatus, CronRunStatus } from '../../../../database/schema';
-import type { ScheduledRunDelivery } from '../../../../scheduler/scheduledRun';
+type CronJobStatus =
+  | 'aborted'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'maxIterations'
+  | 'queued'
+  | 'running'
+  | 'scheduled'
+  | 'skipped';
+type CronRunStatus = Exclude<CronJobStatus, 'scheduled'>;
 
 const cronExpressionSchema = z
   .string()

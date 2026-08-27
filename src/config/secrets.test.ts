@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { type SecretConsumer, type SecretReference, secretRefSchema } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
@@ -11,11 +12,8 @@ import {
   composeWithSecrets,
   findSecretReferences,
   resolveSecrets,
-  type SecretConsumer,
   SecretError,
   SecretHandle,
-  type SecretReference,
-  secretRefSchema,
   SecretStore,
 } from './secrets';
 

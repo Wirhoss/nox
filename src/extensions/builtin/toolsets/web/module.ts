@@ -1,7 +1,4 @@
-import { z } from 'zod';
-
-import { SecretHandle, secretRefSchema } from '../../../../config/secrets';
-import { httpUrlSchema } from '../../../../config/url';
+import { httpUrlSchema, type SecretHandle, secretRefSchema, z } from '@nox/extension-api';
 
 import type { BrowserCapability, ExtractCapability, SearchCapability } from './capabilities';
 
@@ -30,7 +27,14 @@ type WebSlot = (typeof WEB_SLOTS)[number];
 type CredentialSchema = typeof secretRefSchema | z.ZodType<SecretHandle>;
 
 const storedCredentialSchema = secretRefSchema;
-const runtimeCredentialSchema: z.ZodType<SecretHandle> = z.instanceof(SecretHandle);
+const runtimeCredentialSchema: z.ZodType<SecretHandle> = z.custom<SecretHandle>(
+  (value) =>
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'id') === 'string' &&
+    typeof Reflect.get(value, 'reveal') === 'function',
+  'Expected an opaque secret handle supplied by Nox.',
+);
 
 /** Validated config, seen by the registry with the module's own types erased. */
 type WebModuleConfig = Readonly<Record<string, unknown>>;

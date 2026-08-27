@@ -1,11 +1,33 @@
-import { describe, expect, test } from 'bun:test';
-
 import {
   modelAcceptsInput,
   modelConfigSchema,
   modelInputModalities,
   modelProducesOutput,
-} from './config';
+  providerRuntimeConfigSchema,
+} from '@nox/extension-api';
+import { describe, expect, test } from 'bun:test';
+
+describe('provider runtime configuration', () => {
+  test('accepts a host secret capability without relying on constructor identity', () => {
+    // This deliberately is not Config.SecretHandle. A compiled extension has a
+    // separate module graph and must accept the genuine host handle structurally.
+    class ForeignSecretHandle {
+      public readonly id = 'DEEPSEEK_API_KEY';
+
+      public reveal(): string {
+        return 'not-exposed';
+      }
+    }
+
+    const handle = new ForeignSecretHandle();
+    const parsed = providerRuntimeConfigSchema.parse({
+      apiKey: handle,
+      baseUrl: 'https://api.deepseek.com/v1',
+    });
+
+    expect(parsed.apiKey?.reveal()).toBe('not-exposed');
+  });
+});
 
 describe('model modalities', () => {
   test('is text-only until additional capabilities are declared', () => {
@@ -29,15 +51,6 @@ describe('model modalities', () => {
     expect(modelAcceptsInput(model, 'audio')).toBe(true);
     expect(modelProducesOutput(model, 'image')).toBe(false);
     expect(modelProducesOutput(model, 'audio')).toBe(true);
-  });
-
-  test('materializes output capabilities beside the legacy text type', () => {
-    expect(modelConfigSchema.parse({ modelId: 'legacy', type: 'text' })).toEqual({
-      inputModalities: ['text'],
-      modelId: 'legacy',
-      outputModalities: ['text'],
-      type: 'text',
-    });
   });
 
   test('refuses a chat model without text on either side of its contract', () => {

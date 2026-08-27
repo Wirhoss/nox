@@ -12,11 +12,10 @@ import {
   sessions,
 } from './schema';
 
-import type { Message } from '../agent/context/message';
 import type { AuthorizationAuditRecord, StoredDecision } from '../auth/audit';
-import type { PrincipalRef } from '../auth/principal';
 import type { GateAuditRecord, PermissionResolution } from '../tool/gate';
 import type { Database, NoxDrizzle } from './database';
+import type { Message, PrincipalRef } from '@nox/extension-api';
 
 interface SessionStoreOptions {
   logger?: Logger;
@@ -250,10 +249,7 @@ function toMessage(row: MessageRow): Message {
         response: row.content ?? fail(row, 'content'),
         role: row.role,
         trackId: row.trackId ?? fail(row, 'trackId'),
-        // Not `fail`: a row from before trust was recorded is a real row of a
-        // real session, and the safe reading of a missing verdict is the one
-        // that fences the content rather than the one that vouches for it.
-        trust: row.trust ?? 'untrusted',
+        trust: row.trust ?? fail(row, 'trust'),
       };
   }
 }

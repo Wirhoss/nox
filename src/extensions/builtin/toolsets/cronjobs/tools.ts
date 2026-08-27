@@ -1,6 +1,5 @@
-import { z } from 'zod';
+import { stableStringify, type Tool, type ToolContext, z } from '@nox/extension-api';
 
-import { stableStringify } from '../../../../utils/json';
 import {
   cronDeliverySchema,
   type CronJobPolicy,
@@ -8,7 +7,6 @@ import {
   cronScheduleInputSchema,
 } from './model';
 
-import type { Tool, ToolContext } from '../../../../tool/tool';
 import type { CronJobManager } from './scheduler';
 
 const CRON_READ_AUTHORITY = 'nox.toolset.cronjobs.read';

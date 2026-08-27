@@ -4,7 +4,7 @@ import { testOrigin } from '../../testFixtures';
 import { HistorySearchToolSet } from './search';
 import { Transcript } from './transcript';
 
-import type { Message, MessageContent } from './message';
+import type { Message, MessageContent } from '@nox/extension-api';
 
 const AT = new Date('2025-01-01T00:00:00.000Z');
 

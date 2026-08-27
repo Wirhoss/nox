@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { artifactIdSchema } from '../artifact/types';
 import { ARTIFACT_ATTACH_AUTHORITY, ARTIFACT_READ_AUTHORITY } from '../auth/coreAuthorities';
 
-import type { Tool } from '../tool/tool';
+import type { Tool } from '@nox/extension-api';
 
 const ATTACH_ARTIFACT_TOOL_NAME = 'attach_artifact';
 const READ_ARTIFACT_TOOL_NAME = 'read_artifact';

@@ -2,14 +2,18 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  type ChatProvider,
+  providerBaseConfigSchema,
+  providerContribution,
+  providers,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
 import { ContributionRegistry } from '../extensions/contribution';
-import { providerContribution, providers } from '../extensions/contribution-points/providers';
 import { DisposableStore } from '../extensions/disposable';
 import { silentLogger } from '../logger/logger';
-import { providerBaseConfigSchema } from '../provider/config';
 import { appConfigSchema } from './app';
 import { blueprintSchema } from './blueprint';
 import { Config } from './config';
@@ -24,8 +28,6 @@ import {
   writeJson,
 } from './loader';
 import { directorySection, fileSection } from './section';
-
-import type { ChatProvider } from '../provider/provider';
 
 const created: string[] = [];
 
@@ -755,8 +757,15 @@ describe('readEnvConfig', () => {
       configWatchDebounceMs: 250,
       dataDir: '/var/lib/nox',
       environment: 'development',
+      extensionsDir: join('/var/lib/nox', 'extensions'),
       uiDir: '/app/ui',
     });
+  });
+
+  test('does not expose a builtin extension directory override', () => {
+    expect(readEnvConfig({ BUILTIN_EXTENSIONS_DIR: '/tmp/pretend-builtins' })).not.toHaveProperty(
+      'builtinExtensionsDir',
+    );
   });
 
   test('rejects an environment it does not know', () => {

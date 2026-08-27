@@ -10,21 +10,22 @@ import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
-import {
-  type ChatCommand,
-  type ChatCommandInput,
-  type ChatCommandRejection,
-  type ChatConversation,
-  type ChatDecisionInput,
-  type ChatEvent,
-  type ChatHistory,
-  type ChatHistoryInput,
-  ChatHub,
-  type ChatListener,
-  type ChatMessageInput,
-  type ChatMessageRejection,
-  type ChatTransport,
-} from './transport';
+import { ChatHub } from './transport';
+
+import type {
+  ChatCommand,
+  ChatCommandInput,
+  ChatCommandRejection,
+  ChatConversation,
+  ChatDecisionInput,
+  ChatEvent,
+  ChatHistory,
+  ChatHistoryInput,
+  ChatListener,
+  ChatMessageInput,
+  ChatMessageRejection,
+  ChatTransport,
+} from '@nox/extension-api';
 
 const databases: Database[] = [];
 const directories: string[] = [];
@@ -196,7 +197,7 @@ describe('the chat routes', () => {
 
     const stream = await fetch(`${url}/chat/stream`);
     const message = await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
-      body: JSON.stringify({ text: 'hola' }),
+      body: JSON.stringify({ content: [{ text: 'hola', type: 'text' }] }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     });
@@ -210,7 +211,7 @@ describe('the chat routes', () => {
 
     const stream = await fetch(`${url}/chat/stream`, { headers });
     const message = await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
-      body: JSON.stringify({ text: 'hola' }),
+      body: JSON.stringify({ content: [{ text: 'hola', type: 'text' }] }),
       headers,
       method: 'POST',
     });
@@ -225,7 +226,7 @@ describe('the chat routes', () => {
     hub.attach(transport);
 
     const response = await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
-      body: JSON.stringify({ text: 'revisa mis correos' }),
+      body: JSON.stringify({ content: [{ text: 'revisa mis correos', type: 'text' }] }),
       headers,
       method: 'POST',
     });
@@ -234,9 +235,9 @@ describe('the chat routes', () => {
     expect(response.status).toBe(202);
     expect(transport.messages).toHaveLength(1);
     expect(transport.messages[0]).toMatchObject({
+      content: [{ text: 'revisa mis correos', type: 'text' }],
       conversationId: CONVERSATION,
       senderId: accountId,
-      text: 'revisa mis correos',
     });
   });
 
@@ -288,7 +289,6 @@ describe('the chat routes', () => {
       ],
       conversationId: CONVERSATION,
       senderId: accountId,
-      text: 'What is this?',
     });
   });
 
@@ -298,12 +298,12 @@ describe('the chat routes', () => {
     hub.attach(transport);
 
     const chosen = await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
-      body: JSON.stringify({ messageId: 'retry-me', text: 'hola' }),
+      body: JSON.stringify({ content: [{ text: 'hola', type: 'text' }], messageId: 'retry-me' }),
       headers,
       method: 'POST',
     });
     await fetch(`${url}/chat/conversations/${CONVERSATION}/messages`, {
-      body: JSON.stringify({ text: 'hola otra vez' }),
+      body: JSON.stringify({ content: [{ text: 'hola otra vez', type: 'text' }] }),
       headers,
       method: 'POST',
     });
@@ -321,7 +321,7 @@ describe('the chat routes', () => {
     hub.attach(transport);
 
     const response = await fetch(`${url}/chat/conversations/not%20an%20id/messages`, {
-      body: JSON.stringify({ text: 'hola' }),
+      body: JSON.stringify({ content: [{ text: 'hola', type: 'text' }] }),
       headers,
       method: 'POST',
     });
@@ -454,7 +454,7 @@ describe('the chat hub', () => {
       nox.hub.attach(transport);
 
       const response = await fetch(`${nox.url}/chat/conversations/${CONVERSATION}/steer`, {
-        body: JSON.stringify({ text: 'mejor no' }),
+        body: JSON.stringify({ content: [{ text: 'mejor no', type: 'text' }] }),
         headers: nox.headers,
         method: 'POST',
       });
@@ -462,9 +462,9 @@ describe('the chat hub', () => {
       expect(response.status).toBe(202);
       expect(transport.steers).toHaveLength(1);
       expect(transport.steers[0]).toMatchObject({
+        content: [{ text: 'mejor no', type: 'text' }],
         conversationId: CONVERSATION,
         senderId: nox.accountId,
-        text: 'mejor no',
       });
       // Steering intent stays explicit instead of being flattened into a message.
       expect(transport.messages).toHaveLength(0);
@@ -641,7 +641,7 @@ describe('the chat hub', () => {
         fetch(`${nox.url}/chat/conversations`),
         fetch(`${nox.url}/chat/conversations/${CONVERSATION}/history`),
         fetch(`${nox.url}/chat/conversations/${CONVERSATION}/steer`, {
-          body: JSON.stringify({ text: 'mejor no' }),
+          body: JSON.stringify({ content: [{ text: 'mejor no', type: 'text' }] }),
           headers: json,
           method: 'POST',
         }),
@@ -661,7 +661,7 @@ describe('the chat hub', () => {
         fetch(`${nox.url}/chat/conversations`, { headers: nox.headers }),
         fetch(`${nox.url}/chat/conversations/${CONVERSATION}/history`, { headers: nox.headers }),
         fetch(`${nox.url}/chat/conversations/${CONVERSATION}/steer`, {
-          body: JSON.stringify({ text: 'mejor no' }),
+          body: JSON.stringify({ content: [{ text: 'mejor no', type: 'text' }] }),
           headers: nox.headers,
           method: 'POST',
         }),

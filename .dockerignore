@@ -2,7 +2,7 @@
 # secrets, local state and host-specific artefacts out of every layer.
 
 # dependencies — reinstalled inside the image from the lockfile
-node_modules
+**/node_modules
 nox-ui
 
 # version control and tooling

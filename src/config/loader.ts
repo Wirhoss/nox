@@ -2,9 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import {
+  type ContributionReader,
+  entryIdSchema,
+  instanceIdSchema,
+  isConfigurable,
+} from '@nox/extension-api';
 import { z } from 'zod';
 
-import { type ContributionReader, isConfigurable } from '../extensions/contribution';
 import { diffPaths, stableStringify } from '../utils/json';
 import { ConfigError } from './error';
 
@@ -121,15 +126,6 @@ async function materialize<T>(
 }
 
 /**
- * Instance IDs name a configured instance, not a kind: two entries may both be
- * `openai_completions` and differ only in `baseUrl`. Keeping them separate from
- * the contribution ID is what makes more than one instance of a kind possible.
- */
-const instanceIdSchema = z
-  .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'Use letters, digits, dots, dashes or underscores.');
-
-/**
  * Assembles a contribution section's exact schema from what is registered right
  * now: a record of instance ID to the discriminated union of every declared
  * `configSchema`. This is the only schema in the system that cannot be written
@@ -237,8 +233,6 @@ async function loadDirectorySection<T>(
  * use — a blueprint's ID is the agent's name, and there is no reason for two
  * dialects of the same idea — with a length a file name can actually carry.
  */
-const entryIdSchema = instanceIdSchema.max(64);
-
 function entryPath(section: DirectorySection, context: LoaderContext, entryId: string): string {
   const directory = join(context.configDir, section.name);
   if (!entryIdSchema.safeParse(entryId).success) {

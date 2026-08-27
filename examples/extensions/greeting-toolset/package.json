@@ -1,0 +1,12 @@
+{
+  "name": "example-nox-greeting-toolset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/extension.ts --target=bun --outdir=./dist --external=@nox/extension-api --external=zod"
+  },
+  "devDependencies": {
+    "@nox/extension-api": "^0.1.0"
+  }
+}

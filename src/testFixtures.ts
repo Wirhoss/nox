@@ -2,9 +2,10 @@ import { COMPACT_PROMPT } from './agent/context/prompt';
 import { TITLE_PROMPT } from './agent/title';
 import { AuthorityCatalog } from './auth/authority';
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
-import { type MessageOrigin, principal, type PrincipalRef } from './auth/principal';
+import { principal } from './auth/principal';
 
 import type { AuthorizationDecision, AuthorizationProvider } from './auth/authorization';
+import type { MessageOrigin, PrincipalRef } from '@nox/extension-api';
 
 /**
  * Shared fixtures for the test suite — imported by tests, never a test itself,

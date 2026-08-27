@@ -1,6 +1,7 @@
+import { type PrincipalRef, principalToString } from '@nox/extension-api';
+
 import { raceWithAbort } from '../utils/abort';
 import { type AuthorityCatalog, type GrantPattern, matchesPattern } from './authority';
-import { type PrincipalRef, principalToString } from './principal';
 
 import type { Logger } from '../logger/logger';
 

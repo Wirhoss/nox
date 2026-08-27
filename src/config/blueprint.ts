@@ -1,7 +1,7 @@
+import { samplingParametersConfigSchema } from '@nox/extension-api';
 import { z } from 'zod';
 
 import { contextPolicySchema } from '../agent/context/options';
-import { samplingParametersConfigSchema } from '../provider/config';
 import { gatePolicySchema } from '../tool/gate/config';
 
 const taskModelConfigSchema = z.object({

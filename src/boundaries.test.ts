@@ -5,12 +5,10 @@ import { Glob } from 'bun';
 import { describe, expect, test } from 'bun:test';
 
 const SRC = import.meta.dir;
+const EXTENSION_API = resolve(SRC, '..', 'packages', 'extension-api', 'src');
 const BUILTIN = 'extensions/builtin/';
 const UI = 'ui/';
 
-// The composition root is the one layer allowed to name concrete
-// capabilities — that is what makes it the composition root. Naming it here
-// rather than pattern-matching keeps a second one from appearing quietly.
 const COMPOSITION_ROOT = 'bootstrap.ts';
 
 function posix(path: string): string {
@@ -38,7 +36,37 @@ function builtinPackage(path: string): string | undefined {
   return point === undefined || name === undefined ? undefined : `${BUILTIN}${point}/${name}`;
 }
 
+describe('Extension API package', () => {
+  test('is autonomous and never imports a kernel source file', () => {
+    const violations: string[] = [];
+
+    for (const relativeFile of [...new Glob('**/*.ts').scanSync(EXTENSION_API)].map(posix)) {
+      const file = join(EXTENSION_API, relativeFile);
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/from\s+'([^']+)'/g)) {
+        const specifier = match[1] ?? '';
+        if (!specifier.startsWith('.')) continue;
+        const target = resolve(dirname(file), specifier);
+        if (!target.startsWith(EXTENSION_API)) {
+          violations.push(`${relativeFile} imports ${specifier}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+});
+
 describe('kernel boundaries', () => {
+  test('does not re-export the Extension API through compatibility modules', () => {
+    const violations = sourceFiles().filter((file) => {
+      const source = readFileSync(join(SRC, file), 'utf8');
+      return /export\s+(?:type\s+)?(?:\*|\{[^}]*\})\s+from\s+'@nox\/extension-api'/u.test(source);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   test('the UI and kernel communicate only through the HTTP surface', () => {
     const violations: string[] = [];
 
@@ -62,7 +90,7 @@ describe('builtin extensions', () => {
     const violations: string[] = [];
 
     for (const file of sourceFiles()) {
-      if (file.startsWith(BUILTIN) || file === COMPOSITION_ROOT) continue;
+      if (file.startsWith(BUILTIN)) continue;
 
       for (const target of localImports(file)) {
         if (target.startsWith(BUILTIN)) {
@@ -71,9 +99,23 @@ describe('builtin extensions', () => {
       }
     }
 
-    // A builtin is reachable only from whatever composes the application and
-    // registers it. Anything else importing one is the kernel reaching for a
-    // concrete capability, which is what contribution points exist to prevent.
+    // Builtins are discovered packages. Even the composition root must not name
+    // one, or installed packages could never travel through the same path.
+    expect(violations).toEqual([]);
+  });
+
+  test('production packages depend only on their own files and the public API', () => {
+    const violations: string[] = [];
+
+    for (const file of sourceFiles()) {
+      const owner = builtinPackage(file);
+      if (owner === undefined || file.endsWith('.test.ts')) continue;
+
+      for (const target of localImports(file)) {
+        if (!target.startsWith(`${owner}/`)) violations.push(`${file} imports ${target}`);
+      }
+    }
+
     expect(violations).toEqual([]);
   });
 
@@ -106,12 +148,12 @@ describe('builtin extensions', () => {
     expect(files.some((file) => file.startsWith(BUILTIN))).toBe(true);
   });
 
-  test('the composition root is the only file that names one', () => {
+  test('no kernel file, including the composition root, names one', () => {
     const importers = sourceFiles().filter(
       (file) =>
         !file.startsWith(BUILTIN) && localImports(file).some((path) => path.startsWith(BUILTIN)),
     );
 
-    expect(importers).toEqual([COMPOSITION_ROOT]);
+    expect(importers).toEqual([]);
   });
 });

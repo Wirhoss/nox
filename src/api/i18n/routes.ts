@@ -1,12 +1,10 @@
-import { Elysia } from 'elysia';
-
 import {
+  type ContributionReader,
   type LanguagePack,
   languagePacks,
   translationFragments,
-} from '../../extensions/contribution-points/languages';
-
-import type { ContributionReader } from '../../extensions/contribution';
+} from '@nox/extension-api';
+import { Elysia } from 'elysia';
 
 interface LanguageRoutesOptions {
   readonly configuredLocale?: (() => string | undefined) | string;

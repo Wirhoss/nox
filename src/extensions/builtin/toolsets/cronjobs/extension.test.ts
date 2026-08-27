@@ -1,14 +1,26 @@
+import { authorities, toolSets, translationFragments } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../../../../application';
-import { authorities } from '../../../contribution-points/authorities';
-import { translationFragments } from '../../../contribution-points/languages';
-import { toolSets } from '../../../contribution-points/toolsets';
+import { bindExtensionManifest } from '../../../extension';
 import { CronJobsToolSet } from './cronJobsToolSet';
 import { cronJobsExtension } from './extension';
 
 async function started(): Promise<NoxApplication> {
-  const app = new NoxApplication({ extensions: [cronJobsExtension] });
+  const app = new NoxApplication({
+    extensions: [
+      bindExtensionManifest(
+        {
+          engines: { extensionApi: '*', nox: '*' },
+          id: 'nox.toolset.cronjobs',
+          main: 'extension.js',
+          schemaVersion: 1,
+          version: '0.1.0',
+        },
+        cronJobsExtension,
+      ),
+    ],
+  });
   await app.start();
   return app;
 }

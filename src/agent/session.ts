@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 
 import { ArtifactOutputSink } from '../artifact/output';
 import { ConversationParticipants } from '../auth/conversation';
-import { type MessageOrigin, type PrincipalRef, SYSTEM_CRON } from '../auth/principal';
+import { SYSTEM_CRON } from '../auth/principal';
 import { type DecisionRecord, SessionStore } from '../database/sessionStore';
 import {
   type GateEvaluator,
@@ -23,11 +23,18 @@ import type { AuthorityCatalog } from '../auth/authority';
 import type { AuthorizationProvider } from '../auth/authorization';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
-import type { ModelConfig } from '../provider/config';
-import type { ChatProvider } from '../provider/provider';
-import type { Message, MessageContent, UserMessage, UserMessageDelivery } from './context/message';
 import type { ContextOptions, ContextUsage } from './context/options';
 import type { AgentEvent } from './events';
+import type {
+  ChatProvider,
+  Message,
+  MessageContent,
+  MessageOrigin,
+  ModelConfig,
+  PrincipalRef,
+  UserMessage,
+  UserMessageDelivery,
+} from '@nox/extension-api';
 
 interface SessionOptions extends RunnerOptions {
   /** The agent holding the conversation, stored so the transcript stays attributable. */

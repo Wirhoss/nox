@@ -1,7 +1,16 @@
+import {
+  type AssistantMessage,
+  bindTool,
+  type ChatProvider,
+  type CompactedMessage,
+  type Message,
+  type ModelConfig,
+  type Tool,
+  type UserMessage,
+} from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import { SYSTEM_INTERNAL } from '../../auth/principal';
-import { bindTool, type Tool } from '../../tool/tool';
 import { Mutex } from '../../utils/mutex';
 import { applyCompaction, seekSafeCut } from './compact';
 import { applyFold, foldHistory, type FoldOptions } from './fold';
@@ -13,9 +22,6 @@ import { TokenEstimator } from './tokens';
 import { Transcript } from './transcript';
 
 import type { Logger } from '../../logger/logger';
-import type { ModelConfig } from '../../provider/config';
-import type { ChatProvider } from '../../provider/provider';
-import type { AssistantMessage, CompactedMessage, Message, UserMessage } from './message';
 
 const HANDOFF_REQUEST_PREFIX = 'compaction-request';
 

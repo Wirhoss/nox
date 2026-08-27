@@ -1,6 +1,12 @@
-import { brokerConfigSchema, brokers } from '../extensions/contribution-points/brokers';
-import { providerConfigSchema, providers } from '../extensions/contribution-points/providers';
-import { toolSetConfigSchema, toolSets } from '../extensions/contribution-points/toolsets';
+import {
+  brokerConfigSchema,
+  brokers,
+  providerConfigSchema,
+  providers,
+  toolSetConfigSchema,
+  toolSets,
+} from '@nox/extension-api';
+
 import { appConfigSchema } from './app';
 import { blueprintSchema } from './blueprint';
 import { contributionSection, directorySection, fileSection, type SectionValue } from './section';

@@ -7,7 +7,7 @@ import { assertBrokerReferences, brokerAgentRemovalReasons } from './brokers';
 
 import type { Blueprint } from '../../config/blueprint';
 import type { ConfigKey } from '../../config/sections';
-import type { BrokerConfig } from '../../extensions/contribution-points/brokers';
+import type { BrokerConfig } from '@nox/extension-api';
 
 /**
  * What a section insists on beyond its schema. Both halves are about the rest of

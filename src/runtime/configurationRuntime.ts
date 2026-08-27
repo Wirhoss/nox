@@ -1,6 +1,16 @@
+import {
+  type ChatProvider,
+  type ContributionReader,
+  type ModelConfig,
+  type ProviderConfig,
+  providers,
+  type RuntimeComponentKind,
+  type RuntimeComponentState,
+  type RuntimeComponentStatus,
+} from '@nox/extension-api';
+
 import { Agent } from '../agent/agent';
 import { composeWithSecrets, type SecretStore } from '../config/secrets';
-import { type ProviderConfig, providers } from '../extensions/contribution-points/providers';
 import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
 
@@ -10,24 +20,9 @@ import type { AuthorityCatalog } from '../auth/authority';
 import type { Blueprint, TaskModelConfig } from '../config/blueprint';
 import type { Config } from '../config/config';
 import type { Database } from '../database/database';
-import type { ContributionReader } from '../extensions/contribution';
 import type { ToolSetCatalog } from '../extensions/toolSetCatalog';
 import type { BrokerGrant, Gateway } from '../gateway/gateway';
 import type { Logger } from '../logger/logger';
-import type { ModelConfig } from '../provider/config';
-import type { ChatProvider } from '../provider/provider';
-
-type RuntimeComponentKind = 'agent' | 'application' | 'broker' | 'provider' | 'toolSet';
-type RuntimeComponentState = 'active' | 'applying' | 'failed' | 'restartRequired' | 'unavailable';
-
-interface RuntimeComponentStatus {
-  readonly activeGeneration?: number;
-  readonly desiredGeneration: number;
-  readonly error?: string;
-  readonly id: string;
-  readonly kind: RuntimeComponentKind;
-  readonly state: RuntimeComponentState;
-}
 
 interface ConfigurationRuntime {
   reconcile(): Promise<void>;
@@ -600,10 +595,4 @@ function modelConfigFor(
 
 export { ConfigurationRuntimeController, ConfigurationRuntimeRelay };
 
-export type {
-  ConfigurationRuntime,
-  ConfigurationRuntimeOptions,
-  RuntimeComponentKind,
-  RuntimeComponentState,
-  RuntimeComponentStatus,
-};
+export type { ConfigurationRuntime, ConfigurationRuntimeOptions };

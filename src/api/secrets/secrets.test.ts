@@ -2,9 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { type SecretReference, secretRefSchema } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { type SecretReference, secretRefSchema, SecretStore } from '../../config/secrets';
+import { SecretStore } from '../../config/secrets';
 import { Database } from '../../database/database';
 import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from '../auth/registration';

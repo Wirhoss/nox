@@ -1,6 +1,12 @@
+import {
+  type Disposable,
+  type Logger,
+  Mutex,
+  type ScheduledRunDelivery,
+  type ScheduledRunHost,
+} from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
-import { Mutex } from '../../../../utils/mutex';
 import {
   assertFutureRun,
   type CreateCronJobInput,
@@ -14,9 +20,6 @@ import {
   type UpdateCronJobInput,
 } from './model';
 
-import type { Logger } from '../../../../logger/logger';
-import type { ScheduledRunDelivery, ScheduledRunHost } from '../../../../scheduler/scheduledRun';
-import type { Disposable } from '../../../disposable';
 import type { CronJobStore } from './store';
 
 const MAX_TIMER_DELAY_MS = 2_147_000_000;

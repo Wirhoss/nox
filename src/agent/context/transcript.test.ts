@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
 import { testOrigin } from '../../testFixtures';
-import { type Message, messageToString } from './message';
+import { messageToString } from './message';
 import { Transcript } from './transcript';
 
 import type { Logger } from '../../logger/logger';
+import type { Message } from '@nox/extension-api';
 
 const CREATED_AT = new Date('2025-01-01T00:00:00.000Z');
 
