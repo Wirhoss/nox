@@ -17,6 +17,7 @@ const account = computed(() =>
 )
 const logoutError = ref<string>()
 const loggingOut = ref(false)
+const sessionsActive = computed(() => route.path.startsWith('/sessions'))
 const settingsActive = computed(() => route.path.startsWith('/settings'))
 
 async function logout(): Promise<void> {
@@ -45,19 +46,21 @@ async function logout(): Promise<void> {
         >
           <span>01</span> {{ t('navigation.chat') }}
         </RouterLink>
-        <span class="sidebar__item" aria-disabled="true"
-          ><span>02</span> {{ t('navigation.sessions') }}</span
+        <RouterLink
+          class="sidebar__item"
+          :class="{ 'sidebar__item--active': sessionsActive }"
+          :aria-current="sessionsActive ? 'page' : undefined"
+          :to="{ name: 'sessions' }"
         >
-        <span class="sidebar__item" aria-disabled="true"
-          ><span>03</span> {{ t('navigation.audit') }}</span
-        >
+          <span>02</span> {{ t('navigation.sessions') }}
+        </RouterLink>
         <RouterLink
           class="sidebar__item"
           :class="{ 'sidebar__item--active': settingsActive }"
           :aria-current="settingsActive ? 'page' : undefined"
           :to="{ name: 'settings', params: { section: 'general' } }"
         >
-          <span>04</span> {{ t('navigation.settings') }}
+          <span>03</span> {{ t('navigation.settings') }}
         </RouterLink>
       </nav>
 
@@ -188,7 +191,10 @@ async function logout(): Promise<void> {
     padding: var(--nox-space-4) var(--nox-space-2);
   }
 
-  .sidebar :deep(.mark__word),
+  .sidebar :deep(.mark) {
+    width: 3rem;
+  }
+
   .sidebar__item,
   .sidebar__footer > div {
     font-size: 0;

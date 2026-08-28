@@ -137,6 +137,7 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
       .get(
         '/config',
         () => ({
+          authorities: config.authorities(),
           revertAvailable: config.revertAvailable,
           runtime: config.runtimeStatuses(),
           sections: config.sections(),
@@ -164,6 +165,7 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
         async () => {
           await config.reloadConfiguration();
           return {
+            authorities: config.authorities(),
             revertAvailable: config.revertAvailable,
             runtime: config.runtimeStatuses(),
             sections: config.sections(),
@@ -216,6 +218,23 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
       .get('/capabilities/tool-set-types', () => ({ toolSetTypes: config.toolSetTypes() }), {
         authenticated: true,
       })
+
+      /**
+       * The kinds one contributed section may hold, with each kind's own schema.
+       * The tool-set route above is this same answer under an older name; an
+       * editor for any contributed section builds its form from here instead of
+       * carrying a copy of what an extension's configuration looks like.
+       */
+      .get(
+        '/config/:section/types',
+        ({ params, status }) => {
+          const key = keyOf(params.section);
+          if (key === undefined) return status(404, NO_SECTION);
+
+          return { types: config.schema(key).types ?? [] };
+        },
+        { authenticated: true, params: sectionParamsSchema },
+      )
 
       .get(
         '/config/:section',

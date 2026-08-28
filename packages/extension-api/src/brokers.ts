@@ -1,10 +1,11 @@
+import type { ArtifactScope } from './artifacts.js';
 import type { MessageContent, PrincipalRef, ToolResponseExecution } from './content.js';
 import type { Logger } from './core.js';
 import type { Usage } from './providers.js';
 import type { JsonSchema, ToolRisk } from './tools.js';
 
 type RunStatus = 'aborted' | 'completed' | 'failed' | 'maxIterations';
-type RunTrigger = 'cron' | 'deferredResult' | 'steer' | 'user';
+type RunTrigger = 'cron' | 'deferredResult' | 'retry' | 'steer' | 'user';
 
 interface ContextUsage {
   readonly contextWindow?: number;
@@ -23,6 +24,7 @@ interface RunAuthority {
   readonly principal: PrincipalRef;
   readonly source:
     | { readonly causeId: string; readonly type: 'system' }
+    | { readonly commandId: string; readonly type: 'command' }
     | { readonly messageId: string; readonly type: 'message' };
 }
 
@@ -50,6 +52,7 @@ type PermissionResolution =
   | { readonly resolution: 'approved'; readonly scope: 'once' | 'session' };
 
 interface BrokerCapabilities {
+  readonly commands?: boolean;
   readonly contextChanges?: boolean;
   readonly contextUsage?: boolean;
   readonly permissions?: boolean;
@@ -65,6 +68,12 @@ interface BrokerCapabilities {
 interface OutboundBase {
   readonly conversationId: string;
   readonly turnId: string;
+}
+interface OutboundCommandResult extends OutboundBase {
+  readonly name: string;
+  readonly status: 'completed' | 'failed';
+  readonly text: string;
+  readonly type: 'commandResult';
 }
 interface OutboundContextChange extends OutboundBase {
   readonly change: 'compacted' | 'folded';
@@ -149,6 +158,7 @@ interface OutboundUsage extends OutboundBase {
 }
 
 type OutboundEvent =
+  | OutboundCommandResult
   | OutboundContextChange
   | OutboundContextUsage
   | OutboundError
@@ -177,7 +187,7 @@ type MessageBody = Extract<
 >;
 interface HistoryUserMessage {
   readonly content: readonly MessageContent[];
-  readonly mode: 'message' | 'steer';
+  readonly mode: 'message' | 'observation' | 'steer';
   readonly principal: PrincipalRef;
   readonly text: string;
   readonly type: 'userMessage';
@@ -220,6 +230,11 @@ interface InboundSpeech extends InboundBase {
   readonly requestedAgentId?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly receivedAt?: Date;
+  /**
+   * What this transport calls the sender. Optional, presentation only, and
+   * never what anything is decided from: `senderId` remains the identity.
+   */
+  readonly senderName?: string;
 }
 interface InboundMessage extends InboundSpeech {
   readonly type: 'message';
@@ -227,12 +242,29 @@ interface InboundMessage extends InboundSpeech {
 interface InboundSteer extends InboundSpeech {
   readonly type: 'steer';
 }
+/**
+ * Something said in the conversation that was not said to Nox.
+ *
+ * It is attributed, deduplicated and appended to the transcript exactly like
+ * speech, and it wakes nothing: no run starts, and the run in flight does not
+ * change hands. A transport that carries a room — a channel with people talking
+ * in it — uses this for the traffic its ingress rule did not admit as a turn, so
+ * the agent reads a conversation instead of its own replies separated by silence.
+ *
+ * The cost is deliberate and belongs to whoever turns it on. A second principal's
+ * words in the transcript make the session shared for good, which is what raises
+ * the approval floor on every effectful tool call; and unaddressed traffic is
+ * folded and compacted like anything else.
+ */
+interface InboundObservation extends InboundSpeech {
+  readonly type: 'observation';
+}
 interface InboundPermission extends InboundBase {
   readonly requestId: string;
   readonly resolution: 'denied' | { readonly approved: 'once' | 'session' };
   readonly type: 'permission';
 }
-type InboundEvent = InboundMessage | InboundPermission | InboundSteer;
+type InboundEvent = InboundMessage | InboundObservation | InboundPermission | InboundSteer;
 type InboundRejection =
   | { readonly agentId: string; readonly reason: 'unknownAgent' }
   | { readonly agents: readonly string[]; readonly reason: 'agentRequired' }
@@ -259,6 +291,18 @@ interface BrokerHost {
   readonly commands: readonly BrokerCommandSpec[];
   readonly logger: Logger;
   readonly signal: AbortSignal;
+  /**
+   * Where files belonging to one conversation on this transport are filed.
+   *
+   * Named by the host rather than derived by the transport, because it is the
+   * host that decides what a conversation owns. A broker that guessed at the
+   * scope would either store what arrives somewhere nothing else looks, or read
+   * back with a scope that matches nothing and lose the file it was handed — and
+   * the scope is what keeps an artifact ID from being a way to read another
+   * conversation's files, so a guess is not a thing to be approximately right
+   * about.
+   */
+  artifactScope(conversationId: string): ArtifactScope;
   command(invocation: CommandInvocation): CommandRejection | undefined;
   history(
     conversationId: string,
@@ -271,6 +315,20 @@ interface BrokerHost {
 interface Broker {
   readonly capabilities: BrokerCapabilities;
   deliver(event: OutboundEvent): Promise<void>;
+  /**
+   * The groups this sender belongs to, as extra subjects its grants may be
+   * written against — Discord roles, and whatever the equivalent is elsewhere.
+   *
+   * Asked per authorization rather than carried on the message, because a group
+   * is not part of who someone is: membership changes while a session is still
+   * going, and the answer that matters is the one true at the moment of the
+   * call. A transport with no notion of groups leaves this out.
+   *
+   * Returning a group grants nothing on its own. It only says which entries in
+   * `grants` also apply to this sender, and an unknown sender is an empty list
+   * rather than an error — nothing here can widen authority by failing.
+   */
+  principalGroups?(subject: string): readonly string[];
   start(host: BrokerHost): Promise<void>;
   stop(): Promise<void>;
 }
@@ -291,6 +349,7 @@ export type {
   InboundBase,
   InboundEvent,
   InboundMessage,
+  InboundObservation,
   InboundPermission,
   InboundRejection,
   InboundSpeech,
@@ -298,6 +357,7 @@ export type {
   MessageBody,
   OutboundBase,
   OutboundBody,
+  OutboundCommandResult,
   OutboundContextChange,
   OutboundContextUsage,
   OutboundError,

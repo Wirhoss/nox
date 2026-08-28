@@ -7,6 +7,7 @@ import type { MessageOrigin, PrincipalRef } from '@nox/extension-api';
  */
 type RunAuthoritySource =
   | { readonly causeId: string; readonly type: 'system' }
+  | { readonly commandId: string; readonly type: 'command' }
   | { readonly messageId: string; readonly type: 'message' };
 
 /**
@@ -61,6 +62,13 @@ function samePrincipal(left: PrincipalRef, right: PrincipalRef): boolean {
  * for the whole run, and a caller still holding the origin it passed in must not
  * be able to move it afterwards.
  */
+function commandAuthority(subject: PrincipalRef, commandId: string): RunAuthority {
+  return Object.freeze({
+    principal: principal(subject.issuer, subject.subject),
+    source: Object.freeze({ commandId, type: 'command' as const }),
+  });
+}
+
 function messageAuthority(origin: MessageOrigin, messageId: string): RunAuthority {
   return Object.freeze({
     principal: principal(origin.principal.issuer, origin.principal.subject),
@@ -76,6 +84,7 @@ function systemAuthority(subject: PrincipalRef, causeId: string): RunAuthority {
 }
 
 export {
+  commandAuthority,
   messageAuthority,
   principal,
   principalKey,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { type Component, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AgentEditor from '@/features/settings/components/AgentEditor.vue'
@@ -11,7 +11,7 @@ import ProviderEditor from '@/features/settings/components/ProviderEditor.vue'
 import SecretsManager from '@/features/settings/components/SecretsManager.vue'
 import SettingsNavigation from '@/features/settings/components/SettingsNavigation.vue'
 import ToolSetEditor from '@/features/settings/components/ToolSetEditor.vue'
-import { SETTINGS_SECTIONS, settingsSection } from '@/features/settings/model/sections'
+import { settingsSection } from '@/features/settings/model/sections'
 import { useSettingsStore } from '@/features/settings/stores/settings.store'
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
@@ -23,12 +23,31 @@ const router = useRouter()
 const settings = useSettingsStore()
 const slug = computed(() => routeParam('section') ?? 'general')
 const entryId = computed(() => routeParam('entryId'))
-const definition = computed(() => settingsSection(slug.value) ?? SETTINGS_SECTIONS[0])
-const creating = computed(
-  () => definition.value.creatable && entryId.value === undefined && route.query.create === '1',
+const definition = computed(() => settingsSection(settings.catalog, slug.value))
+/** The contribution the list offered, when the form was reached by pressing one. */
+const offeredType = computed(() =>
+  typeof route.query.type === 'string' ? route.query.type : undefined,
 )
+/**
+ * A section that is not freely creatable can still be configured from a
+ * contribution it is offering. The two are different permissions: you cannot
+ * invent a broker out of nothing, because there would be no type to give it —
+ * but setting up one that is installed and named is exactly what the list is
+ * inviting, and refusing it there would make the invitation do nothing.
+ */
+const creating = computed(
+  () =>
+    entryId.value === undefined &&
+    route.query.create === '1' &&
+    (definition.value?.creatable === true || offeredType.value !== undefined),
+)
+/**
+ * A single-instance contribution owns its name, so the type is also the entry
+ * ID, and the form should not ask a person to retype either.
+ */
+const presetType = computed(() => (creating.value ? offeredType.value : undefined))
 const section = computed(() => {
-  const key = definition.value.key
+  const key = definition.value?.key
   return key !== undefined && settings.section?.key === key ? settings.section : undefined
 })
 const runtimeIssues = computed(
@@ -43,38 +62,90 @@ const runtimeRestarts = computed(
 )
 const targetExists = computed(() => {
   if (entryId.value === undefined) return true
-  if (definition.value.slug === 'secrets') {
+  if (definition.value?.slug === 'secrets') {
     return settings.secrets.some((secret) => secret.secretId === entryId.value)
   }
   return section.value !== undefined && entryId.value in section.value.value
 })
 
+const EDITOR_COMPONENTS: Readonly<Record<string, Component>> = Object.freeze({
+  app: AppEditor,
+  blueprint: AgentEditor,
+  broker: BrokerEditor,
+  contribution: ProviderEditor,
+  json: ConfigJsonEditor,
+  toolSet: ToolSetEditor,
+})
+
+const editorComponent = computed(() => {
+  const editor = definition.value?.editor
+  return editor === undefined || editor === 'secrets' ? undefined : EDITOR_COMPONENTS[editor]
+})
+const editingSection = computed(
+  () => section.value !== undefined && (!section.value.entries || creating.value || entryId.value !== undefined),
+)
+const editorProps = computed<Record<string, unknown>>(() => {
+  const currentDefinition = definition.value
+  const currentSection = section.value
+  if (currentDefinition === undefined || currentSection === undefined) return {}
+  if (currentDefinition.editor === 'app') {
+    return { definition: currentDefinition, section: currentSection }
+  }
+
+  const common = {
+    creating: creating.value,
+    definition: currentDefinition,
+    entryId: entryId.value,
+    section: currentSection,
+  }
+  if (currentDefinition.editor === 'blueprint') {
+    return {
+      ...common,
+      providerSection: settings.references.providers,
+      toolSetSection: settings.references.toolSets,
+    }
+  }
+  if (currentDefinition.editor === 'broker') {
+    return {
+      ...common,
+      blueprintSection: settings.references.blueprints,
+      presetType: presetType.value,
+    }
+  }
+  if (currentDefinition.editor === 'contribution' || currentDefinition.editor === 'toolSet') {
+    return { ...common, presetType: presetType.value }
+  }
+  return common
+})
+
 watch(
   slug,
   async (nextSlug) => {
-    const nextDefinition = settingsSection(nextSlug)
-    if (nextDefinition === undefined) {
-      await router.replace({ name: 'settings', params: { section: 'general' } })
-      return
-    }
-    if (nextDefinition.slug === 'secrets') {
+    if (nextSlug === 'secrets') {
       await settings.loadSecrets()
       return
     }
-    if (nextDefinition.key !== undefined) await settings.loadSection(nextDefinition.key)
+
+    const catalog = await settings.loadCatalog()
+    const nextDefinition = settingsSection(catalog, nextSlug)
+    if (nextDefinition?.key === undefined) {
+      await router.replace({ name: 'settings', params: { section: 'general' } })
+      return
+    }
+    await settings.loadSection(nextDefinition.key)
   },
   { immediate: true },
 )
 
 async function reloadConfiguration(): Promise<void> {
   await settings.reloadConfiguration()
-  if (definition.value.key !== undefined) await settings.loadSection(definition.value.key)
+  if (definition.value?.key !== undefined) await settings.loadSection(definition.value.key)
 }
 
 async function retry(): Promise<void> {
-  if (definition.value.slug === 'secrets') {
+  if (definition.value?.slug === 'secrets') {
     await settings.loadSecrets()
-  } else if (definition.value.key !== undefined) {
+  } else if (definition.value?.key !== undefined) {
     await settings.loadSection(definition.value.key)
   }
 }
@@ -98,19 +169,13 @@ function routeParam(name: string): string | undefined {
 
 <template>
   <main class="settings">
-    <SettingsNavigation />
+    <SettingsNavigation
+      :reload-available="settings.catalog !== undefined"
+      :reload-busy="settings.mutation.type === 'saving'"
+      @reload="reloadConfiguration()"
+    />
 
     <section class="settings__workbench" aria-live="polite">
-      <div v-if="settings.catalog !== undefined" class="settings__control-actions">
-        <NoxButton
-          :busy="settings.mutation.type === 'saving'"
-          variant="ghost"
-          @click="reloadConfiguration()"
-        >
-          {{ t('settings.runtime.reload') }}
-        </NoxButton>
-      </div>
-
       <NoxNotice
         v-if="runtimeRestarts.length > 0"
         class="settings__runtime"
@@ -198,67 +263,16 @@ function routeParam(name: string): string | undefined {
         @deleted="openSection"
       />
 
-      <AppEditor
-        v-else-if="section?.key === 'app'"
-        :definition="definition"
-        :section="section"
-      />
-
-      <AgentEditor
-        v-else-if="section?.key === 'blueprints' && (creating || entryId !== undefined)"
-        :creating="creating"
-        :definition="definition"
-        :entry-id="entryId"
-        :provider-section="settings.references.providers"
-        :section="section"
-        :tool-set-section="settings.references.toolSets"
-        @created="openCreated"
-        @deleted="openSection"
-      />
-
-      <ProviderEditor
-        v-else-if="section?.key === 'providers' && (creating || entryId !== undefined)"
-        :creating="creating"
-        :definition="definition"
-        :entry-id="entryId"
-        :section="section"
-        @created="openCreated"
-        @deleted="openSection"
-      />
-
-      <BrokerEditor
-        v-else-if="section?.key === 'brokers' && (creating || entryId !== undefined)"
-        :blueprint-section="settings.references.blueprints"
-        :creating="creating"
-        :definition="definition"
-        :entry-id="entryId"
-        :section="section"
-        @created="openCreated"
-        @deleted="openSection"
-      />
-
-      <ToolSetEditor
-        v-else-if="section?.key === 'toolSets' && (creating || entryId !== undefined)"
-        :creating="creating"
-        :definition="definition"
-        :entry-id="entryId"
-        :section="section"
-        @created="openCreated"
-        @deleted="openSection"
-      />
-
-      <ConfigJsonEditor
-        v-else-if="section !== undefined && (!section.entries || creating || entryId !== undefined)"
-        :creating="creating"
-        :definition="definition"
-        :entry-id="entryId"
-        :section="section"
+      <component
+        :is="editorComponent"
+        v-else-if="editingSection && editorComponent !== undefined"
+        v-bind="editorProps"
         @created="openCreated"
         @deleted="openSection"
       />
 
       <ConfigEntryList
-        v-else-if="section !== undefined"
+        v-else-if="section !== undefined && definition !== undefined"
         :definition="definition"
         :section="section"
       />
@@ -295,11 +309,6 @@ function routeParam(name: string): string | undefined {
 .settings__runtime li {
   display: grid;
   gap: var(--nox-space-1);
-}
-
-.settings__control-actions {
-  display: flex;
-  justify-content: flex-end;
 }
 
 .settings__runtime-actions {

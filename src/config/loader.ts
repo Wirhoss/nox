@@ -3,10 +3,12 @@ import { mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import {
+  contributionInstances,
   type ContributionReader,
   entryIdSchema,
   instanceIdSchema,
   isConfigurable,
+  type UnknownConfigurable,
 } from '@nox/extension-api';
 import { z } from 'zod';
 
@@ -135,11 +137,21 @@ function contributionSchema<T>(
   section: ContributionSection<T>,
   contributions: ContributionReader,
 ): z.ZodType<Record<string, T>> {
-  const schemas = contributions
+  const configurable = contributions
     .list(section.point)
     .map((contribution) => contribution.value)
-    .filter(isConfigurable)
-    .map((value) => value.configSchema);
+    .filter(isConfigurable);
+  const schemas = configurable.map((value) => value.configSchema);
+
+  // A contribution that exists once owns its own name. Enforcing it as "the
+  // entry key must equal the type" also makes a second instance impossible,
+  // since two entries cannot share one key — one rule instead of two, and the
+  // reserved name a singleton transport needs comes out of the same sentence.
+  const singletons = new Set(
+    configurable
+      .filter((value) => contributionInstances(value) === 'single')
+      .map((value) => value.configSchema.shape.type.value),
+  );
 
   const entry =
     schemas.length === 0
@@ -149,11 +161,64 @@ function contributionSchema<T>(
   // The union is built from values only known at runtime, so its inferred type
   // cannot meet the section's declared floor by inference. It does meet it by
   // construction: the point only accepts contributions whose config extends it.
-  return z.record(instanceIdSchema, entry) as unknown as z.ZodType<Record<string, T>>;
+  return z
+    .record(instanceIdSchema, entry)
+    .superRefine((record: Record<string, unknown>, context) => {
+      for (const [instanceId, value] of Object.entries(record)) {
+        const type =
+          typeof value === 'object' && value !== null && 'type' in value
+            ? String(value.type)
+            : undefined;
+        if (type === undefined || !singletons.has(type) || instanceId === type) continue;
+
+        context.addIssue({
+          code: 'custom',
+          message:
+            `"${type}" is configured once and its entry must be named "${type}". ` +
+            `Rename "${instanceId}" to "${type}", and update anything that names ` +
+            `"${instanceId}" — a blueprint granting it, for example — or whatever ` +
+            'referenced it will stop resolving.',
+          path: [instanceId],
+        });
+      }
+    }) as unknown as z.ZodType<Record<string, T>>;
 }
 
 async function loadFileSection<T>(section: FileSection<T>, context: LoaderContext): Promise<T> {
   return loadDocument(join(context.configDir, section.name), section.schema, section, context);
+}
+
+/**
+ * The entries a section should already have, because nothing had to be decided
+ * to have them.
+ *
+ * A single-instance contribution owns exactly one name, so there is no question
+ * of *which* entry it would be. When its schema also accepts the bare type —
+ * every other field defaulted, nothing required — there is no question of *what*
+ * it would contain either, and leaving it out only means an operator has to
+ * write by hand the one document the schema already fully determines. Nox's own
+ * browser transport is that case: a surface a person is looking at should not
+ * have to be declared before it exists.
+ *
+ * Anything with a required field is deliberately not seeded. A broker written
+ * without its credential is not a configured broker, it is one that will come
+ * back as `failed`, and inventing it would trade a clear "not configured yet"
+ * for a confusing failure.
+ */
+function seededEntries(configurable: readonly UnknownConfigurable[]): Record<string, unknown> {
+  const seeded: Record<string, unknown> = {};
+
+  for (const value of configurable) {
+    if (contributionInstances(value) !== 'single') continue;
+
+    const type = value.configSchema.shape.type.value;
+    if (typeof type !== 'string') continue;
+    if (!value.configSchema.safeParse({ type }).success) continue;
+
+    seeded[type] = { type };
+  }
+
+  return seeded;
 }
 
 async function loadContributionSection<T>(
@@ -161,8 +226,18 @@ async function loadContributionSection<T>(
   context: LoaderContext,
   contributions: ContributionReader,
 ): Promise<Record<string, T>> {
-  const schema = contributionSchema(section, contributions);
-  return loadDocument(join(context.configDir, section.name), schema, section, context);
+  const configurable = contributions
+    .list(section.point)
+    .map((contribution) => contribution.value)
+    .filter(isConfigurable);
+
+  return loadDocument(
+    join(context.configDir, section.name),
+    contributionSchema(section, contributions),
+    section,
+    context,
+    seededEntries(configurable),
+  );
 }
 
 /** The read/parse/materialize cycle every single-file section shares. */
@@ -171,11 +246,13 @@ async function loadDocument<T>(
   schema: z.ZodType<T>,
   section: { materialize: boolean },
   context: LoaderContext,
+  /** Entries to fall back on. Anything already written always wins over one. */
+  seed?: Record<string, unknown>,
 ): Promise<T> {
   const source = await readJson(filePath);
 
   if (source === undefined) {
-    const document = parseDocument(schema, {}, filePath);
+    const document = parseDocument(schema, seed ?? {}, filePath);
     if (section.materialize) {
       await writeJson(filePath, document.value);
       context.logger.info({ path: filePath }, 'Configuration file generated with defaults.');
@@ -183,7 +260,14 @@ async function loadDocument<T>(
     return document.value;
   }
 
-  const document = parseDocument(schema, source, filePath);
+  // Merged underneath rather than over: a seeded entry is what the schema would
+  // have determined anyway, and it must never quietly replace what somebody
+  // wrote — including an entry of the same name they meant differently.
+  const merged =
+    seed === undefined || typeof source !== 'object' || source === null
+      ? source
+      : { ...seed, ...(source as Record<string, unknown>) };
+  const document = parseDocument(schema, merged, filePath);
   if (section.materialize) {
     await materialize(filePath, source, document, context.logger);
   }

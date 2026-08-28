@@ -1,3 +1,5 @@
+import { type BrokerConfig, brokers } from '@nox/extension-api';
+
 import {
   assertBlueprintReferences,
   type BlueprintContext,
@@ -7,7 +9,6 @@ import { assertBrokerReferences, brokerAgentRemovalReasons } from './brokers';
 
 import type { Blueprint } from '../../config/blueprint';
 import type { ConfigKey } from '../../config/sections';
-import type { BrokerConfig } from '@nox/extension-api';
 
 /**
  * What a section insists on beyond its schema. Both halves are about the rest of
@@ -56,10 +57,14 @@ function configPolicies(context: BlueprintContext): SectionPolicies {
         assertBlueprintReferences(agentId, value as Blueprint, context),
     },
     brokers: {
-      reasonsToKeep: (brokerId) =>
-        brokerId === 'web'
-          ? ['The built-in Web broker is part of the control plane; disable it instead.']
-          : [],
+      reasonsToKeep: (brokerId) => {
+        const entry = config.get('brokers')[brokerId];
+        if (entry === undefined) return [];
+        const host = context.contributions.get(brokers, entry.type)?.value.host;
+        return host?.removable === false
+          ? [`Broker "${brokerId}" is part of the control plane; disable it instead.`]
+          : [];
+      },
       validate: (brokerId, value) => {
         assertBrokerReferences(brokerId, value as BrokerConfig, context);
       },

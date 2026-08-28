@@ -14,6 +14,7 @@ import {
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
+import { ConversationParticipants } from '../auth/conversation';
 import { SYSTEM_CRON } from '../auth/principal';
 import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
 import { ToolRouter } from '../tool/router';
@@ -171,6 +172,7 @@ function setup(
   contextWindow?: number,
   artifactOutputs?: ArtifactOutputHost,
   artifactReader?: ArtifactContentReader,
+  participants?: ConversationParticipants,
 ): {
   context: Context;
   events: EventLog<AgentEvent>;
@@ -190,6 +192,7 @@ function setup(
     authorities: testCatalog(),
     authorization: permissiveAuthorization,
     maxIterations,
+    ...(participants === undefined ? {} : { participants }),
     sessionId: 'session-1',
   });
   return { context, events, provider, runner };
@@ -1016,5 +1019,66 @@ describe('Runner', () => {
       execution: 'deferredResult',
       trackId: 'track-1',
     });
+  });
+});
+
+describe('observations', () => {
+  test('an observation enters the transcript and starts nothing', async () => {
+    const { context, events, provider, runner } = setup([says('unused')]);
+
+    runner.observe(user('alice and bob are talking', 'bob'));
+    await runner.idle;
+
+    expect(provider.requests).toHaveLength(0);
+    expect(roles(context)).toEqual(['user']);
+    expect(eventTypes(events)).toEqual([]);
+    expect(runner.state).toBe('idle');
+  });
+
+  test('one arriving mid-run is drained at the next opening, not run', async () => {
+    const { context, provider, runner } = setup([says('answer')]);
+
+    runner.send(user('hi'));
+    runner.observe(user('someone else, to nobody', 'bob'));
+    await runner.idle;
+
+    // One request: the observation joined the transcript without asking for a
+    // turn of its own, and did not become part of the turn already in flight.
+    expect(provider.requests).toHaveLength(1);
+    expect(roles(context)).toEqual(['user', 'assistant', 'user']);
+    expect(runner.state).toBe('idle');
+  });
+
+  test('does not block a real turn queued behind it', async () => {
+    const { provider, runner } = setup([says('first'), says('second')]);
+
+    runner.send(user('hi'));
+    runner.observe(user('chatter', 'bob'));
+    runner.send(user('and another thing'));
+    await runner.idle;
+
+    expect(provider.requests).toHaveLength(2);
+  });
+
+  test('makes the conversation shared, because a second voice is in the transcript', async () => {
+    const participants = new ConversationParticipants();
+    const { runner } = setup(
+      [says('answer')],
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      participants,
+    );
+
+    runner.send(user('hi', 'alice'));
+    runner.observe(user('chatter', 'bob'));
+    await runner.idle;
+
+    // Nothing here is about what Bob may do — an observation grants nothing.
+    // It is that Alice's next effectful call is now read against a context
+    // somebody else wrote into, which is what the approval floor is for.
+    expect(participants.isShared).toBeTrue();
   });
 });

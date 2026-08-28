@@ -1,13 +1,33 @@
-import type { ContributionPoint } from '@nox/extension-api';
+import type {
+  ConfigEntrySummaryDescriptor,
+  ConfigKey,
+  ConfigSectionEditor,
+  ConfigSectionGroup,
+  ContributionPoint,
+} from '@nox/extension-api';
 import type { z } from 'zod';
 
 type ConfigApply = 'hot' | 'restart';
+
+interface SectionPresentation {
+  readonly description: string;
+  readonly editor: ConfigSectionEditor;
+  readonly entrySummary?: ConfigEntrySummaryDescriptor;
+  readonly group: ConfigSectionGroup;
+  readonly inventory?: 'toolSets';
+  readonly label: string;
+  readonly plural: string;
+  readonly references?: readonly ConfigKey[];
+  readonly slug: string;
+}
 
 interface SectionBase {
   readonly applies: ConfigApply;
   /** Whether a missing or out-of-date file is written back with resolved defaults. */
   readonly materialize: boolean;
   readonly name: string;
+  /** Navigation and editor metadata exported by the same catalog that owns the section. */
+  readonly presentation: SectionPresentation;
 }
 
 /**
@@ -57,20 +77,47 @@ type SectionValue<S> =
         ? Record<string, T>
         : never;
 
-type SectionInput<S> = Omit<S, 'kind' | 'materialize'> & { materialize?: boolean };
+type SectionInput<S> = Omit<S, 'kind' | 'materialize' | 'presentation'> & {
+  materialize?: boolean;
+  presentation?: SectionPresentation;
+};
+
+const DEFAULT_PRESENTATION = Object.freeze({
+  description: 'settings.sections.configuration.description',
+  editor: 'json',
+  group: 'machine',
+  label: 'settings.sections.configuration.label',
+  plural: 'settings.sections.configuration.plural',
+  slug: 'configuration',
+} as const satisfies SectionPresentation);
 
 function fileSection<T>(input: SectionInput<FileSection<T>>): FileSection<T> {
-  return Object.freeze({ ...input, kind: 'file', materialize: input.materialize ?? true });
+  return Object.freeze({
+    ...input,
+    kind: 'file',
+    materialize: input.materialize ?? true,
+    presentation: input.presentation ?? DEFAULT_PRESENTATION,
+  });
 }
 
 function directorySection<T>(input: SectionInput<DirectorySection<T>>): DirectorySection<T> {
-  return Object.freeze({ ...input, kind: 'directory', materialize: input.materialize ?? true });
+  return Object.freeze({
+    ...input,
+    kind: 'directory',
+    materialize: input.materialize ?? true,
+    presentation: input.presentation ?? DEFAULT_PRESENTATION,
+  });
 }
 
 function contributionSection<T>(
   input: SectionInput<ContributionSection<T>>,
 ): ContributionSection<T> {
-  return Object.freeze({ ...input, kind: 'contribution', materialize: input.materialize ?? true });
+  return Object.freeze({
+    ...input,
+    kind: 'contribution',
+    materialize: input.materialize ?? true,
+    presentation: input.presentation ?? DEFAULT_PRESENTATION,
+  });
 }
 
 export { contributionSection, directorySection, fileSection };
@@ -81,5 +128,6 @@ export type {
   ContributionSection,
   DirectorySection,
   FileSection,
+  SectionPresentation,
   SectionValue,
 };

@@ -138,6 +138,19 @@ interface PrincipalRef {
 }
 
 interface MessageOrigin {
+  /**
+   * What the transport calls this principal, when it has a name for it.
+   *
+   * Presentation only, and never an identity: `principal` is what anything is
+   * decided from. A display name is chosen by the person, is not unique, and
+   * changes without anything else changing — so it goes beside the subject
+   * rather than into it, and nothing compares or matches on it.
+   *
+   * It exists because a shared transcript that names everyone by opaque ID is
+   * one the model cannot talk about. Absent leaves the reader with the subject,
+   * which is what every surface had before.
+   */
+  readonly displayName?: string;
   readonly principal: PrincipalRef;
   readonly transportMessageId: string;
 }
@@ -182,7 +195,16 @@ interface ReasoningMessage extends MessageBase {
   readonly content: readonly MessageContent[];
 }
 
-type UserMessageDelivery = 'message' | 'steer';
+/**
+ * How something someone said reached the agent.
+ *
+ * `message` and `steer` are both addressed to Nox and both start or join a run.
+ * `observation` is not addressed to it at all: it is what else was said in a
+ * shared room, kept because a transcript that omits it is a false record of the
+ * conversation. It carries its speaker's principal like anything else and grants
+ * nothing — no run ever executes under an observation's authority.
+ */
+type UserMessageDelivery = 'message' | 'observation' | 'steer';
 
 interface UserMessage extends MessageBase {
   readonly role: 'user';

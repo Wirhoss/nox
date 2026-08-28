@@ -3,12 +3,22 @@ import { createServiceToken, type Logger } from './core.js';
 import type { ArtifactPipeline } from './artifacts.js';
 import type { ChatSurfaceHub } from './chat.js';
 import type { MessageContent } from './content.js';
+import type { BrokerHostPolicy } from './contributions.js';
 
 const CONFIG_KEYS = ['app', 'blueprints', 'brokers', 'providers', 'toolSets'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 type ConfigEntryKey = Exclude<ConfigKey, 'app'>;
 type ConfigApply = 'hot' | 'restart';
 type ConfigSectionKind = 'contribution' | 'directory' | 'file';
+type ConfigSectionEditor = 'app' | 'blueprint' | 'broker' | 'contribution' | 'json' | 'toolSet';
+type ConfigSectionGroup = 'capabilities' | 'intelligence' | 'machine';
+
+interface ConfigEntrySummaryDescriptor {
+  /** Paths whose first scalar values form the compact detail line. */
+  readonly detail: readonly string[];
+  /** Paths tried in order for the optional longer description. */
+  readonly description: readonly string[];
+}
 
 interface ConfigUpdate<T> {
   readonly restartRequired: boolean;
@@ -46,18 +56,52 @@ interface ToolSetInventory {
 
 interface ConfigSectionSummary {
   readonly applies: ConfigApply;
-  readonly error?: string;
+  /** Whether an operator may choose a new entry name without a contribution offering one. */
+  readonly creatable: boolean;
+  /** What a contribution section can hold. Absent for file and directory sections. */
+  readonly contributions?: readonly ConfigContributionSummary[];
+  readonly description: string;
+  readonly editor: ConfigSectionEditor;
   readonly entries: boolean;
+  readonly entrySummary?: ConfigEntrySummaryDescriptor;
+  readonly error?: string;
+  readonly group: ConfigSectionGroup;
+  /** Optional runtime inventory the editor needs in addition to desired configuration. */
+  readonly inventory?: 'toolSets';
   readonly key: ConfigKey;
   readonly kind: ConfigSectionKind;
+  readonly label: string;
   readonly loaded: boolean;
   readonly name: string;
+  readonly plural: string;
+  /** Other config sections the editor needs as catalogs for references. */
+  readonly references: readonly ConfigKey[];
+  readonly slug: string;
   readonly writable: boolean;
 }
 
 interface ConfigTypeSchemaDescriptor {
   readonly extensionId: string;
+  /** Host behavior declared by broker contributions. Absent for every other point. */
+  readonly host?: BrokerHostPolicy;
+  readonly instances: 'many' | 'single';
   readonly schema: Readonly<Record<string, unknown>>;
+  readonly type: string;
+}
+
+/**
+ * One contribution a section can hold, without the schema.
+ *
+ * It rides along with the section summary because a surface listing what is
+ * configured also has to show what *could* be and is not: a single-instance
+ * contribution with no entry is a thing to fill in, not an absence. The schema
+ * is deliberately left out — a catalog is fetched to draw a list, and carrying
+ * every JSON Schema for that would pay for a form nobody opened.
+ */
+interface ConfigContributionSummary {
+  readonly configured: boolean;
+  readonly extensionId: string;
+  readonly instances: 'many' | 'single';
   readonly type: string;
 }
 
@@ -169,9 +213,13 @@ export {
 
 export type {
   ConfigApply,
+  ConfigContributionSummary,
   ConfigEntryKey,
+  ConfigEntrySummaryDescriptor,
   ConfigKey,
   ConfigRevertTarget,
+  ConfigSectionEditor,
+  ConfigSectionGroup,
   ConfigSectionKind,
   ConfigSectionSchemaDescriptor,
   ConfigSectionSummary,

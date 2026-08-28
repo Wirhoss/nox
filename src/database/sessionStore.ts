@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, count, countDistinct, desc, eq, inArray, isNull, max } from 'drizzle-orm';
 
 import { type Logger, silentLogger } from '../logger/logger';
 import {
@@ -15,7 +15,13 @@ import {
 import type { AuthorizationAuditRecord, StoredDecision } from '../auth/audit';
 import type { GateAuditRecord, PermissionResolution } from '../tool/gate';
 import type { Database, NoxDrizzle } from './database';
-import type { Message, PrincipalRef } from '@nox/extension-api';
+import type {
+  Message,
+  MessageContent,
+  PrincipalRef,
+  ToolOutputTrust,
+  ToolResponseExecution,
+} from '@nox/extension-api';
 
 interface SessionStoreOptions {
   logger?: Logger;
@@ -33,6 +39,55 @@ interface CreateSessionOptions {
 interface StoredSession {
   messages: Message[];
   session: SessionRow;
+}
+
+interface AuditToolResponse {
+  readonly content: readonly MessageContent[];
+  readonly createdAt: Date;
+  readonly execution: ToolResponseExecution;
+  readonly isError: boolean;
+  readonly trust: ToolOutputTrust;
+}
+
+interface SessionAgentSummary {
+  readonly agentId?: string;
+  readonly lastSessionAt: Date;
+  readonly sessionCount: number;
+}
+
+interface SessionSummary {
+  readonly agentId?: string;
+  readonly createdAt: Date;
+  readonly sessionId: string;
+  readonly title?: string;
+  readonly updatedAt: Date;
+}
+
+interface SessionList {
+  readonly entries: readonly SessionSummary[];
+  readonly limit: number;
+  readonly offset: number;
+  readonly total: number;
+}
+
+interface AuditAction {
+  readonly authority: string;
+  readonly createdAt: Date;
+  readonly decisions: readonly StoredDecision[];
+  readonly responses: readonly AuditToolResponse[];
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly title?: string;
+  readonly toolName: string;
+  readonly toolSetId: string;
+  readonly trackId: string;
+}
+
+interface AuditActionList {
+  readonly entries: readonly AuditAction[];
+  readonly limit: number;
+  readonly offset: number;
+  readonly total: number;
 }
 
 function authorizationToRow(record: AuthorizationAuditRecord): DecisionRowInsert {
@@ -379,6 +434,158 @@ class SessionStore {
     );
   }
 
+  /** Historical agents derived from sessions, including removed configurations. */
+  public async listSessionAgents(): Promise<readonly SessionAgentSummary[]> {
+    await this.#writes;
+    return this.#database.exclusive((database) =>
+      database
+        .select({
+          agentId: sessions.agentId,
+          lastSessionAt: max(sessions.updatedAt),
+          sessionCount: count(),
+        })
+        .from(sessions)
+        .groupBy(sessions.agentId)
+        .orderBy(desc(max(sessions.updatedAt)))
+        .all()
+        .map((row): SessionAgentSummary => {
+          if (row.lastSessionAt === null) throw new Error('A session agent has no sessions.');
+          return {
+            ...(row.agentId === null ? {} : { agentId: row.agentId }),
+            lastSessionAt: new Date(row.lastSessionAt),
+            sessionCount: row.sessionCount,
+          };
+        }),
+    );
+  }
+
+  /** Sessions belonging to exactly one historical agent, newest first. */
+  public async listSessions(agentId: null | string, limit = 50, offset = 0): Promise<SessionList> {
+    await this.#writes;
+    return this.#database.exclusive((database) => {
+      const where = agentId === null ? isNull(sessions.agentId) : eq(sessions.agentId, agentId);
+      const total =
+        database.select({ value: count() }).from(sessions).where(where).get()?.value ?? 0;
+      const entries = database
+        .select()
+        .from(sessions)
+        .where(where)
+        .orderBy(desc(sessions.updatedAt), desc(sessions.sessionId))
+        .limit(limit)
+        .offset(offset)
+        .all()
+        .map((row): SessionSummary => ({
+          ...(row.agentId === null ? {} : { agentId: row.agentId }),
+          createdAt: new Date(row.createdAt),
+          sessionId: row.sessionId,
+          ...(row.title === null ? {} : { title: row.title }),
+          updatedAt: new Date(row.updatedAt),
+        }));
+      return { entries, limit, offset, total };
+    });
+  }
+
+  /** One row per tool action, with authorization and Gate decisions kept together. */
+  public async listAuditActions(
+    sessionId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<AuditActionList> {
+    await this.#writes;
+    return this.#database.exclusive((database) => {
+      const where = eq(decisions.sessionId, sessionId);
+      const total =
+        database
+          .select({ value: countDistinct(decisions.trackId) })
+          .from(decisions)
+          .where(where)
+          .get()?.value ?? 0;
+      const tracks = database
+        .select({ createdAt: max(decisions.createdAt), trackId: decisions.trackId })
+        .from(decisions)
+        .where(where)
+        .groupBy(decisions.trackId)
+        .orderBy(desc(max(decisions.createdAt)), desc(decisions.trackId))
+        .limit(limit)
+        .offset(offset)
+        .all();
+      if (tracks.length === 0) return { entries: [], limit, offset, total };
+
+      const trackIds = tracks.map((track) => track.trackId);
+      const records = database
+        .select()
+        .from(decisions)
+        .where(and(where, inArray(decisions.trackId, trackIds)))
+        .orderBy(asc(decisions.createdAt), asc(decisions.decisionId))
+        .all();
+      const grouped = new Map<string, StoredDecision[]>();
+      for (const row of records) {
+        const entries = grouped.get(row.trackId) ?? [];
+        entries.push(decisionToRecord(row));
+        grouped.set(row.trackId, entries);
+      }
+
+      const responseGroups = new Map<string, AuditToolResponse[]>();
+      const responses = database
+        .select({
+          content: messages.content,
+          createdAt: messages.createdAt,
+          execution: messages.execution,
+          isError: messages.isError,
+          trackId: messages.trackId,
+          trust: messages.trust,
+        })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.sessionId, sessionId),
+            eq(messages.role, 'toolResponse'),
+            inArray(messages.trackId, trackIds),
+          ),
+        )
+        .orderBy(asc(messages.seq))
+        .all();
+      for (const response of responses) {
+        if (response.execution === null || response.trackId === null) continue;
+        if (response.content === null || response.trust === null) {
+          throw new Error(`Audit response for ${response.trackId} is incomplete.`);
+        }
+        const groupedResponses = responseGroups.get(response.trackId) ?? [];
+        groupedResponses.push({
+          content: response.content,
+          createdAt: new Date(response.createdAt),
+          execution: response.execution,
+          isError: response.isError ?? false,
+          trust: response.trust,
+        });
+        responseGroups.set(response.trackId, groupedResponses);
+      }
+
+      const entries = tracks.map((track): AuditAction => {
+        const actionDecisions = grouped.get(track.trackId) ?? [];
+        const subject =
+          actionDecisions.findLast((decision) => decision.stage === 'gate') ??
+          actionDecisions.at(-1);
+        if (subject === undefined || track.createdAt === null) {
+          throw new Error(`Audit action ${track.trackId} has no decisions.`);
+        }
+        return {
+          authority: subject.authority,
+          createdAt: new Date(track.createdAt),
+          decisions: actionDecisions,
+          responses: responseGroups.get(track.trackId) ?? [],
+          runId: subject.runId,
+          sessionId,
+          ...(subject.title === undefined ? {} : { title: subject.title }),
+          toolName: subject.toolName,
+          toolSetId: subject.toolSetId,
+          trackId: track.trackId,
+        };
+      });
+      return { entries, limit, offset, total };
+    });
+  }
+
   public async create(sessionId: string, options: CreateSessionOptions = {}): Promise<SessionRow> {
     const now = Date.now();
     const row: SessionRow = {
@@ -410,6 +617,22 @@ class SessionStore {
         .set({ title, updatedAt: Date.now() })
         .where(eq(sessions.sessionId, sessionId))
         .run();
+    });
+  }
+
+  /** Session metadata without loading its transcript. */
+  public async readSession(sessionId: string): Promise<SessionSummary | undefined> {
+    await this.#writes;
+    return this.#database.exclusive((database) => {
+      const row = database.select().from(sessions).where(eq(sessions.sessionId, sessionId)).get();
+      if (row === undefined) return undefined;
+      return {
+        ...(row.agentId === null ? {} : { agentId: row.agentId }),
+        createdAt: new Date(row.createdAt),
+        sessionId: row.sessionId,
+        ...(row.title === null ? {} : { title: row.title }),
+        updatedAt: new Date(row.updatedAt),
+      };
     });
   }
 
@@ -457,5 +680,15 @@ class SessionStore {
 
 export { SessionStore };
 
-export type { CreateSessionOptions, SessionStoreOptions, StoredSession };
+export type {
+  AuditAction,
+  AuditActionList,
+  AuditToolResponse,
+  CreateSessionOptions,
+  SessionAgentSummary,
+  SessionList,
+  SessionStoreOptions,
+  SessionSummary,
+  StoredSession,
+};
 export type { StoredDecision as DecisionRecord } from '../auth/audit';

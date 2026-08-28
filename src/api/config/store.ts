@@ -1,10 +1,14 @@
 import {
+  type BrokerContribution,
+  brokers,
+  type ConfigContributionSummary,
   type ConfigEntryKey,
   type ConfigRevertTarget,
   type ConfigSectionSchemaDescriptor,
   type ConfigSectionSummary,
   type ConfigTypeSchemaDescriptor,
   type ConfigurationAdmin,
+  contributionInstances,
   type ContributionReader,
   isConfigurable,
   type RuntimeComponentStatus,
@@ -96,6 +100,7 @@ function sorted(record: Record<string, unknown>): Record<string, unknown> {
  */
 class ConfigStore implements ConfigurationAdmin {
   readonly #activeApp: unknown;
+  readonly #authorities: BlueprintContext['authorities'];
   readonly #config: Config;
   readonly #contributions: ContributionReader;
   readonly #policies: SectionPolicies;
@@ -106,6 +111,7 @@ class ConfigStore implements ConfigurationAdmin {
 
   constructor(options: ConfigStoreOptions) {
     this.#activeApp = options.config.get('app');
+    this.#authorities = options.authorities;
     this.#config = options.config;
     this.#contributions = options.contributions;
     this.#policies = configPolicies(options);
@@ -136,6 +142,51 @@ class ConfigStore implements ConfigurationAdmin {
     );
   }
 
+  /**
+   * Every contribution this section can hold, and whether it is configured.
+   *
+   * A surface that only listed entries would show nothing at all after an
+   * extension is installed, which is a wrong answer rather than an empty one:
+   * the contribution is there, it has a schema and a name, and for a
+   * single-instance one there is exactly one entry it could ever be. Saying so
+   * is what turns "nothing here" into "this needs a token".
+   *
+   * `configured` is read from the current document rather than remembered, so a
+   * section that has not been resolved yet simply reports everything as
+   * unconfigured instead of failing.
+   */
+  #contributionSummaries(
+    key: ConfigKey,
+    section: Extract<ConfigSection, { kind: 'contribution' }>,
+  ): readonly ConfigContributionSummary[] {
+    const configured = new Set<string>();
+    if (this.#config.loaded.includes(key)) {
+      const value: unknown = this.#config.get(key as ConfigEntryKey);
+      for (const entry of Object.values(value as Record<string, unknown>)) {
+        if (typeof entry === 'object' && entry !== null && 'type' in entry) {
+          configured.add(String(entry.type));
+        }
+      }
+    }
+
+    return Object.freeze(
+      this.#contributions
+        .list(section.point)
+        .flatMap((contribution) => {
+          if (!isConfigurable(contribution.value)) return [];
+          return [
+            Object.freeze({
+              configured: configured.has(contribution.id),
+              extensionId: contribution.extensionId,
+              instances: contributionInstances(contribution.value),
+              type: contribution.id,
+            }),
+          ];
+        })
+        .sort((left, right) => left.type.localeCompare(right.type)),
+    );
+  }
+
   /** The key a URL segment names, or nothing — the surface's 404, not an error. */
   public resolve(name: string): ConfigKey | undefined {
     return Object.hasOwn(sections, name) ? (name as ConfigKey) : undefined;
@@ -144,19 +195,54 @@ class ConfigStore implements ConfigurationAdmin {
   public summary(key: ConfigKey): SectionSummary {
     const section = sections[key] as ConfigSection;
     const error = this.#config.problems.find((problem) => problem.key === key)?.error;
+    const contributions =
+      section.kind === 'contribution' ? this.#contributionSummaries(key, section) : undefined;
+    const presentation = section.presentation;
     return Object.freeze({
       applies: section.applies,
-      ...(error === undefined ? {} : { error }),
+      // A directory always accepts operator-named entries. A contribution section
+      // does only when at least one installed contribution explicitly allows many.
+      creatable:
+        section.kind === 'directory' ||
+        contributions?.some((contribution) => contribution.instances === 'many') === true,
+      ...(contributions === undefined ? {} : { contributions }),
+      description: presentation.description,
+      editor: presentation.editor,
       entries: section.kind !== 'file',
+      ...(presentation.entrySummary === undefined
+        ? {}
+        : { entrySummary: presentation.entrySummary }),
+      ...(error === undefined ? {} : { error }),
+      group: presentation.group,
+      ...(presentation.inventory === undefined ? {} : { inventory: presentation.inventory }),
       key,
       kind: section.kind,
+      label: presentation.label,
       loaded: this.#config.loaded.includes(key),
       name: section.name,
+      plural: presentation.plural,
+      references: Object.freeze([...(presentation.references ?? [])]),
+      slug: presentation.slug,
       // A directory has no whole-document write: its entries are separate files
       // with separate lifetimes, and rewriting the set to change one of them
       // would make every reader of the others a party to that change.
       writable: section.kind !== 'directory',
     });
+  }
+
+  /** Every grantable authority, from the same catalog authorization validates against. */
+  public authorities(): readonly {
+    readonly description: string;
+    readonly id: string;
+    readonly ownerExtensionId: string;
+  }[] {
+    const catalog = this.#authorities();
+    return Object.freeze(
+      catalog.ids.flatMap((id) => {
+        const definition = catalog.get(id);
+        return definition === undefined ? [] : [Object.freeze({ ...definition })];
+      }),
+    );
   }
 
   public hasEntries(key: ConfigKey): key is EntryKey {
@@ -192,6 +278,8 @@ class ConfigStore implements ConfigurationAdmin {
           return [
             Object.freeze({
               extensionId: contribution.extensionId,
+              ...brokerHost(section, configurable),
+              instances: contributionInstances(configurable),
               schema: z.toJSONSchema(configurable.configSchema, {
                 io: 'input',
                 unrepresentable: 'any',
@@ -423,6 +511,15 @@ class ConfigStore implements ConfigurationAdmin {
   #policy(key: ConfigKey): SectionPolicy {
     return this.#policies[key] ?? {};
   }
+}
+
+function brokerHost(
+  section: Extract<ConfigSection, { kind: 'contribution' }>,
+  configurable: object,
+): { readonly host?: BrokerContribution['host'] } {
+  if (section.point !== brokers) return {};
+  const host = (configurable as BrokerContribution).host;
+  return host === undefined ? {} : { host: Object.freeze({ ...host }) };
 }
 
 function problemKind(key: ConfigKey): RuntimeComponentStatus['kind'] {

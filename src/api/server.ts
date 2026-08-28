@@ -12,6 +12,7 @@ import { languageRoutes } from './i18n/routes';
 import { API_PREFIX } from './prefix';
 import { secretRoutes } from './secrets/routes';
 import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './serverConfig';
+import { type SessionReader, sessionRoutes } from './sessions/routes';
 import { ui } from './ui';
 
 import type { ArtifactPipeline } from '../artifact/pipeline';
@@ -70,6 +71,8 @@ interface ApiServerOptions extends ApiConfigInput {
    * and `auth` is what stands between the write and anybody at all.
    */
   secrets?: SecretStore;
+  /** Historical conversations, transcripts and per-session audit projections. */
+  sessions?: SessionReader;
   /** Vite build directory to expose at `/`; omitted when no web UI is available. */
   uiDirectory?: string;
   version?: string;
@@ -133,6 +136,9 @@ class ApiServer implements Disposable {
     }
     if (options.auth !== undefined) {
       api.use(authRoutes(options.auth));
+      if (options.sessions !== undefined) {
+        api.use(sessionRoutes({ sessions: options.sessions, store: options.auth.store }));
+      }
       if (options.artifacts !== undefined) {
         api.use(artifactRoutes({ artifacts: options.artifacts, store: options.auth.store }));
       }

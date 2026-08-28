@@ -43,6 +43,8 @@ const settingsMessages = Object.freeze({
     'El documento deseado está guardado. Reinicia Nox para activar sus cambios de infraestructura.',
   'settings.editor.unsavedChanges': 'CAMBIOS SIN GUARDAR',
   'settings.entries.activation': 'ACTIVACIÓN',
+  'settings.entries.available': 'DISPONIBLE',
+  'settings.entries.configure': 'Configurar →',
   'settings.entries.configured': 'CONFIGURADAS',
   'settings.entries.configuredEntry': 'Entrada configurada',
   'settings.entries.configuredToolSet': 'Conjunto de herramientas configurado',
@@ -52,6 +54,11 @@ const settingsMessages = Object.freeze({
     'Esta sección está cargada y no contiene entradas. Crea una para configurarla.',
   'settings.entries.immediate': 'Inmediata',
   'settings.entries.noneConfigured': 'No hay {section} configurados',
+  'settings.entries.notConfigured': 'Sin configurar',
+  'settings.entries.notConfiguredHelp':
+    'Instalada y todavía sin configurar. Existe una sola, así que esta es la única entrada que puede tener.',
+  'settings.entries.readyToConfigure':
+    'Extensiones instaladas que esta sección puede alojar y aún no tienen entrada.',
   'settings.entries.restart': 'Reinicio',
   'settings.entries.source': 'ORIGEN',
   'settings.error.entryAbsent': '{entry} no está presente en esta sección.',

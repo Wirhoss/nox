@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { providers, toolSets } from '@nox/extension-api';
+import { commands, providers, toolSets } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { AuthStore } from './api/auth/store';
@@ -182,11 +182,11 @@ describe('bootstrap', () => {
   test('wires a contributed tool-set instance into a blueprint', async () => {
     const application = await boot({
       blueprints: {
-        nox: { ...NOX, toolSets: { direct: ['internet'], routed: [] } },
+        nox: { ...NOX, toolSets: { direct: ['web'], routed: [] } },
       },
       secrets: { OPENAI_API_KEY: 'sk-test', SEARXNG_API_KEY: 'search-secret' },
       toolSets: {
-        internet: {
+        web: {
           search: {
             apiKey: { $secret: 'SEARXNG_API_KEY' },
             module: 'searxng',
@@ -198,9 +198,9 @@ describe('bootstrap', () => {
     });
 
     expect(application.contributions.get(toolSets, 'web')?.extensionId).toBe('nox.toolset.web');
-    expect(application.services.get(configService).get('toolSets')).toHaveProperty('internet');
+    expect(application.services.get(configService).get('toolSets')).toHaveProperty('web');
     expect(application.services.get(secretStoreService).consumers('SEARXNG_API_KEY')).toEqual([
-      { extensionId: 'nox.toolset.web', location: 'toolSets.internet.search.apiKey' },
+      { extensionId: 'nox.toolset.web', location: 'toolSets.web.search.apiKey' },
     ]);
 
     const session = await application.openSession('nox');
@@ -210,10 +210,10 @@ describe('bootstrap', () => {
   test('composes the configuration tool set against the shared administration service', async () => {
     const application = await boot({
       blueprints: {
-        nox: { ...NOX, toolSets: { direct: ['control'], routed: [] } },
+        nox: { ...NOX, toolSets: { direct: ['config'], routed: [] } },
       },
       toolSets: {
-        control: {
+        config: {
           manageRuntime: false,
           readSecretMetadata: false,
           readSections: ['blueprints', 'providers'],
@@ -247,7 +247,7 @@ describe('bootstrap', () => {
   });
 
   test('carries a blueprint allowlist through to the tools a session opens with', async () => {
-    const internet = {
+    const web = {
       extract: { module: 'crawl4ai', url: 'https://crawl.example.test' },
       search: { module: 'searxng', url: 'https://search.example.test' },
       type: 'web',
@@ -258,10 +258,10 @@ describe('bootstrap', () => {
     const application = await boot({
       app: { api: { port: 0 } },
       blueprints: {
-        nox: { ...NOX, toolSets: { direct: [{ id: 'internet', tools: ['web_search'] }] } },
-        typo: { ...NOX, toolSets: { direct: [{ id: 'internet', tools: ['web_crawl'] }] } },
+        nox: { ...NOX, toolSets: { direct: [{ id: 'web', tools: ['web_search'] }] } },
+        typo: { ...NOX, toolSets: { direct: [{ id: 'web', tools: ['web_crawl'] }] } },
       },
-      toolSets: { internet },
+      toolSets: { web },
     });
 
     const session = await application.openSession('nox');
@@ -458,6 +458,49 @@ describe('bootstrap', () => {
     const rebound = ApiServer.create(api);
     await rebound.listen();
     await rebound.dispose();
+  });
+
+  test('publishes session commands contributed by the builtin extension', async () => {
+    const api = { host: '127.0.0.1', port: 39_522 };
+    const application = await boot({ app: { api }, brokers: { web: { type: 'web' } } });
+    const url = `http://${api.host}:${String(api.port)}`;
+    const headers = await login(url);
+
+    expect(
+      application.contributions
+        .list(commands)
+        .filter(({ extensionId }) => extensionId === 'nox.commands.session')
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual([
+      'agent',
+      'commands',
+      'compact',
+      'help',
+      'model',
+      'new',
+      'rename',
+      'retry',
+      'session',
+      'tools',
+    ]);
+
+    const response = await fetch(`${url}/api/chat/commands`, { headers });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { commands: { name: string }[] };
+    expect(body.commands.map(({ name }) => name)).toEqual([
+      'agent',
+      'commands',
+      'compact',
+      'help',
+      'model',
+      'new',
+      'rename',
+      'retry',
+      'session',
+      'stop',
+      'tools',
+    ]);
   });
 
   test('always gives the built-in web transport its chat surface', async () => {

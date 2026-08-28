@@ -43,6 +43,8 @@ const settingsMessages = Object.freeze({
     'The desired document is saved. Restart Nox to activate its infrastructure changes.',
   'settings.editor.unsavedChanges': 'UNSAVED CHANGES',
   'settings.entries.activation': 'ACTIVATION',
+  'settings.entries.available': 'AVAILABLE',
+  'settings.entries.configure': 'Configure →',
   'settings.entries.configured': 'CONFIGURED',
   'settings.entries.configuredEntry': 'Configured entry',
   'settings.entries.configuredToolSet': 'Configured tool set',
@@ -52,6 +54,11 @@ const settingsMessages = Object.freeze({
     'This section is loaded and currently contains no entries. Create one to configure it.',
   'settings.entries.immediate': 'Immediate',
   'settings.entries.noneConfigured': 'No {section} configured',
+  'settings.entries.notConfigured': 'Not configured',
+  'settings.entries.notConfiguredHelp':
+    'Installed and not set up yet. It exists once, so this is the only entry it can have.',
+  'settings.entries.readyToConfigure':
+    'Installed extensions this section can hold that have no entry yet.',
   'settings.entries.restart': 'Restart',
   'settings.entries.source': 'SOURCE',
   'settings.error.entryAbsent': '{entry} is not present in this section.',

@@ -1,3 +1,4 @@
+import { WEB_BROKER_ID } from '@nox/extension-api'
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, readonly, ref } from 'vue'
 
@@ -6,6 +7,23 @@ import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/htt
 import { useI18n } from '@/shared/i18n'
 
 import { chatApi, type PermissionDecision } from '../api/chat.api'
+import {
+  type AssistantItem,
+  type ContextChangeActivity,
+  createId,
+  createTimeline,
+  type ErrorItem,
+  mediaFrom,
+  type PermissionItem,
+  type PermissionState,
+  type ReasoningActivity,
+  type RetryActivity,
+  type RunActivityItem,
+  type TimelineItem,
+  type ToolActivity,
+  type ToolResponseActivity,
+  type UserItem,
+} from '../model/timeline'
 
 import type {
   ChatCommand,
@@ -15,10 +33,6 @@ import type {
   ChatEvent,
   ChatHistory,
   ChatHistoryEntry,
-  ChatMediaPart,
-  ChatPermissionRequest,
-  ChatUsage,
-  PermissionOutcome,
 } from '../api/chat.schemas'
 
 type ChatConnection =
@@ -45,120 +59,6 @@ type ChatResourceState =
   | { readonly type: 'loading' }
   | { readonly type: 'ready' }
 
-type PermissionState =
-  | { readonly decision: PermissionDecision; readonly type: 'submitting' }
-  | { readonly message: string; readonly type: 'failed' }
-  | { readonly outcome: PermissionOutcome; readonly type: 'resolved' }
-  | { readonly type: 'pending' }
-
-type RunCompletionStatus = Extract<ChatEvent, { type: 'runCompleted' }>['status']
-type RunTrigger = Extract<ChatEvent, { type: 'runStarted' }>['trigger']
-type ToolResponseExecution = Extract<ChatEvent, { type: 'toolResponse' }>['execution']
-
-interface AssistantItem {
-  content?: readonly ChatContentPart[]
-  readonly createdAt: string
-  readonly id: string
-  readonly kind: 'assistant'
-  media: readonly ChatMediaPart[]
-  streaming: boolean
-  text: string
-  readonly turnId: string
-}
-
-interface ContextChangeActivity {
-  readonly change: 'compacted' | 'folded'
-  readonly id: string
-  readonly replacedMessageIds: string[]
-  readonly text: string
-}
-
-interface ErrorItem {
-  readonly id: string
-  readonly kind: 'error'
-  readonly text: string
-  readonly turnId: string
-}
-
-interface PermissionItem {
-  readonly id: string
-  readonly kind: 'permission'
-  readonly request: ChatPermissionRequest
-  state: PermissionState
-  readonly turnId: string
-}
-
-interface ReasoningActivity {
-  readonly id: string
-  readonly kind: 'reasoning'
-  streaming: boolean
-  text: string
-  readonly turnId: string
-}
-
-interface RetryActivity {
-  readonly attempt: number
-  readonly delayMs: number
-  readonly id: string
-  readonly text: string
-}
-
-interface ToolResponseActivity {
-  readonly execution: ToolResponseExecution
-  readonly id: string
-  readonly isError: boolean
-  readonly media: readonly ChatMediaPart[]
-  readonly text: string
-}
-
-interface ToolActivity {
-  arguments?: Record<string, unknown>
-  readonly id: string
-  readonly kind: 'tool'
-  name: string
-  readonly responses: ToolResponseActivity[]
-  readonly trackId: string
-  readonly turnId: string
-}
-
-interface RunActivityItem {
-  readonly contextChanges: ContextChangeActivity[]
-  durationMs?: number
-  historical?: boolean
-  readonly id: string
-  readonly kind: 'activity'
-  modelId?: string
-  readonly reasoning: ReasoningActivity[]
-  readonly retries: RetryActivity[]
-  startedAt?: string
-  status?: RunCompletionStatus
-  readonly tools: ToolActivity[]
-  trigger?: RunTrigger
-  readonly turnId: string
-  readonly usageCalls: ChatUsage[]
-  usageTotal?: ChatUsage
-}
-
-interface UserItem {
-  readonly createdAt: string
-  readonly id: string
-  readonly kind: 'user'
-  readonly media: readonly ChatMediaPart[]
-  readonly mode: 'message' | 'steer'
-  /** The live run this item visually divides; history already carries real ordering. */
-  readonly steeredTurnId?: string
-  readonly text: string
-}
-
-type TimelineItem =
-  | AssistantItem
-  | ErrorItem
-  | PermissionItem
-  | ReasoningActivity
-  | RunActivityItem
-  | ToolActivity
-  | UserItem
-
 const useActiveSessionStore = defineStore('active-session', () => {
   const auth = useAuthStore()
   const { t } = useI18n()
@@ -167,11 +67,22 @@ const useActiveSessionStore = defineStore('active-session', () => {
   const commands = ref<readonly ChatCommand[]>([])
   const connection = ref<ChatConnection>({ type: 'disconnected' })
   const contextUsage = ref<ChatContextUsage>()
-  const conversationId = ref(createId('web'))
+  const conversationId = ref(createId(WEB_BROKER_ID))
   const conversations = ref<readonly ChatConversation[]>([])
   const defaultAgentId = ref<string>()
   const history = ref<ChatResourceState>({ type: 'ready' })
   const items = ref<TimelineItem[]>([])
+  const timeline = createTimeline(items)
+  const activityItem = timeline.activityItem.bind(undefined)
+  const appendFragment = timeline.appendFragment.bind(undefined)
+  const appendReasoningFragment = timeline.appendReasoningFragment.bind(undefined)
+  const discardStreamingDrafts = timeline.discardStreamingDrafts.bind(undefined)
+  const insertBeforeRunSummary = timeline.insertBeforeRunSummary.bind(undefined)
+  const permissionItem = timeline.permissionItem.bind(undefined)
+  const projectHistory = timeline.projectHistory.bind(undefined)
+  const settleMessage = timeline.settleMessage.bind(undefined)
+  const settleReasoning = timeline.settleReasoning.bind(undefined)
+  const toolActivity = timeline.toolActivity.bind(undefined)
   const run = ref<ChatRunStatus>({ type: 'idle' })
   const selectedAgentId = ref<string>()
   const sendError = ref<string>()
@@ -295,7 +206,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
   function newConversation(): void {
     selectionVersion += 1
     eventBuffer = undefined
-    conversationId.value = createId('web')
+    conversationId.value = createId(WEB_BROKER_ID)
     selectedAgentId.value =
       defaultAgentId.value ?? (agentIds.value.length === 1 ? agentIds.value[0] : undefined)
     contextUsage.value = undefined
@@ -475,8 +386,7 @@ const useActiveSessionStore = defineStore('active-session', () => {
     const messageId = createId('msg')
     const mode = sendMode.value
     const steeredTurnId =
-      mode === 'steer' &&
-      (run.value.type === 'running' || run.value.type === 'waiting-permission')
+      mode === 'steer' && (run.value.type === 'running' || run.value.type === 'waiting-permission')
         ? run.value.turnId
         : undefined
     const item: UserItem = {
@@ -581,6 +491,19 @@ const useActiveSessionStore = defineStore('active-session', () => {
     if (event.conversationId !== conversationId.value) return
 
     switch (event.type) {
+      case 'commandResult':
+        if (event.status === 'completed') {
+          settleMessage(event.turnId, `**/${event.name}**\n\n${event.text}`)
+        } else {
+          insertBeforeRunSummary(event.turnId, {
+            id: createId('error'),
+            kind: 'error',
+            text: `/${event.name}: ${event.text}`,
+            turnId: event.turnId,
+          })
+        }
+        void refreshConversations()
+        break
       case 'contextChange':
         activityItem(event.turnId).contextChanges.push({
           change: event.change,
@@ -717,87 +640,6 @@ const useActiveSessionStore = defineStore('active-session', () => {
     }
   }
 
-  function projectHistory(loaded: ChatHistory): void {
-    items.value = []
-    let turn = 0
-
-    for (const entry of loaded.entries) {
-      if (entry.type === 'userMessage') {
-        turn += 1
-        items.value.push({
-          createdAt: entry.at,
-          id: entry.messageId,
-          kind: 'user',
-          media: mediaFrom(entry.content),
-          mode: entry.mode,
-          text: entry.text,
-        })
-        continue
-      }
-
-      const turnId = `history_${String(turn)}`
-      switch (entry.type) {
-        case 'contextChange': {
-          const activity = historicalActivity(turnId)
-          activity.contextChanges.push({
-            change: entry.change,
-            id: entry.messageId,
-            replacedMessageIds: entry.replacedMessageIds,
-            text: entry.text,
-          })
-          break
-        }
-        case 'message':
-          insertBeforeRunSummary(turnId, {
-            content: entry.content,
-            createdAt: entry.at,
-            id: entry.messageId,
-            kind: 'assistant',
-            media: mediaFrom(entry.content),
-            streaming: false,
-            text: entry.text,
-            turnId,
-          })
-          break
-        case 'reasoning': {
-          const activity = historicalActivity(turnId)
-          const reasoning: ReasoningActivity = {
-            id: entry.messageId,
-            kind: 'reasoning',
-            streaming: false,
-            text: entry.text,
-            turnId,
-          }
-          activity.reasoning.push(reasoning)
-          insertBeforeRunSummary(turnId, reasoning)
-          break
-        }
-        case 'toolCall': {
-          const tool = toolActivity(historicalActivity(turnId), entry.trackId, entry.name)
-          tool.arguments = entry.arguments
-          break
-        }
-        case 'toolResponse': {
-          const tool = toolActivity(historicalActivity(turnId), entry.trackId, entry.name)
-          tool.responses.push({
-            execution: entry.execution,
-            id: entry.messageId,
-            isError: entry.isError,
-            media: mediaFrom(entry.content),
-            text: entry.text,
-          })
-          break
-        }
-      }
-    }
-  }
-
-  function historicalActivity(turnId: string): RunActivityItem {
-    const activity = activityItem(turnId)
-    activity.historical = true
-    return activity
-  }
-
   function replayBufferedEvents(buffer: readonly ChatEvent[], loaded?: ChatHistory): void {
     const represented = new Map<string, number>()
     for (const entry of loaded?.entries ?? []) {
@@ -844,181 +686,6 @@ const useActiveSessionStore = defineStore('active-session', () => {
       if (event.conversationId !== conversationId.value || duplicate.has(event)) continue
       applyEvent(event)
     }
-  }
-
-  function activityItem(turnId: string): RunActivityItem {
-    const existing = items.value.find(
-      (item): item is RunActivityItem => item.kind === 'activity' && item.turnId === turnId,
-    )
-    if (existing !== undefined) return existing
-
-    const activity: RunActivityItem = {
-      contextChanges: [],
-      id: `activity_${turnId}`,
-      kind: 'activity',
-      reasoning: [],
-      retries: [],
-      tools: [],
-      turnId,
-      usageCalls: [],
-    }
-    items.value.push(activity)
-    return activity
-  }
-
-  function appendFragment(turnId: string, text: string): void {
-    const existing = streamingAssistantItem(turnId)
-    if (existing !== undefined) {
-      existing.text += text
-      return
-    }
-
-    insertBeforeRunSummary(turnId, {
-      createdAt: new Date().toISOString(),
-      id: createId('assistant'),
-      kind: 'assistant',
-      media: [],
-      streaming: true,
-      text,
-      turnId,
-    })
-  }
-
-  function settleMessage(turnId: string, text: string, content?: readonly ChatContentPart[]): void {
-    const media = mediaFrom(content)
-    const existing = streamingAssistantItem(turnId)
-    if (existing !== undefined) {
-      existing.content = content
-      existing.text = text
-      existing.media = media
-      existing.streaming = false
-      return
-    }
-
-    insertBeforeRunSummary(turnId, {
-      content,
-      createdAt: new Date().toISOString(),
-      id: createId('assistant'),
-      kind: 'assistant',
-      media,
-      streaming: false,
-      text,
-      turnId,
-    })
-  }
-
-  function appendReasoningFragment(turnId: string, text: string): void {
-    const activity = activityItem(turnId)
-    const current = activity.reasoning[activity.reasoning.length - 1]
-    if (current?.streaming === true) {
-      current.text += text
-      return
-    }
-    const reasoning: ReasoningActivity = {
-      id: createId('reasoning'),
-      kind: 'reasoning',
-      streaming: true,
-      text,
-      turnId,
-    }
-    activity.reasoning.push(reasoning)
-    insertBeforeRunSummary(turnId, reasoning)
-  }
-
-  function settleReasoning(turnId: string, text: string): void {
-    const activity = activityItem(turnId)
-    const current = activity.reasoning[activity.reasoning.length - 1]
-    if (current?.streaming === true) {
-      current.text = text
-      current.streaming = false
-      return
-    }
-    const reasoning: ReasoningActivity = {
-      id: createId('reasoning'),
-      kind: 'reasoning',
-      streaming: false,
-      text,
-      turnId,
-    }
-    activity.reasoning.push(reasoning)
-    insertBeforeRunSummary(turnId, reasoning)
-  }
-
-  function discardStreamingDrafts(turnId: string): void {
-    items.value = items.value.filter(
-      (item) => !(item.kind === 'assistant' && item.turnId === turnId && item.streaming),
-    )
-    const reasoning = items.value.find(
-      (item): item is RunActivityItem => item.kind === 'activity' && item.turnId === turnId,
-    )?.reasoning
-    const latestReasoning = reasoning?.[reasoning.length - 1]
-    if (latestReasoning?.streaming === true) latestReasoning.text = ''
-  }
-
-  function streamingAssistantItem(turnId: string): AssistantItem | undefined {
-    for (let index = items.value.length - 1; index >= 0; index -= 1) {
-      const item = items.value[index]
-      if (item?.kind === 'assistant' && item.turnId === turnId && item.streaming) return item
-    }
-    return undefined
-  }
-
-  function permissionItem(requestId: string): PermissionItem | undefined {
-    return items.value.find(
-      (item): item is PermissionItem =>
-        item.kind === 'permission' && item.request.requestId === requestId,
-    )
-  }
-
-  function toolActivity(activity: RunActivityItem, trackId: string, name: string): ToolActivity {
-    const existing = activity.tools.find((tool) => tool.trackId === trackId)
-    if (existing !== undefined) return existing
-
-    const tool: ToolActivity = {
-      id: `tool_${activity.turnId}_${trackId}`,
-      kind: 'tool',
-      name,
-      responses: [],
-      trackId,
-      turnId: activity.turnId,
-    }
-    activity.tools.push(tool)
-    insertBeforeRunSummary(activity.turnId, tool)
-    return tool
-  }
-
-  function insertBeforeRunSummary(turnId: string, item: TimelineItem): void {
-    const summaryIndex = items.value.findIndex(
-      (candidate) => candidate.kind === 'activity' && candidate.turnId === turnId,
-    )
-    if (summaryIndex === -1) {
-      items.value.push(item)
-      return
-    }
-
-    // A steer is a visible cut through one long run. New response-process items
-    // belong below its marker instead of jumping back above the run summary and
-    // making the steer look like an ordinary message after everything finished.
-    let steerIndex = -1
-    for (let index = items.value.length - 1; index > summaryIndex; index -= 1) {
-      const candidate = items.value[index]
-      if (
-        candidate?.kind === 'user' &&
-        candidate.mode === 'steer' &&
-        candidate.steeredTurnId === turnId
-      ) {
-        steerIndex = index
-        break
-      }
-    }
-    if (steerIndex > summaryIndex) {
-      let insertionIndex = steerIndex + 1
-      while (turnIdOf(items.value[insertionIndex]) === turnId) insertionIndex += 1
-      items.value.splice(insertionIndex, 0, item)
-      return
-    }
-
-    items.value.splice(summaryIndex, 0, item)
   }
 
   function markRunning(turnId: string): void {
@@ -1076,20 +743,6 @@ const useActiveSessionStore = defineStore('active-session', () => {
   }
 })
 
-function createId(prefix: string): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12))
-  const value = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-  return `${prefix}_${value}`
-}
-
-function turnIdOf(item: TimelineItem | undefined): string | undefined {
-  return item === undefined || item.kind === 'user' ? undefined : item.turnId
-}
-
-function mediaFrom(content: readonly ChatContentPart[] | undefined): readonly ChatMediaPart[] {
-  return content?.filter((part): part is ChatMediaPart => part.type !== 'text') ?? []
-}
-
 function appendPending(pending: Map<string, ChatEvent[]>, event: ChatEvent): void {
   const events = pending.get(event.turnId)
   if (events === undefined) pending.set(event.turnId, [event])
@@ -1141,6 +794,7 @@ function eventSignature(event: ChatEvent): string | undefined {
         event.text,
         event.content,
       ])
+    case 'commandResult':
     case 'contextUsage':
     case 'error':
     case 'fragment':

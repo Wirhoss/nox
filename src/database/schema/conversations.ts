@@ -16,6 +16,8 @@ const conversations = sqliteTable(
     brokerId: text('broker_id').notNull(),
     conversationId: text('conversation_id').notNull(),
     createdAt: integer('created_at').notNull(),
+    /** Conversation-local override; null means the agent's configured default. */
+    modelId: text('model_id'),
     sessionId: text('session_id')
       .notNull()
       .references(() => sessions.sessionId, { onDelete: 'cascade' }),

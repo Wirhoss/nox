@@ -34,6 +34,10 @@ interface HostAnswers {
 function testHost(received: InboundEvent[], answers: HostAnswers = {}): BrokerHost {
   return {
     agentIds: () => ['nox'],
+    artifactScope: (conversationId: string) => ({
+      id: JSON.stringify(['web', conversationId]),
+      type: 'conversation' as const,
+    }),
     command: (invocation) => {
       answers.invoked?.push(invocation);
       return answers.rejection;
@@ -101,6 +105,7 @@ describe('the web broker', () => {
     // A chat service posts text; this one is a UI over the runtime. Deciding
     // what to show is the client's, and nothing is decided for it upstream.
     expect(broker.capabilities).toEqual({
+      commands: true,
       contextChanges: true,
       contextUsage: true,
       permissions: true,
@@ -164,6 +169,30 @@ describe('the web broker', () => {
         text: 'the provider refused',
         turnId: 'run-1',
         type: 'error',
+      },
+    ]);
+  });
+
+  test('renders command outcomes outside the model transcript', async () => {
+    const { broker, rendered } = await startedBroker();
+
+    await broker.deliver({
+      conversationId: CONVERSATION,
+      name: 'session',
+      status: 'completed',
+      text: 'Session: session-1',
+      turnId: 'command-1',
+      type: 'commandResult',
+    });
+
+    expect(rendered).toEqual([
+      {
+        conversationId: CONVERSATION,
+        name: 'session',
+        status: 'completed',
+        text: 'Session: session-1',
+        turnId: 'command-1',
+        type: 'commandResult',
       },
     ]);
   });

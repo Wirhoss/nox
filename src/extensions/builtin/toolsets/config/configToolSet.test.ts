@@ -85,6 +85,7 @@ class RecordingAdmin implements ConfigurationAdmin {
         types: [
           {
             extensionId: 'nox.provider.openai',
+            instances: 'many',
             schema: { properties: { type: { const: 'openai_completions' } }, type: 'object' },
             type: 'openai_completions',
           },
@@ -97,11 +98,19 @@ class RecordingAdmin implements ConfigurationAdmin {
   public sections(): readonly ConfigSectionSummary[] {
     return SECTION_KEYS.map((key) => ({
       applies: key === 'app' ? 'restart' : 'hot',
+      creatable: key === 'blueprints' || key === 'providers',
+      description: `settings.sections.${key}.description`,
+      editor: 'json',
       entries: key !== 'app',
+      group: 'machine',
       key,
       kind: key === 'app' ? 'file' : key === 'blueprints' ? 'directory' : 'contribution',
+      label: `settings.sections.${key}.label`,
       loaded: true,
       name: key === 'app' ? 'app.json' : key,
+      plural: `settings.sections.${key}.plural`,
+      references: [],
+      slug: key,
       writable: key !== 'blueprints',
     }));
   }

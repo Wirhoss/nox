@@ -20,28 +20,38 @@ const entries = computed(() =>
     value: isConfigValue(value) ? value : {},
   })),
 )
+/**
+ * Installed contributions this section could hold and does not yet.
+ *
+ * Only the single-instance ones: those own their name, so there is exactly one
+ * entry they could ever be and the list can offer it. A many-instance
+ * contribution has no particular entry waiting to exist — how many and under
+ * what names is the operator's decision, and the create form is where it is made.
+ */
+const available = computed(() =>
+  (props.section.contributions ?? []).filter(
+    (contribution) => contribution.instances === 'single' && !contribution.configured,
+  ),
+)
 
 function detail(value: ConfigValue): string {
-  switch (props.section.key) {
-    case 'blueprints':
-      return [asString(value.provider), asString(value.model)].filter(Boolean).join(' // ')
-    case 'providers':
-      return [asString(value.type), asString(value.defaultModel)].filter(Boolean).join(' // ')
-    case 'toolSets':
-      return asString(value.type) ?? t('settings.entries.configuredToolSet')
-    case 'brokers':
-      return [asString(value.type), asString(value.agent)].filter(Boolean).join(' // ')
-    default:
-      return t('settings.entries.configuredEntry')
-  }
+  const fields = props.section.entrySummary?.detail ?? []
+  const summary = fields.flatMap((path) => scalarAt(value, path)).join(' // ')
+  return summary.length > 0 ? summary : t('settings.entries.configuredEntry')
 }
 
 function description(value: ConfigValue): string | undefined {
-  return asString(value.description) ?? asString(value.baseUrl)
+  const fields = props.section.entrySummary?.description ?? []
+  return fields.flatMap((path) => scalarAt(value, path))[0]
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined
+function scalarAt(value: ConfigValue, path: string): string[] {
+  let current: unknown = value
+  for (const segment of path.split('.')) {
+    if (!isConfigValue(current)) return []
+    current = current[segment]
+  }
+  return typeof current === 'string' && current.length > 0 ? [current] : []
 }
 
 function isConfigValue(value: unknown): value is ConfigValue {
@@ -91,6 +101,32 @@ function isConfigValue(value: unknown): value is ConfigValue {
       </div>
 
       <section
+        v-if="available.length > 0"
+        class="entry-list__available"
+        :aria-label="t('settings.entries.available')"
+      >
+        <p class="entry-list__available-note">{{ t('settings.entries.readyToConfigure') }}</p>
+        <RouterLink
+          v-for="contribution in available"
+          :key="contribution.type"
+          class="entry-list__entry entry-list__entry--available"
+          :to="{
+            name: 'settings',
+            params: { section: props.definition.slug },
+            query: { create: '1', type: contribution.type },
+          }"
+        >
+          <span class="entry-list__marker" aria-hidden="true"></span>
+          <div>
+            <span class="entry-list__id">{{ contribution.type }}</span>
+            <strong>{{ t('settings.entries.notConfigured') }}</strong>
+            <p>{{ t('settings.entries.notConfiguredHelp') }}</p>
+          </div>
+          <span class="entry-list__open">{{ t('settings.entries.configure') }}</span>
+        </RouterLink>
+      </section>
+
+      <section
         v-if="entries.length > 0"
         class="entry-list__entries"
         :aria-label="t(props.definition.plural)"
@@ -116,7 +152,7 @@ function isConfigValue(value: unknown): value is ConfigValue {
         </RouterLink>
       </section>
 
-      <section v-else class="entry-list__empty">
+      <section v-else-if="available.length === 0" class="entry-list__empty">
         <span aria-hidden="true">∅</span>
         <div>
           <h3>

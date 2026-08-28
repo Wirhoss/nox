@@ -94,6 +94,7 @@ function registry(): ContributionRegistry {
     providers,
     'fake_provider',
     providerContribution({
+      instances: 'many',
       configSchema: providerBaseConfigSchema.extend({ type: z.literal('fake_provider') }),
       create: () => ({}) as unknown as ChatProvider,
     }),
@@ -102,6 +103,7 @@ function registry(): ContributionRegistry {
     toolSets,
     'fake_tools',
     toolSetContribution({
+      instances: 'many',
       configSchema: toolSetBaseConfigSchema.extend({ type: z.literal('fake_tools') }),
       create: (config) => new FakeTools(config),
     }),

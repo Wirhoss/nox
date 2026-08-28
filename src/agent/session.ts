@@ -1,8 +1,9 @@
 import { nanoid } from 'nanoid';
 
 import { ArtifactOutputSink } from '../artifact/output';
+import { type AuthorizationProvider, authorize } from '../auth/authorization';
 import { ConversationParticipants } from '../auth/conversation';
-import { SYSTEM_CRON } from '../auth/principal';
+import { commandAuthority, SYSTEM_CRON } from '../auth/principal';
 import { type DecisionRecord, SessionStore } from '../database/sessionStore';
 import {
   type GateEvaluator,
@@ -20,7 +21,6 @@ import type { ArtifactPipeline } from '../artifact/pipeline';
 import type { ArtifactScope } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog } from '../auth/authority';
-import type { AuthorizationProvider } from '../auth/authorization';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ContextOptions, ContextUsage } from './context/options';
@@ -32,6 +32,7 @@ import type {
   MessageOrigin,
   ModelConfig,
   PrincipalRef,
+  ToolRisk,
   UserMessage,
   UserMessageDelivery,
 } from '@nox/extension-api';
@@ -73,14 +74,30 @@ interface SessionOptions extends RunnerOptions {
 
 type UserMessageInput = readonly MessageContent[] | string;
 
+interface CommandAuthorizationInput {
+  readonly authority: string;
+  readonly commandId: string;
+  readonly name: string;
+  readonly params: Readonly<Record<string, unknown>>;
+  readonly principal: PrincipalRef;
+  readonly risk: ToolRisk;
+}
+
+type CommandAuthorizationResult =
+  { readonly allowed: false; readonly reason: string } | { readonly allowed: true };
+
 function toUserMessage(
   input: UserMessageInput,
   origin: MessageOrigin,
   delivery: UserMessageDelivery,
+  said?: Date,
 ): UserMessage {
   return {
     content: typeof input === 'string' ? [{ text: input, type: 'text' }] : [...input],
-    createdAt: new Date(),
+    // When it was said, not when Nox got to it. They are the same thing for live
+    // speech and they are not for anything a transport read back, which is the
+    // case that makes the difference visible in a transcript.
+    createdAt: said ?? new Date(),
     delivery,
     messageId: nanoid(),
     origin,
@@ -99,10 +116,14 @@ function toUserMessage(
  */
 class Session {
   readonly #agentId: string;
+  readonly #authorities?: AuthorityCatalog;
+  readonly #authorization?: AuthorizationProvider;
   readonly #context: Context;
   readonly #events = new EventLog<AgentEvent>();
   readonly #gate: SessionGate;
   readonly #logger?: Logger;
+  readonly #model: ModelConfig;
+  readonly #participants: ConversationParticipants;
   readonly #runner: Runner;
   readonly #sessionId: string;
   readonly #store: SessionStore;
@@ -123,6 +144,9 @@ class Session {
     options: SessionOptions,
   ) {
     this.#agentId = options.agentId;
+    this.#authorities = options.authorities;
+    this.#authorization = options.authorization;
+    this.#model = model;
     this.#sessionId = sessionId;
     this.#store = store;
     this.#logger = options.logger;
@@ -130,7 +154,7 @@ class Session {
     this.#titleModel = options.titleModel;
     this.#titleProvider = options.titleProvider ?? provider;
 
-    const participants = new ConversationParticipants(
+    this.#participants = new ConversationParticipants(
       history
         .filter((message): message is UserMessage => message.role === 'user')
         .map((message) => message.origin.principal),
@@ -171,7 +195,8 @@ class Session {
         audit,
         evaluators: options.gateEvaluators,
         ownerApprovalRequired: (request) =>
-          participants.isShared && (request.risk === undefined || request.risk.effects.length > 0),
+          this.#participants.isShared &&
+          (request.risk === undefined || request.risk.effects.length > 0),
         passthrough: options.gate === undefined,
       },
     );
@@ -192,7 +217,7 @@ class Session {
       maxIterations: options.maxIterations,
       metadata: options.metadata,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
-      participants,
+      participants: this.#participants,
       sessionId,
     });
   }
@@ -256,6 +281,10 @@ class Session {
   /** The agent this conversation is being held with. */
   public get agentId(): string {
     return this.#agentId;
+  }
+
+  public get modelId(): string {
+    return this.#model.modelId;
   }
 
   /** Everything an observer can see, from the first event of the session. */
@@ -326,13 +355,135 @@ class Session {
     return this.#context.getFullHistory();
   }
 
-  /** Says structured content as a principal. There is no unattributed way in. */
-  public send(content: UserMessageInput, origin: MessageOrigin): void {
-    this.#runner.send(toUserMessage(content, origin, 'message'));
+  public getToolNames(): readonly string[] {
+    return Object.freeze(Object.keys(this.#context.getTools()).sort((a, b) => a.localeCompare(b)));
   }
 
-  public steer(content: UserMessageInput, origin: MessageOrigin): Promise<void> {
-    return this.#runner.steer(toUserMessage(content, origin, 'steer'));
+  /**
+   * Applies the same authority-then-risk pipeline used for a model tool call to a
+   * person-invoked command. Commands never borrow the authority of the latest run:
+   * the authenticated sender on this exact invocation is the principal checked.
+   */
+  public async authorizeCommand(
+    input: CommandAuthorizationInput,
+  ): Promise<CommandAuthorizationResult> {
+    const runAuthority = commandAuthority(input.principal, input.commandId);
+    const subject = {
+      authority: input.authority,
+      params: input.params,
+      runId: input.commandId,
+      sessionId: this.#sessionId,
+      toolName: input.name,
+      toolSetId: 'nox.commands',
+      trackId: input.commandId,
+    };
+    const decision = await authorize(
+      { ...subject, principal: input.principal },
+      this.#authorization,
+      this.#authorities,
+      undefined,
+      this.#logger,
+    );
+    this.#store.recordAuthorizationDecision({
+      ...subject,
+      createdAt: new Date(),
+      decidedBy: decision.decidedBy,
+      decisionId: nanoid(),
+      matchedGrant: decision.matchedGrant,
+      principal: input.principal,
+      reason: decision.reason,
+      verdict: decision.allowed ? 'allow' : 'deny',
+    });
+    this.#emit({
+      authority: input.authority,
+      decision,
+      principal: input.principal,
+      runId: input.commandId,
+      toolName: input.name,
+      trackId: input.commandId,
+      type: 'authorizationDecided',
+    });
+    if (!decision.allowed) return { allowed: false, reason: decision.reason };
+
+    const request = {
+      authority: input.authority,
+      params: input.params,
+      risk: input.risk,
+      runAuthority,
+      runId: input.commandId,
+      sessionId: this.#sessionId,
+      title: `Run /${input.name}`,
+      toolName: input.name,
+      toolSetId: 'nox.commands',
+      trackId: input.commandId,
+    };
+    const gated = await this.#gate.evaluate(request);
+    if (gated.verdict === 'allow') return { allowed: true };
+    if (gated.verdict === 'deny') return { allowed: false, reason: gated.reason };
+
+    const pending = this.#gate.requestPermission(request, gated);
+    if (!pending.accepted) {
+      const resolution = await pending.outcome;
+      return {
+        allowed: false,
+        reason: `Permission was ${resolution.resolution}.`,
+      };
+    }
+
+    this.#emit({ request: pending.request, type: 'permissionRequested' });
+    const resolution = await pending.outcome;
+    this.#emit({
+      requestId: pending.request.requestId,
+      resolution,
+      runId: input.commandId,
+      trackId: input.commandId,
+      type: 'permissionResolved',
+    });
+    return resolution.resolution === 'approved'
+      ? { allowed: true }
+      : { allowed: false, reason: `Permission was ${resolution.resolution}.` };
+  }
+
+  /** Manual reduction after the current run has fully settled. */
+  public async compact(): Promise<{ readonly compacted: boolean; readonly reduced: boolean }> {
+    await this.#runner.idle;
+    return this.#context.compact({ force: true });
+  }
+
+  /** Runs the model again from settled context under the invoking command principal. */
+  public async retry(principal: PrincipalRef, commandId: string): Promise<void> {
+    await this.#runner.idle;
+    await this.#runner.retry(commandAuthority(principal, commandId));
+  }
+
+  /** Gives the session an operator-selected title and prevents model titling from racing it. */
+  public async rename(title: string): Promise<void> {
+    const normalized = title.replace(/\s+/gu, ' ').trim();
+    if (normalized.length === 0 || normalized.length > 120) {
+      throw new RangeError('A session title must contain between 1 and 120 characters.');
+    }
+    this.#titling.abort();
+    await this.#titledOnce;
+    this.#title = normalized;
+    this.#store.setTitle(this.#sessionId, normalized);
+    this.#emit({ title: normalized, type: 'titled' });
+  }
+
+  /** Says structured content as a principal. There is no unattributed way in. */
+  public send(content: UserMessageInput, origin: MessageOrigin, said?: Date): void {
+    this.#runner.send(toUserMessage(content, origin, 'message', said));
+  }
+
+  public steer(content: UserMessageInput, origin: MessageOrigin, said?: Date): Promise<void> {
+    return this.#runner.steer(toUserMessage(content, origin, 'steer', said));
+  }
+
+  /**
+   * Something said in this conversation that was not said to the agent. It
+   * belongs to the transcript and wakes nothing; see `Runner.observe`.
+   */
+  public observe(content: UserMessageInput, origin: MessageOrigin, said?: Date): void {
+    this.#runner.observe(toUserMessage(content, origin, 'observation', said));
   }
 
   /** Internal scheduled ingress, attributed and authorized as Nox's cron principal. */
@@ -430,4 +581,4 @@ class Session {
 
 export { Session };
 
-export type { SessionOptions };
+export type { CommandAuthorizationInput, CommandAuthorizationResult, SessionOptions };

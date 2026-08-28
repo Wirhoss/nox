@@ -4,14 +4,42 @@ import { requestJson } from '@/shared/api/http'
 
 const configValueSchema = z.record(z.string(), z.unknown())
 
+/**
+ * One contribution a section can hold, and whether it is configured. It travels
+ * with the section so a list can show what is installed and not set up yet: an
+ * extension with no entry is something to fill in, not an absence.
+ */
+const contributionSummarySchema = z.object({
+  configured: z.boolean(),
+  extensionId: z.string().min(1),
+  instances: z.enum(['many', 'single']),
+  type: z.string().min(1),
+})
+
+const entrySummaryDescriptorSchema = z.object({
+  description: z.array(z.string().min(1)).readonly(),
+  detail: z.array(z.string().min(1)).readonly(),
+})
+
 const sectionSummarySchema = z.object({
   applies: z.enum(['hot', 'restart']),
+  contributions: z.array(contributionSummarySchema.readonly()).readonly().optional(),
+  creatable: z.boolean(),
+  description: z.string().min(1),
+  editor: z.enum(['app', 'blueprint', 'broker', 'contribution', 'json', 'toolSet']),
   entries: z.boolean(),
+  entrySummary: entrySummaryDescriptorSchema.readonly().optional(),
   error: z.string().optional(),
+  group: z.enum(['capabilities', 'intelligence', 'machine']),
+  inventory: z.literal('toolSets').optional(),
   key: z.string().min(1),
   kind: z.enum(['contribution', 'directory', 'file']),
+  label: z.string().min(1),
   loaded: z.boolean(),
   name: z.string().min(1),
+  plural: z.string().min(1),
+  references: z.array(z.string().min(1)).readonly(),
+  slug: z.string().min(1),
   writable: z.boolean(),
 })
 
@@ -30,7 +58,17 @@ const runtimeComponentsSchema = z.preprocess(
 )
 const revertAvailableSchema = z.preprocess((value) => value ?? false, z.boolean())
 
+const authoritySummarySchema = z.object({
+  description: z.string().min(1),
+  id: z.string().min(1),
+  ownerExtensionId: z.string().min(1),
+})
+
 const configCatalogSchema = z.object({
+  authorities: z.preprocess(
+    (value) => value ?? [],
+    z.array(authoritySummarySchema.readonly()).readonly(),
+  ),
   revertAvailable: revertAvailableSchema,
   runtime: runtimeComponentsSchema,
   sections: z.array(sectionSummarySchema),
@@ -71,12 +109,20 @@ const toolSetInventoriesSchema = z.object({ toolSets: z.array(toolSetInventorySc
  * carried as it arrived: the editor reads it, and everything it does not
  * understand stays legible in the JSON surface rather than being dropped here.
  */
-const toolSetTypeSchema = z.object({
+const brokerHostPolicySchema = z.object({
+  authorization: z.enum(['grants', 'owner']).optional(),
+  removable: z.boolean().optional(),
+  selectableAgent: z.boolean().optional(),
+})
+const contributionTypeSchema = z.object({
   extensionId: z.string().min(1),
+  host: brokerHostPolicySchema.readonly().optional(),
+  instances: z.enum(['many', 'single']),
   schema: z.record(z.string(), z.unknown()),
   type: z.string().min(1),
 })
-const toolSetTypesSchema = z.object({ toolSetTypes: z.array(toolSetTypeSchema) })
+const toolSetTypesSchema = z.object({ toolSetTypes: z.array(contributionTypeSchema) })
+const sectionTypesSchema = z.object({ types: z.array(contributionTypeSchema) })
 
 const savedSectionSchema = configSectionSchema.extend({
   restartRequired: z.boolean(),
@@ -131,7 +177,10 @@ const removedSecretSchema = z.object({
   secretId: z.string().min(1),
 })
 
+type AuthoritySummary = z.infer<typeof authoritySummarySchema>
 type ConfigCatalog = z.infer<typeof configCatalogSchema>
+type ContributionSummary = z.infer<typeof contributionSummarySchema>
+type ContributionType = z.infer<typeof contributionTypeSchema>
 type ConfigEntry = z.infer<typeof configEntrySchema>
 type ConfigSection = z.infer<typeof configSectionSchema>
 type ConfigValue = z.infer<typeof configValueSchema>
@@ -146,7 +195,7 @@ type SecretReference = z.infer<typeof secretReferenceSchema>
 type SectionSummary = z.infer<typeof sectionSummarySchema>
 type ToolInventory = z.infer<typeof toolInventorySchema>
 type ToolSetInventory = z.infer<typeof toolSetInventorySchema>
-type ToolSetType = z.infer<typeof toolSetTypeSchema>
+type ToolSetType = ContributionType
 
 interface EntryInput {
   readonly accessToken: string
@@ -179,6 +228,7 @@ interface SettingsApi {
   deleteSecret(input: SecretInput): Promise<RemovedSecret>
   listConfig(accessToken: string): Promise<ConfigCatalog>
   listSecrets(accessToken: string): Promise<readonly Secret[]>
+  listSectionTypes(accessToken: string, section: string): Promise<readonly ToolSetType[]>
   listToolSetInventory(accessToken: string): Promise<readonly ToolSetInventory[]>
   listToolSetTypes(accessToken: string): Promise<readonly ToolSetType[]>
   readEntry(input: EntryInput): Promise<ConfigEntry>
@@ -252,6 +302,20 @@ const settingsApi: SettingsApi = {
     return response.toolSets
   },
 
+  /**
+   * The kinds one contributed section may hold, each with its own schema. Every
+   * editor of a contributed section renders its form from this rather than from
+   * a copy of what an extension's configuration used to look like.
+   */
+  async listSectionTypes(accessToken, section) {
+    const response = await requestJson(
+      `/config/${encodeURIComponent(section)}/types`,
+      sectionTypesSchema,
+      { headers: authorization(accessToken) },
+    )
+    return response.types
+  },
+
   async listToolSetTypes(accessToken) {
     const response = await requestJson('/capabilities/tool-set-types', toolSetTypesSchema, {
       headers: authorization(accessToken),
@@ -323,10 +387,13 @@ const settingsApi: SettingsApi = {
 export { settingsApi }
 
 export type {
+  AuthoritySummary,
   ConfigCatalog,
   ConfigEntry,
   ConfigSection,
   ConfigValue,
+  ContributionSummary,
+  ContributionType,
   RemovedEntry,
   RemovedSecret,
   RuntimeComponent,

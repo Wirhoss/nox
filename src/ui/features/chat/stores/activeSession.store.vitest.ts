@@ -790,5 +790,19 @@ describe('active chat surface integration', () => {
     expect(submitCommand).toHaveBeenCalledWith(
       expect.objectContaining({ arguments: { scope: 'run' }, command: 'stop' }),
     )
+
+    session.applyEvent({
+      conversationId: session.conversationId,
+      name: 'stop',
+      status: 'completed',
+      text: 'Run stopped.',
+      turnId: 'command-1',
+      type: 'commandResult',
+    })
+    expect(
+      session.items.find((item) => item.kind === 'assistant' && item.turnId === 'command-1'),
+    ).toMatchObject({
+      text: '**/stop**\n\nRun stopped.',
+    })
   })
 })

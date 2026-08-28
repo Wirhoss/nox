@@ -93,6 +93,12 @@ const contextUsageSchema = z.object({
 
 const chatEventSchema = z.discriminatedUnion('type', [
   eventBase.extend({
+    name: z.string(),
+    status: z.enum(['completed', 'failed']),
+    text: z.string(),
+    type: z.literal('commandResult'),
+  }),
+  eventBase.extend({
     change: z.enum(['compacted', 'folded']),
     replacedMessageIds: z.array(z.string()),
     text: z.string(),
@@ -132,7 +138,7 @@ const chatEventSchema = z.discriminatedUnion('type', [
   eventBase.extend({
     modelId: z.string(),
     startedAt: z.string().datetime(),
-    trigger: z.enum(['cron', 'deferredResult', 'steer', 'user']),
+    trigger: z.enum(['cron', 'deferredResult', 'retry', 'steer', 'user']),
     type: z.literal('runStarted'),
   }),
   eventBase.extend({ title: z.string(), type: z.literal('title') }),
@@ -189,7 +195,7 @@ const historyEntrySchema = z.discriminatedUnion('type', [
   }),
   historyEntryBase.extend({
     content: z.array(contentPartSchema).optional(),
-    mode: z.enum(['message', 'steer']),
+    mode: z.enum(['message', 'observation', 'steer']),
     principal: z.object({ issuer: z.string(), subject: z.string() }),
     text: z.string(),
     type: z.literal('userMessage'),
@@ -254,6 +260,7 @@ export {
   chatEventSchema,
   chatHistorySchema,
   commandsSchema,
+  contentPartSchema,
   contextUsageSchema,
   conversationsSchema,
   permissionRequestSchema,

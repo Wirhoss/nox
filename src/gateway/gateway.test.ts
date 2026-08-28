@@ -11,6 +11,9 @@ import {
   type BrokerSession,
   ChatProvider,
   type CommandRejection,
+  commands,
+  defineCommand,
+  defineExtension,
   type Message,
   type MessageContent,
   type ModelConfig,
@@ -31,8 +34,9 @@ import { GrantAuthorizationProvider } from '../auth/authorization';
 import { SYSTEM_CRON } from '../auth/principal';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
+import { bindExtensionManifest } from '../extensions/extension';
 import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
-import { brokerCommand } from './command';
+import { brokerCommand, CommandCatalog } from './command';
 import { type BrokerConversationGrant, Gateway } from './gateway';
 
 import type { GatePolicyInput } from '../tool/gate';
@@ -1511,7 +1515,7 @@ describe('Gateway', () => {
 
     test('runs a contributed command with everything it needs and nothing more', async () => {
       const database = await openDatabase();
-      const broker = new TestBroker();
+      const broker = new TestBroker({ commands: true });
       const seen: { conversationId: string; sender: string; tags: string[] }[] = [];
 
       const application = new NoxApplication();
@@ -1533,13 +1537,13 @@ describe('Gateway', () => {
             description: 'Tags a conversation.',
             name: 'tag',
             parameters: z.object({ tags: z.array(z.enum(['urgent', 'later', 'done'])).min(1) }),
-            run: (context, { tags }): Promise<void> => {
+            run: (context, { tags }) => {
               seen.push({
                 conversationId: context.conversationId,
                 sender: context.sender.subject,
                 tags: [...tags],
               });
-              return Promise.resolve();
+              return Promise.resolve({ text: `Tagged: ${tags.join(', ')}` });
             },
           }),
         ],
@@ -1559,9 +1563,280 @@ describe('Gateway', () => {
       expect(seen).toEqual([
         { conversationId: 'chat-1', sender: 'alice', tags: ['urgent', 'done'] },
       ]);
+      expect(
+        broker.delivered.find((event) => event.type === 'commandResult' && event.name === 'tag'),
+      ).toMatchObject({
+        name: 'tag',
+        status: 'completed',
+        text: 'Tagged: urgent, done',
+        type: 'commandResult',
+      });
       // A multiple choice is checked like anything else.
       expect(broker.invoke('chat-1', 'tag', { tags: [] })?.reason).toBe('invalidArguments');
       expect(broker.invoke('chat-1', 'tag', { tags: ['nope'] })?.reason).toBe('invalidArguments');
+    });
+
+    test('retries generation under the command sender without adding a command message', async () => {
+      const database = await openDatabase();
+      const broker = new TestBroker({ commands: true, runs: true });
+      const application = new NoxApplication();
+      applications.push(application);
+      await application.start();
+      application.addAgent(
+        new Agent(database, new SayingProvider('again'), MODEL, {
+          agentId: 'assistant',
+          authorities: catalog,
+          systemPrompt: 'system',
+        }),
+      );
+      const gateway = new Gateway(application, {
+        brokers: [{ agentId: 'assistant', broker, brokerId: 'test' }],
+        commands: [
+          brokerCommand({
+            description: 'Retries generation.',
+            name: 'retry',
+            parameters: z.object({}),
+            run: async (context) => {
+              await context.retry();
+              return { text: 'Retried.' };
+            },
+          }),
+        ],
+        database,
+      });
+      application.setGateway(gateway);
+      await gateway.start();
+      const harnessed = { application, broker, gateway };
+
+      broker.say('chat-1', 'hello', undefined, 'alice');
+      await settle(harnessed);
+      expect(broker.invoke('chat-1', 'retry', undefined, 'alice')).toBeUndefined();
+      await gateway.drain();
+
+      expect(application.sessions[0]?.session.getTranscript().map(({ role }) => role)).toEqual([
+        'user',
+        'assistant',
+        'assistant',
+      ]);
+      let sawRetry = false;
+      for await (const event of application.sessions[0]?.session.events ?? []) {
+        if (event.type !== 'runStarted' || event.trigger !== 'retry') continue;
+        sawRetry = true;
+        expect(event).toMatchObject({
+          authority: {
+            principal: { issuer: 'test', subject: 'alice' },
+            source: { type: 'command' },
+          },
+          trigger: 'retry',
+          type: 'runStarted',
+        });
+        break;
+      }
+      expect(sawRetry).toBeTrue();
+    });
+
+    test('authorizes and gates an extension-contributed command before it runs', async () => {
+      const database = await openDatabase();
+      const broker = new TestBroker({ commands: true, permissions: true });
+      let ran = false;
+      const extension = bindExtensionManifest(
+        {
+          engines: { extensionApi: '^0.1.0', nox: '^0.1.0' },
+          id: 'test.commands',
+          main: 'extension.js',
+          schemaVersion: 1,
+          version: '0.1.0',
+        },
+        defineExtension({
+          activate(context) {
+            context.contributions.register(
+              commands,
+              'secure',
+              defineCommand({
+                authority: TEST_AUTHORITY,
+                description: 'Runs only after authorization and approval.',
+                parameters: z.object({ value: z.string() }),
+                risk: () => ({ effects: ['write'] }),
+                run: (_context, { value }) => {
+                  ran = true;
+                  return Promise.resolve({ text: `Stored ${value}.` });
+                },
+              }),
+            );
+          },
+        }),
+      );
+      const application = new NoxApplication({ extensions: [extension] });
+      applications.push(application);
+      await application.start();
+      application.addAgent(
+        new Agent(database, new SayingProvider('ok'), MODEL, {
+          agentId: 'assistant',
+          authorities: catalog,
+          gate: { defaultVerdict: 'escalate', escalationTimeoutMs: 5_000 },
+          systemPrompt: 'system',
+        }),
+      );
+      const authorization = new GrantAuthorizationProvider(
+        'test',
+        { alice: [TEST_AUTHORITY] },
+        catalog,
+      );
+      const gateway = new Gateway(application, {
+        brokers: [{ agentId: 'assistant', authorization, broker, brokerId: 'test' }],
+        database,
+      });
+      application.setGateway(gateway);
+      await gateway.start();
+      const harnessed = { application, broker, gateway };
+
+      broker.say('chat-1', 'hello', undefined, 'alice');
+      await settle(harnessed);
+      expect(broker.invoke('chat-1', 'secure', { value: 'x' }, 'alice')).toBeUndefined();
+      const permission = await waitFor(
+        () => broker.delivered.find((event) => event.type === 'permission'),
+        'A command permission request',
+      );
+      expect(ran).toBeFalse();
+      broker.answer('chat-1', permission.request.requestId, 'alice', { approved: 'once' });
+      await gateway.drain();
+
+      expect(ran).toBeTrue();
+      expect(
+        broker.delivered.find((event) => event.type === 'commandResult' && event.name === 'secure'),
+      ).toMatchObject({
+        name: 'secure',
+        status: 'completed',
+        text: 'Stored x.',
+        type: 'commandResult',
+      });
+    });
+
+    test('hands a conversation to a fresh session instead of mixing agent transcripts', async () => {
+      const database = await openDatabase();
+      const broker = new TestBroker({ commands: true });
+      const application = new NoxApplication();
+      applications.push(application);
+      await application.start();
+      application.addAgent(
+        new Agent(database, new SayingProvider('first'), MODEL, {
+          agentId: 'first',
+          authorities: catalog,
+          systemPrompt: 'first',
+        }),
+      );
+      application.addAgent(
+        new Agent(database, new SayingProvider('second'), MODEL, {
+          agentId: 'second',
+          authorities: catalog,
+          systemPrompt: 'second',
+        }),
+      );
+      const gateway = new Gateway(application, {
+        brokers: [{ agentId: 'first', broker, brokerId: 'test', selectableAgent: true }],
+        commands: [
+          brokerCommand({
+            description: 'Switches agents.',
+            name: 'agent',
+            parameters: z.object({ agent: z.string() }),
+            run: async (context, { agent }) => {
+              const session = await context.switchAgent(agent);
+              return { text: `Now using ${session.agentId}.` };
+            },
+          }),
+        ],
+        database,
+      });
+      application.setGateway(gateway);
+      await gateway.start();
+      const harnessed = { application, broker, gateway };
+
+      broker.say('chat-1', 'first turn');
+      await settle(harnessed);
+      const previous = (await broker.sessions())[0];
+      expect(previous?.agentId).toBe('first');
+
+      expect(broker.invoke('chat-1', 'agent', { agent: 'second' })).toBeUndefined();
+      await gateway.drain();
+      const replacement = (await broker.sessions())[0];
+      expect(replacement?.agentId).toBe('second');
+      expect(replacement?.sessionId).not.toBe(previous?.sessionId);
+
+      broker.say('chat-1', 'second turn');
+      await settle(harnessed);
+      expect(broker.texts('message').slice(-1)).toEqual(['second']);
+      expect(
+        (await new SessionStore(database).load(previous?.sessionId ?? ''))?.messages,
+      ).toHaveLength(2);
+    });
+
+    test('changes model by reopening the same transcript and persists the override', async () => {
+      const database = await openDatabase();
+      const broker = new TestBroker({ commands: true });
+      const provider = new SayingProvider('ok');
+      provider.addModelConfig({ ...MODEL, modelId: 'other-model' });
+      const application = new NoxApplication();
+      applications.push(application);
+      await application.start();
+      application.addAgent(
+        new Agent(database, provider, MODEL, {
+          agentId: 'assistant',
+          authorities: catalog,
+          systemPrompt: 'system',
+        }),
+      );
+      const gateway = new Gateway(application, {
+        brokers: [{ agentId: 'assistant', broker, brokerId: 'test' }],
+        commands: [
+          brokerCommand({
+            description: 'Switches models.',
+            name: 'model',
+            parameters: z.object({ model: z.string() }),
+            run: async (context, { model }) => {
+              const session = await context.switchModel(model);
+              return { text: `Now using ${session.modelId}.` };
+            },
+          }),
+        ],
+        database,
+      });
+      application.setGateway(gateway);
+      await gateway.start();
+      const harnessed = { application, broker, gateway };
+
+      broker.say('chat-1', 'hello');
+      await settle(harnessed);
+      const before = (await broker.sessions())[0];
+
+      expect(broker.invoke('chat-1', 'model', { model: 'other-model' })).toBeUndefined();
+      await gateway.drain();
+      const after = (await broker.sessions())[0];
+      expect(after?.sessionId).toBe(before?.sessionId);
+      expect(application.sessions[0]?.session.modelId).toBe('other-model');
+
+      await application.closeSession(after?.sessionId ?? '');
+      broker.say('chat-1', 'again');
+      await settle(harnessed);
+      expect(application.sessions[0]?.session.modelId).toBe('other-model');
+      expect(
+        application.sessions[0]?.session
+          .getTranscript()
+          .filter((message) => message.role === 'user'),
+      ).toHaveLength(2);
+    });
+
+    test('refuses command names that slash-command surfaces cannot carry', () => {
+      expect(
+        () =>
+          new CommandCatalog([
+            brokerCommand({
+              description: 'Cannot be published.',
+              name: 'Not.Portable',
+              parameters: z.object({}),
+              run: () => Promise.resolve(),
+            }),
+          ]),
+      ).toThrow('must be 1-32 lowercase letters');
     });
 
     test('refuses to register two commands under one name', async () => {

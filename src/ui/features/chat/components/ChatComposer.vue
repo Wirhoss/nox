@@ -8,9 +8,11 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { uploadArtifact } from '../api/artifact.api'
 import { useActiveSessionStore } from '../stores/activeSession.store'
 import ArtifactMedia from './ArtifactMedia.vue'
+import CommandForm from './CommandForm.vue'
 import ContextGauge from './ContextGauge.vue'
 
-import type { ChatContentPart } from '../api/chat.schemas'
+import type { ChatCommand, ChatContentPart } from '../api/chat.schemas'
+import type { JsonObject } from '../model/commandForm'
 
 type ChatArtifactPart = Extract<ChatContentPart, { type: 'artifact' }>
 
@@ -30,6 +32,8 @@ const commandPicker = ref<HTMLElement>()
 const commandSearch = ref<HTMLInputElement>()
 const commandQuery = ref('')
 const commandsOpen = ref(false)
+const selectedCommand = ref<ChatCommand>()
+const submittingCommand = ref(false)
 const filteredCommands = computed(() => {
   const query = commandQuery.value.trim().toLocaleLowerCase()
   if (query.length === 0) return session.commands
@@ -143,16 +147,37 @@ function removeAttachment(index: number): void {
   attachmentError.value = undefined
 }
 
-function chooseCommand(command: string): void {
-  text.value = `/${command}`
+function chooseCommand(command: ChatCommand): void {
+  selectedCommand.value = command
   commandError.value = undefined
-  commandsOpen.value = false
   commandQuery.value = ''
+}
+
+async function submitCommandForm(argumentsValue: Readonly<JsonObject>): Promise<void> {
+  const command = selectedCommand.value
+  if (command === undefined || submittingCommand.value) return
+
+  submittingCommand.value = true
+  try {
+    if (await session.invokeCommand(command.name, argumentsValue)) {
+      selectedCommand.value = undefined
+      commandsOpen.value = false
+    }
+  } finally {
+    submittingCommand.value = false
+  }
+}
+
+function closeCommandForm(): void {
+  selectedCommand.value = undefined
 }
 
 async function toggleCommands(): Promise<void> {
   commandsOpen.value = !commandsOpen.value
-  if (!commandsOpen.value) return
+  if (!commandsOpen.value) {
+    selectedCommand.value = undefined
+    return
+  }
   await nextTick()
   commandSearch.value?.focus()
 }
@@ -164,6 +189,7 @@ function closeCommandsOnOutsideClick(event: PointerEvent): void {
     commandPicker.value?.contains(event.target) !== true
   ) {
     commandsOpen.value = false
+    selectedCommand.value = undefined
   }
 }
 
@@ -180,7 +206,8 @@ function parseCommand(
 ): string | { readonly arguments?: Readonly<Record<string, unknown>>; readonly command: string } {
   const match = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]+))?$/.exec(value)
   const command = match?.[1]
-  if (command === undefined || !session.commands.some((entry) => entry.name === command)) {
+  const published = session.commands.find((entry) => entry.name === command)
+  if (command === undefined || published === undefined) {
     return t('chat.command.choosePublished')
   }
 
@@ -194,7 +221,39 @@ function parseCommand(
     }
     return { arguments: parsed as Readonly<Record<string, unknown>>, command }
   } catch {
-    return t('chat.command.argumentsValidJson')
+    const shorthand = singleArgument(published.parameters, serializedArguments)
+    return shorthand === undefined
+      ? t('chat.command.argumentsValidJson')
+      : { arguments: shorthand, command }
+  }
+}
+
+function singleArgument(
+  schema: Readonly<Record<string, unknown>>,
+  value: string,
+): Readonly<Record<string, unknown>> | undefined {
+  const properties = schema.properties
+  if (typeof properties !== 'object' || properties === null || Array.isArray(properties)) return
+  const entries = Object.entries(properties)
+  if (entries.length !== 1) return
+  const [name, unknownProperty] = entries[0] ?? []
+  if (name === undefined || typeof unknownProperty !== 'object' || unknownProperty === null) return
+
+  const property = unknownProperty as Readonly<Record<string, unknown>>
+  switch (property.type) {
+    case 'string':
+      return { [name]: value }
+    case 'integer':
+    case 'number': {
+      const number = Number(value)
+      return Number.isFinite(number) ? { [name]: number } : undefined
+    }
+    case 'boolean':
+      if (value === 'true') return { [name]: true }
+      if (value === 'false') return { [name]: false }
+      return
+    default:
+      return
   }
 }
 
@@ -267,30 +326,39 @@ function onKeydown(event: KeyboardEvent): void {
             class="composer__command-menu"
             :aria-label="t('chat.command.available')"
           >
-            <label class="composer__command-search">
-              <span>{{ t('chat.command.find') }}</span>
-              <input
-                ref="commandSearch"
-                v-model="commandQuery"
-                type="search"
-                :placeholder="t('chat.command.searchPlaceholder')"
-              />
-            </label>
+            <CommandForm
+              v-if="selectedCommand !== undefined"
+              :busy="submittingCommand"
+              :command="selectedCommand"
+              @cancel="closeCommandForm"
+              @submit="submitCommandForm"
+            />
 
-            <ul v-if="filteredCommands.length > 0">
-              <li v-for="command in filteredCommands" :key="command.name">
-                <button type="button" @click="chooseCommand(command.name)">
-                  <strong>/{{ command.name }}</strong>
-                  <span>{{ command.description }}</span>
-                </button>
-              </li>
-            </ul>
-            <p v-else class="composer__command-empty">{{ t('chat.command.noMatches') }}</p>
+            <template v-else>
+              <label class="composer__command-search">
+                <span>{{ t('chat.command.find') }}</span>
+                <input
+                  ref="commandSearch"
+                  v-model="commandQuery"
+                  type="search"
+                  :placeholder="t('chat.command.searchPlaceholder')"
+                />
+              </label>
 
-            <p class="composer__command-help">
-              {{ t('chat.command.argumentsHelp') }}
-              <code>/command {&quot;key&quot;:&quot;value&quot;}</code>
-            </p>
+              <ul v-if="filteredCommands.length > 0">
+                <li v-for="command in filteredCommands" :key="command.name">
+                  <button type="button" @click="chooseCommand(command)">
+                    <strong>/{{ command.name }}</strong>
+                    <span>{{ command.description }}</span>
+                  </button>
+                </li>
+              </ul>
+              <p v-else class="composer__command-empty">{{ t('chat.command.noMatches') }}</p>
+
+              <p class="composer__command-help">
+                {{ t('chat.command.argumentsHelp') }}
+              </p>
+            </template>
           </section>
         </div>
 
@@ -445,6 +513,14 @@ function onKeydown(event: KeyboardEvent): void {
   letter-spacing: normal;
   overflow: hidden;
   text-transform: none;
+}
+
+.composer__command-menu :deep(.command-form) {
+  min-height: 0;
+  grid-row: 1 / -1;
+  padding: var(--nox-space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .composer__command-search {

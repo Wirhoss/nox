@@ -59,6 +59,7 @@ class WebBroker implements Broker, ChatTransport {
    * client still decides what it draws, but nothing is decided for it upstream.
    */
   public readonly capabilities: BrokerCapabilities = Object.freeze({
+    commands: true,
     contextChanges: true,
     contextUsage: true,
     permissions: true,
@@ -291,6 +292,14 @@ function toChatEvent(event: OutboundEvent): ChatEvent {
   const base = { conversationId: event.conversationId, turnId: event.turnId };
 
   switch (event.type) {
+    case 'commandResult':
+      return {
+        ...base,
+        name: event.name,
+        status: event.status,
+        text: event.text,
+        type: 'commandResult',
+      };
     case 'error':
     case 'fragment':
     case 'reasoning':

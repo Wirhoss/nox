@@ -9,6 +9,14 @@ interface ChatEventBase {
   readonly turnId: string;
 }
 
+/** The settled outcome of a person-invoked command; never model context. */
+interface ChatCommandResultEvent extends ChatEventBase {
+  readonly name: string;
+  readonly status: 'completed' | 'failed';
+  readonly text: string;
+  readonly type: 'commandResult';
+}
+
 /** Something the conversation has to be told about, and no reply is coming. */
 interface ChatErrorEvent extends ChatEventBase {
   readonly text: string;
@@ -186,6 +194,7 @@ interface ChatUsageEvent extends ChatEventBase {
 }
 
 type ChatEvent =
+  | ChatCommandResultEvent
   | ChatContextChangeEvent
   | ChatContextUsageEvent
   | ChatErrorEvent
@@ -217,7 +226,7 @@ type ChatBody<T extends ChatEvent> = Omit<T, keyof ChatEventBase>;
  */
 interface ChatUserMessage {
   readonly content: readonly MessageContent[];
-  readonly mode: 'message' | 'steer';
+  readonly mode: 'message' | 'observation' | 'steer';
   readonly principal: PrincipalRef;
   readonly text: string;
   readonly type: 'userMessage';
@@ -387,6 +396,7 @@ export type {
   ChatCommand,
   ChatCommandInput,
   ChatCommandRejection,
+  ChatCommandResultEvent,
   ChatContextChangeEvent,
   ChatContextUsage,
   ChatContextUsageEvent,

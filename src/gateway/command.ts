@@ -1,32 +1,15 @@
 import { z } from 'zod';
 
-import type { Session } from '../agent/session';
-import type { Logger } from '../logger/logger';
 import type {
   BrokerCommandSpec,
+  Command,
+  CommandContext,
   CommandInvocation,
   CommandRejection,
+  CommandResult,
   JsonSchema,
-  PrincipalRef,
+  ToolRisk,
 } from '@nox/extension-api';
-
-/**
- * What a command is handed. One conversation, and who invoked it — never the
- * gateway: a command acts on the chat it was invoked in, and one that could
- * reach past it would be a way for a transport to touch another.
- */
-interface CommandContext {
-  /**
-   * Ends this conversation's session. Not destruction: the binding survives, so
-   * the next message reopens the same transcript rather than starting over.
-   */
-  close(): Promise<void>;
-  readonly conversationId: string;
-  readonly logger: Logger;
-  /** The principal the transport authenticated, for attribution and audit. */
-  readonly sender: PrincipalRef;
-  readonly session: Session;
-}
 
 /**
  * Something a person does to a conversation, rather than something they say.
@@ -44,12 +27,18 @@ interface CommandContext {
  * nothing extra: the schema is the whole declaration, and every surface derives
  * what it draws from it.
  */
-interface BrokerCommand<T extends z.ZodObject = z.ZodObject> {
-  readonly description: string;
+interface BrokerCommand<T extends z.ZodObject = z.ZodObject> extends Omit<
+  Command<T>,
+  'authority' | 'risk'
+> {
+  /** Internal commands may omit authority/risk; extension contributions may not. */
+  readonly authority?: string;
   readonly name: string;
-  readonly parameters: T;
-  run(context: CommandContext, args: z.infer<T>): Promise<void>;
+  risk?(args: z.infer<T>): ToolRisk;
+  run(context: CommandContext, args: z.infer<T>): Promise<CommandResult> | Promise<void>;
 }
+
+const COMMAND_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
 /** Preserves a command's parameter schema at its declaration site. */
 function brokerCommand<T extends z.ZodObject>(definition: BrokerCommand<T>): BrokerCommand<T> {
@@ -81,14 +70,14 @@ const stopCommand = brokerCommand({
           'reopens the same transcript.',
       ),
   }),
-  run: async (context, { scope }): Promise<void> => {
+  run: async (context, { scope }): Promise<CommandResult> => {
     if (scope === 'session') {
       await context.close();
-      return;
+      return { text: 'Session closed. The next message will reopen this transcript.' };
     }
 
-    const aborted = await context.session.abort();
-    context.logger.debug({ aborted }, 'Stopped the run in flight.');
+    const aborted = await context.abort();
+    return { text: aborted ? 'Run stopped.' : 'There was no run in flight.' };
   },
 });
 
@@ -110,6 +99,11 @@ class CommandCatalog {
 
   constructor(commands: readonly BrokerCommand[] = BUILTIN_COMMANDS) {
     for (const command of commands) {
+      if (!COMMAND_NAME_PATTERN.test(command.name)) {
+        throw new Error(
+          `Command name "${command.name}" must be 1-32 lowercase letters, digits, or hyphens, and start with a letter.`,
+        );
+      }
       if (this.#commands.has(command.name)) {
         throw new Error(`Command "${command.name}" is registered more than once.`);
       }

@@ -55,18 +55,43 @@ const languagePacks = createContributionPoint<LanguagePack>('nox.languages');
 const translationFragments = createContributionPoint<TranslationFragment>('nox.translations');
 
 const brokerSenderIdSchema = z.string().trim().min(1);
-const brokerGrantsSchema = z.record(
-  brokerSenderIdSchema,
-  z.array(z.string().trim().min(1)).readonly(),
-);
-const brokerConversationOverrideSchema = z.object({
-  agent: z.string().min(1).optional(),
-  grants: brokerGrantsSchema.prefault({}),
-});
-const brokerConversationsSchema = z.record(
-  z.string().trim().min(1),
-  brokerConversationOverrideSchema,
-);
+
+/**
+ * Who a grant is written against, for one transport.
+ *
+ * Parameterised because the key is the transport's own vocabulary: a bare
+ * sender ID everywhere, plus whatever that transport calls a group. A broker
+ * that passes its own key schema gets an ID it cannot authenticate rejected at
+ * load, beside the entry that named it, instead of silently becoming a grant
+ * that never matches anyone.
+ */
+function brokerGrantsSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
+  return z.record(key, z.array(z.string().trim().min(1)).readonly());
+}
+
+/**
+ * One conversation's override.
+ *
+ * `grants` is optional rather than defaulted, and the difference is the whole
+ * point: absent inherits the broker's grants, and `{}` is an explicit "nobody
+ * here". Defaulting it to `{}` made an override that only redirects the agent
+ * silently revoke every grant in that conversation — an answer nobody wrote.
+ */
+function brokerConversationOverrideSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
+  return z.object({
+    agent: z.string().min(1).optional(),
+    grants: brokerGrantsSchemaOf(key).optional(),
+  });
+}
+
+function brokerConversationsSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
+  return z.record(z.string().trim().min(1), brokerConversationOverrideSchemaOf(key));
+}
+
+const brokerGrantsSchema = brokerGrantsSchemaOf(brokerSenderIdSchema);
+const brokerConversationOverrideSchema =
+  brokerConversationOverrideSchemaOf(brokerSenderIdSchema);
+const brokerConversationsSchema = brokerConversationsSchemaOf(brokerSenderIdSchema);
 const brokerBaseConfigSchema = z.strictObject({
   agent: z.string().min(1).optional(),
   conversations: brokerConversationsSchema.prefault({}),
@@ -80,7 +105,8 @@ type BrokerConfigSchema = z.ZodObject<
 >;
 interface BrokerHostPolicy {
   readonly authorization?: 'grants' | 'owner';
-  readonly instanceId?: string;
+  /** False when the contribution is part of the control plane and may only be disabled. */
+  readonly removable?: boolean;
   readonly selectableAgent?: boolean;
 }
 type BrokerContribution = ConfigurableContribution<BrokerConfigSchema, Broker> & {
@@ -130,9 +156,13 @@ export {
   brokerConfigSchema,
   brokerContribution,
   brokerConversationOverrideSchema,
+  brokerConversationOverrideSchemaOf,
   brokerConversationsSchema,
+  brokerConversationsSchemaOf,
   brokerGrantsSchema,
+  brokerGrantsSchemaOf,
   brokers,
+  brokerSenderIdSchema,
   defineLanguagePack,
   defineTranslationFragment,
   languagePacks,

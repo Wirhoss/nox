@@ -135,7 +135,9 @@ function contentFromAssistant(item: ReadonlyAssistantItem): NonNullable<Assistan
     class="assistant-response"
     :class="{
       'assistant-response--active':
-        currentActivity?.status === undefined && props.redirected !== true,
+        currentActivity !== undefined &&
+        currentActivity.status === undefined &&
+        props.redirected !== true,
       'assistant-response--answered': blocks.some((block) => block.kind === 'assistant'),
       'assistant-response--redirected': props.redirected === true,
     }"
@@ -234,7 +236,11 @@ function contentFromAssistant(item: ReadonlyAssistantItem): NonNullable<Assistan
 }
 
 .assistant-response--redirected {
-  border-block-end-color: color-mix(in srgb, var(--nox-status-warning) 48%, var(--nox-border-subtle));
+  border-block-end-color: color-mix(
+    in srgb,
+    var(--nox-status-warning) 48%,
+    var(--nox-border-subtle)
+  );
   border-end-start-radius: var(--nox-radius-panel);
   opacity: 0.86;
 }

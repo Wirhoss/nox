@@ -150,9 +150,34 @@ type ResolvedSecrets<T> = T extends { readonly $secret: string }
       ? { [K in keyof T]: ResolvedSecrets<T[K]> }
       : T;
 
+/**
+ * How many configured instances of one contribution can exist.
+ *
+ * `single` is the default because it is the ordinary case, and saying so is what
+ * keeps the exception visible. A transport is bound to one credential; a
+ * capability like scheduling or configuration access belongs to this Nox rather
+ * than to a remote service, and a second copy of it partitions nothing real.
+ *
+ * `many` is right when an instance is the address of an independent remote
+ * service that a deployment genuinely wants several of, with consumers choosing
+ * between them — which is what a provider is, and why a blueprint names one.
+ *
+ * A `single` contribution owns its own name: its entry must be called exactly
+ * what the contribution is called, which is also its config `type`. That is one
+ * rule doing two jobs — it reserves the name, and it makes a second instance
+ * impossible, because two entries cannot share one key.
+ */
+type ContributionInstances = 'many' | 'single';
+
 interface ConfigurableContribution<TSchema extends ContributionConfigSchema, TValue> {
   readonly configSchema: TSchema;
+  readonly instances?: ContributionInstances;
   create(config: ResolvedSecrets<z.infer<TSchema>>): TValue;
+}
+
+/** What a contribution declared, or the default nothing has to declare. */
+function contributionInstances(value: UnknownConfigurable): ContributionInstances {
+  return value.instances ?? 'single';
 }
 
 type UnknownConfigurable = ConfigurableContribution<ContributionConfigSchema, unknown>;
@@ -220,6 +245,7 @@ function defineExtension<const T extends ExtensionDefinition>(extension: T): T {
 
 export {
   assertDiscriminator,
+  contributionInstances,
   createContributionPoint,
   createServiceToken,
   defineExtension,
@@ -236,6 +262,7 @@ export type {
   Contribution,
   ContributionConfigSchema,
   ContributionDescriptor,
+  ContributionInstances,
   ContributionPoint,
   ContributionReader,
   Disposable,

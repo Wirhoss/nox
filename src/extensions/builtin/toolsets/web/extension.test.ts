@@ -1,4 +1,9 @@
-import { authorities, toolSets, translationFragments } from '@nox/extension-api';
+import {
+  authorities,
+  contributionInstances,
+  toolSets,
+  translationFragments,
+} from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../../../../application';
@@ -33,6 +38,9 @@ describe('webToolsExtension', () => {
     expect(contribution?.extensionId).toBe('nox.toolset.web');
     expect(contribution?.value.configSchema).toBe(WebToolSet.configSchema);
     expect(contribution?.value.configSchema.shape.type.value).toBe('web');
+    expect(contribution === undefined ? undefined : contributionInstances(contribution.value)).toBe(
+      'single',
+    );
     await app.stop();
   });
 

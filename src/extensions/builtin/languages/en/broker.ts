@@ -4,6 +4,8 @@ const brokerMessages = Object.freeze({
   'settings.broker.addConversationSender': 'Add conversation sender',
   'settings.broker.addSenderGrant': 'Add sender grant',
   'settings.broker.agentOverride': 'Agent override',
+  'settings.broker.allAuthorities': 'Every registered authority.',
+  'settings.broker.authorityNamespace': 'Every registered authority in this namespace.',
   'settings.broker.authorityPattern': 'Authority pattern',
   'settings.broker.authorization': 'AUTHORIZATION',
   'settings.broker.baseAgent': 'Base agent',
@@ -20,25 +22,17 @@ const brokerMessages = Object.freeze({
   'settings.broker.composeOnRestartHelp':
     'Disabled entries remain configured but open no connection, route or secret.',
   'settings.broker.contribution': 'CONTRIBUTION',
-  'settings.broker.contributionJson': 'Contribution JSON',
   'settings.broker.conversation': 'CONVERSATION',
   'settings.broker.conversationId': 'Conversation ID',
   'settings.broker.conversationIdHint': 'Transport-native channel, room or conversation ID.',
   'settings.broker.failClosed': 'FAIL CLOSED',
-  'settings.broker.formatPayload': 'Format payload',
   'settings.broker.header': 'BROKER',
   'settings.broker.held': 'HELD',
   'settings.broker.id': 'Broker ID',
-  'settings.broker.idHint': 'Issuer and configured instance ID. The ID web is reserved.',
-  'settings.broker.managedCredentials': 'MANAGED CREDENTIALS',
-  'settings.broker.managedReferences': 'Managed references',
-  'settings.broker.managedReferencesHelp':
-    "Every credential this broker's configuration names. Values are written here and never read back; the configuration keeps only the ID.",
+  'settings.broker.idHint': 'Issuer and configured instance ID.',
   'settings.broker.namedConversations': 'Named conversations',
   'settings.broker.namedConversationsHelp':
     'A transport conversation can choose another agent and replaces the base grants with its own secure-default map.',
-  'settings.broker.newValueLabel': 'New value // {secret}',
-  'settings.broker.newValuePlaceholder': 'New value for {secret}',
   'settings.broker.noBaseAuthority': 'No base sender has tool authority on this broker.',
   'settings.broker.noConversationGrants': 'NO CONVERSATION GRANTS',
   'settings.broker.noConversationGrantsHelp':
@@ -52,7 +46,6 @@ const brokerMessages = Object.freeze({
   'settings.broker.routing': 'ROUTING',
   'settings.broker.save': 'Save broker',
   'settings.broker.saved': 'Broker configuration saved',
-  'settings.broker.secretValueHint': 'Blank preserves an existing value.',
   'settings.broker.askAgentOnNewConversation': 'Ask when a new conversation starts',
   'settings.broker.selectAgent': 'Select an agent',
   'settings.broker.sender': 'SENDER',
@@ -80,13 +73,10 @@ const brokerMessages = Object.freeze({
   'settings.broker.validation.conversationIdUnique': 'Conversation IDs must be unique.',
   'settings.broker.validation.grantUnique': 'Grant patterns must be unique for one sender.',
   'settings.broker.validation.invalidSecretId': 'This configuration contains an invalid secret ID.',
-  'settings.broker.validation.payloadJson': 'Contribution payload is not valid JSON.',
-  'settings.broker.validation.payloadObject': 'Contribution payload must be one JSON object.',
   'settings.broker.validation.senderIdRequired': 'Sender ID is required.',
   'settings.broker.validation.senderIdUnique': 'Sender IDs must be unique inside this route.',
   'settings.broker.validation.storeBeforeEnabling':
     'Store a value before enabling this broker reference.',
-  'settings.broker.validation.webReserved': 'The ID "web" is reserved for Nox chat.',
 } as const);
 
 export { brokerMessages };

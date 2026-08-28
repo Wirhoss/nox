@@ -64,6 +64,7 @@ class ConversationStore {
           brokerId: conversations.brokerId,
           conversationId: conversations.conversationId,
           createdAt: conversations.createdAt,
+          modelId: conversations.modelId,
           sessionId: conversations.sessionId,
           title: sessions.title,
           updatedAt: conversations.updatedAt,
@@ -76,13 +77,56 @@ class ConversationStore {
     );
   }
 
-  /** Binds a conversation to a session. The pair is bound once and never moved. */
-  public async bind(key: ConversationKey, agentId: string, sessionId: string): Promise<void> {
+  /** Creates the first durable route for a conversation. */
+  public async bind(
+    key: ConversationKey,
+    agentId: string,
+    sessionId: string,
+    modelId?: string,
+  ): Promise<void> {
     const now = Date.now();
     await this.#database.exclusive((database) => {
       database
         .insert(conversations)
-        .values({ ...key, agentId, createdAt: now, sessionId, updatedAt: now })
+        .values({ ...key, agentId, createdAt: now, modelId, sessionId, updatedAt: now })
+        .run();
+    });
+  }
+
+  /** Moves the transport conversation to a fresh session by explicit command. */
+  public async rebind(
+    key: ConversationKey,
+    agentId: string,
+    sessionId: string,
+    modelId?: string,
+  ): Promise<void> {
+    const now = Date.now();
+    await this.#database.exclusive((database) => {
+      database
+        .update(conversations)
+        .set({ agentId, modelId: modelId ?? null, sessionId, updatedAt: now })
+        .where(
+          and(
+            eq(conversations.brokerId, key.brokerId),
+            eq(conversations.conversationId, key.conversationId),
+          ),
+        )
+        .run();
+    });
+  }
+
+  /** Persists the model used when this same transcript is reopened. */
+  public async setModel(key: ConversationKey, modelId?: string): Promise<void> {
+    await this.#database.exclusive((database) => {
+      database
+        .update(conversations)
+        .set({ modelId: modelId ?? null, updatedAt: Date.now() })
+        .where(
+          and(
+            eq(conversations.brokerId, key.brokerId),
+            eq(conversations.conversationId, key.conversationId),
+          ),
+        )
         .run();
     });
   }

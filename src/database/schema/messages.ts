@@ -16,7 +16,7 @@ const messages = sqliteTable(
     content: text('content', { mode: 'json' }).$type<readonly MessageContent[]>(),
     createdAt: integer('created_at').notNull(),
     /** How a user message entered the run; null only for old rows and non-user roles. */
-    delivery: text('delivery', { enum: ['message', 'steer'] }),
+    delivery: text('delivery', { enum: ['message', 'observation', 'steer'] }),
     execution: text('execution', { enum: TOOL_RESPONSE_EXECUTIONS }),
     isError: integer('is_error', { mode: 'boolean' }),
     messageId: text('message_id').primaryKey(),

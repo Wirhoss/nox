@@ -1,5 +1,6 @@
+import { type BrokerConfig, brokers } from '@nox/extension-api';
+
 import type { BlueprintContext } from './blueprints';
-import type { BrokerConfig } from '@nox/extension-api';
 
 /** A broker entry that would make the next gateway composition fail. */
 class BrokerReferenceError extends Error {
@@ -26,20 +27,18 @@ function assertBrokerReferences(
 
   const problems: string[] = [];
   const blueprints = context.config.get('blueprints');
-  const isWeb = brokerId === 'web' && broker.type === 'web';
-  if (brokerId === 'web' && !isWeb) {
-    problems.push('the built-in "web" broker must keep type "web"');
-  } else if (broker.type === 'web' && brokerId !== 'web') {
-    problems.push('the built-in Web broker must use ID "web"');
-  }
-  if (!isWeb && broker.agent === undefined) {
+  const host = context.contributions.get(brokers, broker.type)?.value.host;
+  const ownerAuthorized = host?.authorization === 'owner';
+  const selectableAgent = host?.selectableAgent === true;
+
+  if (!selectableAgent && broker.agent === undefined) {
     problems.push('a base agent is required for a transport that cannot ask the sender to choose');
   } else if (broker.agent !== undefined && !Object.hasOwn(blueprints, broker.agent)) {
     problems.push(`blueprints configures no base agent "${broker.agent}"`);
   }
 
-  if (isWeb && Object.keys(broker.grants).length > 0) {
-    problems.push('Web authority comes from the authenticated owner; configure no sender grants');
+  if (ownerAuthorized && Object.keys(broker.grants).length > 0) {
+    problems.push('owner authority cannot be replaced with sender grants');
   } else {
     validateGrants(brokerId, 'base route', broker.grants, context, problems);
   }
@@ -49,10 +48,8 @@ function assertBrokerReferences(
         `conversation "${conversationId}" names agent "${override.agent}", which no blueprint defines`,
       );
     }
-    if (isWeb && Object.keys(override.grants).length > 0) {
-      problems.push(
-        `conversation "${conversationId}" cannot replace authenticated-owner authority with grants`,
-      );
+    if (ownerAuthorized && Object.keys(override.grants).length > 0) {
+      problems.push(`conversation "${conversationId}" cannot replace owner authority with grants`);
     } else {
       validateGrants(
         brokerId,

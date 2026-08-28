@@ -6,9 +6,10 @@
 
 ## Estado
 
-Dirección conceptual inicial. El flujo de acceso y el chat web en vivo están
-implementados. El chat recupera conversaciones anteriores dentro de su propia
-superficie; las rutas dedicadas de Sessions, Audit y Settings aún no comenzaron.
+Dirección conceptual inicial con varios cortes verticales ya implementados. El
+flujo de acceso, el chat web en vivo, Settings y Sessions están operativos. Cada
+sesión expone por separado su conversación y sus acciones auditadas; no existe
+un registro global que mezcle decisiones de sesiones diferentes.
 
 ## Visión del producto
 
@@ -74,13 +75,11 @@ La navegación principal propuesta es deliberadamente pequeña:
 ```text
 Chat
 Sessions
-Audit
 Settings
 ```
 
 - **Chat:** operación e interacción diaria.
-- **Sessions:** conversaciones anteriores y su transcript.
-- **Audit:** decisiones de permisos y acciones ejecutadas.
+- **Sessions:** conversaciones anteriores, su transcript y la auditoría contextual de cada sesión.
 - **Settings:** toda la creación, administración y configuración.
 
 No se propone un dashboard obligatorio antes del chat.
@@ -191,8 +190,8 @@ El chat debe dominar visualmente la aplicación.
 │              │                                │ opcional         │
 │ Chat         │ Mensajes                       │                  │
 │ Sessions     │ Tool activity                  │ Agente activo    │
-│ Audit        │ Solicitudes de permiso         │ Estado           │
-│ Settings     │ Resultados                     │ Detalles sesión  │
+│ Settings     │ Solicitudes de permiso         │ Estado           │
+│              │ Resultados                     │ Detalles sesión  │
 │              │                                │                  │
 │              │ Composer                       │                  │
 └──────────────┴────────────────────────────────┴──────────────────┘
@@ -472,8 +471,12 @@ Responde: **¿por qué y con qué autorización se permitió o rechazó una acci
 - Alcance de la aprobación.
 - Momento y resultado.
 
-Desde el chat se puede abrir el registro de auditoría relacionado, pero no se
-deben mezclar ambas vistas en un único log ilegible.
+Son proyecciones distintas dentro de una sesión seleccionada: **Conversación** y
+**Auditoría** se presentan como pestañas, no como un único log ni como un ledger
+global. Auditoría agrupa authorization, Gate, resolución humana y todas las
+respuestas de la tool por acción ejecutada (`trackId`), incluyendo contenido,
+errores y referencias a artefactos, evitando mostrar etapas internas como
+acciones duplicadas.
 
 ## Dirección visual inicial
 
@@ -884,12 +887,12 @@ alternativo y alto contraste.
 - No hay selector de runtimes locales.
 - Nox se ejecuta como un sistema containerizado mediante Docker.
 - No hay vault planeado ni debe aparecer en la experiencia.
-- La navegación primaria propuesta contiene Chat, Sessions, Audit y Settings.
+- La navegación primaria propuesta contiene Chat, Sessions y Settings.
 - Toda configuración se concentra en Settings.
 - Una sesión pertenece a un agente.
 - La actividad de tools se muestra de forma compacta y expandible.
 - Las solicitudes de autorización ocurren dentro del chat.
-- Sessions y Audit son vistas distintas.
+- Conversación y Auditoría son pestañas distintas dentro de una sesión.
 - Vue 3, TypeScript, Vite y Pinia forman la base de la Web UI.
 - React y JSX no forman parte del stack.
 - SCSS y CSS Custom Properties sostienen el sistema visual y los temas.
@@ -900,6 +903,130 @@ alternativo y alto contraste.
   de verdad.
 - La primera identidad reclama Nox con un código efímero impreso por el runtime.
 - El access token vive solo en memoria y la renovación utiliza una cookie HttpOnly.
+
+## Casos especiales de la UI
+
+Inventario de los lugares donde la Web UI decide por un nombre en duro algo que el
+runtime ya declara. Ninguno es un accidente aislado: todos son la misma forma —
+la UI adivinando desde un identificador en vez de leer una contribución— y cada
+uno deja de funcionar en cuanto aparece una segunda contribución del mismo tipo.
+
+### 1. `isWeb` en `BrokerEditor`
+
+```ts
+const isWeb = computed(() => common.value.type === 'web' && props.entryId === 'web')
+```
+
+Ese string decide en doce lugares si el agente es obligatorio, si se validan y se
+dibujan las concesiones, y si la entrada puede borrarse.
+
+El kernel ya lo declara: `BrokerHostPolicy` tiene `authorization: 'grants' | 'owner'`
+y `selectableAgent`. El broker web no tiene concesiones porque su autoridad es la
+del dueño, y su agente es opcional porque es seleccionable — no porque se llame
+`web`. **Un broker de tercero que declare `authorization: 'owner'` recibe hoy un
+editor de concesiones que no debe tener.** Lo cierra que `ConfigTypeSchemaDescriptor`
+lleve el `host` de la contribución.
+
+### 2. El nombre reservado `web`, validado dos veces
+
+`BrokerEditor` rechaza a mano el ID `web` al crear. Desde que una contribución de
+instancia única es dueña de su propio nombre, la sección lo rechaza sola al
+validar. La UI mantiene una copia de una regla que ya no le pertenece, escrita
+con el nombre en duro.
+
+### 3. `openai_completions` en `ProviderEditor`
+
+Cuatro usos: si se dibuja formulario o JSON crudo, qué plantilla trae una entrada
+nueva, y qué se ofrece en el selector de tipo. **Cualquier otro adaptador de
+provider cae a JSON crudo aunque contribuya un esquema perfectamente
+renderizable.** `ProviderEditor` es el único editor de sección contribuida que no
+consume `contributionTypes`: `ToolSetEditor` ya resuelve esto mirando si existe un
+descriptor para el tipo.
+
+### 4. `AUTHORITY_SUGGESTIONS`, y es el peor
+
+`BrokerEditor` sugiere ocho autoridades escritas a mano. Cuatro de ellas —
+`nox.history.*`, `nox.history.read`, `nox.history.search`, `nox.tools.search` —
+**no las registra ninguna extensión**: solo aparecen en archivos de test. Una
+concesión escrita con cualquiera de ellas no puede coincidir con nada, porque
+`authorize()` rechaza toda autoridad que nadie registró.
+
+Al mismo tiempo, las que sí existen no se ofrecen: las tres del tool set de
+configuración, las tres de tareas programadas, las cinco del tool set web y la del
+comando de sesión. `authorities` es un punto de contribución con descripción por
+autoridad; la lista tiene que venir de ahí y no de una constante.
+
+### 5. `approvers` en `COMMON_PROPERTIES`
+
+`BrokerEditor` excluye `approvers` del payload del transporte. Ese campo fue
+eliminado del esquema de brokers: la UI sigue enmarcando vocabulario que ya no
+existe.
+
+### 6. `switch (props.section.key)` en `ConfigEntryList`
+
+La línea de resumen de cada fila está escrita a mano por sección — proveedor y
+modelo para un blueprint, tipo y agente para un broker— y la descripción adivina
+entre `description` y `baseUrl`. Una sección contribuida nueva cae al texto
+genérico. Es metadato que corresponde al esquema o al descriptor del tipo.
+
+### 7. `SETTINGS_SECTIONS` duplica el catálogo
+
+La UI mantiene su propia tabla de secciones — clave, slug, grupo, etiquetas y
+`creatable` — mientras el catálogo del control plane ya enumera las secciones con
+su forma. `creatable` en particular resultó incorrecto: bloqueaba configurar una
+contribución que la propia lista estaba ofreciendo.
+
+### 8. El despacho por sección en `SettingsRoute`
+
+Cinco `v-else-if` sobre `section?.key` eligen entre cinco editores a medida. Es la
+consecuencia estructural de todo lo anterior más que una decisión propia: mientras
+cada sección necesite su componente, la ruta tiene que nombrarlas.
+
+### 9. `createId('web')` en el store de chat
+
+La superficie del navegador arma sus IDs de conversación con el ID del broker en
+duro. Es defendible —esa superficie *es* el broker web— pero el kernel exporta
+`WEB_BROKER_ID` justamente para que no haya un literal suelto.
+
+### 10. El centinela `NEW_SECRET`
+
+`'__new_secret__'` está definido dos veces, en `ProviderEditor` y en
+`SchemaFieldGroup`. Dos copias de un valor que solo significa algo si ambas
+coinciden.
+
+## Archivos que conviene separar
+
+Cinco archivos concentran la mitad de la UI. El tamaño importa menos que la razón:
+todos crecieron por acumular a mano lo que un esquema ya describe.
+
+| Archivo | Líneas | script / template / estilos |
+|---|---|---|
+| `settings/components/AgentEditor.vue` | 2117 | 762 / 642 / 713 |
+| `settings/components/BrokerEditor.vue` | 1797 | 790 / 503 / 504 |
+| `settings/components/ProviderEditor.vue` | 1567 | 638 / 433 / 496 |
+| `chat/stores/activeSession.store.ts` | 1246 | — |
+| `settings/components/AppEditor.vue` | 1104 | 411 / 349 / 344 |
+| `settings/components/ToolSetEditor.vue` | 1087 | 500 / 218 / 369 |
+
+Las costuras, en orden de lo que más devuelve:
+
+- **Los campos contribuidos salen del esquema.** `SchemaFieldGroup` ya existe y
+  `ToolSetEditor` ya lo usa. `BrokerEditor` y `ProviderEditor` mantienen en su
+  lugar un `textarea` de JSON con su propio parseo, formateo y validación, y
+  `BrokerEditor` además un mecanismo de secretos paralelo al que el grupo de campos
+  ya trae. Es la mayor parte de lo que se puede borrar.
+- **El armazón de editor es uno solo.** Los cuatro editores repiten la misma
+  forma: borrador, modo JSON, ID de entrada, secretos pendientes, guardado,
+  bloqueo de navegación con cambios sin guardar. Eso es un composable, no cuatro
+  copias.
+- **Concesiones y conversaciones son un componente.** Son vocabulario del kernel
+  igual para todo broker, y la única parte donde el formulario a mano se gana el
+  lugar: una autoridad mal escrita es un agujero de permisos, y ahí conviene un
+  editor que sepa qué es una autoridad. Pero vive por su cuenta.
+- **Los estilos son un sistema, no cinco.** Unas 2400 líneas de SCSS con alcance
+  local repiten el mismo lenguaje visual de secciones, campos y avisos.
+- **`activeSession.store` tiene tres trabajos**: construir la línea de tiempo,
+  hablar con el transporte y seguir el estado de la ejecución en curso.
 
 ## Preguntas abiertas
 - ¿Se abre siempre la última sesión o existe una preferencia para comenzar una

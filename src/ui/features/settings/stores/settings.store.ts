@@ -9,10 +9,10 @@ import {
   type ConfigCatalog,
   type ConfigSection,
   type ConfigValue,
+  type ContributionType,
   type Secret,
   settingsApi,
   type ToolSetInventory,
-  type ToolSetType,
 } from '../api/settings.api'
 
 type SettingsResourceState =
@@ -41,11 +41,30 @@ const useSettingsStore = defineStore('settings', () => {
   const section = ref<ConfigSection>()
   const secrets = ref<readonly Secret[]>([])
   const toolSetInventory = ref<readonly ToolSetInventory[]>([])
-  const toolSetTypes = ref<readonly ToolSetType[]>([])
+  /** The kinds the section in view may hold, with each kind's own schema. */
+  const contributionTypes = ref<readonly ContributionType[]>([])
   const resource = ref<SettingsResourceState>({ type: 'idle' })
   const mutation = ref<SettingsMutationState>({ type: 'idle' })
 
   let loadVersion = 0
+
+  /** Loads the runtime-owned section catalog before a route tries to resolve its slug. */
+  async function loadCatalog(): Promise<ConfigCatalog | undefined> {
+    const version = ++loadVersion
+    resource.value = { type: 'loading' }
+    mutation.value = { type: 'idle' }
+    try {
+      const nextCatalog = await settingsApi.listConfig(requireAccessToken())
+      if (version !== loadVersion) return undefined
+      catalog.value = nextCatalog
+      resource.value = { type: 'ready' }
+      return nextCatalog
+    } catch (error) {
+      if (version !== loadVersion) return undefined
+      failResource(error)
+      return undefined
+    }
+  }
 
   async function loadSection(sectionKey: string): Promise<void> {
     const version = ++loadVersion
@@ -54,43 +73,34 @@ const useSettingsStore = defineStore('settings', () => {
 
     try {
       const accessToken = requireAccessToken()
-      const referenceKeys =
-        sectionKey === 'blueprints'
-          ? ['providers', 'toolSets']
-          : sectionKey === 'brokers'
-            ? ['blueprints']
-            : []
-      const nextCatalog = await settingsApi.listConfig(accessToken)
+      const [nextCatalog, nextSection] = await Promise.all([
+        settingsApi.listConfig(accessToken),
+        settingsApi.readSection(accessToken, sectionKey),
+      ])
       if (version !== loadVersion) return
       catalog.value = nextCatalog
-      const [
-        nextSection,
-        nextReferences,
-        nextSecrets,
-        nextToolSetInventory,
-        nextToolSetTypes,
-      ] = await Promise.all([
-          settingsApi.readSection(accessToken, sectionKey),
+
+      const summary = nextCatalog.sections.find((candidate) => candidate.key === sectionKey)
+      const referenceKeys = summary?.references ?? []
+      const contributionSection = nextSection.kind === 'contribution'
+      const [nextReferences, nextSecrets, nextToolSetInventory, nextContributionTypes] =
+        await Promise.all([
           Promise.all(
             referenceKeys.map(
               async (key) => [key, await settingsApi.readSection(accessToken, key)] as const,
             ),
           ),
-          ['brokers', 'providers', 'toolSets'].includes(sectionKey)
-            ? settingsApi.listSecrets(accessToken)
-            : undefined,
-          ['blueprints', 'toolSets'].includes(sectionKey)
+          contributionSection ? settingsApi.listSecrets(accessToken) : undefined,
+          summary?.inventory === 'toolSets'
             ? settingsApi.listToolSetInventory(accessToken)
             : [],
-          // The kinds and their schemas: what the tool-set editor renders its
-          // form from, and pointless to fetch anywhere else.
-          sectionKey === 'toolSets' ? settingsApi.listToolSetTypes(accessToken) : [],
+          contributionSection ? settingsApi.listSectionTypes(accessToken, sectionKey) : [],
         ])
       if (version !== loadVersion) return
       references.value = Object.fromEntries(nextReferences)
       if (nextSecrets !== undefined) secrets.value = nextSecrets
       toolSetInventory.value = nextToolSetInventory
-      toolSetTypes.value = nextToolSetTypes
+      contributionTypes.value = nextContributionTypes
       section.value = nextSection
       resource.value = { type: 'ready' }
     } catch (error) {
@@ -371,6 +381,7 @@ const useSettingsStore = defineStore('settings', () => {
     createEntry,
     deleteEntry,
     deleteSecret,
+    loadCatalog,
     loadSection,
     loadSecrets,
     mutation: readonly(mutation),
@@ -386,7 +397,7 @@ const useSettingsStore = defineStore('settings', () => {
     section: readonly(section),
     secrets: readonly(secrets),
     toolSetInventory: readonly(toolSetInventory),
-    toolSetTypes: readonly(toolSetTypes),
+    contributionTypes: readonly(contributionTypes),
   }
 })
 
@@ -407,7 +418,10 @@ function settingsErrorMessage(error: unknown, t: Translate): string {
       case 'entry_in_use':
         return t('settings.error.entryInUse')
       case 'invalid_config':
-        return t('settings.error.invalidConfig')
+        // The detail is the schema's own complaint — which field, and what it
+        // wanted. Reporting only that a change was refused leaves somebody
+        // guessing at exactly the moment the answer is already in hand.
+        return error.detail ?? t('settings.error.invalidConfig')
       case 'section_unresolved':
         return t('settings.error.sectionUnresolved')
       case 'unknown_reference':

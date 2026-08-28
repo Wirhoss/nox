@@ -13,14 +13,31 @@ describe('settings API', () => {
       http.get('*/api/config', ({ request }) => {
         expect(request.headers.get('authorization')).toBe(`Bearer ${TOKEN}`)
         return HttpResponse.json({
+          authorities: [
+            {
+              description: 'Search the routed tool catalog.',
+              id: 'nox.tools.search',
+              ownerExtensionId: 'nox',
+            },
+          ],
           sections: [
             {
-              applies: 'restart',
+              applies: 'hot',
+              creatable: true,
+              description: 'settings.sections.agents.description',
+              editor: 'blueprint',
               entries: true,
+              entrySummary: { description: ['description'], detail: ['provider', 'model'] },
+              group: 'intelligence',
+              inventory: 'toolSets',
               key: 'blueprints',
               kind: 'directory',
+              label: 'settings.sections.agents.label',
               loaded: true,
               name: 'blueprints',
+              plural: 'settings.sections.agents.plural',
+              references: ['providers', 'toolSets'],
+              slug: 'agents',
               writable: false,
             },
           ],
@@ -30,7 +47,14 @@ describe('settings API', () => {
 
     const catalog = await settingsApi.listConfig(TOKEN)
 
-    expect(catalog.sections[0]).toMatchObject({ entries: true, key: 'blueprints' })
+    expect(catalog.sections[0]).toMatchObject({
+      creatable: true,
+      editor: 'blueprint',
+      entries: true,
+      key: 'blueprints',
+      slug: 'agents',
+    })
+    expect(catalog.authorities[0]?.id).toBe('nox.tools.search')
   })
 
   it('reads the runtime tool inventory for Agent grants', async () => {

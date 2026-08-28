@@ -34,6 +34,7 @@ export type {
   AuthorizationProvider,
   AuthorizationRequest,
   PrincipalGrants,
+  SubjectGroups,
 } from './authorization';
 export type {
   AuthorizationAuditRecord,

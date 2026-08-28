@@ -88,6 +88,7 @@ function registry(): ContributionRegistry {
     brokers,
     'fake_broker',
     brokerContribution({
+      instances: 'many',
       configSchema: brokerBaseConfigSchema.extend({ type: z.literal('fake_broker') }),
       create: () => ({}) as Broker,
     }),
@@ -96,14 +97,29 @@ function registry(): ContributionRegistry {
     providers,
     'fake_provider',
     providerContribution({
+      instances: 'many',
       configSchema: providerBaseConfigSchema.extend({ type: z.literal('fake_provider') }),
       create: () => ({}) as unknown as ChatProvider,
     }),
   );
   scoped.register(
     toolSets,
+    'solo_tools',
+    toolSetContribution({
+      // Required on purpose: a singleton that still needs an answer is the
+      // interesting one, and it is never seeded on the operator's behalf.
+      configSchema: toolSetBaseConfigSchema.extend({
+        endpoint: z.string().min(1),
+        type: z.literal('solo_tools'),
+      }),
+      create: (config) => new FakeTools(config),
+    }),
+  );
+  scoped.register(
+    toolSets,
     'fake_tools',
     toolSetContribution({
+      instances: 'many',
       configSchema: toolSetBaseConfigSchema.extend({ type: z.literal('fake_tools') }),
       create: (config) => new FakeTools(config),
     }),
@@ -269,6 +285,32 @@ describe('reading configuration', () => {
     expect(section('app')).toMatchObject({ entries: false, writable: true });
   });
 
+  test('says what a section can hold, not only what it holds', async () => {
+    const nox = await configNox();
+
+    const response = await fetch(`${nox.url}/config`, { headers: nox.headers });
+    const body = (await response.json()) as {
+      sections: {
+        contributions?: {
+          configured: boolean;
+          extensionId: string;
+          instances: string;
+          type: string;
+        }[];
+        key: string;
+      }[];
+    };
+    const toolSetSection = body.sections.find((entry) => entry.key === 'toolSets');
+
+    // An installed extension with no entry is a thing to fill in, not an
+    // absence. A surface that only listed entries would show nothing at all
+    // after one is installed, which is a wrong answer rather than an empty one.
+    expect(toolSetSection?.contributions).toEqual([
+      { configured: true, extensionId: TEST_EXTENSION, instances: 'many', type: 'fake_tools' },
+      { configured: false, extensionId: TEST_EXTENSION, instances: 'single', type: 'solo_tools' },
+    ]);
+  });
+
   test('describes the tools exposed by configured capability instances', async () => {
     const nox = await configNox();
 
@@ -309,11 +351,20 @@ describe('reading configuration', () => {
       headers: nox.headers,
     });
     const body = (await response.json()) as {
-      toolSetTypes: { extensionId: string; schema: Record<string, unknown>; type: string }[];
+      toolSetTypes: {
+        extensionId: string;
+        instances: string;
+        schema: Record<string, unknown>;
+        type: string;
+      }[];
     };
 
     expect(response.status).toBe(200);
-    expect(body.toolSetTypes).toHaveLength(1);
+    // Every registered kind, and how many of each a deployment may configure.
+    expect(body.toolSetTypes.map(({ instances, type }) => ({ instances, type }))).toEqual([
+      { instances: 'many', type: 'fake_tools' },
+      { instances: 'single', type: 'solo_tools' },
+    ]);
     expect(body.toolSetTypes[0]).toMatchObject({
       extensionId: 'test.extension',
       type: 'fake_tools',

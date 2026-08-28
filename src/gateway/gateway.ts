@@ -1,4 +1,5 @@
 import {
+  type ArtifactScope,
   type Broker,
   type BrokerCapabilities,
   type BrokerCommandSpec,
@@ -6,11 +7,14 @@ import {
   type BrokerHistoryEntry,
   type BrokerHistoryOptions,
   type BrokerSession,
+  type CommandContext,
+  commands as commandContributions,
   type CommandInvocation,
   type CommandRejection,
   hasUsableContent,
   type InboundEvent,
   type InboundMessage,
+  type InboundObservation,
   type InboundPermission,
   type InboundRejection,
   type InboundSteer,
@@ -31,12 +35,7 @@ import { artifactConversationScope } from '../artifact/output';
 import { type ConversationKey, ConversationStore } from '../database/conversationStore';
 import { SessionStore } from '../database/sessionStore';
 import { type Logger, silentLogger } from '../logger/logger';
-import {
-  type BrokerCommand,
-  BUILTIN_COMMANDS,
-  CommandCatalog,
-  type CommandContext,
-} from './command';
+import { type BrokerCommand, BUILTIN_COMMANDS, CommandCatalog } from './command';
 
 import type { AgentEvent, RunStatus } from '../agent/events';
 import type { Session } from '../agent/session';
@@ -272,7 +271,14 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   constructor(application: NoxApplication, options: GatewayOptions) {
     this.#application = application;
     this.#brokerStatus = options.brokerStatus;
-    this.#commands = new CommandCatalog([...BUILTIN_COMMANDS, ...(options.commands ?? [])]);
+    const contributed: BrokerCommand[] = application.contributions
+      .list(commandContributions)
+      .map(({ id, value }) => ({ ...value, name: id }));
+    this.#commands = new CommandCatalog([
+      ...BUILTIN_COMMANDS,
+      ...contributed,
+      ...(options.commands ?? []),
+    ]);
     this.#logger = options.logger ?? silentLogger;
     this.#store = new ConversationStore(options.database);
     this.#transcripts = new SessionStore(options.database, { logger: this.#logger });
@@ -428,6 +434,8 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   async #startBroker(grant: BrokerGrant): Promise<void> {
     await grant.broker.start({
       agentIds: () => this.#application.agentIds,
+      artifactScope: (conversationId: string): ArtifactScope =>
+        artifactConversationScope(grant.brokerId, conversationId),
       command: (invocation: CommandInvocation): CommandRejection | undefined =>
         this.#command(grant, invocation),
       commands: this.#commands.specs,
@@ -617,14 +625,19 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       }
     }
 
+    // Permission is an answer to work already waiting. Queueing it behind that
+    // work would deadlock a command whose Gate is waiting for this exact answer.
+    if (event.type === 'permission') {
+      this.#handlePermission(grant, event);
+      return undefined;
+    }
+
     void this.#queue(keyOf(grant.brokerId, event.conversationId), async () => {
       switch (event.type) {
         case 'message':
+        case 'observation':
         case 'steer':
           await this.#handleSpeech(grant, event);
-          break;
-        case 'permission':
-          this.#handlePermission(grant, event);
           break;
       }
     });
@@ -654,7 +667,10 @@ class Gateway implements MessageGateway, ScheduledRunHost {
    * other speech and never cancels the active operation. Both are attributed,
    * deduplicated and serialized in exactly the same way.
    */
-  async #handleSpeech(grant: BrokerGrant, message: InboundMessage | InboundSteer): Promise<void> {
+  async #handleSpeech(
+    grant: BrokerGrant,
+    message: InboundMessage | InboundObservation | InboundSteer,
+  ): Promise<void> {
     const { content } = message;
     if (!hasUsableContent(content)) return;
 
@@ -693,10 +709,18 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       transportMessageId: message.messageId,
     };
 
+    // An observation is not a turn and does not make the conversation newer:
+    // the agent was not spoken to, and a channel that is merely busy should not
+    // climb a list ordered by when someone last talked to Nox.
+    if (message.type === 'observation') {
+      conversation.session.observe(content, origin, message.receivedAt);
+      return;
+    }
+
     if (message.type === 'steer') {
-      await conversation.session.steer(content, origin);
+      await conversation.session.steer(content, origin, message.receivedAt);
     } else {
-      conversation.session.send(content, origin);
+      conversation.session.send(content, origin, message.receivedAt);
     }
     await this.#store.touch(conversation.key);
   }
@@ -754,24 +778,215 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       return;
     }
 
+    const commandId = `command_${nanoid()}`;
+    let current = conversation;
+    const info = () => ({
+      agentId: current.session.agentId,
+      contextUsage: current.session.getContextUsage(),
+      modelId: current.session.modelId,
+      sessionId: current.session.sessionId,
+      ...(current.session.title === undefined ? {} : { title: current.session.title }),
+      tools: current.session.getToolNames(),
+    });
     const context: CommandContext = {
+      abort: () => current.session.abort(),
       close: async (): Promise<void> => {
         this.#conversations.delete(mapKey);
-        // Closing resolves whatever the gate was still holding, and those
+        // Closing resolves whatever the Gate was still holding, and those
         // outcomes are delivered on the way down; only then is there nothing
         // left to retract.
-        await this.#application.closeSession(conversation.session.sessionId);
+        await this.#application.closeSession(current.session.sessionId);
         for (const [requestId, pending] of this.#pending) {
-          if (pending.conversation === conversation) this.#pending.delete(requestId);
+          if (pending.conversation === current) this.#pending.delete(requestId);
         }
       },
+      compact: () => current.session.compact(),
       conversationId: invocation.conversationId,
-      logger: this.#logger.child(`${grant.brokerId}:${command.name}`),
+      info,
+      listAgents: () =>
+        grant.selectableAgent === true
+          ? this.#application.agentIds
+          : Object.freeze([current.session.agentId]),
+      listCommands: () =>
+        this.#commands.specs.map(({ description, name }) => ({ description, name })),
+      listModels: () => {
+        const agent = this.#application.getAgent(current.session.agentId);
+        return (agent?.modelIds ?? []).map((modelId) => ({
+          current: modelId === current.session.modelId,
+          modelId,
+        }));
+      },
+      newSession: async () => {
+        current = await this.#replaceCommandSession(current, {
+          agentId: current.session.agentId,
+          modelId: current.session.modelId,
+        });
+        return info();
+      },
+      rename: (title) => current.session.rename(title),
+      retry: () =>
+        current.session.retry({ issuer: grant.brokerId, subject: invocation.senderId }, commandId),
       sender: { issuer: grant.brokerId, subject: invocation.senderId },
-      session: conversation.session,
+      switchAgent: async (agentId) => {
+        if (grant.selectableAgent !== true && agentId !== current.session.agentId) {
+          throw new Error(
+            `Broker "${grant.brokerId}" does not allow conversations to select another agent.`,
+          );
+        }
+        current = await this.#replaceCommandSession(current, { agentId });
+        return info();
+      },
+      switchModel: async (modelId) => {
+        current = await this.#replaceCommandSession(current, {
+          agentId: current.session.agentId,
+          modelId,
+          preserveHistory: true,
+        });
+        return info();
+      },
     };
 
-    await command.run(context, args);
+    let status: 'completed' | 'failed' = 'completed';
+    let text = `/${command.name} completed.`;
+    try {
+      if (command.authority !== undefined) {
+        const authorization = await current.session.authorizeCommand({
+          authority: command.authority,
+          commandId,
+          name: command.name,
+          params: args,
+          principal: context.sender,
+          risk: command.risk?.(args) ?? { effects: [] },
+        });
+        if (!authorization.allowed) throw new Error(authorization.reason);
+      }
+      const result = await command.run(context, args);
+      if (result !== undefined) text = result.text;
+    } catch (error) {
+      status = 'failed';
+      text = error instanceof Error ? error.message : String(error);
+      this.#logger.warn(
+        { brokerId: grant.brokerId, command: command.name, err: error },
+        'Command failed.',
+      );
+    }
+
+    if (shows(grant.broker, 'commands')) {
+      this.#deliver(
+        current,
+        { name: command.name, status, text, type: 'commandResult' },
+        commandId,
+      );
+    }
+  }
+
+  /** Replaces only the session behind one transport conversation. */
+  async #replaceCommandSession(
+    conversation: Conversation,
+    selection: {
+      readonly agentId: string;
+      readonly modelId?: string;
+      readonly preserveHistory?: boolean;
+    },
+  ): Promise<Conversation> {
+    const agent = this.#application.getAgent(selection.agentId);
+    if (agent === undefined) throw new Error(`Agent "${selection.agentId}" is not available.`);
+    if (selection.modelId !== undefined && !agent.modelIds.includes(selection.modelId)) {
+      throw new Error(
+        `Model "${selection.modelId}" is not available to agent "${selection.agentId}".`,
+      );
+    }
+
+    await conversation.session.idle;
+    const previousAgentId = conversation.session.agentId;
+    const previousModelId = conversation.session.modelId;
+    const previousSessionId = conversation.session.sessionId;
+    const persisted = await this.#store.find(conversation.key);
+    if (persisted === undefined) {
+      throw new Error('The open conversation has no durable binding to replace.');
+    }
+
+    const preserveHistory = selection.preserveHistory === true;
+    if (preserveHistory && selection.agentId !== previousAgentId) {
+      throw new Error('A transcript cannot be resumed as a different agent.');
+    }
+
+    const mapKey = keyOf(conversation.key.brokerId, conversation.key.conversationId);
+    const binding = this.#bindingFor(conversation.grant, conversation.key.conversationId);
+    const open = (
+      agentId: string,
+      modelId: string | undefined,
+      sessionId: string | undefined,
+      parentSessionId?: string,
+    ): Promise<Session> =>
+      this.#application.openSession(agentId, {
+        artifactScope: artifactConversationScope(
+          conversation.key.brokerId,
+          conversation.key.conversationId,
+        ),
+        authorization: binding.authorization,
+        metadata: {
+          brokerId: conversation.key.brokerId,
+          conversationId: conversation.key.conversationId,
+          ...(parentSessionId === undefined ? {} : { parentSessionId }),
+        },
+        modelId,
+        sessionId,
+      });
+    const activate = (session: Session): Conversation => {
+      const replacement: Conversation = {
+        grant: conversation.grant,
+        key: conversation.key,
+        seen: conversation.seen,
+        seenIds: conversation.seenIds,
+        session,
+        turnId: nanoid(),
+      };
+      this.#conversations.set(mapKey, replacement);
+      void this.#watch(replacement);
+      return replacement;
+    };
+
+    await this.#application.closeSession(previousSessionId);
+    let opened: Session | undefined;
+    try {
+      opened = await open(
+        selection.agentId,
+        selection.modelId,
+        preserveHistory ? previousSessionId : undefined,
+        preserveHistory ? undefined : previousSessionId,
+      );
+      if (preserveHistory) {
+        await this.#store.setModel(conversation.key, selection.modelId);
+      } else {
+        await this.#store.rebind(
+          conversation.key,
+          selection.agentId,
+          opened.sessionId,
+          selection.modelId,
+        );
+      }
+      return activate(opened);
+    } catch (error) {
+      if (opened !== undefined) await this.#application.closeSession(opened.sessionId);
+      try {
+        const restored = await open(previousAgentId, previousModelId, previousSessionId);
+        await this.#store.rebind(
+          conversation.key,
+          persisted.agentId,
+          persisted.sessionId,
+          persisted.modelId ?? undefined,
+        );
+        activate(restored);
+      } catch (restoreError) {
+        this.#conversations.delete(mapKey);
+        this.#logger.error(
+          { err: restoreError, sessionId: previousSessionId },
+          'Could not restore a conversation after its command transition failed.',
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -914,6 +1129,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       artifactScope: artifactConversationScope(grant.brokerId, conversationId),
       authorization: binding.authorization,
       metadata: { brokerId: grant.brokerId, conversationId },
+      modelId: bound?.modelId ?? undefined,
       sessionId: bound?.sessionId,
     });
 

@@ -20,7 +20,6 @@ const commonMessages = Object.freeze({
   'common.retryConnection': 'Retry connection',
   'common.unavailable': 'Unavailable',
   'common.yes': 'Yes',
-  'navigation.audit': 'Audit',
   'navigation.chat': 'Chat',
   'navigation.disconnect': 'Disconnect',
   'navigation.identity': 'IDENTITY',

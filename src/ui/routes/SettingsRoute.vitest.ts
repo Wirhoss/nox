@@ -444,6 +444,9 @@ describe('Settings route', () => {
           value: { main: provider },
         }),
       ),
+      http.get('*/api/config/providers/types', () =>
+        HttpResponse.json({ types: [openAIProviderType()] }),
+      ),
       http.get('*/api/secrets', () =>
         HttpResponse.json({
           secrets: [
@@ -490,17 +493,11 @@ describe('Settings route', () => {
 
     expect(await screen.findByRole('heading', { name: 'main' })).toBeTruthy()
     expect(document.querySelector('#provider-type')).toBeNull()
-    expect(screen.getByPlaceholderText('model-id')).toHaveProperty('value', 'qwen38-27b')
-    expect(screen.getByPlaceholderText('131072')).toHaveProperty('value', '131072')
     expect(screen.getByLabelText('API credential')).toHaveProperty('value', 'LLAMA_API_KEY')
     expect(screen.getByText('STORED')).toBeTruthy()
 
-    await fireEvent.update(
-      screen.getByPlaceholderText('https://api.example.com/v1'),
-      'https://new-models.example/v1',
-    )
-    await fireEvent.click(screen.getByRole('button', { name: 'Replace value' }))
-    const secretValue = screen.getByPlaceholderText('Value will not be shown again')
+    await fireEvent.update(screen.getByLabelText(/^Base Url/), 'https://new-models.example/v1')
+    const secretValue = screen.getByLabelText(/^Credential value/)
     expect(secretValue).toHaveProperty('type', 'password')
     await fireEvent.update(secretValue, 'replacement-key')
     await fireEvent.click(screen.getByRole('button', { name: 'Save provider' }))
@@ -516,7 +513,6 @@ describe('Settings route', () => {
       baseUrl: 'https://new-models.example/v1',
       modelConfigs: [
         {
-          inputModalities: ['text'],
           modelId: 'qwen38-27b',
           outputModalities: ['text'],
         },
@@ -542,6 +538,9 @@ describe('Settings route', () => {
           ...sectionSummary('providers', 'contribution', true, 'providers.json', true),
           value: {},
         }),
+      ),
+      http.get('*/api/config/providers/types', () =>
+        HttpResponse.json({ types: [openAIProviderType()] }),
       ),
       http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
       http.put('*/api/secrets/SECONDARY_API_KEY', async ({ request }) => {
@@ -574,16 +573,10 @@ describe('Settings route', () => {
     expect(await screen.findByRole('heading', { name: 'New provider' })).toBeTruthy()
     expect(document.querySelector('#provider-type')).not.toBeNull()
     await fireEvent.update(screen.getByPlaceholderText('main'), 'secondary')
-    await fireEvent.update(
-      screen.getByPlaceholderText('https://api.example.com/v1'),
-      'https://secondary.example/v1',
-    )
+    await fireEvent.update(screen.getByLabelText(/^Base Url/), 'https://secondary.example/v1')
     await fireEvent.update(screen.getByLabelText('API credential'), '__new_secret__')
-    await fireEvent.update(screen.getByPlaceholderText('OPENAI_API_KEY'), 'SECONDARY_API_KEY')
-    await fireEvent.update(
-      screen.getByPlaceholderText('Value will not be shown again'),
-      'secondary-key',
-    )
+    await fireEvent.update(screen.getByLabelText(/^New secret ID/), 'SECONDARY_API_KEY')
+    await fireEvent.update(screen.getByLabelText(/^Credential value/), 'secondary-key')
     await fireEvent.click(screen.getByRole('button', { name: 'Save provider' }))
 
     await waitFor(() => {
@@ -623,13 +616,14 @@ describe('Settings route', () => {
           value: {},
         }),
       ),
+      http.get('*/api/config/:section/types', () => HttpResponse.json({ types: [] })),
       http.get('*/api/config/brokers', () =>
         HttpResponse.json({
           ...sectionSummary('brokers', 'contribution', true, 'brokers.json', true),
           value: {},
         }),
       ),
-      http.get('*/api/capabilities/tool-set-types', () => HttpResponse.json({ toolSetTypes: [] })),
+      http.get('*/api/config/:section/types', () => HttpResponse.json({ types: [] })),
       http.get('*/api/capabilities/tool-sets', () => HttpResponse.json({ toolSets: [] })),
       http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
     )
@@ -687,8 +681,8 @@ describe('Settings route', () => {
           value: { internet: toolSet },
         }),
       ),
-      http.get('*/api/capabilities/tool-set-types', () =>
-        HttpResponse.json({ toolSetTypes: [webToolSetType()] }),
+      http.get('*/api/config/:section/types', () =>
+        HttpResponse.json({ types: [webToolSetType()] }),
       ),
       http.get('*/api/capabilities/tool-sets', () =>
         HttpResponse.json({
@@ -826,8 +820,8 @@ describe('Settings route', () => {
           value: { files: { root: '/srv/shared', type: 'filesystem' } },
         }),
       ),
-      http.get('*/api/capabilities/tool-set-types', () =>
-        HttpResponse.json({ toolSetTypes: [webToolSetType()] }),
+      http.get('*/api/config/:section/types', () =>
+        HttpResponse.json({ types: [webToolSetType()] }),
       ),
       http.get('*/api/capabilities/tool-sets', () => HttpResponse.json({ toolSets: [] })),
       http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
@@ -843,6 +837,52 @@ describe('Settings route', () => {
     )
     expect(screen.queryByLabelText(/^Service URL/)).toBeNull()
   })
+
+  it.each([
+    { key: 'brokers', newLabel: /New Broker/i, slug: 'brokers', type: 'discord' },
+    { key: 'toolSets', newLabel: /New Tool Set/i, slug: 'tool-sets', type: 'web' },
+  ] as const)(
+    'offers the $type singleton by its owned ID without a generic create action',
+    async ({ key, newLabel, slug, type }) => {
+      const summary = {
+        ...sectionSummary(key, 'contribution', true, `${key}.json`, true),
+        contributions: [
+          {
+            configured: false,
+            extensionId: `test.${type}`,
+            instances: 'single',
+            type,
+          },
+        ],
+      }
+      server.use(
+        ...authenticatedOperator(),
+        http.get('*/api/config', () => HttpResponse.json({ sections: [summary] })),
+        http.get(`*/api/config/${key}`, () => HttpResponse.json({ ...summary, value: {} })),
+        http.get(`*/api/config/${key}/types`, () =>
+          HttpResponse.json({
+            types:
+              key === 'brokers'
+                ? [brokerType(type, { authorization: 'grants' })]
+                : [webToolSetType()],
+          }),
+        ),
+        http.get('*/api/config/blueprints', () =>
+          HttpResponse.json({
+            ...sectionSummary('blueprints', 'directory', true, 'blueprints', false),
+            value: { nox: {} },
+          }),
+        ),
+        http.get('*/api/capabilities/tool-sets', () => HttpResponse.json({ toolSets: [] })),
+        http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
+      )
+
+      await renderAt(`/settings/${slug}`)
+
+      expect(await screen.findByRole('link', { name: new RegExp(`${type}.*Configure`, 'i') })).toBeTruthy()
+      expect(screen.queryByRole('link', { name: newLabel })).toBeNull()
+    },
+  )
 
   it('edits broker routing and grants while keeping contributed credentials write-only', async () => {
     const writes: string[] = []
@@ -872,6 +912,9 @@ describe('Settings route', () => {
             sectionSummary('brokers', 'contribution', true, 'brokers.json', true),
           ],
         }),
+      ),
+      http.get('*/api/config/:section/types', () =>
+        HttpResponse.json({ types: [brokerType('discord', { authorization: 'grants' })] }),
       ),
       http.get('*/api/config/brokers', () =>
         HttpResponse.json({
@@ -940,20 +983,18 @@ describe('Settings route', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Form' }))
     expect(screen.getByLabelText(/^Base agent/)).toHaveProperty('value', 'nox')
     expect(screen.getByText('STORED')).toBeTruthy()
-    expect(screen.getByLabelText('Contribution JSON')).toHaveProperty(
+    expect(screen.getByLabelText(/^Gateway Url/)).toHaveProperty(
       'value',
-      '{\n  "gatewayUrl": "wss://gateway.example",\n  "intents": [\n    "messages"\n  ],\n  "token": {\n    "$secret": "DISCORD_TOKEN"\n  }\n}',
+      'wss://gateway.example',
     )
+    expect(screen.getByLabelText(/^Token/)).toHaveProperty('value', 'DISCORD_TOKEN')
 
     await fireEvent.update(screen.getByLabelText(/^Base agent/), 'support')
-    const [basePattern] = screen.getAllByPlaceholderText('nox.history.read')
+    const [basePattern] = screen.getAllByPlaceholderText('namespace.authority')
     if (basePattern === undefined) throw new Error('Expected the base grant pattern field.')
     expect(basePattern).toHaveProperty('value', 'nox.history.read')
     await fireEvent.update(basePattern, 'nox.history.search')
-    await fireEvent.update(
-      screen.getByPlaceholderText('New value for DISCORD_TOKEN'),
-      'discord-token-v2',
-    )
+    await fireEvent.update(screen.getByLabelText(/^Credential value/), 'discord-token-v2')
     await fireEvent.click(screen.getByRole('button', { name: 'Save broker' }))
 
     await waitFor(() => {
@@ -984,6 +1025,17 @@ describe('Settings route', () => {
           sections: [
             sectionSummary('blueprints', 'directory', true, 'blueprints', false),
             sectionSummary('brokers', 'contribution', true, 'brokers.json', true),
+          ],
+        }),
+      ),
+      http.get('*/api/config/:section/types', () =>
+        HttpResponse.json({
+          types: [
+            brokerType('web', {
+              authorization: 'owner',
+              removable: false,
+              selectableAgent: true,
+            }),
           ],
         }),
       ),
@@ -1040,17 +1092,7 @@ describe('Settings route', () => {
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
-          sections: [
-            {
-              applies: 'restart',
-              entries: false,
-              key: 'app',
-              kind: 'file',
-              loaded: true,
-              name: 'app.json',
-              writable: true,
-            },
-          ],
+          sections: [sectionSummary('app', 'file', false, 'app.json', true)],
         }),
       ),
       http.get('*/api/secrets', ({ request }) => {
@@ -1106,14 +1148,71 @@ function sectionSummary(
   name: string,
   writable: boolean,
 ) {
+  const definitions = {
+    app: {
+      description: 'settings.sections.general.description',
+      editor: 'app',
+      group: 'machine',
+      label: 'settings.sections.general.label',
+      plural: 'settings.sections.general.plural',
+      references: [],
+      slug: 'general',
+    },
+    blueprints: {
+      description: 'settings.sections.agents.description',
+      editor: 'blueprint',
+      entrySummary: { description: ['description'], detail: ['provider', 'model'] },
+      group: 'intelligence',
+      inventory: 'toolSets',
+      label: 'settings.sections.agents.label',
+      plural: 'settings.sections.agents.plural',
+      references: ['providers', 'toolSets'],
+      slug: 'agents',
+    },
+    brokers: {
+      description: 'settings.sections.brokers.description',
+      editor: 'broker',
+      entrySummary: { description: [], detail: ['type', 'agent'] },
+      group: 'capabilities',
+      label: 'settings.sections.brokers.label',
+      plural: 'settings.sections.brokers.plural',
+      references: ['blueprints'],
+      slug: 'brokers',
+    },
+    providers: {
+      description: 'settings.sections.providers.description',
+      editor: 'contribution',
+      entrySummary: { description: ['baseUrl'], detail: ['type', 'defaultModel'] },
+      group: 'intelligence',
+      label: 'settings.sections.providers.label',
+      plural: 'settings.sections.providers.plural',
+      references: [],
+      slug: 'providers',
+    },
+    toolSets: {
+      description: 'settings.sections.toolSets.description',
+      editor: 'toolSet',
+      entrySummary: { description: [], detail: ['type'] },
+      group: 'capabilities',
+      inventory: 'toolSets',
+      label: 'settings.sections.toolSets.label',
+      plural: 'settings.sections.toolSets.plural',
+      references: [],
+      slug: 'tool-sets',
+    },
+  } as const
+  const definition = Object.entries(definitions).find(([candidate]) => candidate === key)?.[1]
+  if (definition === undefined) throw new Error(`No test section definition for ${key}.`)
   return {
     applies: key === 'app' ? 'restart' : 'hot',
+    creatable: key === 'blueprints' || key === 'providers',
     entries,
     key,
     kind,
     loaded: true,
     name,
     writable,
+    ...definition,
   }
 }
 
@@ -1123,6 +1222,63 @@ function sectionSummary(
  * imported so the editor is tested against a schema, not against one build of
  * one extension.
  */
+function brokerType(
+  type: string,
+  host: { authorization?: 'grants' | 'owner'; removable?: boolean; selectableAgent?: boolean },
+) {
+  const transportProperties =
+    type === 'discord'
+      ? {
+          gatewayUrl: { type: 'string' },
+          intents: { items: { type: 'string' }, type: 'array' },
+          token: {
+            nox: { secret: true },
+            properties: { $secret: { type: 'string' } },
+            required: ['$secret'],
+            type: 'object',
+          },
+        }
+      : {}
+  return {
+    extensionId: `test.${type}`,
+    host,
+    instances: 'single',
+    schema: {
+      properties: { ...transportProperties, type: { const: type, type: 'string' } },
+      required: type === 'discord' ? ['token', 'type'] : ['type'],
+      type: 'object',
+    },
+    type,
+  }
+}
+
+function openAIProviderType() {
+  return {
+    extensionId: 'nox.provider.openai',
+    instances: 'many',
+    schema: {
+      properties: {
+        apiKey: {
+          nox: { label: 'ui.apiCredential', secret: true },
+          properties: { $secret: { type: 'string' } },
+          required: ['$secret'],
+          type: 'object',
+        },
+        baseUrl: { format: 'uri', nox: { label: 'ui.baseUrl' }, type: 'string' },
+        defaultModel: { nox: { label: 'ui.defaultModel' }, type: 'string' },
+        maxRetries: { default: 2, nox: { label: 'ui.maxRetries' }, type: 'integer' },
+        maxRetryDelayMs: { default: 30_000, type: 'number' },
+        retryDelayMs: { default: 500, type: 'number' },
+        timeoutMs: { type: 'number' },
+        type: { const: 'openai_completions', type: 'string' },
+      },
+      required: ['baseUrl', 'type'],
+      type: 'object',
+    },
+    type: 'openai_completions',
+  }
+}
+
 function webToolSetType() {
   const endpoint = (module: string, extra: Record<string, unknown> = {}) => ({
     properties: {
@@ -1142,6 +1298,7 @@ function webToolSetType() {
 
   return {
     extensionId: 'nox.toolset.web',
+    instances: 'single',
     schema: {
       properties: {
         browser: {

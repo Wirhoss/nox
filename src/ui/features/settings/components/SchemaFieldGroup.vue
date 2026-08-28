@@ -2,6 +2,7 @@
 import { useI18n } from '@/shared/i18n'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
+import { NEW_SECRET } from '../model/managedSecrets'
 import {
   type ConfigLike,
   type FieldNode,
@@ -39,7 +40,6 @@ interface Props {
   value: ConfigLike
 }
 
-const NEW_SECRET = '__new_secret__'
 const props = defineProps<Props>()
 const emit = defineEmits<{
   credential: [path: readonly string[], state: Partial<CredentialState>]
@@ -202,8 +202,14 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
 <template>
   <div class="schema-fields">
     <template v-for="node in props.nodes" :key="key(node.path)">
-      <div v-if="node.kind === 'field' && node.control === 'secret'" class="schema-fields__secret">
-        <div class="schema-fields__field">
+      <div
+        v-if="node.kind === 'field' && node.control === 'secret'"
+        class="schema-fields__secret"
+      >
+        <div
+          class="schema-fields__field"
+          :class="{ 'schema-fields__field--invalid': error(node.path) }"
+        >
           <label :for="fieldId(node.path)">{{ label(node) }}</label>
           <select
             :id="fieldId(node.path)"
@@ -217,6 +223,7 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
             <option :value="NEW_SECRET">+ {{ t('settings.toolSet.newManagedSecret') }}</option>
           </select>
           <p v-if="help(node)" class="schema-fields__hint">{{ help(node) }}</p>
+          <p v-if="error(node.path)" class="schema-fields__error">{{ error(node.path) }}</p>
         </div>
 
         <div
@@ -240,7 +247,7 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
           :error="error([...node.path, 'secretId'])"
           :hint="t('settings.toolSet.secretIdHint')"
           :label="t('settings.toolSet.newSecretId')"
-          placeholder="SEARXNG_API_KEY"
+          placeholder="SECRET_ID"
           required
           @update:model-value="setNewSecretId(node, $event)"
         />

@@ -7,6 +7,10 @@ import {
   providerBaseConfigSchema,
   providerContribution,
   providers,
+  type ToolSet,
+  toolSetBaseConfigSchema,
+  toolSetContribution,
+  toolSets,
 } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
@@ -627,11 +631,26 @@ function registryWith(...ids: string[]): ContributionRegistry {
       providers,
       id,
       providerContribution({
+        instances: 'many',
         configSchema: providerBaseConfigSchema.extend({ type: z.literal(id) }),
         create: () => ({}) as unknown as ChatProvider,
       }),
     );
   }
+  return registry;
+}
+
+function singletonRegistry(id: string): ContributionRegistry {
+  const registry = new ContributionRegistry();
+  const scoped = registry.scoped('test.extension', new DisposableStore());
+  scoped.register(
+    providers,
+    id,
+    providerContribution({
+      configSchema: providerBaseConfigSchema.extend({ type: z.literal(id) }),
+      create: () => ({}) as unknown as ChatProvider,
+    }),
+  );
   return registry;
 }
 
@@ -743,7 +762,11 @@ describe('contributed sections', () => {
       scoped.register(
         providers,
         'renamed',
-        providerContribution({ configSchema: fakeSchema, create: () => ({}) as ChatProvider }),
+        providerContribution({
+          instances: 'many',
+          configSchema: fakeSchema,
+          create: () => ({}) as ChatProvider,
+        }),
       ),
     ).toThrow('fake_provider');
   });
@@ -770,5 +793,122 @@ describe('readEnvConfig', () => {
 
   test('rejects an environment it does not know', () => {
     expect(() => readEnvConfig({ NODE_ENV: 'staging' })).toThrow('environment');
+  });
+});
+
+describe('how many instances a contribution has', () => {
+  test('lets a many-instance contribution be configured under any name, twice', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', {
+      backup: { baseUrl: 'https://b.test', type: 'fake_provider' },
+      main: { baseUrl: 'https://a.test', type: 'fake_provider' },
+    });
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registryWith('fake_provider'));
+
+    expect(Object.keys(config.get('providers')).sort()).toEqual(['backup', 'main']);
+  });
+
+  test('makes a single-instance contribution own its own name', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', {
+      only: { baseUrl: 'https://a.test', type: 'solo_provider' },
+    });
+    const config = await loadedConfig(dir);
+
+    // One rule, two jobs: the name is reserved, and a second instance is
+    // impossible because two entries cannot share one key.
+    const failure = await config
+      .resolve(singletonRegistry('solo_provider'))
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('must be named "solo_provider"');
+  });
+
+  test('accepts the single instance under the name it owns', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', {
+      solo_provider: { baseUrl: 'https://a.test', type: 'solo_provider' },
+    });
+    const config = await loadedConfig(dir);
+
+    await config.resolve(singletonRegistry('solo_provider'));
+
+    expect(Object.keys(config.get('providers'))).toEqual(['solo_provider']);
+  });
+});
+
+describe('entries a section already has because nothing had to be decided', () => {
+  /** A contribution whose whole document is determined by its own schema. */
+  function defaulted(id: string): ContributionRegistry {
+    const registry = new ContributionRegistry();
+    const scoped = registry.scoped('test.extension', new DisposableStore());
+    scoped.register(
+      toolSets,
+      id,
+      toolSetContribution({
+        configSchema: toolSetBaseConfigSchema.extend({ type: z.literal(id) }),
+        create: () => ({}) as unknown as ToolSet,
+      }),
+    );
+    return registry;
+  }
+
+  test('writes the one entry a fully defaulted singleton could only ever have', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+
+    await config.resolve(defaulted('solo_tools'));
+
+    // Nothing was configured, and yet nothing had to be: the name is the only
+    // one it can have, and the schema determines the rest.
+    expect(config.get('toolSets')).toEqual({ solo_tools: { type: 'solo_tools' } });
+  });
+
+  test('leaves a singleton that still needs an answer unconfigured', async () => {
+    const dir = await configDir();
+    const registry = new ContributionRegistry();
+    const scoped = registry.scoped('test.extension', new DisposableStore());
+    scoped.register(
+      toolSets,
+      'keyed_tools',
+      toolSetContribution({
+        configSchema: toolSetBaseConfigSchema.extend({
+          endpoint: z.string().min(1),
+          type: z.literal('keyed_tools'),
+        }),
+        create: () => ({}) as unknown as ToolSet,
+      }),
+    );
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registry);
+
+    // Written without its endpoint it would only come back as failed, which is a
+    // worse answer than "not configured yet".
+    expect(config.get('toolSets')).toEqual({});
+  });
+
+  test('never overwrites an entry somebody already wrote', async () => {
+    const dir = await configDir();
+    await write(dir, 'toolsets.json', {
+      solo_tools: { enabledTools: ['kept'], type: 'solo_tools' },
+    });
+    const config = await loadedConfig(dir);
+
+    await config.resolve(defaulted('solo_tools'));
+
+    expect(config.get('toolSets').solo_tools).toMatchObject({ enabledTools: ['kept'] });
+  });
+
+  test('leaves a many-instance contribution alone: no entry is implied', async () => {
+    const dir = await configDir();
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registryWith('fake_provider'));
+
+    expect(config.get('providers')).toEqual({});
   });
 });

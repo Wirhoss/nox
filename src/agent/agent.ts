@@ -68,6 +68,8 @@ interface OpenSessionOptions {
    */
   authorization?: AuthorizationProvider;
   metadata?: Readonly<Record<string, unknown>>;
+  /** Optional conversation-local model from this agent's configured provider. */
+  modelId?: string;
   /** Omit for a new session; pass one to resume it, or to name a new one. */
   sessionId?: string;
   title?: string;
@@ -110,7 +112,7 @@ class Agent {
   readonly #agentId: string;
   readonly #artifacts?: ArtifactPipeline;
   readonly #authorities: AuthorityCatalog;
-  readonly #compactionModel: ModelConfig;
+  readonly #compactionModel?: ModelConfig;
   readonly #compactionProvider: ChatProvider;
   readonly #context?: Omit<
     ContextOptions,
@@ -127,7 +129,7 @@ class Agent {
   readonly #routedToolSets: readonly ToolSetGrant[];
   readonly #systemPrompt: string;
   readonly #timeZone?: string;
-  readonly #titleModel: ModelConfig;
+  readonly #titleModel?: ModelConfig;
   readonly #titleProvider: ChatProvider;
 
   constructor(
@@ -139,7 +141,7 @@ class Agent {
     this.#agentId = options.agentId;
     this.#artifacts = options.artifacts;
     this.#authorities = options.authorities;
-    this.#compactionModel = options.compactionModel ?? model;
+    this.#compactionModel = options.compactionModel;
     this.#compactionProvider = options.compactionProvider ?? provider;
     this.#database = database;
     this.#provider = provider;
@@ -153,7 +155,7 @@ class Agent {
     this.#routedToolSets = options.routedToolSets ?? [];
     this.#systemPrompt = options.systemPrompt;
     this.#timeZone = options.timeZone;
-    this.#titleModel = options.titleModel ?? model;
+    this.#titleModel = options.titleModel;
     this.#titleProvider = options.titleProvider ?? provider;
   }
 
@@ -165,12 +167,33 @@ class Agent {
     return this.#model;
   }
 
+  public get modelIds(): readonly string[] {
+    return Object.freeze(
+      [
+        ...new Set([
+          this.#model.modelId,
+          ...this.#provider.listModelConfigs().map((model) => model.modelId),
+        ]),
+      ].sort((a, b) => a.localeCompare(b)),
+    );
+  }
+
   public get systemPrompt(): string {
     return this.#systemPrompt;
   }
 
   /** Resumes the session when `sessionId` names one, and starts one otherwise. */
   public openSession(options: OpenSessionOptions = {}): Promise<Session> {
+    const model =
+      options.modelId === undefined || options.modelId === this.#model.modelId
+        ? this.#model
+        : this.#provider.getModelConfig(options.modelId);
+    if (model === undefined) {
+      throw new Error(
+        `Model "${options.modelId ?? ''}" is not available to agent "${this.#agentId}".`,
+      );
+    }
+
     // Snapshot before Session.open reaches storage: changes after this call
     // belong to later sessions, even while this one is still loading.
     const configuredTools = composeSessionTools(
@@ -196,17 +219,17 @@ class Agent {
     }
     const systemPrompt = withRoutedToolSetCatalog(this.#systemPrompt, this.#routedToolSets);
 
-    return Session.open(this.#database, this.#provider, this.#model, {
+    return Session.open(this.#database, this.#provider, model, {
       ...options,
       agentId: this.#agentId,
       ...(this.#artifacts === undefined ? {} : { artifacts: this.#artifacts }),
       authorities: this.#authorities,
-      // The model's own window is the budget unless the agent overrode it.
+      // The selected model's own window is the budget unless the agent overrode it.
       compactionProvider: this.#compactionProvider,
       context: {
-        contextWindow: this.#model.contextWindow,
+        contextWindow: model.contextWindow,
         ...this.#context,
-        compactionModel: this.#compactionModel,
+        compactionModel: this.#compactionModel ?? model,
         ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
         tools,
       },
@@ -216,7 +239,7 @@ class Agent {
       maxIterations: this.#maxIterations,
       systemPrompt,
       ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
-      titleModel: this.#titleModel,
+      titleModel: this.#titleModel ?? model,
       titleProvider: this.#titleProvider,
     });
   }

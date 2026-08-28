@@ -93,6 +93,39 @@ export default defineExtension({
 })
 ```
 
+Extensions can contribute person-facing commands too. The contribution ID is the slash-command name;
+its Zod parameters become the JSON Schema rendered by Web or Discord and are validated again by the
+host. Every extension command declares an authority and the concrete risk of its invocation, so it goes
+through authorization and the session Gate before running:
+
+```ts
+import { authorities, commands, defineCommand, defineExtension, z } from '@nox/extension-api'
+
+export default defineExtension({
+  activate(context) {
+    context.contributions.register(authorities, 'example.extension.commands', {
+      description: 'Run the example extension commands.',
+    })
+    context.contributions.register(
+      commands,
+      'hello',
+      defineCommand({
+        authority: 'example.extension.commands',
+        description: 'Greets someone without entering the model transcript.',
+        parameters: z.object({ name: z.string() }),
+        risk: () => ({ effects: [] }),
+        run: async (_command, { name }) => ({ text: `Hello, ${name}.` }),
+      }),
+    )
+  },
+})
+```
+
+Command code receives a bounded conversation context rather than Nox's internal `Session` or database.
+It may inspect the current session, compact or rename it, retry generation, start a new session, and
+explicitly switch its agent or model. Results are delivered as command events and never become words the
+model reads.
+
 The autonomous package source lives in `packages/extension-api`. It imports no kernel modules and its
 build emits ESM JavaScript plus TypeScript declarations under `dist`. Extension projects use it as a
 development dependency and keep `@nox/extension-api` external in their production bundle; Nox supplies
@@ -106,11 +139,79 @@ rolls back that package's contributions. Each activation receives `context.stora
 JSON store isolated by extension ID; no extension receives Nox's database connection or schemas.
 Extensions are trusted native code, not a sandbox, and package changes currently require a Nox restart.
 
+#### Pending: extension isolation and privilege
+
+"Trusted native code" is the whole of the current model, and the sentence above is doing more work than
+it looks like it is. The loader `import()`s a package from disk into the Nox process, so an extension
+runs with everything the runtime has: the data directory and its `.secret-key`, the SQLite database,
+the network, the filesystem. `SecretMetadataReader` deliberately exposes metadata and never values, and
+`context.storage` is isolated per extension ID, but neither is a boundary — they are conveniences that
+an extension can simply decline to use.
+
+That is acceptable while every package ships in the image, and it stops being acceptable the moment a
+person can install a third-party one. What un-defers this is exactly that: an install path that accepts
+a package Nox did not build. It needs, at least:
+
+- a declared permission model in the manifest — filesystem, network, services — that the host enforces
+  rather than documents;
+- an execution boundary an extension cannot reach around, whether that is a worker with a restricted
+  module graph, a separate process behind the existing typed-token RPC, or WASM for the pure cases;
+- `origin` meaning a privilege level instead of an inventory label;
+- an install-time disclosure that says plainly what the package will be able to reach.
+
+Until then, installing an extension is granting the machine, and any UI that offers installation has to
+say so in those words.
+
+#### Pending: the size of the public surface
+
+`@nox/extension-api` is now the single declaration of types the kernel also consumes — `Message`,
+`MessageContent`, `MessageOrigin` and the whole outbound event vocabulary live there rather than in
+`src/`. That removes duplication and the drift that comes with it, and it moves the coupling instead of
+removing it: a change to a kernel domain type is now a change to a versioned public contract.
+
+The contract tests cover schema behavior, not the shape of every exported interface, and the package is
+committed under semver before a single third-party extension has exercised it. `0.x` is the room to be
+wrong in; the discipline is to spend it deliberately — when a real external consumer appears, expect one
+compaction pass of the surface, and take it while the major is still `0`.
+
+The builtin `nox.commands.session` extension contributes `/commands`, `/help`, `/session`, `/tools`,
+`/compact`, `/retry`, `/rename`, `/new`, `/agent`, and `/model`; `/stop` remains the host safety command. Bare
+`/agent` and `/model` list choices. Supplying one value switches explicitly: an agent handoff starts a
+fresh linked session so two agents never share one transcript, while a model switch reopens the same
+transcript under a model available from that agent's configured provider. Web accepts either JSON
+(`/agent {"agent":"worker"}`) or shorthand (`/agent worker`) for a one-value command.
+
 Authenticated owners can inspect discovery and activation state through `GET /api/extensions`. The
 response includes Extension API version, package origin/version/state, sanitized errors and contributed
-IDs, but no absolute filesystem paths. Discovering a provider, broker or tool-set extension registers
-its **type**; it never silently creates a configured instance. Settings or configuration still creates
-and grants instances explicitly.
+IDs, but no absolute filesystem paths. Discovering an extension never silently creates a configured
+instance: Settings or configuration still creates and grants them explicitly.
+
+How many instances a contribution can have is the contribution's own declaration, not a property of the
+section it belongs to. `instances` defaults to `single`, because that is the ordinary case — a transport
+is bound to one credential, and a capability like scheduling or configuration access belongs to this Nox
+rather than to a service outside it. `many` is the exception a contribution states out loud, and it is
+right when an instance is the address of an independent remote service a deployment genuinely wants
+several of, with consumers choosing between them. Today that is the OpenAI-compatible provider adapter.
+
+A `single` contribution owns its own name: its entry must be called exactly what the contribution is
+called, which is also its config `type`. One rule does two jobs — it reserves the name, so `web` is the
+browser transport's by being called `web`, and it makes a second instance impossible, because two
+entries cannot share one key. Configuration says so when it is broken, for every section alike.
+
+Because a `single` contribution owns its name, a section can say what it *could* hold and not only what
+it holds: `GET /api/config` carries a compact `contributions` list per contributed section — type,
+extension, multiplicity, and whether it is configured. Settings draws the unconfigured single-instance
+ones as rows to fill in, and following one opens the create form with the type and the entry ID already
+settled, since for a singleton they are the same string. Nothing writes an entry it cannot validate: a
+broker stored without its credential would only come back as `failed`.
+
+#### Upgrading: singleton entries may need renaming
+
+The naming rule is enforced when a section loads, so a configuration written before it existed can name
+a singleton's entry anything at all and stop validating on upgrade. Renaming is the whole fix, and it is
+two edits rather than one: the entry in its own file, and everything that referenced the old name — a
+blueprint granting a tool set, a blueprint naming a provider. The failure is reported per component
+rather than fatally, and the last working generation stays in service while it is corrected.
 
 `bun run build:extension-api` builds the publishable package directly. `bun run build:extensions` first
 builds that same package, then packages every builtin separately under `dist/extensions/builtin` and
@@ -142,17 +243,17 @@ visible while its last valid generation keeps serving. Settings offers retry, re
 watcher enabled. HTTP listen address, SQLite structure/path, artifact storage construction and similar
 process infrastructure report `restartRequired` instead of pretending they changed live.
 
-Tool sets are configured as instances in `toolsets.json` and granted from a
-blueprint as either direct or routed. The builtin `web` kind has three slots —
-`search`, `extract` and `browser` — and each is filled by naming the module that
-backs it. A slot left empty is a tool the agents holding that instance simply do
-not have:
+Tool sets are configured in `toolsets.json` and granted from a blueprint as
+either direct or routed. A single-instance contribution owns its entry ID; the
+builtin Web tool set is therefore named `web`. It has three slots — `search`,
+`extract` and `browser` — and each is filled by naming the module that backs it.
+A slot left empty is a tool the agents holding that tool set simply do not have:
 
 `toolsets.json`:
 
 ```json
 {
-  "internet": {
+  "web": {
     "type": "web",
     "search": { "module": "searxng", "url": "http://localhost:8081" },
     "extract": { "module": "crawl4ai", "url": "http://localhost:11235" },
@@ -221,7 +322,7 @@ The corresponding field inside `blueprints/nox.json`:
 
 ```json
 {
-  "toolSets": { "direct": [], "routed": ["internet"] }
+  "toolSets": { "direct": [], "routed": ["web"] }
 }
 ```
 
@@ -256,7 +357,7 @@ administration boundary, including reference policy and generation reconciliatio
 
 ```json
 {
-  "control": {
+  "config": {
     "type": "config",
     "readSections": ["app", "blueprints", "brokers", "providers", "toolSets"],
     "writeSections": ["blueprints", "providers", "toolSets"],
@@ -270,7 +371,7 @@ Grant the configured instance from a blueprint like any other capability:
 
 ```json
 {
-  "toolSets": { "direct": ["control"], "routed": [] }
+  "toolSets": { "direct": ["config"], "routed": [] }
 }
 ```
 
@@ -299,7 +400,7 @@ agents. Configure one instance in `toolsets.json` and grant its management tools
 
 ```json
 {
-  "automation": {
+  "cronjobs": {
     "type": "cronjobs",
     "maxJobs": 100
   }
@@ -309,8 +410,8 @@ agents. Configure one instance in `toolsets.json` and grant its management tools
 ```json
 {
   "toolSets": {
-    "direct": ["automation"],
-    "routed": ["internet"]
+    "direct": ["cronjobs"],
+    "routed": ["web"]
   }
 }
 ```

@@ -18,6 +18,7 @@ import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
+import { SessionStore } from './database/sessionStore';
 import { toDisposable } from './extensions/disposable';
 import { discoverExtensions } from './extensions/loader';
 import { DatabaseExtensionStorageProvider } from './extensions/storage';
@@ -266,6 +267,7 @@ function openApi(
     locale,
     logger: logger.child('api'),
     secrets,
+    sessions: new SessionStore(database, { logger: logger.child('sessions') }),
     uiDirectory,
     version: application.noxVersion,
   });
@@ -345,10 +347,11 @@ async function composeBrokerGrant(
     );
   }
 
+  // Whether this type may be configured more than once, and under what name, is
+  // settled when the section is validated: a single-instance contribution owns
+  // its own name, so `web` is reserved by being called `web` rather than by a
+  // rule that only brokers have.
   const host = contribution.value.host;
-  if (host?.instanceId !== undefined && brokerId !== host.instanceId) {
-    throw new Error(`Broker type "${entry.type}" must use the reserved ID "${host.instanceId}".`);
-  }
   const ownerAuthorized = host?.authorization === 'owner';
   if (ownerAuthorized && Object.keys(entry.grants).length > 0) {
     throw new Error('Owner-authenticated brokers cannot replace owner authority with grants.');

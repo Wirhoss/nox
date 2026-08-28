@@ -4,7 +4,6 @@ import {
   brokers,
   chatHubService,
   defineExtension,
-  WEB_BROKER_ID,
   z,
 } from '@nox/extension-api';
 
@@ -29,9 +28,11 @@ const webBrokerExtension = defineExtension({
       brokerContribution({
         configSchema: webBrokerConfigSchema,
         create: () => new WebBroker(context.services.get(chatHubService)),
+        // Single by default, which is what reserves the name `web` for it: its
+        // entry must be called exactly what the contribution is called.
         host: {
           authorization: 'owner',
-          instanceId: WEB_BROKER_ID,
+          removable: false,
           selectableAgent: true,
         },
       }),
@@ -40,4 +41,4 @@ const webBrokerExtension = defineExtension({
 });
 
 export default webBrokerExtension;
-export { WEB_BROKER_ID, webBrokerConfigSchema, webBrokerExtension };
+export { webBrokerConfigSchema, webBrokerExtension };

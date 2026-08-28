@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
 import { useI18n } from '@/shared/i18n'
@@ -7,7 +7,21 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
+import { type CredentialState, NEW_SECRET } from '../model/managedSecrets'
+import {
+  activeFields,
+  type ConfigLike,
+  defaultsFor,
+  type FieldNode,
+  formNodes,
+  isObject,
+  seedNode,
+  valueAt,
+  variantAt,
+  withValueAt,
+} from '../model/schemaForm'
 import { useSettingsStore } from '../stores/settings.store'
+import SchemaFieldGroup from './SchemaFieldGroup.vue'
 
 import type { ConfigSection, ConfigValue } from '../api/settings.api'
 import type { SettingsSectionDefinition } from '../model/sections'
@@ -27,18 +41,11 @@ interface ConversationDraft {
   grants: PrincipalGrantDraft[]
 }
 
-/** A value the operator typed for one reference, keyed by where it was named. */
-interface PendingSecret {
-  secretId: string
-  value: string
-}
-
 interface PrincipalGrantDraft {
   patterns: string[]
   subject: string
 }
 
-/** One place this broker's configuration names a secret. */
 interface SecretReferenceDraft {
   path: string
   secretId: string
@@ -49,31 +56,17 @@ interface Props {
   creating?: boolean
   definition: SettingsSectionDefinition
   entryId?: string
+  /** The contribution the list offered, when the form was reached by pressing it. */
+  presetType?: string
   section: ConfigSection
 }
 
-const COMMON_PROPERTIES = new Set([
-  'agent',
-  'approvers',
-  'conversations',
-  'enabled',
-  'grants',
-  'type',
-])
-const AUTHORITY_SUGGESTIONS = Object.freeze([
-  '*',
-  'nox.history.*',
-  'nox.history.read',
-  'nox.history.search',
-  'nox.tools.search',
-  'nox.toolset.web.*',
-  'nox.toolset.web.extract',
-  'nox.toolset.web.search',
-])
+const COMMON_PROPERTIES = new Set(['agent', 'conversations', 'enabled', 'grants', 'type'])
 const props = withDefaults(defineProps<Props>(), {
   blueprintSection: undefined,
   creating: false,
   entryId: undefined,
+  presetType: undefined,
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
@@ -82,51 +75,67 @@ const mode = ref<EditorMode>('form')
 const common = ref<BrokerCommonDraft>(newCommonTemplate())
 const baseGrants = ref<PrincipalGrantDraft[]>([])
 const conversations = ref<ConversationDraft[]>([])
-const transportJsonSource = ref('{}')
+const transportDraft = ref<ConfigLike>({})
+const credentials = reactive<Record<string, CredentialState>>({})
 const jsonSource = ref('')
 const originalJsonSignature = ref('')
 const originalSignature = ref('')
 const entryIdInput = ref('')
 const fieldErrors = ref<Readonly<Record<string, string>>>({})
-const transportJsonError = ref<string>()
 const jsonError = ref<string>()
 const confirmingDelete = ref(false)
-const pendingSecrets = ref<Readonly<Record<string, PendingSecret>>>({})
 const selectedValue = computed<ConfigValue>(() => {
   if (props.creating || props.entryId === undefined) return newBrokerTemplate()
   const value = props.section.value[props.entryId]
   return isConfigValue(value) ? value : newBrokerTemplate()
 })
 const agents = computed(() => Object.keys(props.blueprintSection?.value ?? {}))
-const isWeb = computed(() => common.value.type === 'web' && props.entryId === 'web')
+/** This transport's own schema, when an extension contributed one for the type. */
+const descriptor = computed(() =>
+  settings.contributionTypes.find((candidate) => candidate.type === common.value.type),
+)
+const transportNodes = computed(() =>
+  descriptor.value === undefined
+    ? []
+    : formNodes(descriptor.value.schema, [...COMMON_PROPERTIES]),
+)
+const ownerAuthorized = computed(() => descriptor.value?.host?.authorization === 'owner')
+const selectableAgent = computed(() => descriptor.value?.host?.selectableAgent === true)
+const removable = computed(() => descriptor.value?.host?.removable !== false)
+const authoritySuggestions = computed(() => {
+  const exact = settings.catalog?.authorities ?? []
+  const wildcardPrefixes = new Set<string>()
+  for (const authority of exact) {
+    const segments = authority.id.split('.')
+    for (let index = 1; index < segments.length; index += 1) {
+      wildcardPrefixes.add(`${segments.slice(0, index).join('.')}.*`)
+    }
+  }
+  return [
+    { description: t('settings.broker.allAuthorities'), id: '*' },
+    ...[...wildcardPrefixes]
+      .sort((left, right) => left.localeCompare(right))
+      .map((id) => ({ description: t('settings.broker.authorityNamespace'), id })),
+    ...exact.map(({ description, id }) => ({ description, id })),
+  ]
+})
 const title = computed(() =>
   props.creating
     ? t('settings.broker.titleNew')
     : (props.entryId ?? t('settings.broker.titleFallback')),
 )
 const sourceName = computed(() => props.section.name)
-const currentValue = computed<ConfigValue | undefined>(() =>
-  mode.value === 'json' ? parseJson(false) : buildFormValue(false),
-)
-/**
- * A broker's transport fields are free-form contributed configuration, so the
- * credentials it names are found by looking rather than by knowing: whatever
- * survived the schema as a reference is one, wherever it sits.
- */
-const secretReferences = computed<readonly SecretReferenceDraft[]>(() =>
-  currentValue.value === undefined ? [] : findSecretReferences(currentValue.value),
-)
 const dirty = computed(() => {
   if (mode.value === 'json') {
     const parsed = parseJson(false)
     if (parsed === undefined) return true
-    return JSON.stringify(parsed) !== originalJsonSignature.value || pendingSecretsDirty()
+    return JSON.stringify(parsed) !== originalJsonSignature.value || credentialInputsDirty()
   }
   return formSignature() !== originalSignature.value
 })
 
 watch(
-  [() => props.creating, () => props.entryId, selectedValue],
+  [() => props.creating, () => props.entryId, selectedValue, () => settings.contributionTypes],
   () => {
     resetEditor()
   },
@@ -134,16 +143,23 @@ watch(
 )
 
 function resetEditor(): void {
-  hydrate(selectedValue.value)
-  mode.value = 'form'
-  entryIdInput.value = ''
+  const value = clone(selectedValue.value)
+  if (props.creating) {
+    const configuredType = stringValue(value.type)
+    value.type =
+      props.presetType ??
+      (configuredType.length > 0 ? configuredType : (settings.contributionTypes[0]?.type ?? ''))
+  }
+  hydrate(value)
+  mode.value = descriptor.value === undefined ? 'json' : 'form'
+  // A single-instance contribution's entry is named after its type, so offering
+  // it means the name is already settled; nobody should have to retype it.
+  entryIdInput.value = props.creating ? (props.presetType ?? '') : ''
   fieldErrors.value = {}
-  transportJsonError.value = undefined
   jsonError.value = undefined
   confirmingDelete.value = false
-  pendingSecrets.value = {}
-  jsonSource.value = JSON.stringify(editableBrokerConfig(selectedValue.value), undefined, 2)
-  originalJsonSignature.value = JSON.stringify(selectedValue.value)
+  jsonSource.value = JSON.stringify(editableBrokerConfig(value), undefined, 2)
+  originalJsonSignature.value = JSON.stringify(value)
   originalSignature.value = formSignature()
 }
 
@@ -155,7 +171,8 @@ function hydrate(value: ConfigValue): void {
   }
   baseGrants.value = grantDrafts(value.grants)
   conversations.value = conversationDrafts(value.conversations)
-  transportJsonSource.value = JSON.stringify(transportPayload(value), undefined, 2)
+  transportDraft.value = transportShape(value)
+  syncCredentials()
 }
 
 function formSignature(): string {
@@ -163,9 +180,9 @@ function formSignature(): string {
     baseGrants: baseGrants.value,
     common: common.value,
     conversations: conversations.value,
+    credentials,
     entryId: entryIdInput.value,
-    pendingSecrets: activePendingSecrets(),
-    transport: transportJsonSource.value,
+    transport: transportDraft.value,
   })
 }
 
@@ -328,18 +345,37 @@ function setConversationField(
   clearFeedback(`conversation.${String(index)}.${field}`)
 }
 
-function setPendingSecret(reference: SecretReferenceDraft, value: string): void {
-  pendingSecrets.value = {
-    ...pendingSecrets.value,
-    [reference.path]: { secretId: reference.secretId, value },
+function applyTransportUpdate(path: readonly string[], value: unknown): void {
+  const variant = variantAt(transportNodes.value, path)
+  if (variant !== undefined && typeof value === 'string') {
+    transportDraft.value = withValueAt(transportDraft.value, variant.path, seedNode(variant, value))
+    syncCredentials()
+    clearFeedback()
+    return
   }
-  clearFeedback(`secret.${reference.path}`)
+  transportDraft.value = withValueAt(transportDraft.value, path, value)
+  clearFeedback(path.join('.'))
 }
 
-/** Keyed by path and checked against the ID, so editing the reference drops a stale value. */
-function pendingSecretValue(reference: SecretReferenceDraft): string {
-  const pending = pendingSecrets.value[reference.path]
-  return pending?.secretId === reference.secretId ? pending.value : ''
+function applyCredential(path: readonly string[], state: Partial<CredentialState>): void {
+  const key = path.join('.')
+  const current = credentials[key] ?? { newId: '', selection: '', value: '' }
+  credentials[key] = { ...current, ...state }
+  clearFeedback(`${key}.secretId`)
+  clearFeedback(`${key}.secretValue`)
+}
+
+function syncCredentials(): void {
+  for (const key of Object.keys(credentials)) Reflect.deleteProperty(credentials, key)
+  for (const node of activeFields(transportNodes.value, transportDraft.value)) {
+    if (node.control !== 'secret') continue
+    credentials[node.path.join('.')] = { newId: '', selection: secretIdAt(node), value: '' }
+  }
+}
+
+function secretIdAt(node: FieldNode): string {
+  const current = valueAt(transportDraft.value, node.path)
+  return isObject(current) && typeof current.$secret === 'string' ? current.$secret : ''
 }
 
 function secretStored(secretId: string): boolean {
@@ -349,9 +385,7 @@ function secretStored(secretId: string): boolean {
 function switchMode(nextMode: EditorMode): void {
   if (mode.value === nextMode) return
   if (nextMode === 'json') {
-    const value = buildFormValue(true)
-    if (value === undefined) return
-    jsonSource.value = JSON.stringify(editableBrokerConfig(value), undefined, 2)
+    jsonSource.value = JSON.stringify(editableBrokerConfig(buildFormValue()), undefined, 2)
     jsonError.value = undefined
     mode.value = nextMode
     return
@@ -359,6 +393,13 @@ function switchMode(nextMode: EditorMode): void {
 
   const parsed = parseJson(true)
   if (parsed === undefined) return
+  const nextDescriptor = settings.contributionTypes.find(
+    (candidate) => candidate.type === parsed.type,
+  )
+  if (nextDescriptor === undefined) {
+    jsonError.value = t('settings.provider.validation.curatedFormUnavailable')
+    return
+  }
   hydrate(parsed)
   mode.value = nextMode
 }
@@ -370,24 +411,17 @@ function formatJson(): void {
   }
 }
 
-function formatTransportJson(): void {
-  const parsed = parseTransportJson(true)
-  if (parsed !== undefined) transportJsonSource.value = JSON.stringify(parsed, undefined, 2)
-}
-
 async function save(): Promise<void> {
   fieldErrors.value = {}
   jsonError.value = undefined
-  transportJsonError.value = undefined
   let value: ConfigValue
   if (mode.value === 'json') {
     const parsed = parseJson(true)
     if (parsed === undefined) return
     value = parsed
   } else {
-    const built = buildFormValue(true)
-    if (built === undefined || !validateForm()) return
-    value = built
+    if (!validateForm()) return
+    value = buildFormValue()
   }
 
   const nextEntryId = props.creating ? entryIdInput.value.trim() : props.entryId
@@ -398,14 +432,6 @@ async function save(): Promise<void> {
     }
     return
   }
-  if (props.creating && nextEntryId === 'web') {
-    fieldErrors.value = {
-      ...fieldErrors.value,
-      entryId: t('settings.broker.validation.webReserved'),
-    }
-    return
-  }
-
   const secretWrites = collectSecretWrites(value)
   if (secretWrites === undefined) return
   const saved = await settings.saveEntryWithSecrets(
@@ -432,26 +458,28 @@ function collectSecretWrites(
   value: ConfigValue,
 ): readonly { readonly secretId: string; readonly value: string }[] | undefined {
   const references = findSecretReferences(value)
+  const activeReferences = new Map(references.map((reference) => [reference.path, reference.secretId]))
   const writes = new Map<string, string>()
-  for (const reference of references) {
-    const pendingValue = pendingSecretValue(reference)
-    if (!validSecretId(reference.secretId)) {
+  for (const [path, state] of Object.entries(credentials)) {
+    if (state.value.length === 0) continue
+    const secretId = state.selection === NEW_SECRET ? state.newId.trim() : state.selection
+    if (activeReferences.get(path) !== secretId) continue
+    if (!validSecretId(secretId)) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`secret.${reference.path}`]: t('settings.broker.validation.invalidSecretId'),
+        [`${path}.secretId`]: t('settings.broker.validation.invalidSecretId'),
       }
       return undefined
     }
-    if (pendingValue.length === 0) continue
-    const duplicate = writes.get(reference.secretId)
-    if (duplicate !== undefined && duplicate !== pendingValue) {
+    const duplicate = writes.get(secretId)
+    if (duplicate !== undefined && duplicate !== state.value) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`secret.${reference.path}`]: t('settings.broker.validation.conflictingSecretValues'),
+        [`${path}.secretValue`]: t('settings.broker.validation.conflictingSecretValues'),
       }
       return undefined
     }
-    writes.set(reference.secretId, pendingValue)
+    writes.set(secretId, state.value)
   }
 
   if (commonEnabled(value)) {
@@ -461,7 +489,7 @@ function collectSecretWrites(
     if (missing !== undefined) {
       fieldErrors.value = {
         ...fieldErrors.value,
-        [`secret.${missing.path}`]: t('settings.broker.validation.storeBeforeEnabling'),
+        [`${missing.path}.secretValue`]: t('settings.broker.validation.storeBeforeEnabling'),
       }
       return undefined
     }
@@ -476,7 +504,7 @@ async function remove(): Promise<void> {
 
 function validateForm(): boolean {
   const errors: Record<string, string> = {}
-  if (!isWeb.value && common.value.agent.trim().length === 0) {
+  if (!selectableAgent.value && common.value.agent.trim().length === 0) {
     errors.agent = t('settings.broker.validation.baseAgentRequired')
   } else if (
     common.value.agent.trim().length > 0 &&
@@ -488,11 +516,7 @@ function validateForm(): boolean {
   if (props.creating && !validEntryId(entryIdInput.value.trim())) {
     errors.entryId = t('settings.validation.entryId')
   }
-  if (props.creating && entryIdInput.value.trim() === 'web') {
-    errors.entryId = t('settings.broker.validation.webReserved')
-  }
-
-  if (!isWeb.value) validateGrantList(baseGrants.value, errors)
+  if (!ownerAuthorized.value) validateGrantList(baseGrants.value, errors)
   const conversationIds = new Set<string>()
   conversations.value.forEach((conversation, index) => {
     const prefix = `conversation.${String(index)}`
@@ -510,11 +534,55 @@ function validateForm(): boolean {
     ) {
       errors[`${prefix}.agent`] = t('settings.broker.validation.agentAvailable')
     }
-    if (!isWeb.value) validateGrantList(conversation.grants, errors, index)
+    if (!ownerAuthorized.value) validateGrantList(conversation.grants, errors, index)
   })
+  for (const node of activeFields(transportNodes.value, transportDraft.value)) {
+    validateTransportField(node, errors)
+  }
 
   fieldErrors.value = errors
   return Object.keys(errors).length === 0
+}
+
+function validateTransportField(node: FieldNode, errors: Record<string, string>): void {
+  const key = node.path.join('.')
+  const value = valueAt(transportDraft.value, node.path)
+  if (node.control === 'secret') {
+    const state = credentials[key]
+    if (state?.selection === NEW_SECRET) {
+      if (!validSecretId(state.newId.trim())) {
+        errors[`${key}.secretId`] = t('settings.broker.validation.invalidSecretId')
+      }
+      if (state.value.length === 0) {
+        errors[`${key}.secretValue`] = t('settings.toolSet.validation.secretValueRequired')
+      }
+    }
+    if (node.required && value === undefined) {
+      errors[key] = t('settings.toolSet.validation.required')
+    }
+    return
+  }
+  if (value === undefined || (typeof value === 'string' && value.trim().length === 0)) {
+    if (node.required) errors[key] = t('settings.toolSet.validation.required')
+    return
+  }
+  if (node.url && !(typeof value === 'string' && validHttpUrl(value))) {
+    errors[key] = t('settings.toolSet.validation.httpUrl')
+    return
+  }
+  if (node.control !== 'number') return
+  if (typeof value !== 'number' || (node.integer && !Number.isInteger(value))) {
+    errors[key] = t(node.integer ? 'settings.validation.integer' : 'settings.validation.number')
+    return
+  }
+  if (node.minimum !== undefined && value < node.minimum) {
+    errors[key] = t('settings.validation.numberMinimum', { minimum: node.minimum })
+  } else if (node.maximum !== undefined && value > node.maximum) {
+    errors[key] = t('settings.validation.numberRange', {
+      maximum: node.maximum,
+      minimum: node.minimum ?? 0,
+    })
+  }
 }
 
 function validateGrantList(
@@ -551,11 +619,9 @@ function validateGrantList(
   })
 }
 
-function buildFormValue(report: boolean): ConfigValue | undefined {
-  const payload = parseTransportJson(report)
-  if (payload === undefined) return undefined
+function buildFormValue(): ConfigValue {
   return {
-    ...payload,
+    ...clone(transportDraft.value),
     ...(common.value.agent.trim().length === 0 ? {} : { agent: common.value.agent.trim() }),
     conversations: Object.fromEntries(
       conversations.value.map((conversation) => [
@@ -563,12 +629,12 @@ function buildFormValue(report: boolean): ConfigValue | undefined {
         {
           ...conversation.extra,
           ...(conversation.agent.length === 0 ? {} : { agent: conversation.agent }),
-          grants: isWeb.value ? {} : grantsRecord(conversation.grants),
+          grants: ownerAuthorized.value ? {} : grantsRecord(conversation.grants),
         },
       ]),
     ),
     enabled: common.value.enabled,
-    grants: isWeb.value ? {} : grantsRecord(baseGrants.value),
+    grants: ownerAuthorized.value ? {} : grantsRecord(baseGrants.value),
     type: common.value.type.trim(),
   }
 }
@@ -580,21 +646,6 @@ function grantsRecord(grants: readonly PrincipalGrantDraft[]): ConfigValue {
       principal.patterns.map((pattern) => pattern.trim()),
     ]),
   )
-}
-
-function parseTransportJson(report: boolean): ConfigValue | undefined {
-  try {
-    const parsed: unknown = JSON.parse(transportJsonSource.value)
-    if (!isConfigValue(parsed)) {
-      if (report) transportJsonError.value = t('settings.broker.validation.payloadObject')
-      return undefined
-    }
-    if (report) transportJsonError.value = undefined
-    return parsed
-  } catch {
-    if (report) transportJsonError.value = t('settings.broker.validation.payloadJson')
-    return undefined
-  }
 }
 
 function parseJson(report: boolean): ConfigValue | undefined {
@@ -612,20 +663,8 @@ function parseJson(report: boolean): ConfigValue | undefined {
   }
 }
 
-function pendingSecretsDirty(): boolean {
-  return Object.keys(activePendingSecrets()).length > 0
-}
-
-/** Only the values that still belong to a reference this configuration names. */
-function activePendingSecrets(): Readonly<Record<string, PendingSecret>> {
-  const references = new Map(
-    secretReferences.value.map((reference) => [reference.path, reference.secretId]),
-  )
-  return Object.fromEntries(
-    Object.entries(pendingSecrets.value).filter(
-      ([path, pending]) => pending.value.length > 0 && references.get(path) === pending.secretId,
-    ),
-  )
+function credentialInputsDirty(): boolean {
+  return Object.values(credentials).some((state) => state.value.length > 0 || state.newId.length > 0)
 }
 
 /** Kept as a function rather than an inline pair of statements: a multi-statement
@@ -666,6 +705,26 @@ function editableBrokerConfig(value: ConfigValue): ConfigValue {
 
 function transportPayload(value: ConfigValue): ConfigValue {
   return Object.fromEntries(Object.entries(value).filter(([key]) => !COMMON_PROPERTIES.has(key)))
+}
+
+/**
+ * What this transport's fields should start as.
+ *
+ * An empty object is a true answer to "what is configured" and a useless one to
+ * "what does this need": a person setting up a transport for the first time
+ * would have to read an extension's source to learn that it wants an
+ * application ID and a token. The contributed schema already says so, so the
+ * defaults it determines are laid out to be filled in. Anything already
+ * configured wins over them, exactly as a seeded entry does.
+ */
+function transportShape(value: ConfigValue): ConfigValue {
+  const configured = transportPayload(value)
+  if (descriptor.value === undefined) return configured
+
+  // Framed by the fields this editor already renders itself, so the schema is
+  // asked only about what belongs to the transport.
+  const defaults = defaultsFor(transportNodes.value)
+  return { ...defaults, ...configured }
 }
 
 function grantDrafts(value: unknown): PrincipalGrantDraft[] {
@@ -735,6 +794,14 @@ function validEntryId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)
 }
 
+function validHttpUrl(value: string): boolean {
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
 function validGrantPattern(value: string): boolean {
   if (value === '*') return true
   const namespace = value.endsWith('.*') ? value.slice(0, -2) : value
@@ -749,6 +816,10 @@ function isConfigValue(value: unknown): value is ConfigValue {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function withoutProperty(value: ConfigValue, property: string): ConfigValue {
@@ -814,8 +885,13 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         <p>{{ settings.mutation.message }}</p>
       </NoxNotice>
 
+      <!--
+        A single-instance transport owns its name, so there is nothing to decide
+        and nothing to type: the field only appears where the ID is genuinely the
+        operator's to choose.
+      -->
       <NoxTextField
-        v-if="props.creating"
+        v-if="props.creating && props.presetType === undefined"
         id="broker-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"
@@ -840,7 +916,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             >
               <label for="broker-agent"
                 >{{ t('settings.broker.baseAgent') }}
-                <small v-if="!isWeb">{{ t('common.requiredShort') }}</small></label
+                <small v-if="!selectableAgent">{{ t('common.requiredShort') }}</small></label
               >
               <select
                 id="broker-agent"
@@ -848,9 +924,9 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 :aria-invalid="fieldErrors.agent !== undefined"
                 @change="setCommon('agent', ($event.target as HTMLSelectElement).value)"
               >
-                <option value="" :disabled="!isWeb">
+                <option value="" :disabled="!selectableAgent">
                   {{
-                    isWeb
+                    selectableAgent
                       ? t('settings.broker.askAgentOnNewConversation')
                       : t('settings.broker.selectAgent')
                   }}
@@ -879,7 +955,11 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
           </div>
         </section>
 
-        <section v-if="!isWeb" class="broker-editor__section" aria-labelledby="broker-grants-title">
+        <section
+          v-if="!ownerAuthorized"
+          class="broker-editor__section"
+          aria-labelledby="broker-grants-title"
+        >
           <div class="broker-editor__section-copy">
             <p>02 // {{ t('settings.broker.authorization') }}</p>
             <h3 id="broker-grants-title">{{ t('settings.broker.baseGrants') }}</h3>
@@ -920,7 +1000,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     "
                     :label="t('settings.broker.authorityPattern')"
                     list="broker-authority-suggestions"
-                    placeholder="nox.history.read"
+                    placeholder="namespace.authority"
                     required
                     @update:model-value="setPattern(principalIndex, patternIndex, $event)"
                   />
@@ -1017,7 +1097,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   </p>
                 </div>
               </div>
-              <div v-if="!isWeb" class="broker-editor__nested-grants">
+              <div v-if="!ownerAuthorized" class="broker-editor__nested-grants">
                 <article
                   v-for="(principal, principalIndex) in conversation.grants"
                   :key="principalIndex"
@@ -1062,7 +1142,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                         "
                         :label="t('settings.broker.authorityPattern')"
                         list="broker-authority-suggestions"
-                        placeholder="nox.history.read"
+                        placeholder="namespace.authority"
                         required
                         @update:model-value="
                           setPattern(principalIndex, patternIndex, $event, conversationIndex)
@@ -1109,24 +1189,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
             <h3 id="broker-payload-title">{{ t('settings.broker.transportPayload') }}</h3>
             <span>{{ t('settings.broker.transportPayloadHelp') }}</span>
           </div>
-          <div class="broker-editor__json-field">
-            <div>
-              <label for="broker-transport-json">{{ t('settings.broker.contributionJson') }}</label>
-              <button type="button" @click="formatTransportJson()">
-                {{ t('settings.broker.formatPayload') }}
-              </button>
-            </div>
-            <textarea
-              id="broker-transport-json"
-              v-model="transportJsonSource"
-              :aria-invalid="transportJsonError !== undefined"
-              spellcheck="false"
-              @input="clearFeedback()"
-            ></textarea>
-            <p v-if="transportJsonError" class="broker-editor__error">
-              {{ transportJsonError }}
-            </p>
-          </div>
+          <SchemaFieldGroup
+            v-if="descriptor"
+            :credentials="credentials"
+            :errors="fieldErrors"
+            :extension-id="descriptor.extensionId"
+            :nodes="transportNodes"
+            :secrets="settings.secrets"
+            :value="transportDraft"
+            @credential="applyCredential"
+            @update="applyTransportUpdate"
+          />
         </section>
       </template>
 
@@ -1154,59 +1227,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
         </div>
       </section>
 
-      <section
-        v-if="secretReferences.length > 0"
-        class="broker-editor__section broker-editor__secrets"
-        aria-labelledby="broker-secrets-title"
-      >
-        <div class="broker-editor__section-copy">
-          <p>{{ t('settings.broker.managedCredentials') }}</p>
-          <h3 id="broker-secrets-title">{{ t('settings.broker.managedReferences') }}</h3>
-          <span>{{ t('settings.broker.managedReferencesHelp') }}</span>
-        </div>
-        <div class="broker-editor__secret-list">
-          <article v-for="reference in secretReferences" :key="reference.path">
-            <header>
-              <div>
-                <span>{{ reference.path }}</span>
-                <strong>{{ reference.secretId }}</strong>
-              </div>
-              <em :class="{ 'broker-editor__secret-missing': !secretStored(reference.secretId) }">
-                {{
-                  secretStored(reference.secretId)
-                    ? t('settings.secrets.stored')
-                    : t('common.missing').toUpperCase()
-                }}
-              </em>
-            </header>
-            <NoxTextField
-              :id="`broker-secret-${reference.path.replace(/[^A-Za-z0-9_-]/g, '-')}`"
-              :model-value="pendingSecretValue(reference)"
-              autocomplete="new-password"
-              :error="fieldErrors[`secret.${reference.path}`]"
-              :hint="t('settings.broker.secretValueHint')"
-              :label="t('settings.broker.newValueLabel', { secret: reference.secretId })"
-              :placeholder="
-                t('settings.broker.newValuePlaceholder', { secret: reference.secretId })
-              "
-              :required="!secretStored(reference.secretId) && common.enabled"
-              type="password"
-              @update:model-value="setPendingSecret(reference, $event)"
-            />
-          </article>
-        </div>
-      </section>
-
       <datalist id="broker-authority-suggestions">
         <option
-          v-for="authority in AUTHORITY_SUGGESTIONS"
-          :key="authority"
-          :value="authority"
+          v-for="authority in authoritySuggestions"
+          :key="authority.id"
+          :label="authority.description"
+          :value="authority.id"
         ></option>
       </datalist>
 
       <NoxNotice
-        v-if="confirmingDelete && !isWeb"
+        v-if="confirmingDelete && removable"
         :title="t('settings.broker.removeQuestion')"
         tone="danger"
       >
@@ -1226,7 +1257,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
     <footer class="broker-editor__actions">
       <NoxButton
-        v-if="props.entryId !== undefined && !props.creating && !isWeb"
+        v-if="props.entryId !== undefined && !props.creating && removable"
         variant="ghost"
         @click="confirmingDelete = true"
       >
@@ -1380,8 +1411,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 .broker-editor__fields,
 .broker-editor__grant-surface,
 .broker-editor__conversation-list,
-.broker-editor__nested-grants,
-.broker-editor__secret-list {
+.broker-editor__nested-grants {
   display: grid;
   align-content: start;
   gap: var(--nox-space-4);
@@ -1488,8 +1518,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 }
 
 .broker-editor__principal,
-.broker-editor__conversation,
-.broker-editor__secret-list > article {
+.broker-editor__conversation {
   display: grid;
   gap: var(--nox-space-4);
   padding: var(--nox-space-5);
@@ -1498,8 +1527,7 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 }
 
 .broker-editor__principal > header,
-.broker-editor__conversation > header,
-.broker-editor__secret-list article > header {
+.broker-editor__conversation > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1648,35 +1676,6 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
 .broker-editor__json-field textarea[aria-invalid='true'] {
   border-color: var(--nox-status-danger);
-}
-
-.broker-editor__secret-list article > header > div {
-  display: grid;
-  gap: var(--nox-space-1);
-}
-
-.broker-editor__secret-list article > header span,
-.broker-editor__secret-list article > header strong,
-.broker-editor__secret-list article > header em {
-  font-family: var(--nox-font-mono);
-  font-size: var(--nox-text-xs);
-}
-
-.broker-editor__secret-list article > header span {
-  color: var(--nox-text-muted);
-}
-
-.broker-editor__secret-list article > header strong {
-  color: var(--nox-text-primary);
-}
-
-.broker-editor__secret-list article > header em {
-  color: var(--nox-status-success);
-  font-style: normal;
-}
-
-.broker-editor__secret-list article > header .broker-editor__secret-missing {
-  color: var(--nox-status-danger);
 }
 
 .broker-editor__delete-confirmation {

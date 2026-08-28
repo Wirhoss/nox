@@ -6,17 +6,28 @@ import { useI18n } from '@/shared/i18n'
 
 import {
   SETTINGS_GROUPS,
-  SETTINGS_SECTIONS,
   type SettingsSectionDefinition,
+  settingsSections,
 } from '../model/sections'
 import { useSettingsStore } from '../stores/settings.store'
 
+interface Props {
+  reloadAvailable?: boolean
+  reloadBusy?: boolean
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  reloadAvailable: false,
+  reloadBusy: false,
+})
+const emit = defineEmits<{ reload: [] }>()
 const route = useRoute()
 const { t } = useI18n()
 const settings = useSettingsStore()
 const activeSlug = computed(() => String(route.params.section ?? 'general'))
+const definitions = computed(() => settingsSections(settings.catalog))
 const activeDefinition = computed(() =>
-  SETTINGS_SECTIONS.find((section) => section.slug === activeSlug.value),
+  definitions.value.find((section) => section.slug === activeSlug.value),
 )
 const activeEntries = computed(() => {
   if (activeDefinition.value?.slug === 'secrets') {
@@ -35,7 +46,7 @@ const activeEntries = computed(() => {
 function sectionsIn(
   group: SettingsSectionDefinition['group'],
 ): readonly SettingsSectionDefinition[] {
-  return SETTINGS_SECTIONS.filter((section) => section.group === group)
+  return definitions.value.filter((section) => section.group === group)
 }
 
 function isLoaded(definition: SettingsSectionDefinition): boolean {
@@ -50,7 +61,24 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
   <aside class="settings-nav">
     <header class="settings-nav__header">
       <p>NOX // {{ t('settings.navigation.configuration') }}</p>
-      <h1>{{ t('navigation.settings') }}</h1>
+      <div class="settings-nav__title">
+        <h1>{{ t('navigation.settings') }}</h1>
+        <button
+          v-if="props.reloadAvailable"
+          class="settings-nav__reload"
+          type="button"
+          :aria-busy="props.reloadBusy"
+          :aria-label="t('settings.runtime.reload')"
+          :disabled="props.reloadBusy"
+          :title="t('settings.runtime.reload')"
+          @click="emit('reload')"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M20 7v5h-5M4 17v-5h5" />
+            <path d="M6.1 9a7 7 0 0 1 11.6-2.6L20 9M4 15l2.3 2.6A7 7 0 0 0 17.9 15" />
+          </svg>
+        </button>
+      </div>
       <span>{{ t('settings.navigation.controlSurface') }}</span>
     </header>
 
@@ -140,6 +168,14 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
   letter-spacing: var(--nox-tracking-system);
 }
 
+.settings-nav__title {
+  display: flex;
+  min-height: var(--nox-control-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nox-space-3);
+}
+
 .settings-nav__header h1 {
   margin: var(--nox-space-2) 0 var(--nox-space-1);
   font-size: var(--nox-text-lg);
@@ -147,6 +183,48 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
 
 .settings-nav__header span {
   letter-spacing: 0;
+}
+
+.settings-nav__reload {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--nox-border-subtle);
+  border-radius: var(--nox-radius-control);
+  color: var(--nox-text-muted);
+  background: var(--nox-surface-1);
+  cursor: pointer;
+  transition:
+    color var(--nox-motion-fast) var(--nox-ease-out),
+    background var(--nox-motion-fast) var(--nox-ease-out),
+    border-color var(--nox-motion-fast) var(--nox-ease-out);
+}
+
+.settings-nav__reload:hover:not(:disabled) {
+  border-color: var(--nox-action-primary);
+  color: var(--nox-action-primary);
+  background: var(--nox-surface-hover);
+}
+
+.settings-nav__reload:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.settings-nav__reload svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 1.7;
+}
+
+.settings-nav__reload[aria-busy='true'] svg {
+  animation: settings-nav-reload 700ms linear infinite;
 }
 
 .settings-nav__groups {
@@ -251,6 +329,20 @@ function isLoaded(definition: SettingsSectionDefinition): boolean {
 .settings-nav__entry small {
   color: var(--nox-action-primary);
   font-size: 0.56rem;
+}
+
+@keyframes settings-nav-reload {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav__reload,
+  .settings-nav__reload[aria-busy='true'] svg {
+    transition: none;
+    animation: none;
+  }
 }
 
 @media (max-width: 60rem) {

@@ -7,6 +7,7 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
+import { NEW_SECRET } from '../model/managedSecrets'
 import {
   activeFields,
   type ConfigLike,
@@ -39,6 +40,8 @@ interface Props {
   creating?: boolean
   definition: SettingsSectionDefinition
   entryId?: string
+  /** The contribution the list offered, when the form was reached by pressing it. */
+  presetType?: string
   section: ConfigSection
 }
 
@@ -48,11 +51,11 @@ interface Props {
  * else on screen comes from that already-selected schema.
  */
 const FRAMED = ['enabledTools', 'type']
-const NEW_SECRET = '__new_secret__'
 
 const props = withDefaults(defineProps<Props>(), {
   creating: false,
   entryId: undefined,
+  presetType: undefined,
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
@@ -74,7 +77,7 @@ const confirmingDelete = ref(false)
 const parked = ref<Record<string, unknown>>({})
 const credentials = reactive<Record<string, CredentialState>>({})
 
-const types = computed(() => settings.toolSetTypes)
+const types = computed(() => settings.contributionTypes)
 const descriptor = computed(() =>
   types.value.find((candidate) => candidate.type === draft.value.type),
 )
@@ -122,7 +125,7 @@ watch(
 function resetEditor(): void {
   draft.value = clone(selectedValue.value)
   mode.value = descriptor.value === undefined ? 'json' : 'form'
-  entryIdInput.value = ''
+  entryIdInput.value = props.creating ? (props.presetType ?? '') : ''
   fieldErrors.value = {}
   jsonError.value = undefined
   confirmingDelete.value = false
@@ -160,9 +163,10 @@ function secretIdAt(node: FieldNode): string {
 }
 
 function newToolSetTemplate(): ConfigLike {
-  const first = types.value[0]
-  if (first === undefined) return { type: '' }
-  return { ...defaultsFor(formNodes(first.schema, FRAMED)), type: first.type }
+  const selectedType = props.presetType ?? types.value[0]?.type
+  const selected = types.value.find((candidate) => candidate.type === selectedType)
+  if (selected === undefined) return { type: selectedType ?? '' }
+  return { ...defaultsFor(formNodes(selected.schema, FRAMED)), type: selected.type }
 }
 
 /**
@@ -548,7 +552,7 @@ function validHttpUrl(value: string): boolean {
       </NoxNotice>
 
       <NoxTextField
-        v-if="props.creating"
+        v-if="props.creating && props.presetType === undefined"
         id="tool-set-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"

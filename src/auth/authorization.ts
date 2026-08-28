@@ -159,17 +159,33 @@ class OwnerAuthorizationProvider implements AuthorizationProvider {
 }
 
 /**
+ * The groups a subject belongs to right now, as extra keys its grants may be
+ * written against. Asked per call rather than snapshotted, because membership
+ * changes while a session is still going and the answer that matters is the one
+ * true at the moment of the call.
+ */
+type SubjectGroups = (subject: string) => readonly string[];
+
+/**
  * Authorization from configured grants, scoped to a single issuer.
  *
  * One instance belongs to one broker: the issuer is that broker's configured ID,
  * and the subjects are the sender IDs it authenticates. A principal from any
  * other issuer is unknown here and is denied — the same subject on a different
  * transport is a different person, and this is where that stays true.
+ *
+ * A grant key is either a sender the transport authenticates or a group it
+ * reports that sender belongs to. Both are looked up the same way and neither
+ * outranks the other: authority is the union, because a grant is a permission
+ * and two permissions do not subtract. Restricting someone who holds a
+ * permissive role is done by not giving them the role, not by a narrower entry
+ * that would silently never apply.
  */
 class GrantAuthorizationProvider implements AuthorizationProvider {
   public readonly id: string;
 
   readonly #grants: ReadonlyMap<string, readonly GrantPattern[]>;
+  readonly #groups?: SubjectGroups;
   readonly #issuer: string;
 
   /**
@@ -177,9 +193,16 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
    * registered fails at load with the entry that named it, instead of becoming a
    * grant that silently never matches anything.
    */
-  constructor(issuer: string, grants: PrincipalGrants, catalog: AuthorityCatalog, id = 'grants') {
+  constructor(
+    issuer: string,
+    grants: PrincipalGrants,
+    catalog: AuthorityCatalog,
+    id = 'grants',
+    groups?: SubjectGroups,
+  ) {
     this.id = id;
     this.#issuer = issuer;
+    if (groups !== undefined) this.#groups = groups;
 
     const compiled = new Map<string, readonly GrantPattern[]>();
     for (const [subject, patterns] of Object.entries(grants)) {
@@ -189,6 +212,22 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
       compiled.set(subject, Object.freeze([...patterns]));
     }
     this.#grants = compiled;
+  }
+
+  /**
+   * Every grant key that speaks for this subject: the subject itself, then the
+   * groups the transport reports for it. A transport that reports none, or that
+   * throws while trying, contributes nothing — a group lookup can only ever add
+   * authority, so failing to resolve one denies rather than widens.
+   */
+  #keysFor(subject: string): readonly string[] {
+    if (this.#groups === undefined) return [subject];
+
+    try {
+      return [subject, ...this.#groups(subject)];
+    } catch {
+      return [subject];
+    }
   }
 
   public authorize(request: AuthorizationRequest): AuthorizationDecision {
@@ -201,28 +240,43 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
       );
     }
 
-    const patterns = this.#grants.get(principal.subject);
-    if (patterns === undefined) {
+    let configured = false;
+    for (const key of this.#keysFor(principal.subject)) {
+      const patterns = this.#grants.get(key);
+      if (patterns === undefined) continue;
+      configured = true;
+
+      const matched = patterns.find((pattern) => matchesPattern(pattern, authority));
+      if (matched === undefined) continue;
+
+      return Object.freeze({
+        allowed: true,
+        decidedBy: this.id,
+        matchedGrant: matched,
+        // The key is named as well as the pattern: with roles in play, "granted
+        // nox.x" does not tell an auditor whether it was this person or a role
+        // they happened to hold, and that is the whole question afterwards.
+        reason: `Granted "${matched}" by "${key}".`,
+      });
+    }
+
+    if (!configured) {
       return deny(`Principal ${principalToString(principal)} has no grants configured.`, this.id);
     }
 
-    const matched = patterns.find((pattern) => matchesPattern(pattern, authority));
-    if (matched === undefined) {
-      return deny(
-        `Principal ${principalToString(principal)} is not granted "${authority}".`,
-        this.id,
-      );
-    }
-
-    return Object.freeze({
-      allowed: true,
-      decidedBy: this.id,
-      matchedGrant: matched,
-      reason: `Granted "${matched}".`,
-    });
+    return deny(
+      `Principal ${principalToString(principal)} is not granted "${authority}".`,
+      this.id,
+    );
   }
 }
 
 export { authorize, GrantAuthorizationProvider, OwnerAuthorizationProvider };
 
-export type { AuthorizationDecision, AuthorizationProvider, AuthorizationRequest, PrincipalGrants };
+export type {
+  AuthorizationDecision,
+  AuthorizationProvider,
+  AuthorizationRequest,
+  PrincipalGrants,
+  SubjectGroups,
+};

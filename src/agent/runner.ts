@@ -100,7 +100,15 @@ interface QueuedMessage {
   readonly authority: RunAuthority;
   /** Run-local grants carried only by trusted scheduled ingress. */
   readonly authorityGrants?: readonly GrantPattern[];
-  readonly message: Message;
+  /** Commands can wake a retry without manufacturing a transcript message. */
+  readonly message?: Message;
+  /**
+   * Context, never a turn. It carries an authority so the transcript can say who
+   * spoke, and that authority is never the one a run executes under: an
+   * observation is drained into the context at the next opening and starts
+   * nothing.
+   */
+  readonly observation?: true;
   readonly responseAttachments?: readonly ArtifactRef[];
   readonly trigger: RunTrigger;
 }
@@ -281,6 +289,43 @@ class Runner {
     return Promise.resolve();
   }
 
+  /** Wakes the model from current settled context without appending a message. */
+  public retry(authority: RunAuthority): Promise<void> {
+    if (this.#state === 'stopped') throw new Error('A stopped session cannot be retried.');
+    if (this.#state === 'running') throw new Error('A running session cannot be retried.');
+    this.#enqueue({ authority, trigger: 'retry' });
+    return this.#idle;
+  }
+
+  /**
+   * Records something said in the conversation that was not said to Nox.
+   *
+   * It never wakes the runner and never joins the run in flight. Idle, it goes
+   * straight into the context, because there is nothing for it to race. Running,
+   * it waits in the queue and is drained at the next opening — injecting into a
+   * turn while its context is being assembled is exactly the race `#drainOwn`
+   * exists to avoid, and an observation is in no hurry.
+   *
+   * The speaker is observed as a participant regardless. That is the whole point:
+   * a transcript that now contains a second person's words is a shared
+   * conversation, whether or not they were talking to the agent.
+   */
+  public observe(message: UserMessage): void {
+    this.#participants.observe(message.origin.principal);
+
+    if (this.#state !== 'running') {
+      this.#context.addMessage(message);
+      return;
+    }
+
+    this.#queue.push({
+      authority: messageAuthority(message.origin, message.messageId),
+      message,
+      observation: true,
+      trigger: 'user',
+    });
+  }
+
   /** Wakes this fresh session as Nox's cron principal. */
   public schedule(message: UserMessage, causeId: string): void {
     this.#participants.observe(SYSTEM_CRON);
@@ -332,17 +377,30 @@ class Runner {
     }
 
     for (const { message, responseAttachments } of this.#queue.splice(0, owned)) {
-      this.#context.addMessage(message);
+      if (message !== undefined) this.#context.addMessage(message);
       for (const artifact of responseAttachments ?? []) {
         this.#responseAttachments.set(artifact.artifactId, artifact);
       }
     }
   }
 
+  /**
+   * The next entry that is actually a turn, with everything that is only context
+   * absorbed on the way to it. Observations at the head of the queue are drained
+   * rather than run: nobody asked Nox for anything by saying them.
+   */
+  #nextTurn(): QueuedMessage | undefined {
+    while (this.#queue[0]?.observation === true) {
+      const entry = this.#queue.shift();
+      if (entry?.message !== undefined) this.#context.addMessage(entry.message);
+    }
+    return this.#queue[0];
+  }
+
   /** Empties the queue into the context. Never starts anything. */
   #drainAll(): void {
     for (const { message } of this.#queue.splice(0)) {
-      this.#context.addMessage(message);
+      if (message !== undefined) this.#context.addMessage(message);
     }
   }
 
@@ -356,7 +414,7 @@ class Runner {
     // A late result still belongs to the transcript, which is permanent and
     // complete; dropping it to save the trouble would be deleting it.
     if (this.#state === 'stopped') {
-      this.#context.addMessage(entry.message);
+      if (entry.message !== undefined) this.#context.addMessage(entry.message);
       return;
     }
 
@@ -388,7 +446,7 @@ class Runner {
     });
 
     try {
-      for (let next = this.#queue[0]; next !== undefined; next = this.#queue[0]) {
+      for (let next = this.#nextTurn(); next !== undefined; next = this.#nextTurn()) {
         const status = await this.#runTurn(next.authority, next.trigger, next.authorityGrants);
         if (this.#session.signal.aborted) break;
 

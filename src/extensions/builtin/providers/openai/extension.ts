@@ -57,6 +57,10 @@ const openAIExtension = defineExtension({
       'openai_completions',
       providerContribution({
         configSchema: OpenAICompletions.configSchema,
+        // Several, on purpose: an instance here is the address of one endpoint,
+        // and pointing two blueprints at two OpenAI-compatible services is the
+        // ordinary reason this adapter exists.
+        instances: 'many',
         create: (config) =>
           new OpenAICompletions(config, {
             artifacts: context.services.tryGet(artifactPipelineService),

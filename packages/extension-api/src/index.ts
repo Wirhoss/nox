@@ -9,6 +9,7 @@ export { z } from 'zod';
 export * from './artifacts.js';
 export type * from './brokers.js';
 export type * from './chat.js';
+export * from './commands.js';
 export * from './content.js';
 export * from './contributions.js';
 export * from './core.js';
