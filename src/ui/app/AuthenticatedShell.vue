@@ -107,6 +107,10 @@ async function logout(): Promise<void> {
   background: var(--nox-canvas-raised);
 }
 
+.sidebar :deep(.mark) {
+  align-self: center;
+}
+
 .sidebar__nav {
   display: grid;
   gap: var(--nox-space-2);

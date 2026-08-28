@@ -1,5 +1,6 @@
 import { toMessageContent, toUploads } from './attachments';
 import { commandArguments, toDiscordCommand } from './commands';
+import { type DiscordBrokerRuntimeConfig, type DiscordChannelPolicy, ROLE_PREFIX } from './config';
 import { admitsCommand, decideIngress, type IngressMessage, type IngressPolicy } from './ingress';
 import { chunkMessage } from './render';
 import {
@@ -14,7 +15,6 @@ import {
 } from './rest';
 import { DiscordSocket } from './socket';
 
-import type { DiscordBrokerRuntimeConfig, DiscordChannelPolicy } from './config';
 import type {
   ArtifactPipeline,
   Broker,
@@ -72,6 +72,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Every command scope that must be empty once one selected scope is published.
+ *
+ * Discord stores global and per-guild commands as independent catalogs. Replacing
+ * one leaves every other one untouched, so failing to empty a previous scope is
+ * what makes one command appear twice after changing `guildId`.
+ */
+function staleCommandScopes(
+  selectedGuildId: string | undefined,
+  connectedGuildIds: readonly string[],
+): readonly (string | undefined)[] {
+  const scopes = new Set<string | undefined>([undefined, ...connectedGuildIds]);
+  scopes.delete(selectedGuildId);
+  return [...scopes];
+}
+
+/**
+ * What to call this person, most specific first: their nickname in this guild,
+ * then the display name they chose, then the account name.
+ *
+ * Presentation only. It never decides anything and never travels as identity —
+ * a display name is not unique and changes at its owner's whim, which is exactly
+ * why the ID stays the subject.
+ */
+function displayNameOf(
+  author: Record<string, unknown>,
+  member: Record<string, unknown> | undefined,
+): string | undefined {
+  const candidates = [member?.nick, author.global_name, author.username];
+  for (const candidate of candidates) {
+    const name = asString(candidate)?.trim();
+    if (name !== undefined && name.length > 0) return name;
+  }
+  return undefined;
 }
 
 /**
@@ -173,6 +209,20 @@ class DiscordBroker implements Broker {
   /** Prompts posted and still waiting, by request ID. */
   readonly #posted = new Map<string, PostedPermission>();
   readonly #pipeline?: ArtifactPipeline;
+  /**
+   * The roles each member holds, as the gateway last reported them.
+   *
+   * A cache rather than a lookup because Discord already sends this: role IDs
+   * ride on every message and interaction, and `GUILD_MEMBER_UPDATE` corrects
+   * it when someone's roles change without them speaking. Putting a REST call
+   * in front of each authorization instead would make a rate limit into a
+   * denial, since a provider that cannot answer has not answered yes.
+   *
+   * Absent means "nothing reported yet", which grants nothing. Authority is
+   * always the union of what is known, so a stale or empty entry can only ever
+   * withhold — never widen.
+   */
+  readonly #roles = new Map<string, readonly string[]>();
   /** Conversations with a run in flight, so speech can join it instead of queueing. */
   readonly #running = new Set<string>();
   /** The renewal loop keeping the typing indicator up, by channel. */
@@ -243,7 +293,7 @@ class DiscordBroker implements Broker {
       selfId: identity.id,
     };
 
-    await this.#publishCommands(host);
+    await this.#publishCommands(host, identity.guildIds);
   }
 
   /**
@@ -255,6 +305,7 @@ class DiscordBroker implements Broker {
     this.#socket?.close();
     this.#socket = undefined;
     this.#posted.clear();
+    this.#roles.clear();
     this.#running.clear();
     for (const channelId of [...this.#typing.keys()]) this.#stopTyping(channelId);
     this.#host = undefined;
@@ -332,6 +383,25 @@ class DiscordBroker implements Broker {
   }
 
   /**
+   * The roles this member holds, as grant keys.
+   *
+   * Called by the host once per authorization, so what it returns is whatever
+   * the gateway last said — which is the point: a role removed a moment ago
+   * stops granting on the next tool call rather than at the end of the session.
+   */
+  public principalGroups(subject: string): readonly string[] {
+    const roles = this.#roles.get(subject);
+    if (roles === undefined) return [];
+    return roles.map((roleId) => `${ROLE_PREFIX}${roleId}`);
+  }
+
+  /** Records what the gateway just told us about who holds what. */
+  #rememberRoles(userId: string | undefined, roles: unknown): void {
+    if (userId === undefined || userId.length === 0 || !Array.isArray(roles)) return;
+    this.#roles.set(userId, Object.freeze(roles.filter((role) => typeof role === 'string')));
+  }
+
+  /**
    * Publishes the command catalog as slash commands, derived from what the host
    * declares rather than from any list kept here. A command Discord cannot
    * express is left unpublished and logged: the catalog grows, and this has to
@@ -341,8 +411,16 @@ class DiscordBroker implements Broker {
    * of the same thing: a guild command list exists in one server and nowhere
    * else, so a bot in several servers, or one that is talked to in a direct
    * message, has commands only if they are published globally.
+   *
+   * Discord does not replace across those scopes: a global bulk overwrite leaves
+   * every guild list intact and vice versa. Once the selected catalog is safely
+   * present, every other reachable scope is therefore emptied. Publishing first
+   * avoids turning a cleanup failure into an application with no commands at all.
    */
-  async #publishCommands(host: BrokerHost): Promise<void> {
+  async #publishCommands(host: BrokerHost, connectedGuildIds: readonly string[]): Promise<void> {
+    const rest = this.#rest;
+    if (rest === undefined) return;
+
     const guildId = this.#config.guildId;
     const publishable: DiscordCommand[] = [];
     for (const spec of host.commands) {
@@ -358,7 +436,7 @@ class DiscordBroker implements Broker {
     }
 
     try {
-      await this.#rest?.publishCommands(this.#config.applicationId, guildId, publishable);
+      await rest.publishCommands(this.#config.applicationId, guildId, publishable);
       host.logger.info(
         { count: publishable.length, scope: guildId ?? 'global' },
         'Published Discord slash commands.',
@@ -367,11 +445,39 @@ class DiscordBroker implements Broker {
       // Commands are a convenience over a conversation that works without them.
       // Failing to publish them is worth reporting, never worth refusing to run.
       host.logger.error({ err: error }, 'Could not publish Discord slash commands.');
+      return;
+    }
+
+    for (const staleGuildId of staleCommandScopes(guildId, connectedGuildIds)) {
+      try {
+        await rest.publishCommands(this.#config.applicationId, staleGuildId, []);
+        host.logger.debug(
+          { scope: staleGuildId ?? 'global' },
+          'Cleared stale Discord slash commands.',
+        );
+      } catch (error) {
+        host.logger.error(
+          { err: error, scope: staleGuildId ?? 'global' },
+          'Could not clear stale Discord slash commands.',
+        );
+      }
     }
   }
 
   #onDispatch(type: string, data: Record<string, unknown>): void {
     switch (type) {
+      case 'GUILD_MEMBER_ADD':
+      case 'GUILD_MEMBER_UPDATE':
+        this.#rememberRoles(isRecord(data.user) ? asString(data.user.id) : undefined, data.roles);
+        break;
+      case 'GUILD_MEMBER_REMOVE':
+        // Someone who left holds nothing. Forgetting is the whole point: a
+        // cached role list outliving the membership would keep granting.
+        if (isRecord(data.user)) {
+          const userId = asString(data.user.id);
+          if (userId !== undefined) this.#roles.delete(userId);
+        }
+        break;
       case 'INTERACTION_CREATE':
         void this.#onInteraction(data);
         break;
@@ -390,16 +496,24 @@ class DiscordBroker implements Broker {
     if (host === undefined || policy === undefined) return;
 
     const author = isRecord(data.author) ? data.author : {};
+    const member = isRecord(data.member) ? data.member : undefined;
     const referenced = isRecord(data.referenced_message) ? data.referenced_message : undefined;
     const referencedAuthor = isRecord(referenced?.author) ? referenced.author : {};
     const mentions = Array.isArray(data.mentions) ? data.mentions : [];
     const channelId = asString(data.channel_id) ?? '';
     const messageId = asString(data.id) ?? '';
     const content = asString(data.content) ?? '';
+    const authorId = asString(author.id) ?? '';
+
+    // Recorded before the ingress rule runs, and for every message including the
+    // ones it refuses: what somebody's roles are is not a question about whether
+    // this particular message was admitted.
+    this.#rememberRoles(authorId, member?.roles);
 
     const message: IngressMessage = {
-      authorId: asString(author.id) ?? '',
+      authorId,
       authorIsBot: author.bot === true,
+      authorRoles: this.#roles.get(authorId) ?? [],
       channelId,
       content,
       ...(asString(data.guild_id) === undefined ? {} : { guildId: asString(data.guild_id) }),
@@ -434,6 +548,7 @@ class DiscordBroker implements Broker {
     if (parts.length === 0) return;
 
     const said = timestampOf(data.timestamp);
+    const name = displayNameOf(author, member);
 
     if (decision.kind === 'observe') {
       host.receive({
@@ -441,6 +556,7 @@ class DiscordBroker implements Broker {
         conversationId: channelId,
         messageId,
         senderId: message.authorId,
+        ...(name === undefined ? {} : { senderName: name }),
         ...(said === undefined ? {} : { receivedAt: said }),
         type: 'observation',
       });
@@ -458,6 +574,7 @@ class DiscordBroker implements Broker {
       conversationId: channelId,
       messageId,
       senderId: message.authorId,
+      ...(name === undefined ? {} : { senderName: name }),
       ...(said === undefined ? {} : { receivedAt: said }),
       type,
     });
@@ -540,6 +657,13 @@ class DiscordBroker implements Broker {
     const interactionId = asString(data.id);
     const token = asString(data.token);
     if (interactionId === undefined || token === undefined) return;
+
+    // An interaction carries the member too, so pressing a button or invoking a
+    // command keeps the role cache as current as speaking does.
+    const member = isRecord(data.member) ? data.member : undefined;
+    if (member !== undefined && isRecord(member.user)) {
+      this.#rememberRoles(asString(member.user.id), member.roles);
+    }
 
     if (data.type === INTERACTION_MESSAGE_COMPONENT) {
       await this.#onButton(interactionId, token, data);
@@ -653,6 +777,7 @@ class DiscordBroker implements Broker {
           ? {}
           : { parentChannelId: asString(channel?.parent_id) }),
         senderId,
+        senderRoles: this.#roles.get(senderId) ?? [],
       },
       policy,
     );
@@ -805,4 +930,4 @@ class DiscordBroker implements Broker {
   }
 }
 
-export { DiscordBroker, permissionButtons, permissionText };
+export { DiscordBroker, permissionButtons, permissionText, staleCommandScopes };

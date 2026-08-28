@@ -14,6 +14,7 @@ const token: SecretHandle = {
 
 const READY = {
   d: {
+    guilds: [{ id: 'guild-1' }, { id: 'guild-2' }],
     resume_gateway_url: 'wss://resume.invalid',
     session_id: 'session-1',
     user: { id: '42', username: 'noxbot' },
@@ -108,8 +109,12 @@ describe('DiscordSocket', () => {
     try {
       const identity = await socket.connect();
 
-      expect(identity).toEqual({ id: '42', username: 'noxbot' });
-      expect(socket.identity).toEqual({ id: '42', username: 'noxbot' });
+      expect(identity).toEqual({
+        guildIds: ['guild-1', 'guild-2'],
+        id: '42',
+        username: 'noxbot',
+      });
+      expect(socket.identity).toEqual(identity);
 
       const identify = fake.received.find((frame) => frame.op === 2);
       expect(identify?.d).toMatchObject({ token: 'secret-token' });

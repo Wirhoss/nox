@@ -1,5 +1,7 @@
 import {
   brokerBaseConfigSchema,
+  brokerConversationsSchemaOf,
+  brokerGrantsSchemaOf,
   runtimeSecretSchema,
   secretRefSchema,
   z,
@@ -14,6 +16,30 @@ const snowflakeSchema = z
   .string()
   .trim()
   .regex(/^\d{17,20}$/, 'Use a Discord ID: 17 to 20 digits, copied with Developer Mode on.');
+
+/** The `role:` form of a Discord role ID, as grants and `senders` accept it. */
+const ROLE_PREFIX = 'role:';
+
+/**
+ * Who an entry speaks for: one member, or everyone holding one role.
+ *
+ * Both halves of Discord's world are snowflakes and nothing in the ID says which
+ * kind it is, so the prefix is what distinguishes them. Without it a role pasted
+ * where a user was expected is a grant that quietly matches nobody, which is the
+ * failure this whole file is written to avoid.
+ */
+const discordPrincipalRefSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^(role:)?\d{17,20}$/,
+    'Use a Discord user ID, or a role as "role:<id>": 17 to 20 digits, copied with Developer Mode on.',
+  );
+
+/** Whether a configured principal reference names a role rather than a member. */
+function isRoleRef(reference: string): boolean {
+  return reference.startsWith(ROLE_PREFIX);
+}
 
 /**
  * What makes a message in a guild channel something said *to* Nox.
@@ -75,7 +101,7 @@ const discordChannelSchema = z.strictObject({
    * the room.
    */
   senders: z
-    .array(snowflakeSchema)
+    .array(discordPrincipalRefSchema)
     .readonly()
     .prefault([])
     .meta({ nox: { help: 'ui.sendersHelp', label: 'ui.senders' } }),
@@ -205,6 +231,10 @@ const discordConfigShape = {
  */
 const discordBrokerConfigSchema = brokerBaseConfigSchema.extend({
   ...discordConfigShape,
+  // Narrowed from the broker floor's "any non-empty string" to Discord's own
+  // vocabulary, so a mistyped ID fails at load beside the entry that named it.
+  conversations: brokerConversationsSchemaOf(discordPrincipalRefSchema).prefault({}),
+  grants: brokerGrantsSchemaOf(discordPrincipalRefSchema).prefault({}),
   token: secretRefSchema.meta({ nox: { help: 'ui.tokenHelp', label: 'ui.token' } }),
   type: z.literal('discord'),
 });
@@ -229,7 +259,10 @@ export {
   discordBrokerConfigSchema,
   discordBrokerRuntimeConfigSchema,
   discordChannelSchema,
+  discordPrincipalRefSchema,
   discordTriggerSchema,
+  isRoleRef,
+  ROLE_PREFIX,
   snowflakeSchema,
 };
 

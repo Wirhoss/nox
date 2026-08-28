@@ -77,6 +77,7 @@ function freezeDeep(value: unknown, seen = new WeakMap<object, unknown>()): unkn
  */
 function freezeOrigin(origin: MessageOrigin): MessageOrigin {
   return Object.freeze({
+    ...(origin.displayName === undefined ? {} : { displayName: origin.displayName }),
     principal: principal(origin.principal.issuer, origin.principal.subject),
     transportMessageId: origin.transportMessageId,
   });

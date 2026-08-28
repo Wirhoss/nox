@@ -3,17 +3,31 @@ import type { Logger, SecretHandle } from '@nox/extension-api';
 /**
  * What the bot asks Discord to send it.
  *
- * `MESSAGE_CONTENT` is privileged and has to be enabled on the application, and
- * without it every message arrives with an empty body — which would make the
- * ingress rule pass on nothing at all. Nothing else is requested: presence,
- * membership and the rest are traffic this transport would receive and drop.
+ * Two of these are privileged and have to be enabled on the application.
+ *
+ * `MESSAGE_CONTENT`, or every message arrives with an empty body and the ingress
+ * rule passes on nothing at all.
+ *
+ * `GUILD_MEMBERS`, because grants and `senders` can be written against roles.
+ * Role IDs ride along on every message, so reading them needs nothing extra —
+ * what this intent buys is `GUILD_MEMBER_UPDATE`, which is the only way losing a
+ * role takes effect before its holder happens to speak again. Authority that
+ * outlives the role it came from is the failure worth an extra intent.
+ *
+ * Nothing else is requested: presence and the rest are traffic this transport
+ * would receive and drop.
  */
 const INTENT_GUILDS = 1 << 0;
+const INTENT_GUILD_MEMBERS = 1 << 1;
 const INTENT_GUILD_MESSAGES = 1 << 9;
 const INTENT_DIRECT_MESSAGES = 1 << 12;
 const INTENT_MESSAGE_CONTENT = 1 << 15;
 const INTENTS =
-  INTENT_GUILDS | INTENT_GUILD_MESSAGES | INTENT_DIRECT_MESSAGES | INTENT_MESSAGE_CONTENT;
+  INTENT_GUILDS |
+  INTENT_GUILD_MEMBERS |
+  INTENT_GUILD_MESSAGES |
+  INTENT_DIRECT_MESSAGES |
+  INTENT_MESSAGE_CONTENT;
 
 const OP_DISPATCH = 0;
 const OP_HEARTBEAT = 1;
@@ -41,6 +55,8 @@ const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
 
 interface DiscordIdentity {
+  /** Every server Discord reported this bot belongs to when the session became ready. */
+  readonly guildIds: readonly string[];
   readonly id: string;
   readonly username: string;
 }
@@ -313,6 +329,11 @@ class DiscordSocket {
     if (type === 'READY') {
       const user = isRecord(data.user) ? data.user : {};
       const identity: DiscordIdentity = {
+        guildIds: Array.isArray(data.guilds)
+          ? data.guilds.flatMap((guild) =>
+              isRecord(guild) && typeof guild.id === 'string' ? [guild.id] : [],
+            )
+          : [],
         id: typeof user.id === 'string' ? user.id : '',
         username: typeof user.username === 'string' ? user.username : '',
       };

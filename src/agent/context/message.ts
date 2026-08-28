@@ -2,6 +2,7 @@ import {
   type ContentMessage,
   contentToString,
   type Message,
+  type MessageOrigin,
   principalToString,
   type ToolCallMessage,
   type ToolResponseMessage,
@@ -20,6 +21,24 @@ const MESSAGE_ROLES = [
 type MessageRole = (typeof MESSAGE_ROLES)[number];
 type AssertNever<T extends never> = T;
 type _EveryRoleIsListed = AssertNever<Exclude<Message['role'], MessageRole>>;
+
+/**
+ * Who said it, as the model should read it.
+ *
+ * The principal is always there and is always what anything was decided from. A
+ * display name goes in front when the transport had one, because a shared
+ * transcript where everyone is an opaque ID is one the model cannot talk about:
+ * it cannot address anyone, or notice that two messages came from the same
+ * person, without comparing digits.
+ *
+ * The name never replaces the principal. Names are chosen, repeat, and change,
+ * so a transcript carrying only names is one where two people can be made to
+ * look like one.
+ */
+function originToString(origin: MessageOrigin): string {
+  const subject = principalToString(origin.principal);
+  return origin.displayName === undefined ? subject : `${origin.displayName} <${subject}>`;
+}
 
 function messageIdentityToString(message: Message): string {
   return `Created At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`;
@@ -43,7 +62,7 @@ function messageToString(message: Message): string {
       return contentMessageToString(message);
     case 'user':
       return (
-        `Role: user\nFrom: ${principalToString(message.origin.principal)}` +
+        `Role: user\nFrom: ${originToString(message.origin)}` +
         `\nContent:\n${contentToString(message.content)}` +
         `\n${messageIdentityToString(message)}`
       );
@@ -75,6 +94,12 @@ function messageToString(message: Message): string {
   }
 }
 
-export { MESSAGE_ROLES, messageIdentityToString, messageToString, trackedHeaderToString };
+export {
+  MESSAGE_ROLES,
+  messageIdentityToString,
+  messageToString,
+  originToString,
+  trackedHeaderToString,
+};
 
 export type { MessageRole };

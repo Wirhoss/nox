@@ -65,7 +65,9 @@ const brokerSenderIdSchema = z.string().trim().min(1);
  * load, beside the entry that named it, instead of silently becoming a grant
  * that never matches anyone.
  */
-function brokerGrantsSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
+function brokerGrantsSchemaOf<TKey extends z.ZodType<string>>(
+  key: TKey,
+): z.ZodRecord<TKey, z.ZodReadonly<z.ZodArray<z.ZodString>>> {
   return z.record(key, z.array(z.string().trim().min(1)).readonly());
 }
 
@@ -77,20 +79,26 @@ function brokerGrantsSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
  * here". Defaulting it to `{}` made an override that only redirects the agent
  * silently revoke every grant in that conversation — an answer nobody wrote.
  */
-function brokerConversationOverrideSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
+function brokerConversationOverrideSchemaOf<TKey extends z.ZodType<string>>(
+  key: TKey,
+): z.ZodObject<{
+  agent: z.ZodOptional<z.ZodString>;
+  grants: z.ZodOptional<z.ZodRecord<TKey, z.ZodReadonly<z.ZodArray<z.ZodString>>>>;
+}> {
   return z.object({
     agent: z.string().min(1).optional(),
     grants: brokerGrantsSchemaOf(key).optional(),
   });
 }
 
-function brokerConversationsSchemaOf<TKey extends z.ZodType<string>>(key: TKey) {
+function brokerConversationsSchemaOf<TKey extends z.ZodType<string>>(
+  key: TKey,
+): z.ZodRecord<z.ZodString, ReturnType<typeof brokerConversationOverrideSchemaOf<TKey>>> {
   return z.record(z.string().trim().min(1), brokerConversationOverrideSchemaOf(key));
 }
 
 const brokerGrantsSchema = brokerGrantsSchemaOf(brokerSenderIdSchema);
-const brokerConversationOverrideSchema =
-  brokerConversationOverrideSchemaOf(brokerSenderIdSchema);
+const brokerConversationOverrideSchema = brokerConversationOverrideSchemaOf(brokerSenderIdSchema);
 const brokerConversationsSchema = brokerConversationsSchemaOf(brokerSenderIdSchema);
 const brokerBaseConfigSchema = z.strictObject({
   agent: z.string().min(1).optional(),

@@ -48,7 +48,11 @@ function assertBrokerReferences(
         `conversation "${conversationId}" names agent "${override.agent}", which no blueprint defines`,
       );
     }
-    if (ownerAuthorized && Object.keys(override.grants).length > 0) {
+    // Absent grants inherit the base route's, which were validated above; only
+    // an override that actually states them has anything of its own to check.
+    if (override.grants === undefined) continue;
+
+    if (ownerAuthorized) {
       problems.push(`conversation "${conversationId}" cannot replace owner authority with grants`);
     } else {
       validateGrants(

@@ -34,6 +34,7 @@ function message(overrides: Partial<IngressMessage> = {}): IngressMessage {
   return {
     authorId: ALICE,
     authorIsBot: false,
+    authorRoles: [],
     channelId: CHANNEL,
     content: 'hello',
     guildId: '500000000000000005',
@@ -203,6 +204,7 @@ function command(overrides: Partial<IngressCommand> = {}): IngressCommand {
     channelId: CHANNEL,
     guildId: '500000000000000005',
     senderId: ALICE,
+    senderRoles: [],
     ...overrides,
   };
 }
@@ -244,5 +246,53 @@ describe('slash commands', () => {
 
     expect(admitsCommand(guildless, policy({ dms: new Set([ALICE]) }))).toBeUndefined();
     expect(admitsCommand(guildless, policy())).toBe('senderNotAdmitted');
+  });
+});
+
+describe('role-based admission', () => {
+  const OPS = '700000000000000007';
+  const CAROL = '800000000000000008';
+
+  function byRole() {
+    return policy({
+      channels: new Map([[CHANNEL, channel({ respondTo: ['all'], senders: [`role:${OPS}`] })]]),
+    });
+  }
+
+  test('admits someone holding an admitted role', () => {
+    expect(decideIngress(message({ authorId: CAROL, authorRoles: [OPS] }), byRole())).toEqual({
+      kind: 'address',
+    });
+  });
+
+  test('refuses someone holding none of them', () => {
+    expect(decideIngress(message({ authorId: CAROL, authorRoles: [] }), byRole())).toEqual({
+      kind: 'ignore',
+      reason: 'channelSenderNotAdmitted',
+    });
+  });
+
+  test('takes the union of members and roles', () => {
+    const mixed = policy({
+      channels: new Map([
+        [CHANNEL, channel({ respondTo: ['all'], senders: [ALICE, `role:${OPS}`] })],
+      ]),
+    });
+
+    expect(decideIngress(message({ authorId: ALICE, authorRoles: [] }), mixed)).toEqual({
+      kind: 'address',
+    });
+    expect(decideIngress(message({ authorId: CAROL, authorRoles: [OPS] }), mixed)).toEqual({
+      kind: 'address',
+    });
+  });
+
+  test('admits a slash command by role too, so both doors ask the same question', () => {
+    expect(
+      admitsCommand(command({ senderId: CAROL, senderRoles: [OPS] }), byRole()),
+    ).toBeUndefined();
+    expect(admitsCommand(command({ senderId: CAROL, senderRoles: [] }), byRole())).toBe(
+      'channelSenderNotAdmitted',
+    );
   });
 });

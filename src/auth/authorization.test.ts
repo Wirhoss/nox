@@ -140,3 +140,94 @@ describe('authorize', () => {
     expect(await authorize(request(), provider, CATALOG)).toMatchObject({ allowed: true });
   });
 });
+
+describe('GrantAuthorizationProvider with groups', () => {
+  const GROUPS: Record<string, readonly string[]> = {
+    alice: ['role:ops'],
+    bob: ['role:guests', 'role:ops'],
+  };
+  const provider = new GrantAuthorizationProvider(
+    'test-broker',
+    { 'role:ops': ['nox.files.read'], carol: ['nox.files.write'] },
+    CATALOG,
+    'grants',
+    (subject) => GROUPS[subject] ?? [],
+  );
+
+  test('grants through a group the sender belongs to', () => {
+    expect(provider.authorize(request({ principal: testPrincipal('alice') }))).toMatchObject({
+      allowed: true,
+      matchedGrant: 'nox.files.read',
+    });
+  });
+
+  test('names the key that granted it, not only the pattern', () => {
+    const decision = provider.authorize(request({ principal: testPrincipal('alice') }));
+
+    // With roles in play, "granted nox.files.read" does not tell an auditor
+    // whether it was this person or a role they happened to hold.
+    expect(decision.reason).toContain('role:ops');
+  });
+
+  test('takes the union across groups rather than stopping at the first', () => {
+    expect(
+      provider.authorize(request({ authority: 'nox.files.read', principal: testPrincipal('bob') })),
+    ).toMatchObject({ allowed: true });
+  });
+
+  test('still denies an authority no group of theirs was granted', () => {
+    expect(
+      provider.authorize(
+        request({ authority: 'nox.files.write', principal: testPrincipal('alice') }),
+      ),
+    ).toMatchObject({ allowed: false });
+  });
+
+  test('grants directly to a sender with no groups at all', () => {
+    expect(
+      provider.authorize(
+        request({ authority: 'nox.files.write', principal: testPrincipal('carol') }),
+      ),
+    ).toMatchObject({ allowed: true, matchedGrant: 'nox.files.write' });
+  });
+
+  test('denies a sender that neither is nor belongs to anything granted', () => {
+    const decision = provider.authorize(request({ principal: testPrincipal('dave') }));
+
+    expect(decision).toMatchObject({ allowed: false });
+    expect(decision.reason).toContain('no grants configured');
+  });
+
+  test('denies rather than widens when the group lookup throws', () => {
+    // A transport that cannot say which roles someone holds has not said they
+    // hold one. Failing closed here is the same rule as everywhere else.
+    const unreadable = new GrantAuthorizationProvider(
+      'test-broker',
+      { 'role:ops': ['nox.files.read'] },
+      CATALOG,
+      'grants',
+      () => {
+        throw new Error('roles unreadable');
+      },
+    );
+
+    expect(unreadable.authorize(request({ principal: testPrincipal('alice') }))).toMatchObject({
+      allowed: false,
+    });
+  });
+
+  test('reflects a group removed since the session started', () => {
+    const held = new Set(['role:ops']);
+    const live = new GrantAuthorizationProvider(
+      'test-broker',
+      { 'role:ops': ['nox.files.read'] },
+      CATALOG,
+      'grants',
+      () => [...held],
+    );
+
+    expect(live.authorize(request())).toMatchObject({ allowed: true });
+    held.delete('role:ops');
+    expect(live.authorize(request())).toMatchObject({ allowed: false });
+  });
+});

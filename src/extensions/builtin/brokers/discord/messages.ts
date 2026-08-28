@@ -25,7 +25,7 @@ const englishMessages = Object.freeze({
     'What makes a message in this channel something said to Nox. “All” means every message in the channel is addressed to it.',
   'ui.senders': 'Answers only',
   'ui.sendersHelp':
-    'User IDs that can make the agent answer here. Empty means anyone the channel already lets speak. This is whether a run starts at all, which is a different question from what grants let a run do.',
+    'Who can make the agent answer here: user IDs, or roles as “role:<id>”. Empty means anyone the channel already lets speak. This is whether a run starts at all, which is a different question from what grants let a run do.',
   'ui.threads': 'Threads',
   'ui.threadsHelp':
     'Whether threads under this channel are admitted with it. A thread is its own conversation with its own transcript, which makes it the way to start a topic over.',

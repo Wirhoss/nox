@@ -1,4 +1,4 @@
-import type { DiscordChannelPolicy } from './config';
+import { type DiscordChannelPolicy, isRoleRef, ROLE_PREFIX } from './config';
 
 /**
  * One Discord message, reduced to the facts the rule is about. The broker
@@ -9,6 +9,12 @@ import type { DiscordChannelPolicy } from './config';
 interface IngressMessage {
   readonly authorId: string;
   readonly authorIsBot: boolean;
+  /**
+   * The role IDs Discord reported for the author on this message. Present for
+   * guild messages, empty for a direct message — which has no member and so no
+   * roles, and is why DM admission stays a list of people.
+   */
+  readonly authorRoles: readonly string[];
   readonly channelId: string;
   readonly content: string;
   /** Absent in a direct message: Discord sends no guild for one. */
@@ -123,6 +129,8 @@ interface IngressCommand {
   /** Set when the channel is a thread; the channel it hangs from. */
   readonly parentChannelId?: string;
   readonly senderId: string;
+  /** The role IDs Discord reported for the sender; empty in a direct message. */
+  readonly senderRoles: readonly string[];
 }
 
 /**
@@ -149,8 +157,31 @@ function admitsCommand(command: IngressCommand, policy: IngressPolicy): IngressR
     return parentAdmitted ? 'threadsIgnored' : 'channelNotAdmitted';
   }
 
-  const admitted = channel.senders.length === 0 || channel.senders.includes(command.senderId);
+  const admitted = admits(channel.senders, command.senderId, command.senderRoles);
   return admitted ? undefined : 'channelSenderNotAdmitted';
+}
+
+/**
+ * Whether an admission list lets this person speak to Nox.
+ *
+ * Empty admits anyone the channel already lets speak, which is Discord's own
+ * decision and a reasonable one for a private team channel. Otherwise an entry
+ * matches either the member or one of the roles they hold — the union, because
+ * a list of who may speak is a list of permissions and two of them do not
+ * subtract.
+ */
+function admits(
+  senders: readonly string[],
+  senderId: string,
+  senderRoles: readonly string[],
+): boolean {
+  if (senders.length === 0) return true;
+
+  return senders.some((sender) =>
+    isRoleRef(sender)
+      ? senderRoles.includes(sender.slice(ROLE_PREFIX.length))
+      : sender === senderId,
+  );
 }
 
 /**
@@ -196,7 +227,7 @@ function decideIngress(message: IngressMessage, policy: IngressPolicy): IngressD
   // the triggers rather than after, because someone who cannot start a run has
   // not addressed Nox by mentioning it — they are part of the room, and the room
   // is what `observe` is for.
-  const admitted = channel.senders.length === 0 || channel.senders.includes(message.authorId);
+  const admitted = admits(channel.senders, message.authorId, message.authorRoles);
 
   const addressed =
     admitted &&

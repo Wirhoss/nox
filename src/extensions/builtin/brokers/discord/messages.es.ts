@@ -25,7 +25,7 @@ const spanishMessages = Object.freeze({
     'Qué hace que un mensaje de este canal sea algo dicho a Nox. «Cualquier mensaje» significa que todo el canal le habla.',
   'ui.senders': 'Solo responde a',
   'ui.sendersHelp':
-    'IDs de usuario que pueden hacer que el agente conteste acá. Vacío significa cualquiera que ya pueda hablar en el canal. Esto decide si una ejecución arranca, que es distinto de lo que las concesiones dejan hacer una vez que arrancó.',
+    'Quiénes pueden hacer que el agente conteste acá: IDs de usuario, o roles como «role:<id>». Vacío significa cualquiera que ya pueda hablar en el canal. Esto decide si una ejecución arranca, que es distinto de lo que las concesiones dejan hacer una vez que arrancó.',
   'ui.threads': 'Hilos',
   'ui.threadsHelp':
     'Si los hilos de este canal quedan admitidos con él. Un hilo es su propia conversación con su propio transcript, y por eso es la forma de empezar un tema de cero.',

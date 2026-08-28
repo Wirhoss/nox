@@ -705,6 +705,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     // act under. The issuer is the broker's configured ID, because a sender ID
     // only means something relative to the transport that vouched for it.
     const origin: MessageOrigin = {
+      ...(message.senderName === undefined ? {} : { displayName: message.senderName }),
       principal: { issuer: grant.brokerId, subject: message.senderId },
       transportMessageId: message.messageId,
     };

@@ -371,6 +371,21 @@ async function composeBrokerGrant(
     throw new Error(`Broker "${brokerId}" requires a base agent.`);
   }
 
+  // Built before the authorization providers, which close over it: a transport
+  // that knows about groups answers `principalGroups` from state it keeps while
+  // it runs, so the provider needs the instance rather than a copy of anything.
+  const broker = await composeWithSecrets(
+    entry,
+    secretStore,
+    { extensionId: contribution.extensionId, location: `brokers.${brokerId}` },
+    (resolved) => contribution.value.create(resolved),
+  );
+
+  // Late-bound on purpose. The broker is asked at the moment of the call, so
+  // membership that changed mid-session is reflected without anything having to
+  // rebuild a provider.
+  const groups = (subject: string): readonly string[] => broker.principalGroups?.(subject) ?? [];
+
   const conversationGrants = Object.fromEntries(
     Object.entries(entry.conversations).map(([conversationId, override]) => {
       const conversationAgentId = override.agent ?? agentId;
@@ -383,11 +398,16 @@ async function composeBrokerGrant(
             `"${conversationAgentId}", which no blueprint defines.`,
         );
       }
-      if (ownerAuthorized && Object.keys(override.grants).length > 0) {
+      if (ownerAuthorized && override.grants !== undefined) {
         throw new Error(
           `Owner-authenticated conversation "${conversationId}" cannot replace owner authority with grants.`,
         );
       }
+
+      // Absent inherits the broker's grants; `{}` is an explicit "nobody here".
+      // The two used to be the same value, which made an override that only
+      // redirects the agent revoke every grant in that conversation.
+      const conversationGrantsEntry = override.grants ?? entry.grants;
 
       return [
         conversationId,
@@ -397,9 +417,10 @@ async function composeBrokerGrant(
             ? new OwnerAuthorizationProvider(brokerId)
             : new GrantAuthorizationProvider(
                 brokerId,
-                override.grants,
+                conversationGrantsEntry,
                 catalog,
                 `grants:${brokerId}:${conversationId}`,
+                groups,
               ),
         }),
       ] as const;
@@ -410,13 +431,14 @@ async function composeBrokerGrant(
     ...(agentId === undefined ? {} : { agentId }),
     authorization: ownerAuthorized
       ? new OwnerAuthorizationProvider(brokerId)
-      : new GrantAuthorizationProvider(brokerId, entry.grants, catalog, `grants:${brokerId}`),
-    broker: await composeWithSecrets(
-      entry,
-      secretStore,
-      { extensionId: contribution.extensionId, location: `brokers.${brokerId}` },
-      (resolved) => contribution.value.create(resolved),
-    ),
+      : new GrantAuthorizationProvider(
+          brokerId,
+          entry.grants,
+          catalog,
+          `grants:${brokerId}`,
+          groups,
+        ),
+    broker,
     brokerId,
     conversations: Object.freeze(conversationGrants),
     ...(host?.selectableAgent === true ? { selectableAgent: true } : {}),

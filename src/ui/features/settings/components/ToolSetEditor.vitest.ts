@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import ToolSetEditor from './ToolSetEditor.vue'
 
 const settings = vi.hoisted(() => ({
-  clearMutation: vi.fn(),
+  clearMutation: vi.fn<() => void>(),
   contributionTypes: [
     {
       extensionId: 'test.first',
@@ -43,8 +43,8 @@ vi.mock('vue-router', async (importOriginal) => {
   const original = await importOriginal<typeof import('vue-router')>()
   return {
     ...original,
-    onBeforeRouteLeave: vi.fn(),
-    onBeforeRouteUpdate: vi.fn(),
+    onBeforeRouteLeave: vi.fn<typeof original.onBeforeRouteLeave>(),
+    onBeforeRouteUpdate: vi.fn<typeof original.onBeforeRouteUpdate>(),
   }
 })
 
