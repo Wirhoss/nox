@@ -7,7 +7,7 @@ import {
   translationFragments,
 } from '@nox/extension-api';
 
-import { discordBrokerConfigSchema } from './config';
+import { discordBrokerConfigSchema, discordBrokerRuntimeConfigSchema } from './config';
 import { DiscordBroker } from './discordBroker';
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
@@ -54,8 +54,16 @@ const discordBrokerExtension = defineExtension({
       'discord',
       brokerContribution({
         configSchema: discordBrokerConfigSchema,
+        // Parsed, not just passed through. An unset secret arrives as an absent
+        // property rather than an explicit `undefined`, so the type says the
+        // token is there while the object has no such key — and the failure
+        // surfaces much later, as an unreadable one, deep inside the gateway
+        // handshake. Rejecting it here is what lets `composeWithSecrets` name
+        // the secret that is missing and where the configuration named it.
+        // Parsing also narrows the entry to the broker's own shape: `agent`,
+        // `grants` and `conversations` belong to the host, not to this.
         create: (config) =>
-          new DiscordBroker(config, {
+          new DiscordBroker(discordBrokerRuntimeConfigSchema.parse(config), {
             logger: context.logger,
             // Optional on purpose: a Nox without an artifact pipeline still
             // carries conversations, it just carries them as text.

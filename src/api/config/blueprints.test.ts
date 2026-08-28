@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import {
   authorities,
   type ChatProvider,
+  memories,
+  type Memory,
+  memoryContribution,
   providerBaseConfigSchema,
   providerContribution,
   providers,
@@ -91,6 +94,19 @@ function registry(): ContributionRegistry {
     description: 'Use a tool from the fake set.',
   });
   scoped.register(
+    memories,
+    'fake_memory',
+    memoryContribution({
+      instances: 'many',
+      configSchema: z.object({ type: z.literal('fake_memory') }),
+      create: () =>
+        ({
+          recall: () => ({ memories: [] }),
+          retain: () => undefined,
+        }) satisfies Memory,
+    }),
+  );
+  scoped.register(
     providers,
     'fake_provider',
     providerContribution({
@@ -144,6 +160,10 @@ async function blueprintNox(options: NoxOptions = {}): Promise<BlueprintNox> {
   for (const [agentId, blueprint] of Object.entries(options.blueprints ?? { nox: NOX })) {
     await writeFile(join(directory, 'blueprints', `${agentId}.json`), JSON.stringify(blueprint));
   }
+  await writeFile(
+    join(directory, 'memories.json'),
+    JSON.stringify({ memory: { type: 'fake_memory' } }),
+  );
   await writeFile(
     join(directory, 'providers.json'),
     JSON.stringify({ main: { baseUrl: 'https://main.test', type: 'fake_provider' } }),
@@ -336,6 +356,38 @@ describe('writing blueprints', () => {
     expect(missing.status).toBe(404);
   });
 
+  test('selects exactly one configured memory with a resolved token budget', async () => {
+    const nox = await blueprintNox();
+
+    const response = await fetch(`${nox.url}/config/blueprints/remembering`, {
+      body: JSON.stringify({ ...NOX, memory: { id: 'memory' } }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+    const body = (await response.json()) as { value: Record<string, unknown> };
+
+    expect(response.status).toBe(201);
+    expect(body.value).toMatchObject({ memory: { id: 'memory', maxTokens: 2048 } });
+    expect(await onDisk(nox.directory, 'remembering')).toMatchObject({
+      memory: { id: 'memory', maxTokens: 2048 },
+    });
+  });
+
+  test('refuses a blueprint naming a memory nothing configures', async () => {
+    const nox = await blueprintNox();
+
+    const response = await fetch(`${nox.url}/config/blueprints/broken-memory`, {
+      body: JSON.stringify({ ...NOX, memory: { id: 'absent' } }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+    const body = (await response.json()) as { error: string; problems: string[] };
+
+    expect(response.status).toBe(422);
+    expect(body.error).toBe('unknown_reference');
+    expect(body.problems).toEqual(['memories.json configures no memory "absent"']);
+  });
+
   test('refuses a blueprint naming a provider nothing configures', async () => {
     const nox = await blueprintNox();
 
@@ -512,6 +564,18 @@ describe('writing blueprints', () => {
     // believes they configured. The loader rejects it in a file; so does this.
     expect(unknownKey.status).toBe(422);
     expect((await unknownKey.json()) as { detail: string }).toMatchObject({
+      error: 'invalid_config',
+    });
+
+    const composedMemories = await fetch(`${nox.url}/config/blueprints/broken`, {
+      body: JSON.stringify({ ...NOX, memory: [{ id: 'memory' }, { id: 'memory' }] }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+
+    // Memory is a singleton choice on the blueprint, never a backend fan-in.
+    expect(composedMemories.status).toBe(422);
+    expect((await composedMemories.json()) as { error: string }).toMatchObject({
       error: 'invalid_config',
     });
   });

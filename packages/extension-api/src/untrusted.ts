@@ -35,6 +35,12 @@ function boundaryId(message: ToolResponseMessage): string {
 function sanitizeUntrustedText(text: string): string {
   return text.replace(BOUNDARY_MARKER, '[redacted boundary marker]');
 }
+
+/** Fences arbitrary external text that is not already represented as a tool response. */
+function fenceUntrustedText(text: string): string {
+  const id = nanoid(BOUNDARY_ID_LENGTH);
+  return openMarker(id) + sanitizeUntrustedText(text) + closeMarker(id);
+}
 function sanitizePart(part: MessageContent): MessageContent {
   return part.type === 'text' ? { ...part, text: sanitizeUntrustedText(part.text) } : part;
 }
@@ -62,5 +68,11 @@ function toolResponseContentForModel(message: ToolResponseMessage): readonly Mes
 const UNTRUSTED_FENCE_TEXT =
   openMarker('x'.repeat(BOUNDARY_ID_LENGTH)) + closeMarker('x'.repeat(BOUNDARY_ID_LENGTH));
 
-export { sanitizeUntrustedText, toolResponseContentForModel, UNTRUSTED_FENCE_TEXT, untrustedFence };
+export {
+  fenceUntrustedText,
+  sanitizeUntrustedText,
+  toolResponseContentForModel,
+  UNTRUSTED_FENCE_TEXT,
+  untrustedFence,
+};
 export type { UntrustedFence };

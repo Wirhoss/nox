@@ -8,6 +8,9 @@ import {
   brokerContribution,
   brokers,
   type ChatProvider,
+  memories,
+  type Memory,
+  memoryContribution,
   providerBaseConfigSchema,
   providerContribution,
   providers,
@@ -94,6 +97,19 @@ function registry(): ContributionRegistry {
     }),
   );
   scoped.register(
+    memories,
+    'fake_memory',
+    memoryContribution({
+      instances: 'many',
+      configSchema: z.object({ type: z.literal('fake_memory') }),
+      create: () =>
+        ({
+          recall: () => ({ memories: [] }),
+          retain: () => undefined,
+        }) satisfies Memory,
+    }),
+  );
+  scoped.register(
     providers,
     'fake_provider',
     providerContribution({
@@ -131,6 +147,7 @@ function registry(): ContributionRegistry {
 interface NoxOptions {
   blueprints?: Record<string, unknown>;
   brokers?: Record<string, unknown>;
+  memories?: Record<string, unknown>;
   /** Left unresolved, the contributed sections have no value to administer. */
   resolve?: boolean;
   runtime?: (config: Config) => ConfigurationRuntime;
@@ -188,6 +205,7 @@ async function configNox(options: NoxOptions = {}): Promise<ConfigNox> {
     await writeFile(join(directory, 'blueprints', `${agentId}.json`), JSON.stringify(blueprint));
   }
   await writeFile(join(directory, 'brokers.json'), JSON.stringify(options.brokers ?? {}));
+  await writeFile(join(directory, 'memories.json'), JSON.stringify(options.memories ?? {}));
   await writeFile(join(directory, 'providers.json'), JSON.stringify({ main: PROVIDER }));
   await writeFile(
     join(directory, 'toolsets.json'),
@@ -274,6 +292,7 @@ describe('reading configuration', () => {
       'app',
       'blueprints',
       'brokers',
+      'memories',
       'providers',
       'toolSets',
     ]);
@@ -300,7 +319,12 @@ describe('reading configuration', () => {
         key: string;
       }[];
     };
+    const memorySection = body.sections.find((entry) => entry.key === 'memories');
     const toolSetSection = body.sections.find((entry) => entry.key === 'toolSets');
+
+    expect(memorySection?.contributions).toEqual([
+      { configured: false, extensionId: TEST_EXTENSION, instances: 'many', type: 'fake_memory' },
+    ]);
 
     // An installed extension with no entry is a thing to fill in, not an
     // absence. A surface that only listed entries would show nothing at all
@@ -840,6 +864,24 @@ describe('removing one entry', () => {
 
     expect(response.status).toBe(200);
     expect(Object.keys(await onDisk(nox.directory, 'toolsets.json'))).toEqual(['internet']);
+  });
+
+  test('refuses to remove a memory a blueprint still names', async () => {
+    const nox = await configNox({
+      blueprints: { nox: { ...NOX, memory: { id: 'long-term' } } },
+      memories: { 'long-term': { type: 'fake_memory' } },
+    });
+
+    const response = await fetch(`${nox.url}/config/memories/long-term`, {
+      headers: nox.headers,
+      method: 'DELETE',
+    });
+    const body = (await response.json()) as { error: string; reasons: string[] };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('entry_in_use');
+    expect(body.reasons).toEqual(['blueprints/nox.json names it.']);
+    expect(Object.keys(await onDisk(nox.directory, 'memories.json'))).toEqual(['long-term']);
   });
 
   test('refuses to remove a provider a blueprint still names', async () => {

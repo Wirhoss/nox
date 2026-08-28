@@ -307,9 +307,13 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   }
 
   /**
-   * Starts every transport. A broker that fails to start takes the gateway with
-   * it: a Nox that came up believing it is reachable on a channel it never
-   * connected to is worse than one that refused to start.
+   * Starts every transport, and survives the ones that cannot start.
+   *
+   * A transport is not the gateway. One broker with a bad credential taking
+   * every other channel down with it — and the control plane that could repair
+   * it — is worse than a Nox that reports one route as failed and keeps
+   * carrying the rest. The failure is recorded against the broker that caused
+   * it, which is where an operator goes looking.
    */
   public async start(): Promise<void> {
     if (this.#state !== 'created') {

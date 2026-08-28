@@ -100,6 +100,37 @@ async function until(predicate: () => boolean, timeoutMs = 2000): Promise<void> 
 }
 
 describe('DiscordSocket', () => {
+  test('a fault while handling a frame fails connect instead of the process', async () => {
+    const fake = gateway(() => undefined);
+    const socket = new DiscordSocket({
+      gatewayUrl: fake.url,
+      logger: silentLogger,
+      onDispatch: () => undefined,
+      signal: new AbortController().signal,
+      // Exactly the shape a broker gets when the secret its configuration names
+      // has no stored value: the type says the handle is there, the object has
+      // no such property. Reading it throws inside the socket's own message
+      // listener, where nothing above can catch it.
+      token: undefined as unknown as SecretHandle,
+    });
+
+    try {
+      // The contract that matters is that this settles at all. Unguarded, the
+      // throw escapes the listener as an uncaught exception and takes the
+      // process down, so the gateway never gets to report one failed transport
+      // and keep the others.
+      let failure: unknown;
+      await socket.connect().catch((error: unknown) => {
+        failure = error;
+      });
+
+      expect(failure).toBeInstanceOf(Error);
+    } finally {
+      socket.close();
+      fake.close();
+    }
+  });
+
   test('identifies with the bot token and resolves once Discord says ready', async () => {
     const fake = gateway((ws, frame) => {
       if (frame.op === 2) ws.send(JSON.stringify(READY));

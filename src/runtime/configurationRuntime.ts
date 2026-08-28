@@ -1,6 +1,9 @@
 import {
   type ChatProvider,
   type ContributionReader,
+  memories,
+  type Memory,
+  type MemoryConfig,
   type ModelConfig,
   type ProviderConfig,
   providers,
@@ -40,6 +43,11 @@ interface ConfigurationRuntimeOptions {
   readonly logger: Logger;
   readonly secretStore: SecretStore;
   readonly toolSets: ToolSetCatalog;
+}
+
+interface ActiveMemory {
+  readonly memory: Memory;
+  readonly signature: string;
 }
 
 interface ActiveProvider {
@@ -93,6 +101,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
   readonly #createBroker?: (brokerId: string) => Promise<BrokerGrant>;
   readonly #database: Database;
   readonly #logger: Logger;
+  readonly #memories = new Map<string, ActiveMemory>();
   readonly #mutex = new Mutex();
   readonly #providers = new Map<string, ActiveProvider>();
   readonly #secretStore: SecretStore;
@@ -140,6 +149,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       const generation = ++this.#generation;
       this.#logger.setLevel?.(this.#config.get('app').logLevel);
       await this.#attempt('providers', () => this.#reconcileProviders(generation));
+      await this.#attempt('memories', () => this.#reconcileMemories(generation));
       await this.#attempt('tool sets', () => this.#reconcileToolSets(generation));
       await this.#attempt('agents', () => this.#reconcileAgents(generation));
       await this.#attempt('brokers', () => this.#reconcileBrokers(generation));
@@ -302,6 +312,75 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     );
   }
 
+  async #reconcileMemories(generation: number): Promise<void> {
+    const configured = this.#config.get('memories');
+    const desired = new Set(Object.keys(configured));
+
+    for (const [memoryId, entry] of Object.entries(configured)) {
+      const componentKey = key('memory', memoryId);
+      const signature = stableStringify({ entry, secretRevision: this.#secretStore.revision });
+      const active = this.#memories.get(memoryId);
+      if (active?.signature === signature) {
+        this.#active('memory', memoryId, generation);
+        continue;
+      }
+
+      this.#applying('memory', memoryId, generation, active !== undefined);
+      try {
+        const memory = await this.#createMemory(memoryId, entry);
+        this.#memories.set(memoryId, { memory, signature });
+        this.#active('memory', memoryId, generation);
+      } catch (error) {
+        const activeGeneration = this.#statuses.get(componentKey)?.activeGeneration;
+        this.#statuses.set(componentKey, {
+          ...(activeGeneration === undefined ? {} : { activeGeneration }),
+          desiredGeneration: generation,
+          error: message(error),
+          id: memoryId,
+          kind: 'memory',
+          state: active === undefined ? 'unavailable' : 'failed',
+        });
+        this.#logger.error({ err: error, memoryId }, 'Memory configuration did not activate.');
+      }
+    }
+
+    const visible = new Set(desired);
+    for (const memoryId of this.#memories.keys()) {
+      if (desired.has(memoryId)) continue;
+      const reference = this.#memoryReference(memoryId);
+      if (reference !== undefined) {
+        visible.add(memoryId);
+        const activeGeneration = this.#statuses.get(key('memory', memoryId))?.activeGeneration;
+        this.#statuses.set(key('memory', memoryId), {
+          ...(activeGeneration === undefined ? {} : { activeGeneration }),
+          desiredGeneration: generation,
+          error: reference,
+          id: memoryId,
+          kind: 'memory',
+          state: 'failed',
+        });
+        continue;
+      }
+      this.#memories.delete(memoryId);
+    }
+    this.#dropAbsent('memory', visible);
+  }
+
+  async #createMemory(memoryId: string, entry: MemoryConfig): Promise<Memory> {
+    const contribution = this.#contributions.get(memories, entry.type);
+    if (contribution === undefined) {
+      throw new Error(
+        `Memory "${memoryId}" is of type "${entry.type}", which no extension contributed.`,
+      );
+    }
+    return composeWithSecrets(
+      entry,
+      this.#secretStore,
+      { extensionId: contribution.extensionId, location: `memories.${memoryId}` },
+      (resolved) => contribution.value.create(resolved),
+    );
+  }
+
   async #reconcileToolSets(generation: number): Promise<void> {
     const configuredIds = new Set(this.#toolSets.configuredIds);
     const retained = [...this.#statuses.values()]
@@ -427,6 +506,8 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     };
     const compaction = openTask(blueprint.taskModels.compaction);
     const title = openTask(blueprint.taskModels.title);
+    const memory =
+      blueprint.memory === undefined ? undefined : this.#requiredMemory(blueprint.memory.id);
 
     for (const grant of [...blueprint.toolSets.direct, ...blueprint.toolSets.routed]) {
       const toolSetId = typeof grant === 'string' ? grant : grant.id;
@@ -448,6 +529,9 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       gate: blueprint.gate,
       logger: this.#logger,
       maxIterations: blueprint.maxIterations,
+      ...(memory === undefined
+        ? {}
+        : { memory, memoryMaxTokens: blueprint.memory?.maxTokens ?? 2048 }),
       routedToolSets,
       systemPrompt: blueprint.systemPrompt,
       timeZone,
@@ -469,6 +553,15 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       if (conversation.agentId !== undefined) agentIds.add(conversation.agentId);
     }
     return agentIds;
+  }
+
+  #memoryReference(memoryId: string): string | undefined {
+    for (const [agentId, blueprint] of Object.entries(this.#config.get('blueprints'))) {
+      if (blueprint.memory?.id === memoryId) {
+        return `Agent "${agentId}" still depends on this memory.`;
+      }
+    }
+    return undefined;
   }
 
   #providerReference(providerId: string): string | undefined {
@@ -514,6 +607,22 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     return undefined;
   }
 
+  #requiredMemory(memoryId: string): Memory {
+    const status = this.#statuses.get(key('memory', memoryId));
+    const active = this.#memories.get(memoryId);
+    if (active === undefined) {
+      throw new Error(
+        status?.error === undefined
+          ? `Memory "${memoryId}" is not configured.`
+          : `Memory "${memoryId}" is unavailable: ${status.error}`,
+      );
+    }
+    if (status?.state === 'failed') {
+      throw new Error(`Memory "${memoryId}" did not activate: ${status.error ?? 'unknown error'}`);
+    }
+    return active.memory;
+  }
+
   #requiredProvider(providerId: string): ChatProvider {
     const status = this.#statuses.get(key('provider', providerId));
     const active = this.#providers.get(providerId);
@@ -541,10 +650,15 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     const toolSetIds = [...blueprint.toolSets.direct, ...blueprint.toolSets.routed].map((grant) =>
       typeof grant === 'string' ? grant : grant.id,
     );
+    const configuredMemories = this.#config.get('memories');
     const configuredProviders = this.#config.get('providers');
     const configuredToolSets = this.#config.get('toolSets');
     return stableStringify({
       blueprint,
+      memories:
+        blueprint.memory === undefined
+          ? {}
+          : { [blueprint.memory.id]: configuredMemories[blueprint.memory.id] },
       providers: Object.fromEntries(providerIds.map((id) => [id, configuredProviders[id]])),
       secretRevision: this.#secretStore.revision,
       timeZone,

@@ -40,6 +40,25 @@ function originToString(origin: MessageOrigin): string {
   return origin.displayName === undefined ? subject : `${origin.displayName} <${subject}>`;
 }
 
+/**
+ * The artifacts a message actually carries.
+ *
+ * A tool call is skipped on purpose: its arguments are the model's own words,
+ * so an ID written there is a claim, not a receipt. Only what came back — a
+ * tool response, or content some other participant contributed — is evidence
+ * that this conversation was ever handed the artifact.
+ */
+function artifactIdsIn(message: Message): string[] {
+  if (message.role === 'toolCall') return [];
+
+  const content = message.role === 'toolResponse' ? message.response : message.content;
+  const ids: string[] = [];
+  for (const part of content) {
+    if (part.type === 'artifact') ids.push(part.artifact.artifactId);
+  }
+  return ids;
+}
+
 function messageIdentityToString(message: Message): string {
   return `Created At: ${message.createdAt.toISOString()}\nMessage ID: ${message.messageId}`;
 }
@@ -95,6 +114,7 @@ function messageToString(message: Message): string {
 }
 
 export {
+  artifactIdsIn,
   MESSAGE_ROLES,
   messageIdentityToString,
   messageToString,

@@ -59,6 +59,7 @@ async function assertBlueprintReferences(
   context: BlueprintContext,
 ): Promise<void> {
   const configured = context.config.get('providers');
+  const configuredMemories = context.config.get('memories');
   const problems: string[] = [];
 
   const referenced = [
@@ -70,6 +71,9 @@ async function assertBlueprintReferences(
     if (provider !== undefined && !Object.hasOwn(configured, provider)) {
       problems.push(`providers.json configures no provider "${provider}"`);
     }
+  }
+  if (blueprint.memory !== undefined && !Object.hasOwn(configuredMemories, blueprint.memory.id)) {
+    problems.push(`memories.json configures no memory "${blueprint.memory.id}"`);
   }
 
   if (problems.length > 0) throw new BlueprintReferenceError(agentId, problems);
@@ -91,7 +95,7 @@ async function assertBlueprintReferences(
  */
 function instanceRemovalReasons(
   config: Config,
-  key: 'providers' | 'toolSets',
+  key: 'memories' | 'providers' | 'toolSets',
   instanceId: string,
 ): readonly string[] {
   return Object.entries(config.get('blueprints'))
@@ -100,7 +104,12 @@ function instanceRemovalReasons(
     .sort((a, b) => a.localeCompare(b));
 }
 
-function names(blueprint: Blueprint, key: 'providers' | 'toolSets', instanceId: string): boolean {
+function names(
+  blueprint: Blueprint,
+  key: 'memories' | 'providers' | 'toolSets',
+  instanceId: string,
+): boolean {
+  if (key === 'memories') return blueprint.memory?.id === instanceId;
   if (key === 'providers') {
     return [
       blueprint.provider,

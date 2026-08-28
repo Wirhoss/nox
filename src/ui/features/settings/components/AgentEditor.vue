@@ -20,6 +20,7 @@ type NumericInputKey =
   | 'contextWindow'
   | 'frequencyPenalty'
   | 'maxTokens'
+  | 'memoryMaxTokens'
   | 'presencePenalty'
   | 'reserveForOutput'
   | 'temperature'
@@ -43,6 +44,7 @@ interface AgentDraft extends ConfigValue {
   description: string
   generation: ConfigValue
   maxIterations: 'unlimited' | number
+  memory?: { id: string; maxTokens?: number }
   model: string
   provider: string
   systemPrompt: string
@@ -57,6 +59,7 @@ interface Props {
   creating?: boolean
   definition: SettingsSectionDefinition
   entryId?: string
+  memorySection?: ConfigSection
   providerSection?: ConfigSection
   section: ConfigSection
   toolSetSection?: ConfigSection
@@ -65,6 +68,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   creating: false,
   entryId: undefined,
+  memorySection: undefined,
   providerSection: undefined,
   toolSetSection: undefined,
 })
@@ -85,6 +89,7 @@ const numericInputs = reactive<Record<NumericInputKey, string>>({
   contextWindow: '',
   frequencyPenalty: '',
   maxTokens: '',
+  memoryMaxTokens: '',
   presencePenalty: '',
   reserveForOutput: '',
   temperature: '',
@@ -115,6 +120,14 @@ const providers = computed(() =>
     providerId,
     type: isConfigValue(value) ? stringValue(value.type) : '',
   })),
+)
+const memories = computed(() =>
+  Object.entries(props.memorySection?.value ?? {})
+    .map(([configuredId, value]) => ({
+      memoryId: configuredId,
+      type: isConfigValue(value) ? stringValue(value.type) : '',
+    }))
+    .sort((left, right) => left.memoryId.localeCompare(right.memoryId)),
 )
 const selectedProviderModels = computed(() => {
   const provider = providers.value.find(
@@ -195,6 +208,7 @@ function syncNumericInputs(): void {
   numericInputs.contextWindow = optionalNumber(draft.value.context.contextWindow)
   numericInputs.frequencyPenalty = optionalNumber(draft.value.generation.frequencyPenalty)
   numericInputs.maxTokens = optionalNumber(draft.value.generation.maxTokens)
+  numericInputs.memoryMaxTokens = optionalNumber(configValue(draft.value.memory).maxTokens)
   numericInputs.presencePenalty = optionalNumber(draft.value.generation.presencePenalty)
   numericInputs.reserveForOutput = optionalNumber(draft.value.context.reserveForOutput)
   numericInputs.temperature = optionalNumber(draft.value.generation.temperature)
@@ -235,6 +249,42 @@ function setProvider(value: string): void {
     provider: value,
   }
   clearFeedback('provider')
+}
+
+function memoryId(): string {
+  return stringValue(configValue(draft.value.memory).id)
+}
+
+function setMemory(value: string): void {
+  if (value.length === 0) {
+    draft.value = withoutProperty(draft.value, 'memory') as AgentDraft
+    numericInputs.memoryMaxTokens = ''
+  } else {
+    const current = configValue(draft.value.memory)
+    draft.value = {
+      ...draft.value,
+      memory: {
+        id: value,
+        maxTokens: typeof current.maxTokens === 'number' ? current.maxTokens : 2048,
+      },
+    }
+    numericInputs.memoryMaxTokens = String(configValue(draft.value.memory).maxTokens)
+  }
+  clearFeedback('memory')
+}
+
+function setMemoryMaxTokens(value: string): void {
+  numericInputs.memoryMaxTokens = value
+  const current = configValue(draft.value.memory)
+  if (value.trim().length === 0) {
+    draft.value = { ...draft.value, memory: withoutProperty(current, 'maxTokens') } as AgentDraft
+  } else {
+    const parsed = Number(value)
+    if (Number.isInteger(parsed) && parsed > 0) {
+      draft.value = { ...draft.value, memory: { ...current, maxTokens: parsed } } as AgentDraft
+    }
+  }
+  clearFeedback('memoryMaxTokens')
 }
 
 function setMaxIterations(value: string): void {
@@ -572,6 +622,7 @@ function validateForm(): boolean {
   validateOptionalNumber(errors, 'topP', 0, 1)
   validateOptionalNumber(errors, 'topK', 1, undefined, true)
   validateOptionalNumber(errors, 'maxTokens', 1, undefined, true)
+  validateOptionalNumber(errors, 'memoryMaxTokens', 1, 16_384, true)
   validateOptionalNumber(errors, 'frequencyPenalty', -2, 2)
   validateOptionalNumber(errors, 'presencePenalty', -2, 2)
   validateOptionalNumber(errors, 'contextWindow', 1, undefined, true)
@@ -897,6 +948,42 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
               required
               @update:model-value="setMaxIterations($event)"
             />
+            <div class="agent-editor__field-grid">
+              <div class="agent-editor__field">
+                <label for="agent-memory">{{ t('settings.agent.memory') }}</label>
+                <select
+                  id="agent-memory"
+                  :value="memoryId()"
+                  @change="setMemory(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">{{ t('settings.agent.memoryDisabled') }}</option>
+                  <option
+                    v-if="memoryId().length > 0 && !memories.some((memory) => memory.memoryId === memoryId())"
+                    :value="memoryId()"
+                  >
+                    {{ memoryId() }} · {{ t('settings.agent.unknownContribution') }}
+                  </option>
+                  <option
+                    v-for="memory in memories"
+                    :key="memory.memoryId"
+                    :value="memory.memoryId"
+                  >
+                    {{ memory.memoryId }} · {{ memory.type }}
+                  </option>
+                </select>
+                <p class="agent-editor__hint">{{ t('settings.agent.memoryHint') }}</p>
+              </div>
+              <NoxTextField
+                v-if="memoryId().length > 0"
+                id="agent-memory-max-tokens"
+                :model-value="numericInputs.memoryMaxTokens"
+                :error="fieldErrors.memoryMaxTokens"
+                :hint="t('settings.agent.memoryMaxTokensHint')"
+                :label="t('settings.agent.memoryMaxTokens')"
+                required
+                @update:model-value="setMemoryMaxTokens($event)"
+              />
+            </div>
           </div>
         </section>
 

@@ -69,6 +69,9 @@ function configPolicies(context: BlueprintContext): SectionPolicies {
         assertBrokerReferences(brokerId, value as BrokerConfig, context);
       },
     },
+    memories: {
+      reasonsToKeep: (instanceId) => instanceRemovalReasons(config, 'memories', instanceId),
+    },
     providers: {
       reasonsToKeep: (instanceId) => instanceRemovalReasons(config, 'providers', instanceId),
     },

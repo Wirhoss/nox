@@ -37,6 +37,17 @@ interface ArtifactOutputPublisher {
 }
 
 interface ArtifactOutputHost {
+  /**
+   * Takes ownership of an artifact this scope does not own yet, by minting a
+   * new one over the same bytes.
+   *
+   * Privileged, like `read`: it does not ask whether the caller was entitled to
+   * the source, and whoever calls it has already decided that. What it
+   * guarantees is that anything published from here is *published* — this scope
+   * owns the copy it hands out, and the copy records where it came from, so a
+   * later tool that rewrites it inherits a chain rather than an orphan.
+   */
+  adopt(artifactId: string, signal?: AbortSignal): Promise<ContentArtifact | undefined>;
   publisher(provenance: ArtifactOutputProvenance, signal?: AbortSignal): ArtifactOutputPublisher;
   reference(artifactId: string): Promise<ContentArtifact | undefined>;
 }
@@ -147,6 +158,46 @@ class ArtifactOutputSink implements ArtifactContentReader, ArtifactOutputHost {
   constructor(artifacts: ArtifactPipeline, scope: ArtifactScope) {
     this.#artifacts = artifacts;
     this.#scope = artifactScopeSchema.parse(scope);
+  }
+
+  /**
+   * A second artifact over the same blob, owned by this scope.
+   *
+   * Bytes are streamed back through ingestion rather than re-scoped in place,
+   * for two reasons. The original keeps its own identity and scope, so nothing
+   * a past conversation holds changes underneath it; and the blob store is
+   * content-addressed, so the copy costs a row and a hash rather than the
+   * bytes. `derived` names the source, which is the whole point of copying
+   * instead of widening a lookup.
+   */
+  public async adopt(
+    artifactId: string,
+    signal?: AbortSignal,
+  ): Promise<ContentArtifact | undefined> {
+    const source = await this.#artifacts.find(artifactId);
+    if (source === undefined) return undefined;
+    if (source.scope.type === this.#scope.type && source.scope.id === this.#scope.id) {
+      return Object.freeze({ artifact: artifactRef(source), type: 'artifact' });
+    }
+
+    const payload = await this.#artifacts.open(artifactId);
+    signal?.throwIfAborted();
+    const record = await this.#artifacts.ingest({
+      data: payload.stream,
+      declaredMediaType: source.mediaType,
+      ...(source.filename === undefined ? {} : { filename: source.filename }),
+      provenance: Object.freeze({
+        details: Object.freeze({
+          sourceArtifactId: source.artifactId,
+          sourceScopeId: source.scope.id,
+          sourceScopeType: source.scope.type,
+        }),
+        type: 'derived',
+      }),
+      scope: this.#scope,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    return Object.freeze({ artifact: artifactRef(record), type: 'artifact' });
   }
 
   public async reference(artifactId: string): Promise<ContentArtifact | undefined> {

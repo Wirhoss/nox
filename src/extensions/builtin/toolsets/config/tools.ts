@@ -21,6 +21,7 @@ const CONFIG_WRITE_AUTHORITY = 'nox.toolset.config.write';
 const ENTRY_SECTION_KEYS = Object.freeze([
   'blueprints',
   'brokers',
+  'memories',
   'providers',
   'toolSets',
 ] as const satisfies readonly ConfigEntryKey[]);
@@ -81,6 +82,8 @@ function componentSection(
       return 'app';
     case 'broker':
       return 'brokers';
+    case 'memory':
+      return 'memories';
     case 'provider':
       return 'providers';
     case 'toolSet':
@@ -161,7 +164,7 @@ function configTools(
     const schema: Tool<typeof schemaParameters> = {
       authority: CONFIG_READ_AUTHORITY,
       description:
-        'Return the authoritative JSON Schema for a section or one contributed provider, broker, or tool-set type.',
+        'Return the authoritative JSON Schema for a section or one contributed provider, memory, broker, or tool-set type.',
       name: 'config_schema',
       parameters: schemaParameters,
       prepare: ({ section, type }) => ({

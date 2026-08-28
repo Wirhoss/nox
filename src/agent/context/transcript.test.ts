@@ -71,55 +71,30 @@ describe('Transcript', () => {
     );
   });
 
-  test('search returns original information after reduction events and never indexes summaries twice', () => {
-    const original = user('u1', 'UNIQUE_NEEDLE original fact');
-    const compacted: Message = {
-      compactedMessageIds: ['u1'],
-      content: [{ text: 'UNIQUE_NEEDLE summary', type: 'text' }],
-      createdAt: CREATED_AT,
-      messageId: 'compact',
-      role: 'compacted',
-    };
-    const transcript = new Transcript([original, compacted]);
-
-    const hits = transcript.search('UNIQUE_NEEDLE', 10);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.text).toContain('original fact');
-    expect(hits[0]?.text).not.toContain('summary');
-  });
-
-  test('reasoning is recorded but never indexed, so it cannot crowd out the record', () => {
+  test('records every role verbatim, including the ones no search will ever return', () => {
     const reasoning: Message = {
-      content: [{ text: 'UNIQUE_NEEDLE weighing whether to grep first', type: 'text' }],
+      content: [{ text: 'weighing whether to grep first', type: 'text' }],
       createdAt: CREATED_AT,
       messageId: 'think',
       role: 'reasoning',
     };
-    const assistant: Message = {
-      content: [{ text: 'UNIQUE_NEEDLE grepping now', type: 'text' }],
+    const compacted: Message = {
+      compactedMessageIds: ['think'],
+      content: [{ text: 'a summary', type: 'text' }],
       createdAt: CREATED_AT,
-      messageId: 'say',
-      role: 'assistant',
+      messageId: 'compact',
+      role: 'compacted',
     };
-    const transcript = new Transcript([reasoning, assistant]);
+    // Whether these are searchable is `isIndexable`'s question, asked at index
+    // time. The transcript's own job is narrower and absolute: it keeps what it
+    // was given, so a replay is bit-perfect no matter what the index skipped.
+    const transcript = new Transcript([reasoning, compacted, user('u1', 'said out loud')]);
 
-    const hits = transcript.search('UNIQUE_NEEDLE', 10);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.text).toContain('grepping now');
-    expect(hits[0]?.text).not.toContain('weighing whether');
-    expect(transcript.messages).toHaveLength(2);
-    expect(transcript.messages[0]?.messageId).toBe('think');
-  });
-
-  test('search responses obey the global character budget', () => {
-    const transcript = new Transcript(
-      [user('u1', 'needle ' + 'x'.repeat(500)), user('u2', 'needle ' + 'y'.repeat(500))],
-      { chunkSize: 100, maxSearchCharacters: 220 },
-    );
-
-    const hits = transcript.search('needle', 10);
-    expect(hits.reduce((total, hit) => total + hit.text.length, 0)).toBeLessThanOrEqual(220);
-    expect(hits.at(-1)?.text).toContain('omitted');
+    expect(transcript.messages.map((message) => message.messageId)).toEqual([
+      'think',
+      'compact',
+      'u1',
+    ]);
   });
 
   test('reads tool results in stable bounded pages', () => {
@@ -145,7 +120,7 @@ describe('Transcript', () => {
     expect(() => transcript.readToolResult('track', 100_000, 200)).toThrow(RangeError);
   });
 
-  test('deferred acknowledgements are neither searchable nor readable as final results', () => {
+  test('a deferred acknowledgement is not readable as the final result', () => {
     const transcript = new Transcript([
       {
         createdAt: CREATED_AT,
@@ -159,7 +134,6 @@ describe('Transcript', () => {
       },
     ]);
 
-    expect(transcript.search('ack-only', 5)).toEqual([]);
     expect(() => transcript.readToolResult('track', 0, 200)).toThrow('No tool response');
   });
 
@@ -187,7 +161,6 @@ describe('Transcript', () => {
       },
     ]);
 
-    expect(transcript.search('waiting', 5)).toEqual([]);
     expect(transcript.readToolResult('track', 0, 200)[0]?.text).toContain('finished');
   });
 
@@ -237,7 +210,6 @@ describe('Transcript', () => {
 
     expect(() => transcript.append(user('kept', 'needle'))).not.toThrow();
     expect(transcript.messages.map((message) => message.messageId)).toEqual(['kept']);
-    expect(transcript.search('needle', 5)).not.toEqual([]);
     expect(logged).toHaveLength(1);
   });
 });

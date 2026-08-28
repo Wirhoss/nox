@@ -10,6 +10,18 @@ const ARTIFACT_READ_AUTHORITY = 'nox.artifacts.read';
 const HISTORY_SEARCH_AUTHORITY = 'nox.history.search';
 const HISTORY_READ_AUTHORITY = 'nox.history.read';
 
+/**
+ * Reaching past this session, into the transcripts of the ones before it.
+ *
+ * Separate from the two above because it is a different privilege, not a wider
+ * setting of the same one: an agent allowed to re-read what was said in the
+ * conversation it is having is not thereby allowed to read every conversation
+ * it has ever had. Authority is declared per tool, so keeping these apart is
+ * what makes "search this session, but not the others" expressible at all.
+ */
+const HISTORY_SESSIONS_AUTHORITY = 'nox.history.sessions';
+const HISTORY_SESSIONS_SEARCH_AUTHORITY = 'nox.history.sessions.search';
+
 /** The router's own two tools. */
 const TOOL_SEARCH_AUTHORITY = 'nox.tools.search';
 
@@ -47,6 +59,16 @@ const CORE_AUTHORITIES: readonly AuthorityDefinition[] = Object.freeze([
     ownerExtensionId: CORE_OWNER_ID,
   }),
   Object.freeze({
+    description: 'List the earlier sessions held with this agent.',
+    id: HISTORY_SESSIONS_AUTHORITY,
+    ownerExtensionId: CORE_OWNER_ID,
+  }),
+  Object.freeze({
+    description: 'Keyword-search the transcripts of earlier sessions held with this agent.',
+    id: HISTORY_SESSIONS_SEARCH_AUTHORITY,
+    ownerExtensionId: CORE_OWNER_ID,
+  }),
+  Object.freeze({
     description: 'Invoke a tool from the routed catalog, under that tool own authority.',
     id: TOOL_CALL_AUTHORITY,
     ownerExtensionId: CORE_OWNER_ID,
@@ -64,6 +86,8 @@ export {
   CORE_AUTHORITIES,
   HISTORY_READ_AUTHORITY,
   HISTORY_SEARCH_AUTHORITY,
+  HISTORY_SESSIONS_AUTHORITY,
+  HISTORY_SESSIONS_SEARCH_AUTHORITY,
   TOOL_CALL_AUTHORITY,
   TOOL_SEARCH_AUTHORITY,
 };

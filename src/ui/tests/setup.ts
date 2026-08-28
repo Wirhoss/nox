@@ -177,6 +177,8 @@ installTestLanguage(
     'sessions.untitled': 'Untitled session',
     'settings.agent.description': 'Description',
     'settings.agent.direct': 'Direct',
+    'settings.agent.memory': 'Long-term memory',
+    'settings.agent.memoryMaxTokens': 'Memory token budget',
     'settings.agent.model': 'Model',
     'settings.agent.moveFrom': 'MOVE FROM {channel}',
     'settings.agent.noChannelCapabilities.direct':

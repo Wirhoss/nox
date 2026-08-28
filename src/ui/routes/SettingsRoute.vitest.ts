@@ -279,6 +279,7 @@ describe('Settings route', () => {
       description: 'Local Nox test agent',
       generation: { seed: 7 },
       maxIterations: 90,
+      memory: { id: 'local', maxTokens: 768 },
       model: 'qwen38-27b',
       provider: 'main',
       systemPrompt: 'You are Nox.',
@@ -293,6 +294,7 @@ describe('Settings route', () => {
           sections: [
             sectionSummary('app', 'file', false, 'app.json', true),
             sectionSummary('blueprints', 'directory', true, 'blueprints', false),
+            sectionSummary('memories', 'contribution', true, 'memories.json', true),
             sectionSummary('providers', 'contribution', true, 'providers.json', true),
             sectionSummary('toolSets', 'contribution', true, 'toolsets.json', true),
           ],
@@ -302,6 +304,18 @@ describe('Settings route', () => {
         HttpResponse.json({
           ...sectionSummary('blueprints', 'directory', true, 'blueprints', false),
           value: { nox: blueprint },
+        }),
+      ),
+      http.get('*/api/config/memories', () =>
+        HttpResponse.json({
+          ...sectionSummary('memories', 'contribution', true, 'memories.json', true),
+          value: {
+            local: {
+              maxEntriesPerScope: 2000,
+              maxRecallItems: 12,
+              type: 'local',
+            },
+          },
         }),
       ),
       http.get('*/api/config/providers', () =>
@@ -371,6 +385,10 @@ describe('Settings route', () => {
     expect(screen.getByText('HOT APPLY')).toBeTruthy()
     expect(screen.queryByText('APPLIES ON RESTART')).toBeNull()
     expect(screen.getByLabelText(/^Provider REQ$/)).toHaveProperty('value', 'main')
+    expect(screen.getByLabelText('Long-term memory')).toHaveProperty('value', 'local')
+    const memoryBudget = document.querySelector<HTMLInputElement>('#agent-memory-max-tokens')
+    if (memoryBudget === null) throw new Error('Expected the selected memory token budget.')
+    expect(memoryBudget.value).toBe('768')
     expect(screen.getByPlaceholderText('model-id')).toHaveProperty('value', 'qwen38-27b')
     expect(screen.getByPlaceholderText('You are...')).toHaveProperty('value', 'You are Nox.')
 
@@ -383,6 +401,7 @@ describe('Settings route', () => {
     expect(within(routedPanel).getByText('internet')).toBeTruthy()
 
     await fireEvent.update(screen.getByLabelText(/^Description/), 'Primary personal agent')
+    await fireEvent.update(memoryBudget, '1024')
     await fireEvent.click(within(directPanel).getByRole('button', { name: '+ Add' }))
     await fireEvent.update(screen.getByLabelText('Search configured Tool Sets'), 'internet')
     await fireEvent.click(
@@ -406,6 +425,7 @@ describe('Settings route', () => {
       context: { foldMinReductionRatio: 0.25 },
       description: 'Primary personal agent',
       generation: { seed: 7 },
+      memory: { id: 'local', maxTokens: 1024 },
       taskModels: { title: { model: 'qwen38-9b' } },
       toolSets: { direct: [{ id: 'internet', tools: ['web_search'] }], routed: [] },
     })
@@ -1166,7 +1186,7 @@ function sectionSummary(
       inventory: 'toolSets',
       label: 'settings.sections.agents.label',
       plural: 'settings.sections.agents.plural',
-      references: ['providers', 'toolSets'],
+      references: ['memories', 'providers', 'toolSets'],
       slug: 'agents',
     },
     brokers: {
@@ -1178,6 +1198,16 @@ function sectionSummary(
       plural: 'settings.sections.brokers.plural',
       references: ['blueprints'],
       slug: 'brokers',
+    },
+    memories: {
+      description: 'settings.sections.memories.description',
+      editor: 'contribution',
+      entrySummary: { description: [], detail: ['type'] },
+      group: 'intelligence',
+      label: 'settings.sections.memories.label',
+      plural: 'settings.sections.memories.plural',
+      references: ['blueprints'],
+      slug: 'memories',
     },
     providers: {
       description: 'settings.sections.providers.description',
@@ -1205,7 +1235,7 @@ function sectionSummary(
   if (definition === undefined) throw new Error(`No test section definition for ${key}.`)
   return {
     applies: key === 'app' ? 'restart' : 'hot',
-    creatable: key === 'blueprints' || key === 'providers',
+    creatable: key === 'blueprints' || key === 'memories' || key === 'providers',
     entries,
     key,
     kind,

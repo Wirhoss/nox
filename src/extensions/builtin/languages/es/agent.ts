@@ -43,6 +43,13 @@ const agentMessages = Object.freeze({
     'Máximo de iteraciones del bucle modelo/herramienta, o «sin límite».',
   'settings.agent.maxPendingPermissions': 'Máximo de permisos pendientes',
   'settings.agent.maxTokens': 'Tokens máximos',
+  'settings.agent.memory': 'Memoria a largo plazo',
+  'settings.agent.memoryDisabled': 'Sin memoria a largo plazo',
+  'settings.agent.memoryHint':
+    'Selecciona como máximo una memoria configurada. El almacenamiento siempre se aísla por el ID de este agente.',
+  'settings.agent.memoryMaxTokens': 'Presupuesto de tokens de memoria',
+  'settings.agent.memoryMaxTokensHint':
+    'Máximo de memoria recuperada que se inyecta de forma efímera en cada ejecución del modelo.',
   'settings.agent.model': 'Modelo',
   'settings.agent.modelContext': 'CONTEXTO DEL MODELO',
   'settings.agent.modelHint': 'ID exacto del modelo expuesto por el proveedor seleccionado.',

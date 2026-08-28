@@ -1,60 +1,28 @@
-import {
-  contentToString,
-  type Message,
-  type MessageContentText,
-  type ToolResponseMessage,
-} from '@nox/extension-api';
-import { z } from 'zod';
-
-import { BM25 } from '../../utils/bm25';
-import { parseOrThrow } from '../../utils/validate';
 import { freezeMessage } from './immutable';
-import { messageIdentityToString, messageToString, trackedHeaderToString } from './message';
+import { messageToString } from './message';
 
 import type { Logger } from '../../logger/logger';
+import type { Message, MessageContentText, ToolResponseMessage } from '@nox/extension-api';
 
 interface TranscriptOptions {
-  chunkSize?: number;
   logger?: Logger;
-  maxSearchCharacters?: number;
   onAppend?: (message: Message) => void;
 }
 
-const DEFAULT_CHUNK_SIZE = 1000;
-const DEFAULT_MAX_SEARCH_CHARACTERS = 6000;
-const SEARCH_BUDGET_NOTE =
-  '[More matches were omitted to stay within the history-search response budget. ' +
-  'Narrow the query with a more exact keyword, path, symbol, error, or ID.]';
-
-const transcriptLimitsSchema = z.object({
-  chunkSize: z.number().int().positive(),
-  maxSearchCharacters: z.number().int().positive(),
-});
-
-function isIndexable(message: Message): boolean {
-  switch (message.role) {
-    case 'compacted':
-    case 'folded':
-    case 'reasoning':
-      return false;
-    case 'toolResponse':
-      return message.execution !== 'deferredAck' && message.execution !== 'permissionPending';
-    case 'assistant':
-    case 'user':
-      return message.content.some((part) => part.type !== 'text' || part.text.length > 0);
-    case 'toolCall':
-      return true;
-  }
-}
-
+/**
+ * The permanent record of one session, in append order.
+ *
+ * It holds the messages and nothing derived from them. Searching used to live
+ * here, over an index this class rebuilt in memory on every construction; it
+ * now lives in storage, where it survives the process and can be asked about
+ * more than one session. What stays is the part that is genuinely about *this*
+ * conversation: the messages themselves, and the tool results the model may ask
+ * to re-read in full.
+ */
 class Transcript {
-  readonly #bm25: BM25;
-  readonly #chunkSize: number;
   readonly #logger?: Logger;
-  readonly #maxSearchCharacters: number;
   readonly #onAppend?: (message: Message) => void;
 
-  readonly #chunks: string[] = [];
   readonly #knownIds = new Set<string>();
   readonly #messages: Message[] = [];
   readonly #toolResponses = new Map<string, ToolResponseMessage>();
@@ -62,13 +30,7 @@ class Transcript {
   #snapshot?: readonly Message[];
 
   constructor(messages: readonly Message[] = [], options: TranscriptOptions = {}) {
-    const limits = parseOrThrow(transcriptLimitsSchema, {
-      chunkSize: options.chunkSize ?? DEFAULT_CHUNK_SIZE,
-      maxSearchCharacters: options.maxSearchCharacters ?? DEFAULT_MAX_SEARCH_CHARACTERS,
-    });
-    this.#chunkSize = limits.chunkSize;
     this.#logger = options.logger;
-    this.#maxSearchCharacters = limits.maxSearchCharacters;
     this.#onAppend = options.onAppend;
 
     for (const message of messages) {
@@ -81,8 +43,6 @@ class Transcript {
       }
       this.#record(freezeMessage(message));
     }
-
-    this.#bm25 = new BM25(this.#chunks);
   }
 
   public get messages(): readonly Message[] {
@@ -96,12 +56,7 @@ class Transcript {
       throw new Error(`Duplicate message ID: ${frozen.messageId}.`);
     }
 
-    const firstNewChunk = this.#chunks.length;
     this.#record(frozen);
-    for (let index = firstNewChunk; index < this.#chunks.length; index++) {
-      this.#indexChunk(index);
-    }
-
     this.#snapshot = undefined;
     this.#notify(frozen);
     return frozen;
@@ -138,110 +93,6 @@ class Transcript {
     ];
   }
 
-  public search(query: string, limit: number): MessageContentText[] {
-    const hits: MessageContentText[] = [];
-    let characterCount = 0;
-    let omitted = false;
-
-    for (const { docIndex } of this.#bm25.search(query, limit)) {
-      const chunk = this.#chunks[docIndex];
-      if (chunk === undefined) {
-        throw new Error(`BM25 index ${String(docIndex)} does not map to a transcript chunk.`);
-      }
-      if (characterCount + chunk.length > this.#maxSearchCharacters) {
-        omitted = true;
-        break;
-      }
-      hits.push({ text: chunk, type: 'text' });
-      characterCount += chunk.length;
-    }
-
-    if (omitted) this.#appendBudgetNote(hits, characterCount);
-    return hits;
-  }
-
-  #appendBudgetNote(hits: MessageContentText[], usedCharacters: number): void {
-    let characterCount = usedCharacters;
-    while (
-      hits.length > 0 &&
-      characterCount + SEARCH_BUDGET_NOTE.length > this.#maxSearchCharacters
-    ) {
-      characterCount -= hits.pop()?.text.length ?? 0;
-    }
-    hits.push({
-      text: SEARCH_BUDGET_NOTE.slice(0, this.#maxSearchCharacters - characterCount),
-      type: 'text',
-    });
-  }
-
-  #chunkString(text: string): string[] {
-    if (text.length === 0) return [''];
-
-    const chunks: string[] = [];
-    let start = 0;
-    while (start < text.length) {
-      let end = Math.min(start + this.#chunkSize, text.length);
-      if (end < text.length) {
-        const newline = text.indexOf('\n', end);
-        if (newline !== -1 && newline - end <= this.#chunkSize / 4) end = newline + 1;
-      }
-      chunks.push(text.slice(start, end));
-      start = end;
-    }
-    return chunks;
-  }
-
-  #chunksForMessage(message: Message): string[] {
-    if (!isIndexable(message)) return [];
-
-    if (message.role === 'toolCall') {
-      return this.#renderChunks(
-        JSON.stringify(message.arguments),
-        (chunk, position) =>
-          trackedHeaderToString(message) +
-          `\n${messageIdentityToString(message)}` +
-          `\nArguments chunk ${position}` +
-          `\nArguments:\n${chunk}`,
-      );
-    }
-
-    if (message.role === 'toolResponse') {
-      return this.#renderChunks(
-        contentToString(message.response),
-        (chunk, position) =>
-          trackedHeaderToString(message) +
-          `\nExecution: ${message.execution}\nIs Error: ${String(message.isError ?? false)}` +
-          `\n${messageIdentityToString(message)}` +
-          `\nResponse chunk ${position}` +
-          `\nResponse:\n${chunk}`,
-      );
-    }
-
-    return this.#renderChunks(
-      contentToString(message.content),
-      (chunk, position) =>
-        `Role: ${message.role}` +
-        `\n${messageIdentityToString(message)}` +
-        `\nContent chunk ${position}` +
-        `\nContent:\n${chunk}`,
-    );
-  }
-
-  #indexChunk(index: number): void {
-    const chunk = this.#chunks[index];
-    if (chunk === undefined) {
-      throw new Error(`Transcript chunk ${String(index)} is missing.`);
-    }
-
-    const docIndex = this.#bm25.addDocument(chunk);
-    if (docIndex !== index) {
-      throw new Error(
-        `BM25 document index ${String(docIndex)} does not match ` +
-          `transcript chunk index ${String(index)}.`,
-      );
-    }
-  }
-
   /**
    * A failing sink must not turn an append into a lost message. The transcript
    * is the source of truth and appending to it is the one operation that is not
@@ -264,7 +115,6 @@ class Transcript {
   #record(message: Message): void {
     this.#knownIds.add(message.messageId);
     this.#messages.push(message);
-    this.#chunks.push(...this.#chunksForMessage(message));
 
     if (
       message.role === 'toolResponse' &&
@@ -274,13 +124,6 @@ class Transcript {
     ) {
       this.#toolResponses.set(message.trackId, message);
     }
-  }
-
-  #renderChunks(text: string, render: (chunk: string, position: string) => string): string[] {
-    const chunks = this.#chunkString(text);
-    return chunks.map((chunk, index) =>
-      render(chunk, `${String(index + 1)} of ${String(chunks.length)}`),
-    );
   }
 }
 

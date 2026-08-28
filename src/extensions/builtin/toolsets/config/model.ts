@@ -4,6 +4,7 @@ const CONFIG_SECTION_KEYS = Object.freeze([
   'app',
   'blueprints',
   'brokers',
+  'memories',
   'providers',
   'toolSets',
 ] as const satisfies readonly ConfigKey[]);

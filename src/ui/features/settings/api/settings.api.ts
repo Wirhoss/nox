@@ -48,7 +48,7 @@ const runtimeComponentSchema = z.object({
   desiredGeneration: z.number().int().positive(),
   error: z.string().optional(),
   id: z.string().min(1),
-  kind: z.enum(['agent', 'application', 'broker', 'provider', 'toolSet']),
+  kind: z.enum(['agent', 'application', 'broker', 'memory', 'provider', 'toolSet']),
   state: z.enum(['active', 'applying', 'failed', 'restartRequired', 'unavailable']),
 })
 

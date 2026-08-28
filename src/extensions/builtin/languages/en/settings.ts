@@ -86,6 +86,25 @@ const settingsMessages = Object.freeze({
   'settings.navigation.controlSurface': 'Machine control surface',
   'settings.navigation.newEntry': 'New {entry}',
   'settings.navigation.sections': 'Settings sections',
+  'settings.memory.changeRefused': 'Memory change refused',
+  'settings.memory.confirmDiscard': 'Discard the unsaved memory changes?',
+  'settings.memory.header': 'LONG-TERM MEMORY',
+  'settings.memory.id': 'Memory ID',
+  'settings.memory.idHint': 'Stable ID that an agent blueprint may select.',
+  'settings.memory.providerJson': 'Memory JSON',
+  'settings.memory.providerJsonHelp':
+    'Full fidelity access to this contributed memory adapter. Credentials do not belong inline; use a managed secret reference.',
+  'settings.memory.remove': 'Remove memory',
+  'settings.memory.removeQuestion': 'Remove memory?',
+  'settings.memory.removeWarning':
+    'Nox will refuse this operation while an agent blueprint still names this memory.',
+  'settings.memory.save': 'Save memory',
+  'settings.memory.saved': 'Memory configuration saved',
+  'settings.memory.titleFallback': 'Memory',
+  'settings.memory.titleNew': 'New memory',
+  'settings.memory.validation.configurationObject': 'Memory configuration must be one JSON object.',
+  'settings.memory.validation.curatedFormUnavailable':
+    'This contributed memory type has no curated form. Continue in JSON mode.',
   'settings.provider.changeRefused': 'Provider change refused',
   'settings.provider.confirmDiscard': 'Discard the unsaved provider changes?',
   'settings.provider.header': 'MODEL PROVIDER',
@@ -115,6 +134,10 @@ const settingsMessages = Object.freeze({
   'settings.sections.general.description': 'Runtime, access, storage and logging defaults.',
   'settings.sections.general.label': 'General',
   'settings.sections.general.plural': 'General',
+  'settings.sections.memories.description':
+    'Long-term memory backends that agents may select one at a time.',
+  'settings.sections.memories.label': 'Memory',
+  'settings.sections.memories.plural': 'Memories',
   'settings.sections.providers.description':
     'Model endpoints and the models available through them.',
   'settings.sections.providers.label': 'Provider',

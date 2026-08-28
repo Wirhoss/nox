@@ -16,7 +16,7 @@ import type { Logger } from '../logger/logger';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
 import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
-import type { ChatProvider, ModelConfig, ToolSetGrant } from '@nox/extension-api';
+import type { ChatProvider, Memory, ModelConfig, ToolSetGrant } from '@nox/extension-api';
 
 interface AgentOptions extends RunnerOptions {
   /**
@@ -44,6 +44,9 @@ interface AgentOptions extends RunnerOptions {
   gate?: GatePolicyInput;
   gateEvaluators?: readonly GateEvaluator[];
   logger?: Logger;
+  /** The single long-term memory selected by this agent's blueprint. */
+  memory?: Memory;
+  memoryMaxTokens?: number;
   routedToolSets?: readonly ToolSetGrant[];
   systemPrompt: string;
   /**
@@ -124,6 +127,8 @@ class Agent {
   readonly #gateEvaluators: readonly GateEvaluator[];
   readonly #logger?: Logger;
   readonly #maxIterations?: 'unlimited' | number;
+  readonly #memory?: Memory;
+  readonly #memoryMaxTokens?: number;
   readonly #model: ModelConfig;
   readonly #provider: ChatProvider;
   readonly #routedToolSets: readonly ToolSetGrant[];
@@ -152,6 +157,9 @@ class Agent {
     this.#gateEvaluators = Object.freeze([...(options.gateEvaluators ?? [])]);
     this.#logger = options.logger;
     this.#maxIterations = options.maxIterations;
+    this.#memory = options.memory;
+    this.#memoryMaxTokens =
+      options.memory === undefined ? undefined : (options.memoryMaxTokens ?? 2048);
     this.#routedToolSets = options.routedToolSets ?? [];
     this.#systemPrompt = options.systemPrompt;
     this.#timeZone = options.timeZone;
@@ -231,12 +239,17 @@ class Agent {
         ...this.#context,
         compactionModel: this.#compactionModel ?? model,
         ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
+        ...(this.#memoryMaxTokens === undefined
+          ? {}
+          : { memoryReserveTokens: this.#memoryMaxTokens + 256 }),
         tools,
       },
       gate: this.#gate,
       gateEvaluators: this.#gateEvaluators,
       logger: this.#logger,
       maxIterations: this.#maxIterations,
+      ...(this.#memory === undefined ? {} : { memory: this.#memory }),
+      ...(this.#memoryMaxTokens === undefined ? {} : { memoryMaxTokens: this.#memoryMaxTokens }),
       systemPrompt,
       ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
       titleModel: this.#titleModel ?? model,

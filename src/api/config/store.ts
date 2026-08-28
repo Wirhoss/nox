@@ -489,11 +489,13 @@ class ConfigStore implements ConfigurationAdmin {
     const kind =
       change.key === 'app' || change.key === 'blueprints'
         ? 'agent'
-        : change.key === 'providers'
-          ? 'provider'
-          : change.key === 'toolSets'
-            ? 'toolSet'
-            : 'broker';
+        : change.key === 'memories'
+          ? 'memory'
+          : change.key === 'providers'
+            ? 'provider'
+            : change.key === 'toolSets'
+              ? 'toolSet'
+              : 'broker';
     const failed = this.runtimeStatuses().some(
       (status) =>
         (status.state === 'failed' || status.state === 'unavailable') &&
@@ -525,6 +527,7 @@ function brokerHost(
 function problemKind(key: ConfigKey): RuntimeComponentStatus['kind'] {
   if (key === 'app') return 'application';
   if (key === 'brokers') return 'broker';
+  if (key === 'memories') return 'memory';
   if (key === 'providers') return 'provider';
   if (key === 'toolSets') return 'toolSet';
   return 'agent';

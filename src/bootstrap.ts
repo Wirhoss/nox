@@ -18,7 +18,7 @@ import { Config } from './config/config';
 import { type EnvSource, readEnvConfig } from './config/env';
 import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
-import { SessionStore } from './database/sessionStore';
+import { backfillDerivedIndexes, SessionStore } from './database/sessionStore';
 import { toDisposable } from './extensions/disposable';
 import { discoverExtensions } from './extensions/loader';
 import { DatabaseExtensionStorageProvider } from './extensions/storage';
@@ -84,6 +84,9 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       ? appConfig.database.path
       : join(env.dataDir, appConfig.database.path),
   });
+  // Before anything opens a session: a rebuild reads every stored message, and
+  // doing that under a live transcript would race the appends it is indexing.
+  await backfillDerivedIndexes(database, logger);
 
   let artifactPipeline: ArtifactPipeline;
   let secretStore: SecretStore;

@@ -60,3 +60,46 @@ export default defineExtension({
 The command context exposes bounded operations for its current conversation, including inspection,
 renaming, compaction, retry, and explicit session/agent/model transitions. It does not expose the kernel
 session, gateway, provider, or database.
+
+Long-term memory is also a contribution. The host calls `recall` with a token
+budget before generation and `retain` with the non-derived turn afterwards:
+
+```ts
+import { defineExtension, memories, memoryContribution, z } from '@nox/extension-api';
+
+const configSchema = z.object({
+  endpoint: z.url(),
+  type: z.literal('example_memory'),
+});
+
+export default defineExtension({
+  activate(context) {
+    context.contributions.register(
+      memories,
+      'example_memory',
+      memoryContribution({
+        configSchema,
+        instances: 'many',
+        create: (config) => ({
+          recall: async (request) => {
+            // Use config.endpoint to query a namespace derived from both values.
+            // Never broaden either boundary.
+            const namespace = `${request.scope.agentId}:${request.scope.principal.issuer}:${request.scope.principal.subject}`;
+            return { memories: await backendRecall(config.endpoint, namespace, request) };
+          },
+          retain: async (request) => {
+            await backendRetain(config.endpoint, request.scope, request.messages);
+          },
+        }),
+      }),
+    );
+  },
+});
+```
+
+An agent selects at most one configured instance. `MemoryScope.agentId` is the
+mandatory storage boundary, not optional metadata; principal scope prevents
+participants in shared conversations from being combined. Returned text is
+untrusted data and may exceed the requested budget, so Nox fences and bounds it
+again before ephemeral provider injection. Ordinary adapter errors degrade to no
+memory.

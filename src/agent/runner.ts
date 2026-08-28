@@ -1,11 +1,16 @@
 import {
   type ChatProvider,
+  contentToString,
+  fenceUntrustedText,
   isProviderError,
+  type Memory,
+  type MemoryMessage,
   type Message,
   type MessageContent,
   type ModelConfig,
   prepareToolCall,
   type ProviderError,
+  type RecalledMemory,
   type ToolCallMessage,
   type ToolContext,
   type ToolExecution,
@@ -30,6 +35,7 @@ import {
   type RunAuthority,
   samePrincipal,
   SYSTEM_CRON,
+  SYSTEM_INTERNAL,
   SYSTEM_ISSUER,
   systemAuthority,
 } from '../auth/principal';
@@ -52,6 +58,10 @@ import type { Context } from './context/context';
 import type { AgentEvent, RunStatus, RunTrigger } from './events';
 
 const DEFAULT_MAX_ITERATIONS = 90;
+const DEFAULT_MEMORY_MAX_TOKENS = 2048;
+// Matches the context engine's conservative fallback estimator; backend token
+// accounting is advisory and a result that overran it is still bounded here.
+const MEMORY_CHARS_PER_TOKEN = 3;
 /** Cron is a trusted system ingress; the selected blueprint remains its tool boundary. */
 const SYSTEM_CRON_GRANTS: readonly GrantPattern[] = Object.freeze(['*']);
 
@@ -73,6 +83,15 @@ interface RunnerConstructionOptions extends RunnerOptions {
   artifactOutputs?: ArtifactOutputHost;
   /** Privileged storage reader, narrowed by the runner to conversation-known artifact IDs. */
   artifactReader?: ArtifactContentReader;
+  /**
+   * Whether an artifact was ever handed to any transcript this agent holds.
+   *
+   * Separate from `artifactOutputs`, which answers about the conversation that
+   * produced an artifact. This one answers about the agent that received it,
+   * which is the only reason a session may read what an earlier session of its
+   * own was given.
+   */
+  artifactHistory?: (artifactId: string) => Promise<boolean>;
   /** Where both halves of the decision pipeline write their one timeline. */
   audit?: DecisionAuditSink;
   /** Every authority this Nox knows. Absent means nothing can be authorized. */
@@ -84,6 +103,9 @@ interface RunnerConstructionOptions extends RunnerOptions {
    */
   authorization?: AuthorizationProvider;
   gate?: SessionGate;
+  /** At most one memory is attached to an agent generation. */
+  memory?: Memory;
+  memoryMaxTokens?: number;
   participants?: ConversationParticipants;
   sessionId: string;
 }
@@ -139,6 +161,14 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+function resolveMemoryMaxTokens(maxTokens: number | undefined): number {
+  if (maxTokens === undefined) return DEFAULT_MEMORY_MAX_TOKENS;
+  if (!Number.isInteger(maxTokens) || maxTokens < 1) {
+    throw new RangeError('memoryMaxTokens must be a positive integer.');
+  }
+  return maxTokens;
+}
+
 function resolveMaxIterations(maxIterations: RunnerOptions['maxIterations']): number {
   if (maxIterations === undefined) return DEFAULT_MAX_ITERATIONS;
   if (maxIterations === 'unlimited') return Number.POSITIVE_INFINITY;
@@ -161,6 +191,55 @@ function sameRunOwner(left: RunAuthority, right: RunAuthority): boolean {
   return true;
 }
 
+/** Projects only original speech and settled replies; reasoning and derived context never leave Nox. */
+function memoryMessages(messages: readonly Message[]): MemoryMessage[] {
+  return messages.flatMap((message): MemoryMessage[] => {
+    if (message.role !== 'assistant' && message.role !== 'user') return [];
+    const text = contentToString(message.content).trim();
+    if (text.length === 0) return [];
+    return [
+      Object.freeze({
+        createdAt: new Date(message.createdAt.getTime()),
+        messageId: message.messageId,
+        ...(message.role === 'user'
+          ? {
+              principal: Object.freeze({ ...message.origin.principal }),
+              role: 'user' as const,
+            }
+          : { role: 'assistant' as const }),
+        text,
+      }),
+    ];
+  });
+}
+
+/** A second line of defence if a contributed adapter ignores the requested token budget. */
+function renderMemories(memories: readonly RecalledMemory[], maxTokens: number): string {
+  let remaining = Math.max(1, maxTokens) * MEMORY_CHARS_PER_TOKEN;
+  const rendered: string[] = [];
+
+  for (const [index, memory] of memories.entries()) {
+    if (typeof memory.text !== 'string') continue;
+    const text = memory.text.trim();
+    if (text.length === 0) continue;
+
+    const references = [
+      typeof memory.id === 'string' && memory.id.length > 0 ? `id=${memory.id}` : undefined,
+      typeof memory.uri === 'string' && memory.uri.length > 0 ? `uri=${memory.uri}` : undefined,
+    ].filter((value): value is string => value !== undefined);
+    const header = `Memory ${String(index + 1)}${references.length === 0 ? '' : ` (${references.join(', ')})`}:\n`;
+    if (header.length >= remaining) break;
+
+    const available = remaining - header.length;
+    const body = text.length > available ? text.slice(0, available) : text;
+    rendered.push(header + body);
+    remaining -= header.length + body.length;
+    if (remaining <= 0) break;
+  }
+
+  return rendered.join('\n\n');
+}
+
 /**
  * The engine of a session: one long-lived runner, one queue, one run at a time.
  *
@@ -174,6 +253,7 @@ function sameRunOwner(left: RunAuthority, right: RunAuthority): boolean {
 class Runner {
   readonly #agentId: string;
   readonly #artifactOutputs?: ArtifactOutputHost;
+  readonly #artifactHistory?: (artifactId: string) => Promise<boolean>;
   readonly #artifactReader?: ArtifactContentReader;
   readonly #timeZone?: string;
   readonly #audit?: DecisionAuditSink;
@@ -184,6 +264,9 @@ class Runner {
   readonly #gate?: SessionGate;
   readonly #logger?: Logger;
   readonly #maxIterations: number;
+  readonly #memory?: Memory;
+  readonly #memoryMaxTokens: number;
+  readonly #memoryTasks = new Set<Promise<void>>();
   readonly #metadata: Readonly<Record<string, unknown>>;
   readonly #model: ModelConfig;
   readonly #participants: ConversationParticipants;
@@ -202,8 +285,12 @@ class Runner {
   #idle: Promise<void> = Promise.resolve();
   #resolveIdle?: () => void;
   #runAuthority?: RunAuthority;
+  #recalledMemory?: UserMessage;
+  #memoryAnchorId?: string;
+  #memoryQuerySignature?: string;
   #runAuthorityGrants?: readonly GrantPattern[];
   #runId?: string;
+  #runTranscriptStart = 0;
   #state: RunnerState = 'idle';
 
   constructor(
@@ -215,6 +302,7 @@ class Runner {
   ) {
     this.#agentId = options.agentId;
     this.#artifactOutputs = options.artifactOutputs;
+    this.#artifactHistory = options.artifactHistory;
     this.#artifactReader = options.artifactReader;
     this.#timeZone = options.timeZone;
     this.#audit = options.audit;
@@ -227,6 +315,8 @@ class Runner {
     this.#gate = options.gate;
     this.#logger = options.logger;
     this.#maxIterations = resolveMaxIterations(options.maxIterations);
+    this.#memory = options.memory;
+    this.#memoryMaxTokens = resolveMemoryMaxTokens(options.memoryMaxTokens);
     this.#metadata = Object.freeze({ ...options.metadata });
     this.#participants =
       options.participants ??
@@ -351,6 +441,7 @@ class Runner {
     this.#run?.abort();
     this.#state = 'stopped';
     await this.#idle;
+    await Promise.all([...this.#memoryTasks]);
     this.#events.close();
   }
 
@@ -486,6 +577,10 @@ class Runner {
     this.#runAuthority = authority;
     this.#runAuthorityGrants = authorityGrants;
     this.#runId = runId;
+    this.#runTranscriptStart = this.#context.getFullHistory().length;
+    this.#recalledMemory = undefined;
+    this.#memoryAnchorId = undefined;
+    this.#memoryQuerySignature = undefined;
     const startedAt = new Date();
     const usage: Usage = { cacheReadTokens: 0, inputTokens: 0, outputTokens: 0 };
 
@@ -500,7 +595,9 @@ class Runner {
 
     try {
       const status = await this.#runLoop(usage);
+      const completedAt = new Date();
       this.#finish(runId, status, startedAt, usage);
+      this.#retainTurn(runId, status, trigger, startedAt, completedAt, authority);
       return status;
     } catch (error) {
       const failure = toError(error);
@@ -511,10 +608,15 @@ class Runner {
       this.#flushResponseAttachments();
       this.#logger?.error({ err: failure, modelId: this.#model.modelId }, 'Agent run failed.');
       this.#events.push({ error: failure, type: 'error' });
+      const completedAt = new Date();
       this.#finish(runId, 'failed', startedAt, usage);
+      this.#retainTurn(runId, 'failed', trigger, startedAt, completedAt, authority);
       return 'failed';
     } finally {
       this.#responseAttachments.clear();
+      this.#recalledMemory = undefined;
+      this.#memoryAnchorId = undefined;
+      this.#memoryQuerySignature = undefined;
       this.#run = undefined;
     }
   }
@@ -536,7 +638,12 @@ class Runner {
   async #request(usage: Usage): Promise<ToolResponseMessage[]> {
     // Usage reported at the end belongs to this exact input snapshot, not to
     // the assistant output or tool results appended while the call is running.
-    const requestTokenEstimate = this.#context.getTokenEstimate();
+    const requestHistory = this.#historyWithMemory();
+    const requestTokenEstimate =
+      this.#context.getTokenEstimate() +
+      (this.#recalledMemory === undefined
+        ? 0
+        : this.#context.estimateMessages([this.#recalledMemory]));
     const signal = this.#runSignal();
     const artifactOutput = this.#artifactOutputs?.publisher(
       {
@@ -551,7 +658,7 @@ class Runner {
     );
     const stream = this.#provider.getMessageStream(
       this.#context.getSystemPrompt(),
-      [...this.#context.getHistory()],
+      requestHistory,
       Object.values(this.#context.getTools()),
       {
         ...(artifactOutput === undefined ? {} : { artifactOutput }),
@@ -611,6 +718,156 @@ class Runner {
     return settled;
   }
 
+  #historyWithMemory(): Message[] {
+    const history = [...this.#context.getHistory()];
+    const memory = this.#recalledMemory;
+    if (memory === undefined) return history;
+
+    const anchor = this.#memoryAnchorId;
+    const index =
+      anchor === undefined ? -1 : history.findIndex((message) => message.messageId === anchor);
+    if (index === -1) history.unshift(memory);
+    else history.splice(index, 0, memory);
+    return history;
+  }
+
+  /** Recalls once per distinct set of user messages absorbed by the current run. */
+  async #recall(): Promise<void> {
+    const memory = this.#memory;
+    if (memory === undefined) return;
+
+    const authority = this.#authority();
+    const transcript = this.#context.getFullHistory();
+    const turn = memoryMessages(transcript.slice(this.#runTranscriptStart));
+    let queries = turn.filter(
+      (message) =>
+        message.role === 'user' &&
+        message.principal !== undefined &&
+        samePrincipal(message.principal, authority.principal),
+    );
+    let recallContext = turn.filter(
+      (message) =>
+        message.role === 'assistant' ||
+        (message.principal !== undefined && samePrincipal(message.principal, authority.principal)),
+    );
+
+    if (queries.length === 0) {
+      const fallback = memoryMessages(transcript).findLast(
+        (message) =>
+          message.role === 'user' &&
+          message.principal !== undefined &&
+          samePrincipal(message.principal, authority.principal),
+      );
+      if (fallback === undefined) return;
+      queries = [fallback];
+      recallContext = [fallback];
+    }
+
+    const signature = queries.map((message) => message.messageId).join('\u0000');
+    if (this.#memoryQuerySignature === signature) return;
+    this.#memoryQuerySignature = signature;
+    this.#recalledMemory = undefined;
+    this.#memoryAnchorId = queries[0]?.messageId;
+
+    const signal = this.#runSignal();
+    try {
+      const result = await memory.recall({
+        context: Object.freeze(recallContext),
+        maxTokens: this.#memoryMaxTokens,
+        query: queries.map((message) => message.text).join('\n\n'),
+        scope: Object.freeze({
+          agentId: this.#agentId,
+          metadata: this.#metadata,
+          principal: Object.freeze({ ...authority.principal }),
+          sessionId: this.#sessionId,
+        }),
+        signal,
+      });
+      if (!Array.isArray(result.memories)) {
+        throw new TypeError('Memory recall returned no memories array.');
+      }
+
+      const rendered = renderMemories(result.memories, this.#memoryMaxTokens);
+      if (rendered.length === 0) return;
+      const runId = this.#currentRunId();
+      this.#recalledMemory = freezeMessage<UserMessage>({
+        content: [
+          {
+            text:
+              '[Nox runtime record: relevant long-term memory, retrieved for this request only.]\n' +
+              fenceUntrustedText(rendered),
+            type: 'text',
+          },
+        ],
+        createdAt: new Date(),
+        delivery: 'observation',
+        messageId: `memory-${runId}`,
+        origin: {
+          principal: SYSTEM_INTERNAL,
+          transportMessageId: `memory-${runId}`,
+        },
+        role: 'user',
+      });
+    } catch (error) {
+      if (!signal.aborted) {
+        this.#logger?.warn(
+          { agentId: this.#agentId, err: error, sessionId: this.#sessionId },
+          'Could not recall long-term memory; continuing without it.',
+        );
+      }
+    }
+  }
+
+  /** Retention is isolated from the turn and drained only when the session stops. */
+  #retainTurn(
+    runId: string,
+    status: RunStatus,
+    trigger: RunTrigger,
+    startedAt: Date,
+    completedAt: Date,
+    authority: RunAuthority,
+  ): void {
+    const memory = this.#memory;
+    if (memory === undefined) return;
+
+    const messages = memoryMessages(
+      this.#context.getFullHistory().slice(this.#runTranscriptStart),
+    ).filter(
+      (entry) =>
+        entry.role === 'assistant' ||
+        (entry.principal !== undefined && samePrincipal(entry.principal, authority.principal)),
+    );
+    if (messages.length === 0) return;
+
+    const pending = Promise.resolve()
+      .then(() =>
+        memory.retain({
+          completedAt,
+          messages: Object.freeze(messages),
+          runId,
+          scope: Object.freeze({
+            agentId: this.#agentId,
+            metadata: this.#metadata,
+            principal: Object.freeze({ ...authority.principal }),
+            sessionId: this.#sessionId,
+          }),
+          startedAt,
+          status,
+          trigger,
+        }),
+      )
+      .catch((error: unknown) => {
+        this.#logger?.warn(
+          { agentId: this.#agentId, err: error, runId, sessionId: this.#sessionId },
+          'Could not retain long-term memory; the conversation remains available.',
+        );
+      });
+    this.#memoryTasks.add(pending);
+    void pending.finally(() => {
+      this.#memoryTasks.delete(pending);
+    });
+  }
+
   #recordUsage(total: Usage, call: Usage): void {
     total.cacheReadTokens = (total.cacheReadTokens ?? 0) + (call.cacheReadTokens ?? 0);
     total.inputTokens += call.inputTokens;
@@ -663,6 +920,7 @@ class Runner {
     for (let iteration = 0; iteration < this.#maxIterations; iteration++) {
       this.#drainOwn(authority);
       await this.#context.compact();
+      await this.#recall();
 
       const responses = await this.#requestWithinBudget(usage);
       for (const response of responses) {
@@ -713,12 +971,30 @@ class Runner {
       return await this.#request(usage);
     } catch (error) {
       if (!isProviderError(error) || error.code !== 'context_limit') throw error;
+      let refusal = error;
+
+      // Recalled context is optional and ephemeral. It is the first thing to
+      // remove when the provider proves the estimate wrong; memory must never
+      // turn an otherwise valid user turn into a failed one.
+      if (this.#recalledMemory !== undefined) {
+        this.#recalledMemory = undefined;
+        this.#logger?.warn(
+          { err: error, modelId: this.#model.modelId },
+          'Provider refused a request containing memory; retried without recalled context.',
+        );
+        try {
+          return await this.#request(usage);
+        } catch (retryError) {
+          if (!isProviderError(retryError) || retryError.code !== 'context_limit') throw retryError;
+          refusal = retryError;
+        }
+      }
 
       const { reduced } = await this.#context.compact({ force: true });
-      if (!reduced) throw error;
+      if (!reduced) throw refusal;
 
       this.#logger?.warn(
-        { err: error, modelId: this.#model.modelId },
+        { err: refusal, modelId: this.#model.modelId },
         'Provider refused the request for length; reduced the working set and retried.',
       );
       return await this.#request(usage);
@@ -855,9 +1131,15 @@ class Runner {
         : Object.freeze({
             read: async (input: Parameters<ArtifactContentReader['read']>[0]) => {
               signal.throwIfAborted();
-              const known = this.#knownArtifactIds().has(input.artifactId);
+              // Cheapest first, and each one is a different claim to the same
+              // artifact: this transcript was handed it, this conversation
+              // produced it, or an earlier session of this same agent was
+              // handed it. The last is what makes an artifact found through
+              // `search_sessions` openable instead of a dead reference.
               const owned =
-                known || (await this.#artifactOutputs?.reference(input.artifactId)) !== undefined;
+                this.#knownArtifactIds().has(input.artifactId) ||
+                (await this.#artifactOutputs?.reference(input.artifactId)) !== undefined ||
+                (await this.#artifactHistory?.(input.artifactId)) === true;
               if (!owned) return undefined;
 
               const result = await this.#artifactReader?.read(input, signal);
@@ -876,7 +1158,21 @@ class Runner {
         : Object.freeze({
             addArtifact: async (artifactId: string) => {
               signal.throwIfAborted();
-              const part = await this.#artifactOutputs?.reference(artifactId);
+              // Attaching is not reading. Reading shows the agent bytes;
+              // attaching hands them to whoever is in this conversation, which
+              // is a different audience from the one that produced them. So an
+              // artifact this conversation does not own is not attached as
+              // itself — an earlier session of this agent having received it
+              // buys the right to publish a *copy* that this conversation owns
+              // and that names where it came from. Nothing leaves under an
+              // identity belonging to a conversation that never published it.
+              const owned = await this.#artifactOutputs?.reference(artifactId);
+              signal.throwIfAborted();
+              const part =
+                owned ??
+                ((await this.#artifactHistory?.(artifactId)) === true
+                  ? await this.#artifactOutputs?.adopt(artifactId, signal)
+                  : undefined);
               signal.throwIfAborted();
               if (part === undefined) {
                 throw new Error(

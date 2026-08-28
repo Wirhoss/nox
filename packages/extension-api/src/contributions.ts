@@ -5,6 +5,7 @@ import { type ChatProvider, providerBaseConfigSchema } from './providers.js';
 import { identifierSchema, localeSchema } from './schemas.js';
 
 import type { Broker } from './brokers.js';
+import type { Memory } from './memory.js';
 import type { ToolSet } from './tools.js';
 
 interface AuthorityContribution {
@@ -142,6 +143,22 @@ function providerContribution<TSchema extends ProviderConfigSchema>(
 }
 const providers = createContributionPoint<ProviderContribution>('nox.providers');
 
+/**
+ * Memory implementations have no common storage configuration beyond their
+ * discriminator. Their runtime contract is recall/retain; endpoint, credentials,
+ * indexing and consolidation remain entirely implementation-owned.
+ */
+const memoryConfigSchema = z.object({ type: z.string() });
+type MemoryConfig = z.infer<typeof memoryConfigSchema>;
+type MemoryConfigSchema = z.ZodObject<{ type: z.ZodLiteral<string> }>;
+type MemoryContribution = ConfigurableContribution<MemoryConfigSchema, Memory>;
+function memoryContribution<TSchema extends MemoryConfigSchema>(
+  contribution: ConfigurableContribution<TSchema, Memory>,
+): ConfigurableContribution<TSchema, Memory> {
+  return contribution;
+}
+const memories = createContributionPoint<MemoryContribution>('nox.memories');
+
 const toolSetBaseConfigSchema = z.object({
   enabledTools: z.array(z.string().min(1)).optional(),
 });
@@ -176,6 +193,9 @@ export {
   languagePacks,
   languagePackSchema,
   localeSchema,
+  memories,
+  memoryConfigSchema,
+  memoryContribution,
   providerConfigSchema,
   providerContribution,
   providers,
@@ -195,6 +215,9 @@ export type {
   BrokerHostPolicy,
   LanguagePack,
   LanguagePackInput,
+  MemoryConfig,
+  MemoryConfigSchema,
+  MemoryContribution,
   ProviderConfig,
   ProviderConfigSchema,
   ProviderContribution,

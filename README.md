@@ -191,7 +191,8 @@ section it belongs to. `instances` defaults to `single`, because that is the ord
 is bound to one credential, and a capability like scheduling or configuration access belongs to this Nox
 rather than to a service outside it. `many` is the exception a contribution states out loud, and it is
 right when an instance is the address of an independent remote service a deployment genuinely wants
-several of, with consumers choosing between them. Today that is the OpenAI-compatible provider adapter.
+several of, with consumers choosing between them. Today that is the OpenAI-compatible provider
+adapter; Nox's local memory is deliberately a singleton.
 
 A `single` contribution owns its own name: its entry must be called exactly what the contribution is
 called, which is also its config `type`. One rule does two jobs — it reserves the name, so `web` is the
@@ -232,16 +233,62 @@ host `SecretStore`, but cannot read them back. Configuration contains only a glo
 The store generates `.secret-key` in `DATA_DIR` with owner-only permissions. Back up that key together
 with the database: losing it makes the encrypted values intentionally unrecoverable. Values are handed
 to configured contributions as redacted snapshot handles. Rotating a secret reconciles replacement
-provider, tool-set, agent and broker generations; work already in flight finishes against its immutable
-snapshot. Environment variables and mounted secret directories are not alternate sources.
+provider, memory, tool-set, agent and broker generations; work already in flight finishes against its
+immutable snapshot. Environment variables and mounted secret directories are not alternate sources.
 
-Configuration files are durable desired state. Providers, tool sets, blueprints, brokers, log level,
-time zone and interface locale reconcile without a process restart; a failed candidate remains saved and
+Configuration files are durable desired state. Providers, memories, tool sets, blueprints, brokers, log
+level, time zone and interface locale reconcile without a process restart; a failed candidate remains saved and
 visible while its last valid generation keeps serving. Settings offers retry, revert and an explicit
 **Reload mounted config** action. Set `CONFIG_WATCH=true` to add debounced filesystem reloads
 (`CONFIG_WATCH_DEBOUNCE_MS`, default 250 ms). The explicit action remains available even with the
 watcher enabled. HTTP listen address, SQLite structure/path, artifact storage construction and similar
 process infrastructure report `restartRequired` instead of pretending they changed live.
+
+### Long-term memory
+
+Memory is a public contribution point rather than a vector-store contract. An adapter implements two
+operations: recall bounded context before a model request, and retain the original user/assistant delta
+after a run. Extraction, embeddings, consolidation, deduplication and storage policy remain the
+adapter's responsibility. A blueprint can select **one** configured memory instance; Nox never merges
+results from multiple backends.
+
+The builtin implementation is Nox's own small local engine. It writes turn documents through the
+extension storage backed by Nox's SQLite `extension_state` table, ranks candidates locally with a
+lexical BM25 pass, and has no network service, embedding model, or external credential. Because it is a
+singleton, its entry is named `local`:
+
+```json
+{
+  "local": {
+    "type": "local",
+    "maxEntriesPerScope": 2000,
+    "maxRecallItems": 12
+  }
+}
+```
+
+Select it in `blueprints/<agent-id>.json` and reserve the maximum recalled payload in model tokens:
+
+```json
+{
+  "memory": { "id": "local", "maxTokens": 2048 }
+}
+```
+
+Every SQL collection key contains both the **agent ID** and the initiating principal. Sessions of one
+agent and principal form a long-term corpus, while another agent or another participant addresses a
+different collection. Speech from another participant in a shared conversation is excluded rather than
+silently attributed to the run owner. Oldest turns are pruned independently per scope according to
+`maxEntriesPerScope`.
+
+Hindsight, Mem0, OpenViking, or another remote engine can later implement the same public `Memory`
+contract as an installed extension; none of them is linked into the builtin implementation.
+
+Recalled text is ephemeral: it is inserted only into the provider request, never the transcript, and is
+wrapped in Nox's randomized untrusted-data boundary. The configured token budget is enforced again by
+Nox even if a backend returns too much. Recall and retain failures degrade to an ordinary memoryless
+turn; they do not fail the conversation or broaden its scope. Retention is detached from response
+latency and is drained when the session stops.
 
 Tool sets are configured in `toolsets.json` and granted from a blueprint as
 either direct or routed. A single-instance contribution owns its entry ID; the
@@ -359,8 +406,8 @@ administration boundary, including reference policy and generation reconciliatio
 {
   "config": {
     "type": "config",
-    "readSections": ["app", "blueprints", "brokers", "providers", "toolSets"],
-    "writeSections": ["blueprints", "providers", "toolSets"],
+    "readSections": ["app", "blueprints", "brokers", "memories", "providers", "toolSets"],
+    "writeSections": ["blueprints", "memories", "providers", "toolSets"],
     "manageRuntime": true,
     "readSecretMetadata": true
   }
@@ -790,14 +837,15 @@ What the runtime guarantees:
 Builtins are contributions too, and they are whole ones: each lives in its own
 directory under `src/extensions/builtin/<contribution-point>/`, holding both the
 capability and the extension that registers it. Providers and tool sets therefore
-live under `builtin/providers/` and `builtin/toolsets/`, respectively. Nothing else
+live under `builtin/providers/` and `builtin/toolsets/`, and memories under `builtin/memories/`.
+Nothing else
 in the tree may import one —
 `src/boundaries.test.ts` fails the build if it does — so a builtin can be
 published as its own package later by moving the directory.
 
 `NoxApplication` is deliberately *not* a dynamic plugin host: it performs no
 package dependency resolution or extension hot unload. Runtime configuration is
-a separate generation reconciler: provider, tool-set, agent and broker failures
+a separate generation reconciler: provider, memory, tool-set, agent and broker failures
 are isolated, last valid generations remain active, and the authenticated
 Settings/control plane stays available for retry, revert and explicit mounted-file
 reload. External extension package loading still waits in `idk_yet/plugin/host.ts`.
@@ -813,14 +861,15 @@ reload. External extension package loading still waits in `idk_yet/plugin/host.t
 | Config (zod-validated sections), SQLite via Drizzle, logger | Ported and tested |
 | Provider layer | `BaseProvider`, `ChatProvider`, `ProviderStream` and retries |
 | OpenAI Chat Completions, as a self-contained builtin provider extension | Ported and tested |
+| Provider-neutral long-term memory contribution and isolated SQLite-backed local engine | Built and tested |
 | Configurable tool-set contributions and blueprint grants | Ported and tested |
 | SearXNG search and Crawl4AI extraction builtin tool set | Ported and tested |
 | Message gateway, and the `web` broker over the HTTP surface | Built and tested |
 | Artifact pipeline — bidirectional streamed ingestion/output, SHA-256 blob deduplication, conversation-scoped references, deterministic rendition cache, Sharp image processing and authenticated delivery | Built and tested |
 
 Deferred, each with the trigger that un-defers it, in
-[NOX.md](NOX.md#v1-scope): extension machinery, memory, web UI, message brokers,
-blueprints, gates, embedding retrieval, apps, multi-provider.
+[NOX.md](NOX.md#v1-scope): extension package loading, richer memory administration, apps and
+additional provider/back-end integrations.
 
 ## Repository layout
 

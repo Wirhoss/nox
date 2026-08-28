@@ -137,6 +137,17 @@ describe('context token policy', () => {
     expect(options.compactMinTokens).toBe(40);
   });
 
+  test('holds recalled memory outside the durable working-set budget', () => {
+    const options = resolveContextOptions({
+      compactAtRatio: 0.5,
+      contextWindow: 1000,
+      memoryReserveTokens: 100,
+      reserveForOutput: 200,
+    });
+
+    expect(options.pressureTokenLimit).toBe(350);
+  });
+
   test('explicit token policy values are preserved exactly, including zero guards', () => {
     const options = resolveContextOptions({
       compactGuardBeginningTokens: 0,

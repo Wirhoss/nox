@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { commands, providers, toolSets } from '@nox/extension-api';
+import { commands, memories, providers, toolSets } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { AuthStore } from './api/auth/store';
@@ -64,6 +64,7 @@ interface BootOptions {
   brokers?: unknown;
   configWatch?: boolean;
   dataDir?: string;
+  memories?: unknown;
   providers?: unknown;
   secrets?: Readonly<Record<string, string>>;
   toolSets?: unknown;
@@ -75,6 +76,7 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
   // Port 0 unless a test says otherwise: every boot listens, and no two boots
   // — or a Nox already running on this machine — fight over the same socket.
   writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
+  writeFileSync(join(configDir, 'memories.json'), JSON.stringify(options.memories ?? {}));
   writeFileSync(join(configDir, 'providers.json'), JSON.stringify(options.providers ?? PROVIDERS));
   writeFileSync(join(configDir, 'brokers.json'), JSON.stringify(options.brokers ?? {}));
   writeFileSync(join(configDir, 'toolsets.json'), JSON.stringify(options.toolSets ?? {}));
@@ -141,6 +143,23 @@ describe('bootstrap', () => {
       outputModalities: ['text'],
     });
     expect(application.getAgent('nox')?.systemPrompt).toBe('be exact');
+  });
+
+  test('composes the selected local SQL memory as a builtin contribution', async () => {
+    const application = await boot({
+      blueprints: { nox: { ...NOX, memory: { id: 'local', maxTokens: 512 } } },
+      memories: { local: { type: 'local' } },
+    });
+
+    expect(application.contributions.get(memories, 'local')?.extensionId).toBe('nox.memory.local');
+    expect(application.services.get(configService).get('memories')).toHaveProperty('local');
+    expect(
+      application.services
+        .get(configAdminService)
+        .runtimeStatuses()
+        .find(({ id, kind }) => id === 'local' && kind === 'memory'),
+    ).toMatchObject({ id: 'local', kind: 'memory', state: 'active' });
+    expect(application.getAgent('nox')).toBeDefined();
   });
 
   test('registers Sharp as the first concrete artifact processor', async () => {
@@ -231,6 +250,7 @@ describe('bootstrap', () => {
       'app',
       'blueprints',
       'brokers',
+      'memories',
       'providers',
       'toolSets',
     ]);

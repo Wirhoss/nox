@@ -67,6 +67,59 @@ describe('ArtifactOutputSink', () => {
     ).toBeUndefined();
   });
 
+  test('adopting mints a copy this scope owns, over the same bytes, naming its source', async () => {
+    const origin = artifactConversationScope('discord', 'channel-old');
+    const here = artifactConversationScope('discord', 'channel-new');
+    const published = await new ArtifactOutputSink(pipeline, origin)
+      .publisher({ type: 'tool' })
+      .publish({ data: new Blob(['the photo bytes']), declaredMediaType: 'text/plain' });
+
+    const adopted = await new ArtifactOutputSink(pipeline, here).adopt(
+      published.artifact.artifactId,
+    );
+    if (adopted === undefined) throw new Error('Adoption produced nothing.');
+
+    const copy = await pipeline.find(adopted.artifact.artifactId, here);
+    const source = await pipeline.find(published.artifact.artifactId, origin);
+    if (copy === undefined || source === undefined) throw new Error('An artifact went missing.');
+
+    // A new identity owned here, the same content, and a provenance that says
+    // where it came from - which is what a later tool rewriting it inherits.
+    expect(copy.artifactId).not.toBe(source.artifactId);
+    expect(copy.scope).toEqual(here);
+    expect(copy.blobHash).toBe(source.blobHash);
+    expect(copy.provenance).toEqual({
+      details: {
+        sourceArtifactId: source.artifactId,
+        sourceScopeId: origin.id,
+        sourceScopeType: 'conversation',
+      },
+      type: 'derived',
+    });
+    // The original is untouched and still belongs to the conversation that
+    // produced it: adoption copies, it never re-scopes in place.
+    expect(source.scope).toEqual(origin);
+  });
+
+  test('adopting what this scope already owns hands back the artifact, not a duplicate', async () => {
+    const scope = artifactConversationScope('discord', 'channel-1');
+    const sink = new ArtifactOutputSink(pipeline, scope);
+    const published = await sink
+      .publisher({ type: 'tool' })
+      .publish({ data: new Blob(['already mine']), declaredMediaType: 'text/plain' });
+
+    const adopted = await sink.adopt(published.artifact.artifactId);
+
+    // Attaching twice must not grow a chain of copies of the same thing.
+    expect(adopted).toEqual(published);
+  });
+
+  test('adopting an artifact that does not exist produces nothing', async () => {
+    const sink = new ArtifactOutputSink(pipeline, artifactConversationScope('discord', 'c'));
+
+    expect(await sink.adopt('art_missing00001')).toBeUndefined();
+  });
+
   test('reads textual artifacts in bounded Unicode pages through a representation profile', async () => {
     const scope = artifactConversationScope('web', 'conversation-text');
     const sink = new ArtifactOutputSink(pipeline, scope);

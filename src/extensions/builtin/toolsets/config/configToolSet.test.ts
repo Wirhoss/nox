@@ -14,12 +14,13 @@ import type {
   ToolExecution,
 } from '@nox/extension-api';
 
-const SECTION_KEYS = ['app', 'blueprints', 'brokers', 'providers', 'toolSets'] as const;
+const SECTION_KEYS = ['app', 'blueprints', 'brokers', 'memories', 'providers', 'toolSets'] as const;
 
 class RecordingAdmin implements ConfigurationAdmin {
   public readonly entries: Record<ConfigEntryKey, Record<string, unknown>> = {
     blueprints: { nox: { model: 'main', provider: 'main', systemPrompt: 'Be exact.' } },
     brokers: {},
+    memories: {},
     providers: { main: { baseUrl: 'https://models.example/v1', type: 'openai_completions' } },
     toolSets: {},
   };

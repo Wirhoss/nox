@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { parseOrThrow } from '../../utils/validate';
 
 import type { Logger } from '../../logger/logger';
+import type { HistoryArchive } from './search';
 import type { Message, ModelConfig, Tool } from '@nox/extension-api';
 
 const DEFAULT_COMPACT_AT_RATIO = 0.8;
@@ -57,9 +58,19 @@ interface ContextOptions extends ContextPolicy {
   /** Model used for the internal compaction request; structural, not context policy. */
   compactionModel?: ModelConfig;
   fullHistory?: readonly Message[];
+  /**
+   * Stored transcripts behind the history search tools. Absent — a context
+   * composed without persistence — those tools are not offered at all, rather
+   * than offered over an index that does not exist.
+   */
+  historyArchive?: HistoryArchive;
   logger?: Logger;
+  /** Space held outside the transcript for ephemeral long-term memory context. */
+  memoryReserveTokens?: number;
   /** Handed to the transcript: one call per live append, whoever wrote it. */
   onAppend?: (message: Message) => void;
+  /** The session these tools are for, so a search can be scoped to it. */
+  sessionId?: string;
   /** The zone the history is timestamped in when a model is shown it. */
   timeZone?: string;
   tokenCounter?: (text: string) => number;
@@ -83,15 +94,20 @@ interface ResolvedContextOptions {
   compactMinTokens: number;
   foldMinReductionRatio: number;
   fullHistory: readonly Message[];
+  historyArchive?: HistoryArchive;
   logger?: Logger;
   onAppend?: (message: Message) => void;
   pressureTokenLimit?: number;
+  sessionId?: string;
   timeZone?: string;
   tokenCounter?: (text: string) => number;
   tools: Readonly<Record<string, Tool>>;
 }
 
-function resolvePressureTokenLimit(policy: ContextPolicy): number | undefined {
+function resolvePressureTokenLimit(
+  policy: ContextPolicy,
+  memoryReserveTokens = 0,
+): number | undefined {
   const { contextWindow } = policy;
   if (contextWindow === undefined) return undefined;
 
@@ -100,7 +116,12 @@ function resolvePressureTokenLimit(policy: ContextPolicy): number | undefined {
     Math.min(DEFAULT_MAX_RESERVE_FOR_OUTPUT, Math.floor(contextWindow * DEFAULT_RESERVE_RATIO));
   const compactAtRatio = policy.compactAtRatio ?? DEFAULT_COMPACT_AT_RATIO;
 
-  return Math.max(1, Math.floor((contextWindow - reserveForOutput) * compactAtRatio));
+  return Math.max(
+    1,
+    Math.floor(
+      (contextWindow - reserveForOutput - Math.max(0, memoryReserveTokens)) * compactAtRatio,
+    ),
+  );
 }
 
 function resolveDefaultTokenBudget(
@@ -126,7 +147,7 @@ function resolveTools(tools: Readonly<Record<string, Tool>> = {}): Readonly<Reco
 
 function resolveContextOptions(options: ContextOptions): ResolvedContextOptions {
   const policy = parseOrThrow(contextPolicySchema, options);
-  const pressureTokenLimit = resolvePressureTokenLimit(policy);
+  const pressureTokenLimit = resolvePressureTokenLimit(policy, options.memoryReserveTokens);
 
   return {
     compactionModel: options.compactionModel,
@@ -157,9 +178,11 @@ function resolveContextOptions(options: ContextOptions): ResolvedContextOptions 
     contextWindow: policy.contextWindow,
     foldMinReductionRatio: policy.foldMinReductionRatio ?? DEFAULT_FOLD_MIN_REDUCTION_RATIO,
     fullHistory: options.fullHistory ?? [],
+    historyArchive: options.historyArchive,
     logger: options.logger,
     onAppend: options.onAppend,
     pressureTokenLimit,
+    sessionId: options.sessionId,
     timeZone: options.timeZone,
     tokenCounter: options.tokenCounter,
     tools: resolveTools(options.tools),

@@ -5,7 +5,7 @@ import type { ChatSurfaceHub } from './chat.js';
 import type { MessageContent } from './content.js';
 import type { BrokerHostPolicy } from './contributions.js';
 
-const CONFIG_KEYS = ['app', 'blueprints', 'brokers', 'providers', 'toolSets'] as const;
+const CONFIG_KEYS = ['app', 'blueprints', 'brokers', 'memories', 'providers', 'toolSets'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 type ConfigEntryKey = Exclude<ConfigKey, 'app'>;
 type ConfigApply = 'hot' | 'restart';
@@ -25,7 +25,7 @@ interface ConfigUpdate<T> {
   readonly value: T;
 }
 
-type RuntimeComponentKind = 'agent' | 'application' | 'broker' | 'provider' | 'toolSet';
+type RuntimeComponentKind = 'agent' | 'application' | 'broker' | 'memory' | 'provider' | 'toolSet';
 type RuntimeComponentState = 'active' | 'applying' | 'failed' | 'restartRequired' | 'unavailable';
 
 interface RuntimeComponentStatus {

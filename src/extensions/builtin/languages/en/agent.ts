@@ -42,6 +42,13 @@ const agentMessages = Object.freeze({
   'settings.agent.maxIterationsHint': 'Maximum model/tool loop iterations, or “unlimited”.',
   'settings.agent.maxPendingPermissions': 'Maximum pending permissions',
   'settings.agent.maxTokens': 'Max tokens',
+  'settings.agent.memory': 'Long-term memory',
+  'settings.agent.memoryDisabled': 'No long-term memory',
+  'settings.agent.memoryHint':
+    'Select at most one configured memory. Storage is always isolated by this agent ID.',
+  'settings.agent.memoryMaxTokens': 'Memory token budget',
+  'settings.agent.memoryMaxTokensHint':
+    'Maximum recalled memory injected ephemerally into each model run.',
   'settings.agent.model': 'Model',
   'settings.agent.modelContext': 'MODEL CONTEXT',
   'settings.agent.modelHint': 'Exact model ID exposed by the selected provider.',

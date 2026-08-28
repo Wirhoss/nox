@@ -207,7 +207,19 @@ class DiscordSocket {
     this.#socket = socket;
 
     socket.addEventListener('message', (event: MessageEvent) => {
-      this.#receive(event.data);
+      // A listener is the end of the line: nothing above it can catch what it
+      // throws, so a fault while handling one frame would leave the process
+      // with an uncaught exception instead of leaving Nox with a broker that
+      // failed to start. Failing the pending connect is what turns it back into
+      // an ordinary startup failure the gateway already knows how to report.
+      try {
+        this.#receive(event.data);
+      } catch (error) {
+        this.#logger.error({ err: error }, 'Handling a Discord gateway frame threw.');
+        this.#settle(
+          error instanceof Error ? error : new DiscordSocketError('A gateway frame threw.'),
+        );
+      }
     });
     socket.addEventListener('error', () => {
       // The close event carries the code and always follows; logging here as

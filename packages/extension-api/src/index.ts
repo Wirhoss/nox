@@ -13,6 +13,7 @@ export * from './commands.js';
 export * from './content.js';
 export * from './contributions.js';
 export * from './core.js';
+export type * from './memory.js';
 export * from './providers.js';
 export * from './schemas.js';
 export * from './services.js';

@@ -17,7 +17,7 @@ import { applyFold, foldHistory, type FoldOptions } from './fold';
 import { freezeMessage } from './immutable';
 import { type ContextOptions, type ContextUsage, resolveContextOptions } from './options';
 import { COMPACT_PROMPT } from './prompt';
-import { HistorySearchToolSet } from './search';
+import { HISTORY_TOOL_NAMES, HistorySearchToolSet } from './search';
 import { TokenEstimator } from './tokens';
 import { Transcript } from './transcript';
 
@@ -122,11 +122,12 @@ class Context {
       logger: options.logger,
       onAppend: options.onAppend,
     });
-    this.#historyTools = new HistorySearchToolSet(this.#transcript);
+    this.#historyTools = new HistorySearchToolSet(this.#transcript, {
+      ...(options.historyArchive === undefined ? {} : { archive: options.historyArchive }),
+      ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+    });
 
-    const duplicateToolName = Object.keys(this.#historyTools.tools).find(
-      (name) => options.tools[name] !== undefined,
-    );
+    const duplicateToolName = HISTORY_TOOL_NAMES.find((name) => options.tools[name] !== undefined);
     if (duplicateToolName !== undefined) {
       throw new Error(`Tool ${duplicateToolName} conflicts with a context history tool.`);
     }
@@ -215,6 +216,11 @@ class Context {
         foldHistory(this.#activeHistory, this.#foldOptions(fromMessageId, toMessageId)),
       ),
     );
+  }
+
+  /** Estimates ephemeral messages without appending them to working history or transcript. */
+  public estimateMessages(messages: readonly Message[]): number {
+    return this.#estimateMessages(messages);
   }
 
   public getFullHistory(): readonly Message[] {

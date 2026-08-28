@@ -24,9 +24,11 @@ import type { AuthorityCatalog } from '../auth/authority';
 import type { Database } from '../database/database';
 import type { Logger } from '../logger/logger';
 import type { ContextOptions, ContextUsage } from './context/options';
+import type { HistoryArchive } from './context/search';
 import type { AgentEvent } from './events';
 import type {
   ChatProvider,
+  Memory,
   Message,
   MessageContent,
   MessageOrigin,
@@ -54,6 +56,9 @@ interface SessionOptions extends RunnerOptions {
   gate?: GatePolicyInput;
   gateEvaluators?: readonly GateEvaluator[];
   logger?: Logger;
+  /** The single long-term memory selected by the owning agent. */
+  memory?: Memory;
+  memoryMaxTokens?: number;
   metadata?: Readonly<Record<string, unknown>>;
   /** Omit to start a new session; pass one to resume it. */
   sessionId?: string;
@@ -102,6 +107,36 @@ function toUserMessage(
     messageId: nanoid(),
     origin,
     role: 'user',
+  };
+}
+
+/**
+ * The store, narrowed to what the history tools are allowed to do with it and
+ * fixed to one agent.
+ *
+ * The narrowing is the point. `SessionStore` can read any session of any agent;
+ * what reaches the context is two calls that can only ever answer about this
+ * agent, so the tools need no agent parameter and the model is never in a
+ * position to supply one.
+ */
+function createHistoryArchive(store: SessionStore, agentId: string): HistoryArchive {
+  return {
+    listSessions: async (limit, offset) => {
+      const list = await store.listSessions(agentId, limit, offset);
+      return { entries: list.entries, total: list.total };
+    },
+    search: async (query, limit, sessionId) => {
+      const hits = await store.searchHistory(agentId, {
+        limit,
+        query,
+        ...(sessionId === undefined ? {} : { sessionId }),
+      });
+      return hits.map((hit) => ({
+        sessionId: hit.sessionId,
+        text: hit.text,
+        ...(hit.title === undefined ? {} : { title: hit.title }),
+      }));
+    },
   };
 }
 
@@ -163,10 +198,15 @@ class Session {
     this.#context = new Context(options.systemPrompt, options.compactionProvider ?? provider, {
       ...options.context,
       fullHistory: history,
+      // The archive is bound to this agent here and nowhere else. The tools it
+      // backs take no agent ID of their own, so an agent cannot ask for another
+      // one's transcripts even by naming a session it does not own.
+      historyArchive: createHistoryArchive(store, options.agentId),
       logger: options.logger,
       onAppend: (message) => {
         this.#persist(message);
       },
+      sessionId,
     });
 
     // Authorization and the Gate write the same timeline through one sink, so
@@ -209,12 +249,19 @@ class Session {
       ...(artifactOutputs === undefined
         ? {}
         : { artifactOutputs, artifactReader: artifactOutputs }),
+      // Bound to this agent here, like the history archive: the Runner asks a
+      // yes/no question and never gets to say whose sessions it is about.
+      artifactHistory: (artifactId) => store.hasArtifactReference(options.agentId, artifactId),
       audit,
       authorities: options.authorities,
       authorization: options.authorization,
       gate: this.#gate,
       logger: options.logger,
       maxIterations: options.maxIterations,
+      ...(options.memory === undefined ? {} : { memory: options.memory }),
+      ...(options.memoryMaxTokens === undefined
+        ? {}
+        : { memoryMaxTokens: options.memoryMaxTokens }),
       metadata: options.metadata,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
       participants: this.#participants,

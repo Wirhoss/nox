@@ -86,6 +86,26 @@ const settingsMessages = Object.freeze({
   'settings.navigation.controlSurface': 'Superficie de control de la máquina',
   'settings.navigation.newEntry': 'Nuevo {entry}',
   'settings.navigation.sections': 'Secciones de ajustes',
+  'settings.memory.changeRefused': 'Cambio de memoria rechazado',
+  'settings.memory.confirmDiscard': '¿Descartar los cambios de la memoria sin guardar?',
+  'settings.memory.header': 'MEMORIA A LARGO PLAZO',
+  'settings.memory.id': 'ID de la memoria',
+  'settings.memory.idHint': 'ID estable que puede seleccionar un plano de agente.',
+  'settings.memory.providerJson': 'JSON de la memoria',
+  'settings.memory.providerJsonHelp':
+    'Acceso completo a este adaptador de memoria contribuido. Las credenciales no deben escribirse en línea; usa una referencia a un secreto administrado.',
+  'settings.memory.remove': 'Eliminar memoria',
+  'settings.memory.removeQuestion': '¿Eliminar la memoria?',
+  'settings.memory.removeWarning':
+    'Nox rechazará esta operación mientras un plano de agente siga nombrando esta memoria.',
+  'settings.memory.save': 'Guardar memoria',
+  'settings.memory.saved': 'Configuración de memoria guardada',
+  'settings.memory.titleFallback': 'Memoria',
+  'settings.memory.titleNew': 'Nueva memoria',
+  'settings.memory.validation.configurationObject':
+    'La configuración de memoria debe ser un objeto JSON.',
+  'settings.memory.validation.curatedFormUnavailable':
+    'Este tipo de memoria contribuido no tiene formulario guiado. Continúa en modo JSON.',
   'settings.provider.changeRefused': 'Cambio de proveedor rechazado',
   'settings.provider.confirmDiscard': '¿Descartar los cambios del proveedor sin guardar?',
   'settings.provider.header': 'PROVEEDOR DE MODELOS',
@@ -117,6 +137,10 @@ const settingsMessages = Object.freeze({
     'Valores predeterminados de entorno, acceso, almacenamiento y registro.',
   'settings.sections.general.label': 'General',
   'settings.sections.general.plural': 'General',
+  'settings.sections.memories.description':
+    'Backends de memoria a largo plazo que los agentes pueden seleccionar de uno en uno.',
+  'settings.sections.memories.label': 'Memoria',
+  'settings.sections.memories.plural': 'Memorias',
   'settings.sections.providers.description':
     'Endpoints de modelos y modelos disponibles mediante ellos.',
   'settings.sections.providers.label': 'Proveedor',

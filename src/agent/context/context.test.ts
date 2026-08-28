@@ -162,16 +162,18 @@ describe('Context cache stability', () => {
     const second = context.getTools();
     expect(second).toBe(first);
     expect(Object.isFrozen(first)).toBeTrue();
-    expect(Object.keys(first)).toEqual(['alpha', 'read_tool_result', 'search_history', 'zebra']);
+    // No archive is wired into a bare context, so the searches are absent and
+    // only the transcript-backed reader is offered.
+    expect(Object.keys(first)).toEqual(['alpha', 'read_tool_result', 'zebra']);
     for (const name of Object.keys(first)) expect(second[name]).toBe(first[name]);
   });
 
-  test('user tools cannot silently replace a history tool', () => {
+  test('user tools cannot silently replace a history tool, offered or not', () => {
     const parameters = z.object({});
     const conflicting: Tool<typeof parameters> = {
       authority: TEST_AUTHORITY,
       description: 'conflict',
-      name: 'search_history',
+      name: 'search_sessions',
       parameters,
       prepare: () => ({
         run: () => Promise.resolve([]),
@@ -183,7 +185,7 @@ describe('Context cache stability', () => {
     expect(
       () =>
         new Context('system', new SummaryProvider([]), {
-          tools: { search_history: conflicting },
+          tools: { search_sessions: conflicting },
         }),
     ).toThrow('conflicts with a context history tool');
   });

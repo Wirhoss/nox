@@ -31,6 +31,12 @@ const taskModelsConfigSchema = z.object({
 
 const maxIterationsSchema = z.union([z.number().int().positive(), z.literal('unlimited')]);
 
+/** Exactly one configured memory instance may be attached to an agent. */
+const memoryConfigSchema = z.object({
+  id: z.string().min(1),
+  maxTokens: z.number().int().positive().max(16_384).default(2048),
+});
+
 /**
  * A granted tool set, and how much of it this agent gets. The bare string is
  * the whole set; the object form is an allowlist over it.
@@ -82,6 +88,8 @@ const blueprintSchema = z.object({
   gate: gatePolicySchema.optional(),
   generation: samplingParametersConfigSchema.prefault({}),
   maxIterations: maxIterationsSchema.default(90),
+  /** Omit for a stateless agent; one object selects one memory implementation. */
+  memory: memoryConfigSchema.optional(),
   model: z.string().min(1),
   provider: z.string().min(1),
   systemPrompt: z.string().min(1),
@@ -92,10 +100,12 @@ const blueprintSchema = z.object({
 
 type Blueprint = z.infer<typeof blueprintSchema>;
 
+type MemoryConfig = z.infer<typeof memoryConfigSchema>;
+
 type TaskModelConfig = z.infer<typeof taskModelConfigSchema>;
 
 type ToolSetGrantConfig = z.infer<typeof toolSetGrantConfigSchema>;
 
-export { blueprintSchema, taskModelConfigSchema, toolSetGrantConfigSchema };
+export { blueprintSchema, memoryConfigSchema, taskModelConfigSchema, toolSetGrantConfigSchema };
 
-export type { Blueprint, TaskModelConfig, ToolSetGrantConfig };
+export type { Blueprint, MemoryConfig, TaskModelConfig, ToolSetGrantConfig };

@@ -101,6 +101,7 @@ const editorProps = computed<Record<string, unknown>>(() => {
   if (currentDefinition.editor === 'blueprint') {
     return {
       ...common,
+      memorySection: settings.references.memories,
       providerSection: settings.references.providers,
       toolSetSection: settings.references.toolSets,
     }

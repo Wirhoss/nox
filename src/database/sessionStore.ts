@@ -1,10 +1,14 @@
-import { and, asc, count, countDistinct, desc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, asc, count, countDistinct, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 
+import { artifactIdsIn } from '../agent/context/message';
 import { type Logger, silentLogger } from '../logger/logger';
+import { type HistoryHit, type HistorySearchQuery, indexMessage, search } from './historyIndex';
 import {
+  backfills,
   type DecisionRow,
   type DecisionRowInsert,
   decisions,
+  messageArtifacts,
   type MessageRow,
   type MessageRowInsert,
   messages,
@@ -309,6 +313,75 @@ function toMessage(row: MessageRow): Message {
   }
 }
 
+/** One rebuild, named so the database can record that it already happened. */
+const HISTORY_INDEX_BACKFILL = 'history_fts';
+const ARTIFACT_REFERENCE_BACKFILL = 'message_artifacts';
+
+/**
+ * Builds what earlier transcripts never got the chance to write.
+ *
+ * Both indexes are derived from `messages` by functions that live in this
+ * codebase, not in SQL, so a migration could not have filled them and the
+ * migration journal does not record them. They are rebuilt once, from scratch,
+ * and the fact is recorded — a rebuild that decided by looking at the index
+ * would either loop forever on a database that legitimately has no artifacts,
+ * or skip a database that was filled by an earlier release.
+ *
+ * The chunk rebuild clears before it writes, so running against a partly built
+ * index produces one copy of everything rather than two.
+ */
+async function backfillDerivedIndexes(
+  database: Database,
+  logger: Logger = silentLogger,
+): Promise<void> {
+  await database.exclusive((db) => {
+    const done = new Set(
+      db
+        .select({ name: backfills.name })
+        .from(backfills)
+        .all()
+        .map((row) => row.name),
+    );
+    const needsChunks = !done.has(HISTORY_INDEX_BACKFILL);
+    const needsArtifacts = !done.has(ARTIFACT_REFERENCE_BACKFILL);
+    if (!needsChunks && !needsArtifacts) return;
+
+    const rows = db.select().from(messages).orderBy(asc(messages.seq)).all();
+    const completedAt = Date.now();
+    let artifacts = 0;
+
+    db.transaction((tx) => {
+      if (needsChunks) tx.run(sql`DELETE FROM history_fts`);
+
+      for (const row of rows) {
+        const message = toMessage(row);
+        if (needsChunks) indexMessage(tx, row.sessionId, message, row.seq);
+        if (!needsArtifacts) continue;
+
+        for (const artifactId of artifactIdsIn(message)) {
+          tx.insert(messageArtifacts)
+            .values({ artifactId, messageId: row.messageId, sessionId: row.sessionId })
+            .onConflictDoNothing()
+            .run();
+          artifacts++;
+        }
+      }
+
+      if (needsChunks) {
+        tx.insert(backfills).values({ completedAt, name: HISTORY_INDEX_BACKFILL }).run();
+      }
+      if (needsArtifacts) {
+        tx.insert(backfills).values({ completedAt, name: ARTIFACT_REFERENCE_BACKFILL }).run();
+      }
+    });
+
+    logger.info(
+      { artifacts, chunks: needsChunks, messages: rows.length },
+      'Backfilled the derived transcript indexes.',
+    );
+  });
+}
+
 /**
  * Storage for sessions and their transcripts.
  *
@@ -346,6 +419,19 @@ class SessionStore {
     this.#enqueue(sessionId, (database) => {
       database.transaction((tx) => {
         tx.insert(messages).values(row).run();
+        // Same transaction as the row it indexes. A message that reached
+        // storage without reaching the index is one `search_history` can never
+        // find, and nothing downstream would ever report the gap.
+        indexMessage(tx, sessionId, message, seq);
+        // Written beside the row, for the same reason: a permission check that
+        // has to reopen and rescan a transcript to answer would get slower with
+        // every message it is protecting.
+        for (const artifactId of artifactIdsIn(message)) {
+          tx.insert(messageArtifacts)
+            .values({ artifactId, messageId: message.messageId, sessionId })
+            .onConflictDoNothing()
+            .run();
+        }
         tx.update(sessions)
           .set({ updatedAt: Date.now() })
           .where(eq(sessions.sessionId, sessionId))
@@ -482,6 +568,43 @@ class SessionStore {
           updatedAt: new Date(row.updatedAt),
         }));
       return { entries, limit, offset, total };
+    });
+  }
+
+  /**
+   * Keyword-searches stored transcripts, scoped to one agent.
+   *
+   * Draining the write queue first is what makes a search able to find what was
+   * said a moment ago: `append` returns as soon as a message is sequenced, so
+   * without this the newest turns would be sequenced but not yet written, and
+   * the agent would be told its own last sentence never happened.
+   */
+  public async searchHistory(agentId: string, request: HistorySearchQuery): Promise<HistoryHit[]> {
+    await this.#writes;
+    return this.#database.exclusive((database) => search(database, agentId, request));
+  }
+
+  /**
+   * Whether any transcript this agent holds was ever handed this artifact.
+   *
+   * The permission question behind `read_artifact` once the agent can see its
+   * own earlier sessions: the same rule the current transcript already applied,
+   * asked of every session the agent owns rather than only the open one. It
+   * answers about *receipt*, never about the artifact's own ownership — a
+   * conversation that was never given the artifact gets nothing here, whichever
+   * agent asks.
+   */
+  public async hasArtifactReference(agentId: string, artifactId: string): Promise<boolean> {
+    await this.#writes;
+    return this.#database.exclusive((database) => {
+      const row = database
+        .select({ artifactId: messageArtifacts.artifactId })
+        .from(messageArtifacts)
+        .innerJoin(sessions, eq(sessions.sessionId, messageArtifacts.sessionId))
+        .where(and(eq(messageArtifacts.artifactId, artifactId), eq(sessions.agentId, agentId)))
+        .limit(1)
+        .get();
+      return row !== undefined;
     });
   }
 
@@ -678,7 +801,7 @@ class SessionStore {
   }
 }
 
-export { SessionStore };
+export { backfillDerivedIndexes, SessionStore };
 
 export type {
   AuditAction,
