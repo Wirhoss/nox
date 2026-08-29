@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type ChatModelConfig,
   ChatProvider,
   type Message,
   type MessageContent,
   type MessageOrigin,
-  type ModelConfig,
   type ProviderSourceEvent,
   type TextGenerateOptions,
   type Tool,
@@ -34,7 +34,8 @@ import { Agent } from './agent';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
 import type { Session } from './session';
 
-const MODEL: ModelConfig = {
+const MODEL: ChatModelConfig = {
+  kind: 'chat',
   inputModalities: ['text'],
   modelId: 'test-model',
   outputModalities: ['text'],

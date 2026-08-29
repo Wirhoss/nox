@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type ChatModelConfig,
   ChatProvider,
   type Message,
-  type ModelConfig,
   type ProviderSourceEvent,
   type TextGenerateOptions,
   type Tool,
@@ -19,7 +19,8 @@ import { messages } from '../database/schema';
 import { permissiveAuthorization, testCatalog, testOrigin } from '../testFixtures';
 import { Agent } from './agent';
 
-const MODEL: ModelConfig = {
+const MODEL: ChatModelConfig = {
+  kind: 'chat',
   inputModalities: ['text'],
   modelId: 'artifact-model',
   outputModalities: ['text', 'document'],

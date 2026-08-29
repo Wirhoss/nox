@@ -4,7 +4,7 @@ import { parseOrThrow } from '../../utils/validate';
 
 import type { Logger } from '../../logger/logger';
 import type { HistoryArchive } from './search';
-import type { Message, ModelConfig, Tool } from '@nox/extension-api';
+import type { ChatModelConfig, Message, Tool } from '@nox/extension-api';
 
 const DEFAULT_COMPACT_AT_RATIO = 0.8;
 const DEFAULT_COMPACT_GUARD_BEGINNING_RATIO = 0.1;
@@ -56,7 +56,7 @@ type ContextPolicy = z.infer<typeof contextPolicySchema>;
 
 interface ContextOptions extends ContextPolicy {
   /** Model used for the internal compaction request; structural, not context policy. */
-  compactionModel?: ModelConfig;
+  compactionModel?: ChatModelConfig;
   fullHistory?: readonly Message[];
   /**
    * Stored transcripts behind the history search tools. Absent — a context
@@ -87,7 +87,7 @@ interface ContextUsage {
 }
 
 interface ResolvedContextOptions {
-  compactionModel?: ModelConfig;
+  compactionModel?: ChatModelConfig;
   contextWindow?: number;
   compactGuardBeginningTokens: number;
   compactGuardEndTokens: number;

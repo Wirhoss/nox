@@ -38,5 +38,5 @@
     "scripts/**/*.ts",
     "src/**/*.ts"
   ],
-  "exclude": ["ULTRA_OLD_DO_NOT_CHECK", "node_modules", "src/ui"]
+  "exclude": ["node_modules", "src/ui"]
 }

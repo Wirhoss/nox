@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type ChatModelConfig,
   ChatProvider,
   type Message,
   type MessageContent,
-  type ModelConfig,
   type ProviderSourceEvent,
   type TextGenerateOptions,
   type Tool,
@@ -32,7 +32,8 @@ import { Agent } from './agent';
 import type { PermissionRequest } from '../tool/gate';
 import type { Session } from './session';
 
-const MODEL: ModelConfig = {
+const MODEL: ChatModelConfig = {
+  kind: 'chat',
   inputModalities: ['text'],
   modelId: 'test-model',
   outputModalities: ['text'],
@@ -653,6 +654,7 @@ describe('Agent', () => {
       agentId: 'test',
       authorities: testCatalog(),
       compactionModel: {
+        kind: 'chat',
         inputModalities: ['text'],
         modelId: 'compact-model',
         outputModalities: ['text'],

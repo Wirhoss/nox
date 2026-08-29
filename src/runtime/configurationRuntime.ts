@@ -1,15 +1,14 @@
 import {
+  type BaseProvider,
+  type ChatModelConfig,
   type ChatProvider,
   type ContributionReader,
   type Disposable,
-  type EmbeddingProvider,
-  type EmbeddingProviderConfig,
-  embeddings,
+  isChatCapable,
   isDisposable,
   memories,
   type Memory,
   type MemoryConfig,
-  type ModelConfig,
   type ProviderConfig,
   providers,
   type RuntimeComponentKind,
@@ -50,27 +49,22 @@ interface ConfigurationRuntimeOptions {
   readonly toolSets: ToolSetCatalog;
 }
 
-interface ActiveEmbedding {
-  readonly embedding: EmbeddingProvider;
-  readonly signature: string;
-}
-
 interface ActiveMemory {
   readonly memory: Memory;
   readonly signature: string;
 }
 
 interface ActiveProvider {
-  readonly provider: ChatProvider;
+  readonly provider: BaseProvider;
   readonly signature: string;
 }
 
 interface TaskModel {
-  readonly model: ModelConfig;
+  readonly model: ChatModelConfig;
   readonly provider: ChatProvider;
 }
 
-type InstanceKind = 'embedding' | 'memory' | 'provider' | 'toolSet';
+type InstanceKind = 'memory' | 'provider' | 'toolSet';
 
 /** One instance the configuration has replaced or dropped, waiting to be released. */
 interface SupersededInstance {
@@ -80,10 +74,6 @@ interface SupersededInstance {
 }
 
 function blueprintUses(blueprint: Blueprint, kind: InstanceKind, id: string): boolean {
-  // Nothing in a blueprint names an embedding provider yet. Whatever starts to
-  // — a memory that vectorizes what it stores is the obvious first — has to be
-  // answered here too, or its instance will be released while still in use.
-  if (kind === 'embedding') return false;
   if (kind === 'memory') return blueprint.memory?.id === id;
   if (kind === 'toolSet') {
     return [...blueprint.toolSets.direct, ...blueprint.toolSets.routed].some(
@@ -147,7 +137,6 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
   readonly #contributions: ContributionReader;
   readonly #createBroker?: (brokerId: string) => Promise<BrokerGrant>;
   readonly #database: Database;
-  readonly #embeddings = new Map<string, ActiveEmbedding>();
   readonly #logger: Logger;
   readonly #memories = new Map<string, ActiveMemory>();
   readonly #mutex = new Mutex();
@@ -198,7 +187,6 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       const generation = ++this.#generation;
       this.#logger.setLevel?.(this.#config.get('app').logLevel);
       await this.#attempt('providers', () => this.#reconcileProviders(generation));
-      await this.#attempt('embedding providers', () => this.#reconcileEmbeddings(generation));
       await this.#attempt('memories', () => this.#reconcileMemories(generation));
       await this.#attempt('tool sets', () => this.#reconcileToolSets(generation));
       await this.#attempt('agents', () => this.#reconcileAgents(generation));
@@ -224,10 +212,6 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       this.#supersede('memory', memoryId, active.memory);
     }
     this.#memories.clear();
-    for (const [embeddingId, active] of this.#embeddings) {
-      this.#supersede('embedding', embeddingId, active.embedding);
-    }
-    this.#embeddings.clear();
     this.#toolSets.retire();
     for (const { id, instance } of this.#toolSets.takeSuperseded()) {
       this.#superseded.push({ id, instance, kind: 'toolSet' });
@@ -379,7 +363,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     this.#dropAbsent('provider', visible);
   }
 
-  async #createProvider(providerId: string, entry: ProviderConfig): Promise<ChatProvider> {
+  async #createProvider(providerId: string, entry: ProviderConfig): Promise<BaseProvider> {
     const contribution = this.#contributions.get(providers, entry.type);
     if (contribution === undefined) {
       throw new Error(
@@ -390,69 +374,6 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       entry,
       this.#secretStore,
       { extensionId: contribution.extensionId, location: `providers.${providerId}` },
-      (resolved) => contribution.value.create(resolved),
-    );
-  }
-
-  async #reconcileEmbeddings(generation: number): Promise<void> {
-    const configured = this.#config.get('embeddings');
-    const desired = new Set(Object.keys(configured));
-
-    for (const [embeddingId, entry] of Object.entries(configured)) {
-      const componentKey = key('embedding', embeddingId);
-      const signature = stableStringify({ entry, secretRevision: this.#secretStore.revision });
-      const active = this.#embeddings.get(embeddingId);
-      if (active?.signature === signature) {
-        this.#active('embedding', embeddingId, generation);
-        continue;
-      }
-
-      this.#applying('embedding', embeddingId, generation, active !== undefined);
-      try {
-        const embedding = await this.#createEmbedding(embeddingId, entry);
-        this.#embeddings.set(embeddingId, { embedding, signature });
-        if (active !== undefined) this.#supersede('embedding', embeddingId, active.embedding);
-        this.#active('embedding', embeddingId, generation);
-      } catch (error) {
-        const activeGeneration = this.#statuses.get(componentKey)?.activeGeneration;
-        this.#statuses.set(componentKey, {
-          ...(activeGeneration === undefined ? {} : { activeGeneration }),
-          desiredGeneration: generation,
-          error: message(error),
-          id: embeddingId,
-          kind: 'embedding',
-          state: active === undefined ? 'unavailable' : 'failed',
-        });
-        this.#logger.error(
-          { embeddingId, err: error },
-          'Embedding provider configuration did not activate.',
-        );
-      }
-    }
-
-    for (const embeddingId of this.#embeddings.keys()) {
-      if (desired.has(embeddingId)) continue;
-      const dropped = this.#embeddings.get(embeddingId);
-      this.#embeddings.delete(embeddingId);
-      if (dropped !== undefined) this.#supersede('embedding', embeddingId, dropped.embedding);
-    }
-    this.#dropAbsent('embedding', desired);
-  }
-
-  async #createEmbedding(
-    embeddingId: string,
-    entry: EmbeddingProviderConfig,
-  ): Promise<EmbeddingProvider> {
-    const contribution = this.#contributions.get(embeddings, entry.type);
-    if (contribution === undefined) {
-      throw new Error(
-        `Embedding provider "${embeddingId}" is of type "${entry.type}", which no extension contributed.`,
-      );
-    }
-    return composeWithSecrets(
-      entry,
-      this.#secretStore,
-      { extensionId: contribution.extensionId, location: `embeddings.${embeddingId}` },
       (resolved) => contribution.value.create(resolved),
     );
   }
@@ -645,7 +566,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
 
   async #createAgent(agentId: string, blueprint: Blueprint, timeZone: string): Promise<Agent> {
     const provider = this.#requiredProvider(blueprint.provider);
-    const model = modelConfigFor(provider, blueprint.model, blueprint.generation);
+    const model = modelConfigFor(provider, blueprint.model);
     const openTask = (task: TaskModelConfig | undefined): TaskModel => {
       if (task === undefined) return { model, provider };
       const taskProvider =
@@ -675,6 +596,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       context: blueprint.context,
       directToolSets,
       gate: blueprint.gate,
+      generation: blueprint.generation,
       logger: this.#logger,
       maxIterations: blueprint.maxIterations,
       ...(memory === undefined
@@ -771,6 +693,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     return active.memory;
   }
 
+  /** The provider an agent named, refused here unless it can actually hold a conversation. */
   #requiredProvider(providerId: string): ChatProvider {
     const status = this.#statuses.get(key('provider', providerId));
     const active = this.#providers.get(providerId);
@@ -784,6 +707,12 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     if (status?.state === 'failed') {
       throw new Error(
         `Provider "${providerId}" did not activate: ${status.error ?? 'unknown error'}`,
+      );
+    }
+    if (!isChatCapable(active.provider)) {
+      throw new Error(
+        `Provider "${providerId}" serves no chat model, so an agent cannot talk through it. ` +
+          'Name a provider that does.',
       );
     }
     return active.provider;
@@ -904,17 +833,19 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
   }
 }
 
-function modelConfigFor(
-  provider: ChatProvider,
-  modelId: string,
-  generation: Blueprint['generation'] = {},
-): ModelConfig {
-  const configured = provider.getModelConfig(modelId) ?? {
-    inputModalities: ['text'] as const,
-    modelId,
-    outputModalities: ['text'] as const,
-  };
-  return { ...configured, ...generation };
+function modelConfigFor(provider: ChatProvider, modelId: string): ChatModelConfig {
+  const configured = provider.getModelConfig(modelId);
+  if (configured?.kind === 'embedding') {
+    throw new Error(`Model "${modelId}" is configured for embeddings, not conversation.`);
+  }
+  return (
+    configured ?? {
+      inputModalities: ['text'] as const,
+      kind: 'chat' as const,
+      modelId,
+      outputModalities: ['text'] as const,
+    }
+  );
 }
 
 export { ConfigurationRuntimeController, ConfigurationRuntimeRelay };

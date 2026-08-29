@@ -98,7 +98,28 @@ interface VariantBranch {
   readonly value: string
 }
 
-type FormNode = FieldNode | MapNode | ObjectNode | VariantNode
+/**
+ * An array whose entries have a shape rather than a value: model declarations,
+ * and anything else written as a list of objects.
+ *
+ * A sibling of `MapNode` and for the same reason — the shape of one entry is
+ * fixed and the variable part is how many there are — with the position taking
+ * the place of the key. Children are derived per index by `listEntryNodes`,
+ * because an entry's path contains its position and positions exist only in the
+ * value being edited.
+ */
+interface ListNode {
+  /** The schema of one entry; `listEntryNodes` turns it into fields. */
+  readonly entry: JsonSchema
+  readonly help?: string
+  readonly kind: 'list'
+  readonly label?: string
+  readonly name: string
+  readonly optional: boolean
+  readonly path: readonly string[]
+}
+
+type FormNode = FieldNode | ListNode | MapNode | ObjectNode | VariantNode
 
 type ConfigLike = Record<string, unknown>
 
@@ -169,6 +190,12 @@ function discriminatorOf(options: readonly JsonSchema[]): string | undefined {
 
 function constantOf(schema: JsonSchema, name: string): string {
   return stringOf(schemaOf(schemaOf(schema.properties)?.[name])?.const) ?? ''
+}
+
+/** Whether an array's items carry structure a comma-separated field would destroy. */
+function structured(items: JsonSchema): boolean {
+  if (items.type === 'object' || items.properties !== undefined) return true
+  return branches(items).some((branch) => branch.type === 'object' || branch.properties !== undefined)
 }
 
 /** An enum, whether it was written as one or as a union of constants. */
@@ -255,6 +282,57 @@ function fieldNode(
   }
 }
 
+/**
+ * A choice between shapes, as a node, or nothing when the schema is not one.
+ *
+ * Separate from `nodeFor` because a union is not only ever a property: an entry
+ * of a list or a map can be one too, and there the node's path is the entry
+ * itself rather than a property inside it.
+ */
+function variantNode(
+  name: string,
+  schema: JsonSchema,
+  path: readonly string[],
+  optional: boolean,
+  help?: string,
+  label?: string,
+): undefined | VariantNode {
+  const union = branches(schema)
+  const discriminator = union.length > 0 ? discriminatorOf(union) : undefined
+  if (discriminator === undefined) return undefined
+  return {
+    discriminator,
+    ...(help === undefined ? {} : { help }),
+    kind: 'variant',
+    ...(label === undefined ? {} : { label }),
+    name,
+    optional,
+    path,
+    variants: union.map((option) => ({
+      children: childrenOf(option, path),
+      value: constantOf(option, discriminator),
+    })),
+  }
+}
+
+/**
+ * The fields of one entry of a list or a map.
+ *
+ * Not `childrenOf`, which reads `properties` and nothing else: an entry is a
+ * value, and a value is not always an object. Where it is a choice between
+ * shapes — a model that is either a chat model or an embedding one — its fields
+ * depend on which shape was chosen, and reading only `properties` produced an
+ * entry with nothing in it at all. The variant is named after its discriminator
+ * so the selector reads as what it chooses.
+ */
+function entryNodes(entry: JsonSchema, path: readonly string[]): readonly FormNode[] {
+  const union = branches(entry)
+  const discriminator = union.length > 0 ? discriminatorOf(union) : undefined
+  if (discriminator === undefined) return childrenOf(entry, path)
+  const node = variantNode(discriminator, entry, path, false)
+  return node === undefined ? [] : [node]
+}
+
 /** One property of an object schema, as whatever it turns out to be. */
 function nodeFor(
   name: string,
@@ -265,23 +343,8 @@ function nodeFor(
   const path = [...parentPath, name]
   const { help, label, options: optionLabels } = meta(schema)
 
-  const union = branches(schema)
-  const discriminator = union.length > 0 ? discriminatorOf(union) : undefined
-  if (discriminator !== undefined) {
-    return {
-      discriminator,
-      ...(help === undefined ? {} : { help }),
-      kind: 'variant',
-      ...(label === undefined ? {} : { label }),
-      name,
-      optional: !required,
-      path,
-      variants: union.map((option) => ({
-        children: childrenOf(option, path),
-        value: constantOf(option, discriminator),
-      })),
-    }
-  }
+  const variant = variantNode(name, schema, path, !required, help, label)
+  if (variant !== undefined) return variant
 
   const options = optionsOf(schema, optionLabels)
   if (options.length > 0) return fieldNode(name, schema, path, required, 'enum', options)
@@ -318,14 +381,23 @@ function nodeFor(
   if (schema.type === 'array') {
     const items = schemaOf(schema.items) ?? {}
     const choices = optionsOf(items, optionLabels)
-    return fieldNode(
-      name,
-      schema,
-      path,
-      required,
-      choices.length > 0 ? 'checklist' : 'list',
-      choices,
-    )
+    if (choices.length > 0) return fieldNode(name, schema, path, required, 'checklist', choices)
+    // A list of things that are not scalars cannot be commas: rendering it that
+    // way printed `[object Object]`, and editing it replaced structured entries
+    // with the strings they had been printed as. Its entries have a shape the
+    // schema already describes, so they are edited as forms like everything else.
+    if (structured(items)) {
+      return {
+        entry: items,
+        ...(help === undefined ? {} : { help }),
+        kind: 'list',
+        ...(label === undefined ? {} : { label }),
+        name,
+        optional: !required,
+        path,
+      }
+    }
+    return fieldNode(name, schema, path, required, 'list')
   }
 
   if (schema.type === 'boolean') return fieldNode(name, schema, path, required, 'boolean')
@@ -360,27 +432,65 @@ function formNodes(schema: JsonSchema, framed: readonly string[]): readonly Form
   return childrenOf(schema, []).filter((node) => !framed.includes(node.name))
 }
 
+/** A path segment that can address an array without accepting coercive names such as `01`. */
+function arrayIndex(step: string): number | undefined {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(step)) return undefined
+  const index = Number(step)
+  return Number.isSafeInteger(index) ? index : undefined
+}
+
 function valueAt(value: ConfigLike, path: readonly string[]): unknown {
   let current: unknown = value
   for (const step of path) {
+    if (Array.isArray(current)) {
+      const index = arrayIndex(step)
+      if (index === undefined) return undefined
+      current = current[index]
+      continue
+    }
     if (!isObject(current)) return undefined
     current = current[step]
   }
   return current
 }
 
-function withValueAt(value: ConfigLike, path: readonly string[], next: unknown): ConfigLike {
+/**
+ * Writes through objects and arrays without changing either container's shape.
+ *
+ * List entry paths use their array position as one segment. Treating every
+ * segment as an object key turns an array into `{ "0": ... }` as soon as one
+ * field in a row is edited, which makes the row disappear on the next render.
+ */
+function updatedAt(current: unknown, path: readonly string[], next: unknown): unknown {
   const [step, ...rest] = path
-  if (step === undefined) return value
-  if (rest.length === 0) {
-    if (next === undefined) {
-      return Object.fromEntries(Object.entries(value).filter(([key]) => key !== step))
+  if (step === undefined) return current
+
+  if (Array.isArray(current)) {
+    const index = arrayIndex(step)
+    if (index === undefined) return current
+    const updated = [...current]
+    if (rest.length === 0) {
+      if (next === undefined) updated.splice(index, 1)
+      else updated[index] = next
+      return updated
     }
-    return { ...value, [step]: next }
+    updated[index] = updatedAt(current[index], rest, next)
+    return updated
   }
 
-  const child = value[step]
-  return { ...value, [step]: withValueAt(isObject(child) ? child : {}, rest, next) }
+  const record = isObject(current) ? current : {}
+  if (rest.length === 0) {
+    if (next === undefined) {
+      return Object.fromEntries(Object.entries(record).filter(([key]) => key !== step))
+    }
+    return { ...record, [step]: next }
+  }
+  return { ...record, [step]: updatedAt(record[step], rest, next) }
+}
+
+function withValueAt(value: ConfigLike, path: readonly string[], next: unknown): ConfigLike {
+  const updated = updatedAt(value, path, next)
+  return isObject(updated) ? updated : value
 }
 
 /** The value a new entry starts from: every default the schema declared. */
@@ -397,6 +507,12 @@ function defaultsFor(nodes: readonly FormNode[]): ConfigLike {
       if (!node.optional) value = withValueAt(value, node.path, {})
       continue
     }
+    if (node.kind === 'list') {
+      // Empty for the same reason: how many entries there are is the operator's
+      // answer, and one seeded entry is a claim that there is at least one.
+      if (!node.optional) value = withValueAt(value, node.path, [])
+      continue
+    }
     if (node.optional) continue
     value = withValueAt(value, node.path, seedNode(node))
   }
@@ -409,10 +525,15 @@ function defaultsFor(nodes: readonly FormNode[]): ConfigLike {
  * keeping what was typed, because the fields of two modules are two different
  * sets and carrying one into the other writes settings nobody chose.
  */
-function seedNode(node: MapNode | ObjectNode | VariantNode, chosen?: string): ConfigLike {
+function seedNode(
+  node: ListNode | MapNode | ObjectNode | VariantNode,
+  chosen?: string,
+): ConfigLike | readonly ConfigLike[] {
   // A map fills as the empty record it is: its entries are keyed by names only
   // the operator can supply, so there is no seed to give it beyond the slot.
   if (node.kind === 'map') return {}
+  // A list likewise: how many entries there are is the operator's answer.
+  if (node.kind === 'list') return []
   if (node.kind === 'object') return branchDefaults(node.children)
 
   const branch =
@@ -422,22 +543,36 @@ function seedNode(node: MapNode | ObjectNode | VariantNode, chosen?: string): Co
 }
 
 /** The variant a discriminator path belongs to, so a change of it can reseed. */
+function pathStartsWith(path: readonly string[], prefix: readonly string[]): boolean {
+  return prefix.every((step, index) => path[index] === step)
+}
+
 function variantAt(nodes: readonly FormNode[], path: readonly string[]): undefined | VariantNode {
   for (const node of nodes) {
-    // A map's children hang off keys that live in the value, not in the schema,
-    // so there is nothing to walk here — a variant inside a map entry is reseeded
-    // by the entry itself rather than found by path.
-    if (node.kind === 'field' || node.kind === 'map') continue
+    if (node.kind === 'field') continue
     if (
       node.kind === 'variant' &&
       [...node.path, node.discriminator].join('.') === path.join('.')
     ) {
       return node
     }
-    const children =
-      node.kind === 'object'
-        ? node.children
-        : node.variants.flatMap((variant) => variant.children)
+
+    let children: readonly FormNode[]
+    if (node.kind === 'list' || node.kind === 'map') {
+      if (!pathStartsWith(path, node.path)) continue
+      const entry = path[node.path.length]
+      if (entry === undefined) continue
+      if (node.kind === 'list') {
+        const index = arrayIndex(entry)
+        if (index === undefined) continue
+        children = listEntryNodes(node, index)
+      } else children = mapEntryNodes(node, entry)
+    } else {
+      children =
+        node.kind === 'object'
+          ? node.children
+          : node.variants.flatMap((variant) => variant.children)
+    }
     const found = variantAt(children, path)
     if (found !== undefined) return found
   }
@@ -451,25 +586,43 @@ function branchDefaults(children: readonly FormNode[]): ConfigLike {
       if (child.default !== undefined) value = { ...value, [child.name]: child.default }
       continue
     }
-    if (child.kind === 'map' && !child.optional) {
-      value = { ...value, [child.name]: {} }
-      continue
-    }
-    if (child.kind === 'object' && !child.optional) {
+    if (child.optional) continue
+    if (child.kind === 'map') value = { ...value, [child.name]: {} }
+    else if (child.kind === 'list') value = { ...value, [child.name]: [] }
+    else if (child.kind === 'object') {
       value = { ...value, [child.name]: branchDefaults(child.children) }
-    }
+    } else value = { ...value, [child.name]: seedNode(child) }
   }
   return value
 }
 
 /** The fields of one map entry, pathed through the key it is filed under. */
 function mapEntryNodes(node: MapNode, key: string): readonly FormNode[] {
-  return childrenOf(node.entry, [...node.path, key])
+  return entryNodes(node.entry, [...node.path, key])
+}
+
+function listEntryNodes(node: ListNode, index: number): readonly FormNode[] {
+  return entryNodes(node.entry, [...node.path, String(index)])
+}
+
+/**
+ * What a newly added entry starts as: every default its schema declared, and
+ * for a choice between shapes, the first one already chosen. An entry added
+ * without its discriminator would render as a selector over nothing.
+ */
+function entryDefaults(entry: JsonSchema): ConfigLike {
+  const [node] = entryNodes(entry, [])
+  if (node?.kind === 'variant') return seedNode(node) as ConfigLike
+  return branchDefaults(childrenOf(entry, []))
+}
+
+function listEntryDefaults(node: ListNode): ConfigLike {
+  return entryDefaults(node.entry)
 }
 
 /** What a newly added entry starts as: every default its value schema declared. */
 function mapEntryDefaults(node: MapNode): ConfigLike {
-  return branchDefaults(childrenOf(node.entry, []))
+  return entryDefaults(node.entry)
 }
 
 /**
@@ -496,6 +649,12 @@ function withoutKey(record: ConfigLike, key: string): ConfigLike {
 function activeFields(nodes: readonly FormNode[], value: ConfigLike): readonly FieldNode[] {
   return nodes.flatMap((node): readonly FieldNode[] => {
     if (node.kind === 'field') return [node]
+    if (node.kind === 'list') {
+      const entries = valueAt(value, node.path)
+      return Array.isArray(entries)
+        ? entries.flatMap((_entry, index) => activeFields(listEntryNodes(node, index), value))
+        : []
+    }
     const present = valueAt(value, node.path)
     if (!isObject(present)) return []
     if (node.kind === 'object') return activeFields(node.children, value)
@@ -516,6 +675,8 @@ export {
   defaultsFor,
   formNodes,
   isObject,
+  listEntryDefaults,
+  listEntryNodes,
   mapEntryDefaults,
   mapEntryNodes,
   seedNode,
@@ -533,6 +694,7 @@ export type {
   FieldOption,
   FormNode,
   JsonSchema,
+  ListNode,
   MapNode,
   ObjectNode,
   VariantBranch,

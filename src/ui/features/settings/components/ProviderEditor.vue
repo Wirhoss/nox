@@ -58,7 +58,12 @@ const jsonError = ref<string>()
 const confirmingDelete = ref(false)
 const credentials = reactive<Record<string, CredentialState>>({})
 
-const types = computed(() => settings.contributionTypes)
+/** Generic creation is only for operator-named, many-instance contributions. */
+const types = computed(() =>
+  props.creating && props.presetType === undefined
+    ? settings.contributionTypes.filter((candidate) => candidate.instances === 'many')
+    : settings.contributionTypes,
+)
 const descriptor = computed(() =>
   types.value.find((candidate) => candidate.type === draft.value.type),
 )

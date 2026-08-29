@@ -40,9 +40,19 @@ describe('parseExtensionManifest', () => {
     expect(() => parseExtensionManifest({ ...manifest(), version: '^1.0.0' })).toThrow(/version/u);
   });
 
+  test('accepts and freezes separately built worker entry points', () => {
+    const parsed = parseExtensionManifest({ ...manifest(), workers: ['worker.js'] });
+
+    expect(parsed.workers).toEqual(['worker.js']);
+    expect(Object.isFrozen(parsed.workers)).toBeTrue();
+  });
+
   test('rejects fields it does not define and entry points outside the package', () => {
     expect(() => parseExtensionManifest({ ...manifest(), surprise: true })).toThrow(RangeError);
     expect(() => parseExtensionManifest({ ...manifest(), main: '../outside.js' })).toThrow(/main/u);
+    expect(() => parseExtensionManifest({ ...manifest(), workers: ['../outside.js'] })).toThrow(
+      /workers/u,
+    );
   });
 
   test('names an offending compatibility range', () => {

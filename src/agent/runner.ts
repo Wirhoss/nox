@@ -1,4 +1,5 @@
 import {
+  type ChatModelConfig,
   type ChatProvider,
   contentToString,
   fenceUntrustedText,
@@ -7,10 +8,10 @@ import {
   type MemoryMessage,
   type Message,
   type MessageContent,
-  type ModelConfig,
   prepareToolCall,
   type ProviderError,
   type RecalledMemory,
+  type SamplingParametersConfig,
   type ToolCallMessage,
   type ToolContext,
   type ToolExecution,
@@ -68,6 +69,8 @@ const SYSTEM_CRON_GRANTS: readonly GrantPattern[] = Object.freeze(['*']);
 type RunnerState = 'idle' | 'running' | 'stopped';
 
 interface RunnerOptions {
+  /** Sampling policy for this agent's conversational turns. */
+  generation?: SamplingParametersConfig;
   logger?: Logger;
   /** `'unlimited'` runs until the model stops asking for tools. At your risk. */
   maxIterations?: 'unlimited' | number;
@@ -265,13 +268,14 @@ class Runner {
   readonly #context: Context;
   readonly #events: EventLog<AgentEvent>;
   readonly #gate?: SessionGate;
+  readonly #generation: SamplingParametersConfig;
   readonly #logger?: Logger;
   readonly #maxIterations: number;
   readonly #memory?: Memory;
   readonly #memoryMaxTokens: number;
   readonly #memoryTasks = new Set<Promise<void>>();
   readonly #metadata: Readonly<Record<string, unknown>>;
-  readonly #model: ModelConfig;
+  readonly #model: ChatModelConfig;
   readonly #participants: ConversationParticipants;
   readonly #pendingOperations = new Map<string, PendingOwnedOperation>();
   readonly #provider: ChatProvider;
@@ -300,7 +304,7 @@ class Runner {
     context: Context,
     events: EventLog<AgentEvent>,
     provider: ChatProvider,
-    model: ModelConfig,
+    model: ChatModelConfig,
     options: RunnerConstructionOptions,
   ) {
     this.#agentId = options.agentId;
@@ -316,6 +320,7 @@ class Runner {
     this.#provider = provider;
     this.#model = model;
     this.#gate = options.gate;
+    this.#generation = Object.freeze({ ...options.generation });
     this.#logger = options.logger;
     this.#maxIterations = resolveMaxIterations(options.maxIterations);
     this.#memory = options.memory;
@@ -664,6 +669,7 @@ class Runner {
       requestHistory,
       Object.values(this.#context.getTools()),
       {
+        ...this.#generation,
         ...(artifactOutput === undefined ? {} : { artifactOutput }),
         ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),
         model: this.#model,

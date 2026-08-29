@@ -113,7 +113,7 @@ const settingsMessages = Object.freeze({
   'settings.provider.idHint': 'ID estable referenciado por los planos de agentes.',
   'settings.provider.providerJson': 'JSON del proveedor',
   'settings.provider.providerJsonHelp':
-    'Acceso completo a adaptadores aportados y campos de muestreo del modelo. Las credenciales no pertenecen a este documento; cada adaptador declara lo que Nox debe proporcionarle por separado.',
+    'Acceso completo a adaptadores aportados y capacidades intrínsecas del modelo. El muestreo conversacional pertenece al agente. Las credenciales no pertenecen a este documento; cada adaptador declara lo que Nox debe proporcionarle por separado.',
   'settings.provider.remove': 'Eliminar proveedor',
   'settings.provider.removeQuestion': '¿Eliminar el proveedor?',
   'settings.provider.removeWarning':
@@ -131,6 +131,7 @@ const settingsMessages = Object.freeze({
   'settings.schemaMap.keyInvalid': 'Este ID no es uno que acepte este ajuste.',
   'settings.schemaMap.keyRequired': 'Dale un ID a esta entrada.',
   'settings.schemaMap.minItems': 'Elige al menos {count}.',
+  'settings.schemaMap.position': 'Entrada {position}',
   'settings.schemaMap.removeNamed': 'Eliminar {entry}',
   'settings.schemaMap.unnamedEntry': 'la entrada sin nombre',
   'settings.sections.agents.description':
@@ -140,10 +141,6 @@ const settingsMessages = Object.freeze({
   'settings.sections.brokers.description': 'Transportes de conversación aportados por extensiones.',
   'settings.sections.brokers.label': 'Bróker',
   'settings.sections.brokers.plural': 'Brókeres',
-  'settings.sections.embeddings.description':
-    'Modelos que convierten texto en vectores, para las funciones que buscan por significado.',
-  'settings.sections.embeddings.label': 'Modelo de embeddings',
-  'settings.sections.embeddings.plural': 'Modelos de embeddings',
   'settings.sections.general.description':
     'Valores predeterminados de entorno, acceso, almacenamiento y registro.',
   'settings.sections.general.label': 'General',

@@ -90,9 +90,15 @@ const selectedValue = computed<ConfigValue>(() => {
   return isConfigValue(value) ? value : newBrokerTemplate()
 })
 const agents = computed(() => Object.keys(props.blueprintSection?.value ?? {}))
+/** Generic creation is only for operator-named, many-instance contributions. */
+const types = computed(() =>
+  props.creating && props.presetType === undefined
+    ? settings.contributionTypes.filter((candidate) => candidate.instances === 'many')
+    : settings.contributionTypes,
+)
 /** This transport's own schema, when an extension contributed one for the type. */
 const descriptor = computed(() =>
-  settings.contributionTypes.find((candidate) => candidate.type === common.value.type),
+  types.value.find((candidate) => candidate.type === common.value.type),
 )
 const transportNodes = computed(() =>
   descriptor.value === undefined
@@ -135,7 +141,7 @@ const dirty = computed(() => {
 })
 
 watch(
-  [() => props.creating, () => props.entryId, selectedValue, () => settings.contributionTypes],
+  [() => props.creating, () => props.entryId, selectedValue, types],
   () => {
     resetEditor()
   },
@@ -148,7 +154,7 @@ function resetEditor(): void {
     const configuredType = stringValue(value.type)
     value.type =
       props.presetType ??
-      (configuredType.length > 0 ? configuredType : (settings.contributionTypes[0]?.type ?? ''))
+      (configuredType.length > 0 ? configuredType : (types.value[0]?.type ?? ''))
   }
   hydrate(value)
   mode.value = descriptor.value === undefined ? 'json' : 'form'
@@ -393,9 +399,7 @@ function switchMode(nextMode: EditorMode): void {
 
   const parsed = parseJson(true)
   if (parsed === undefined) return
-  const nextDescriptor = settings.contributionTypes.find(
-    (candidate) => candidate.type === parsed.type,
-  )
+  const nextDescriptor = types.value.find((candidate) => candidate.type === parsed.type)
   if (nextDescriptor === undefined) {
     jsonError.value = t('settings.provider.validation.curatedFormUnavailable')
     return

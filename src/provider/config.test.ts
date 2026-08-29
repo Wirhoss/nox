@@ -1,7 +1,10 @@
 import {
-  httpChatProviderRuntimeConfigSchema,
+  chatModelConfigSchema,
+  ChatProvider,
+  httpProviderRuntimeConfigSchema,
+  isChatCapable,
+  isEmbeddingCapable,
   modelAcceptsInput,
-  modelConfigSchema,
   modelInputModalities,
   modelProducesOutput,
 } from '@nox/extension-api';
@@ -20,7 +23,7 @@ describe('provider runtime configuration', () => {
     }
 
     const handle = new ForeignSecretHandle();
-    const parsed = httpChatProviderRuntimeConfigSchema.parse({
+    const parsed = httpProviderRuntimeConfigSchema.parse({
       apiKey: handle,
       baseUrl: 'https://api.deepseek.com/v1',
     });
@@ -29,9 +32,51 @@ describe('provider runtime configuration', () => {
   });
 });
 
+describe('provider capability detection', () => {
+  const foreignProvider = (kind: 'chat' | 'embedding') => ({
+    addModelConfig: (): void => undefined,
+    chatModelConfig: (): undefined => undefined,
+    embeddingModelConfig: (): undefined => undefined,
+    fetchModelIds: (): Promise<string[]> => Promise.resolve([]),
+    getModelConfig: (): undefined => undefined,
+    listModelConfigs: (): never[] => [],
+    supports: (requested: 'chat' | 'embedding'): boolean => requested === kind,
+  });
+
+  test('accepts a chat provider from another extension API module graph', () => {
+    const provider = {
+      ...foreignProvider('chat'),
+      getMessageStream: (): undefined => undefined,
+    };
+
+    expect(provider).not.toBeInstanceOf(ChatProvider);
+    expect(isChatCapable(provider)).toBe(true);
+    expect(isEmbeddingCapable(provider)).toBe(false);
+  });
+
+  test('accepts an embedding provider structurally and still requires its operation', () => {
+    const provider = foreignProvider('embedding');
+
+    expect(isEmbeddingCapable(provider)).toBe(false);
+    expect(isEmbeddingCapable({ ...provider, embed: (): undefined => undefined })).toBe(true);
+    expect(isChatCapable(provider)).toBe(false);
+  });
+});
+
 describe('model modalities', () => {
+  test('refuses agent generation policy in provider model declarations', () => {
+    expect(
+      chatModelConfigSchema.safeParse({
+        maxTokens: 512,
+        modelId: 'plain',
+        stop: ['END'],
+        temperature: 0.2,
+      }).success,
+    ).toBe(false);
+  });
+
   test('is text-only until additional capabilities are declared', () => {
-    const model = modelConfigSchema.parse({ modelId: 'plain' });
+    const model = chatModelConfigSchema.parse({ modelId: 'plain' });
 
     expect(modelInputModalities(model)).toEqual(['text']);
     expect(model.outputModalities).toEqual(['text']);
@@ -41,7 +86,8 @@ describe('model modalities', () => {
   });
 
   test('keeps input and output modalities as independent capabilities', () => {
-    const model = modelConfigSchema.parse({
+    const model = chatModelConfigSchema.parse({
+      kind: 'chat',
       inputModalities: ['text', 'image', 'audio'],
       modelId: 'multimodal',
       outputModalities: ['text', 'audio'],
@@ -55,10 +101,11 @@ describe('model modalities', () => {
 
   test('refuses a chat model without text on either side of its contract', () => {
     expect(
-      modelConfigSchema.safeParse({ inputModalities: ['image'], modelId: 'broken-input' }).success,
+      chatModelConfigSchema.safeParse({ inputModalities: ['image'], modelId: 'broken-input' })
+        .success,
     ).toBe(false);
     expect(
-      modelConfigSchema.safeParse({ modelId: 'broken-output', outputModalities: ['audio'] })
+      chatModelConfigSchema.safeParse({ modelId: 'broken-output', outputModalities: ['audio'] })
         .success,
     ).toBe(false);
   });

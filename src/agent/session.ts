@@ -27,12 +27,12 @@ import type { ContextOptions, ContextUsage } from './context/options';
 import type { HistoryArchive } from './context/search';
 import type { AgentEvent } from './events';
 import type {
+  ChatModelConfig,
   ChatProvider,
   Memory,
   Message,
   MessageContent,
   MessageOrigin,
-  ModelConfig,
   PrincipalRef,
   ToolRisk,
   UserMessage,
@@ -70,7 +70,7 @@ interface SessionOptions extends RunnerOptions {
    */
   title?: string;
   /** Model used for the internal titling request; defaults to the main model. */
-  titleModel?: ModelConfig;
+  titleModel?: ChatModelConfig;
   /** Provider used for internal titling requests; defaults to the main provider. */
   /** The zone timestamps are written in when a model is shown this conversation. */
   timeZone?: string;
@@ -157,12 +157,12 @@ class Session {
   readonly #events = new EventLog<AgentEvent>();
   readonly #gate: SessionGate;
   readonly #logger?: Logger;
-  readonly #model: ModelConfig;
+  readonly #model: ChatModelConfig;
   readonly #participants: ConversationParticipants;
   readonly #runner: Runner;
   readonly #sessionId: string;
   readonly #store: SessionStore;
-  readonly #titleModel?: ModelConfig;
+  readonly #titleModel?: ChatModelConfig;
   readonly #titleProvider: ChatProvider;
   /** Aborts the titling request when the session ends before it has answered. */
   readonly #titling = new AbortController();
@@ -174,7 +174,7 @@ class Session {
     sessionId: string,
     store: SessionStore,
     provider: ChatProvider,
-    model: ModelConfig,
+    model: ChatModelConfig,
     history: readonly Message[],
     options: SessionOptions,
   ) {
@@ -256,6 +256,7 @@ class Session {
       authorities: options.authorities,
       authorization: options.authorization,
       gate: this.#gate,
+      generation: options.generation,
       logger: options.logger,
       maxIterations: options.maxIterations,
       ...(options.memory === undefined ? {} : { memory: options.memory }),
@@ -273,7 +274,7 @@ class Session {
   public static async open(
     database: Database,
     provider: ChatProvider,
-    model: ModelConfig,
+    model: ChatModelConfig,
     options: SessionOptions,
   ): Promise<Session> {
     const sessionId = options.sessionId ?? nanoid();

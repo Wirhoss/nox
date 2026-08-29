@@ -1,5 +1,9 @@
 const spanishMessages = Object.freeze({
   'ui.cacheDirectory': 'Directorio de caché de pesos',
+  'ui.dimensions': 'Dimensiones del vector',
+  'ui.dimensionsHelp':
+    'Cuántos números tiene cada vector. Lo que los almacene reserva espacio para esto antes de ver uno.',
+  'ui.enabled': 'Cargar este modelo',
   'ui.cacheDirectoryHelp':
     'Dónde se guardan los pesos descargados. Vacío, el runtime usa su propia caché.',
   'ui.model': 'Modelo',

@@ -1,8 +1,8 @@
 import {
+  type ChatModelConfig,
   type ChatProvider,
   contentToString,
   type Message,
-  type ModelConfig,
   type UserMessage,
 } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
@@ -49,7 +49,7 @@ interface TitleRequest {
   readonly history: readonly Message[];
   readonly logger?: Logger;
   /** Defaults to the provider's own default when the caller names none. */
-  readonly model?: ModelConfig;
+  readonly model?: ChatModelConfig;
   readonly provider: ChatProvider;
   readonly signal?: AbortSignal;
 }

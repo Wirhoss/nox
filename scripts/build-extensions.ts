@@ -11,6 +11,7 @@ const manifestName = 'nox-extension.json';
 interface BuildManifest {
   readonly id: string;
   readonly main: string;
+  readonly workers?: readonly string[];
   readonly [key: string]: unknown;
 }
 
@@ -27,6 +28,16 @@ async function manifests(directory: string): Promise<string[]> {
   }
   return found;
 }
+
+/** Resolved by the host at runtime, so never inlined into a package. */
+const external = [
+  '@huggingface/transformers',
+  '@nox/extension-api',
+  'onnxruntime-node',
+  'playwright',
+  'sharp',
+  'zod',
+];
 
 function assertBuild(result: Bun.BuildOutput, subject: string): void {
   if (result.success) return;
@@ -62,15 +73,47 @@ for (const manifestPath of await manifests(sourceRoot)) {
   const destination = join(outputRoot, manifest.id);
   const result = await Bun.build({
     entrypoints: [resolve(dirname(manifestPath), manifest.main)],
-    external: ['@nox/extension-api', 'playwright', 'sharp', 'zod'],
+    external,
     minify: true,
     naming: 'extension.js',
     outdir: destination,
     target: 'bun',
   });
   assertBuild(result, manifest.id);
+
+  // Built separately because nothing imports them: a worker is resolved from a
+  // URL at runtime, so the entry point's dependency graph never reaches it and a
+  // build that only followed imports would ship a package missing half of
+  // itself. Its relative path and base name are kept, so the URL it is started
+  // from still resolves without a package-specific rewrite.
+  const workers = manifest.workers ?? [];
+  if (workers.length > 0) {
+    const built = await Bun.build({
+      entrypoints: workers.map((worker) => resolve(dirname(manifestPath), worker)),
+      external,
+      minify: true,
+      naming: '[dir]/[name].js',
+      outdir: destination,
+      root: dirname(manifestPath),
+      target: 'bun',
+    });
+    assertBuild(built, `${manifest.id} workers`);
+  }
+
   await writeFile(
     join(destination, manifestName),
-    `${JSON.stringify({ ...manifest, main: 'extension.js' }, undefined, 2)}\n`,
+    `${JSON.stringify(
+      {
+        ...manifest,
+        main: 'extension.js',
+        ...(workers.length === 0
+          ? {}
+          : {
+              workers: workers.map((worker) => `${worker.replace(/[.][^./\\]+$/u, '')}.js`),
+            }),
+      },
+      undefined,
+      2,
+    )}\n`,
   );
 }

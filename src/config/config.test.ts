@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import {
   type ChatProvider,
-  chatProviderConfigSchema,
-  httpChatProviderConfigSchema,
+  httpProviderConfigSchema,
+  providerBaseConfigSchema,
   providerContribution,
   providers,
   type ToolSet,
@@ -622,7 +622,7 @@ describe('Config', () => {
 
 /** A provider kind that exists only here, to prove the union is built from the
  *  registry rather than from anything the kernel imported. */
-const fakeSchema = httpChatProviderConfigSchema.extend({ type: z.literal('fake_provider') });
+const fakeSchema = httpProviderConfigSchema.extend({ type: z.literal('fake_provider') });
 
 function registryWith(...ids: string[]): ContributionRegistry {
   const registry = new ContributionRegistry();
@@ -633,7 +633,7 @@ function registryWith(...ids: string[]): ContributionRegistry {
       id,
       providerContribution({
         instances: 'many',
-        configSchema: httpChatProviderConfigSchema.extend({ type: z.literal(id) }),
+        configSchema: httpProviderConfigSchema.extend({ type: z.literal(id) }),
         create: () => ({}) as unknown as ChatProvider,
       }),
     );
@@ -648,7 +648,7 @@ function singletonRegistry(id: string): ContributionRegistry {
     providers,
     id,
     providerContribution({
-      configSchema: httpChatProviderConfigSchema.extend({ type: z.literal(id) }),
+      configSchema: httpProviderConfigSchema.extend({ type: z.literal(id) }),
       create: () => ({}) as unknown as ChatProvider,
     }),
   );
@@ -715,7 +715,7 @@ describe('contributed sections', () => {
       providers,
       'in_process',
       providerContribution({
-        configSchema: chatProviderConfigSchema.extend({ type: z.literal('in_process') }),
+        configSchema: providerBaseConfigSchema.extend({ type: z.literal('in_process') }),
         create: () => ({}) as unknown as ChatProvider,
       }),
     );

@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { commands, embeddings, memories, providers, toolSets } from '@nox/extension-api';
+import {
+  commands,
+  isChatCapable,
+  isEmbeddingCapable,
+  memories,
+  providers,
+  toolSets,
+} from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { AuthStore } from './api/auth/store';
@@ -64,7 +71,6 @@ interface BootOptions {
   brokers?: unknown;
   configWatch?: boolean;
   dataDir?: string;
-  embeddings?: unknown;
   extensionsDir?: string;
   memories?: unknown;
   providers?: unknown;
@@ -78,7 +84,6 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
   // Port 0 unless a test says otherwise: every boot listens, and no two boots
   // — or a Nox already running on this machine — fight over the same socket.
   writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
-  writeFileSync(join(configDir, 'embeddings.json'), JSON.stringify(options.embeddings ?? {}));
   writeFileSync(join(configDir, 'memories.json'), JSON.stringify(options.memories ?? {}));
   writeFileSync(join(configDir, 'providers.json'), JSON.stringify(options.providers ?? PROVIDERS));
   writeFileSync(join(configDir, 'brokers.json'), JSON.stringify(options.brokers ?? {}));
@@ -143,6 +148,7 @@ describe('bootstrap', () => {
     expect(application.agentIds).toEqual(['nox']);
     expect(application.getAgent('nox')?.model).toEqual({
       inputModalities: ['text'],
+      kind: 'chat',
       modelId: 'gpt-test',
       outputModalities: ['text'],
     });
@@ -254,7 +260,6 @@ describe('bootstrap', () => {
       'app',
       'blueprints',
       'brokers',
-      'embeddings',
       'memories',
       'providers',
       'toolSets',
@@ -336,7 +341,7 @@ describe('bootstrap', () => {
     expect(application.getAgent('nox')?.model).toMatchObject({ contextWindow: 4096 });
   });
 
-  test('applies blueprint generation settings over provider model defaults', async () => {
+  test('keeps agent generation policy separate from provider model facts', async () => {
     const application = await boot({
       blueprints: {
         nox: { ...NOX, generation: { maxTokens: 1200, temperature: 0.2 } },
@@ -344,15 +349,17 @@ describe('bootstrap', () => {
       providers: {
         main: {
           ...PROVIDERS.main,
-          modelConfigs: [{ contextWindow: 4096, modelId: 'gpt-test', temperature: 0.8 }],
+          modelConfigs: [{ contextWindow: 4096, modelId: 'gpt-test' }],
         },
       },
     });
 
-    expect(application.getAgent('nox')?.model).toMatchObject({
+    expect(application.getAgent('nox')?.model).toEqual({
       contextWindow: 4096,
-      maxTokens: 1200,
-      temperature: 0.2,
+      inputModalities: ['text'],
+      kind: 'chat',
+      modelId: 'gpt-test',
+      outputModalities: ['text'],
     });
   });
 
@@ -891,30 +898,88 @@ describe('bootstrap', () => {
     expect(booted.state).toBe('running');
   });
 
-  test('activates a contributed embedding provider and embeds a batch through it', async () => {
-    const application = await boot({
-      embeddings: { counting_test: { type: 'counting_test' } },
-      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
-    });
-    const statuses = application.services
+  test('offers the local engine without configuring it on the operator’s behalf', async () => {
+    const application = await boot();
+    const configured = application.services.get(configService).get('providers');
+    const summary = application.services
       .get(configAdminService)
-      .runtimeStatuses()
-      .filter((component) => component.kind === 'embedding');
+      .sections()
+      .find((section) => section.key === 'providers');
 
-    expect(statuses).toMatchObject([{ id: 'counting_test', state: 'active' }]);
+    // Registration makes the type valid and lets settings offer its owned
+    // singleton entry. It does not mean this installation chose to run a local
+    // model, so no entry may be invented in providers.json.
+    expect(application.contributions.get(providers, 'local')?.extensionId).toBe(
+      'nox.provider.local',
+    );
+    expect(configured).not.toHaveProperty('local');
+    expect(summary?.contributions).toContainEqual({
+      configured: false,
+      extensionId: 'nox.provider.local',
+      instances: 'single',
+      type: 'local',
+    });
+  });
 
-    const contribution = application.contributions.get(embeddings, 'counting_test');
+  test('configures a provider that only embeds, without a place of its own', async () => {
+    const application = await boot({
+      blueprints: { nox: NOX },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      providers: { ...PROVIDERS, counting_test: { type: 'counting_test' } },
+    });
+    const contribution = application.contributions.get(providers, 'counting_test');
     const provider = contribution?.value.create({ type: 'counting_test' } as never);
-    const result = await provider?.embed({ texts: ['first', 'second and longer'] });
 
-    // The contract, not the model: one vector per text in the order given, the
-    // declared dimension count, and unit length so similarity is a dot product.
+    // A service that cannot chat is still an ordinary provider: what it can do
+    // is what it implements, not which section it was configured in.
+    expect(isChatCapable(provider)).toBeFalse();
+    expect(isEmbeddingCapable(provider)).toBeTrue();
+
+    const result = isEmbeddingCapable(provider)
+      ? await provider.embed({ texts: ['first', 'second and longer'] })
+      : undefined;
     expect(result?.vectors).toHaveLength(2);
     expect(result?.dimensions).toBe(4);
-    expect(result?.vectors[0]).toHaveLength(4);
     for (const vector of result?.vectors ?? []) {
       expect(Math.hypot(...vector)).toBeCloseTo(1, 10);
     }
+  });
+
+  test('refuses to compose an agent on a provider that serves no chat model', async () => {
+    const application = await boot({
+      blueprints: { nox: { ...NOX, provider: 'counting_test' } },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      providers: { ...PROVIDERS, counting_test: { type: 'counting_test' } },
+    });
+
+    // Reported as the configuration mistake it is, rather than failing at the
+    // first request the agent would have tried to answer.
+    expect(application.getAgent('nox')).toBeUndefined();
+    const failure = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'agent' && component.id === 'nox');
+    expect(failure?.error).toContain('serves no chat model');
+  });
+
+  test('refuses an embedding model where an agent needs a conversational one', async () => {
+    const application = await boot({
+      blueprints: { nox: { ...NOX, model: 'test/embed', provider: 'local' } },
+      providers: {
+        local: {
+          embedding: { dimensions: 384, enabled: true, model: 'test/embed' },
+          llm: { enabled: true, model: 'test/chat' },
+          type: 'local',
+        },
+      },
+    });
+
+    expect(application.getAgent('nox')).toBeUndefined();
+    const failure = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'agent' && component.id === 'nox');
+    expect(failure?.error).toContain('configured for embeddings, not conversation');
   });
 
   test('releases a tool set the configuration has replaced', async () => {

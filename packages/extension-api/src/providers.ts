@@ -18,6 +18,7 @@ import {
 
 import type { Tool } from './tools.js';
 
+/** Per-request generation policy, owned by an agent rather than by a provider model. */
 const samplingParametersConfigSchema = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
   maxTokens: z.number().int().positive().optional(),
@@ -28,6 +29,7 @@ const samplingParametersConfigSchema = z.object({
   topK: z.number().int().positive().optional(),
   topP: z.number().min(0).max(1).optional(),
 });
+type SamplingParametersConfig = z.infer<typeof samplingParametersConfigSchema>;
 
 const requiredChatModalities = (direction: 'input' | 'output') =>
   z
@@ -38,24 +40,78 @@ const requiredChatModalities = (direction: 'input' | 'output') =>
     });
 const modelInputModalitiesSchema = requiredChatModalities('input');
 const modelOutputModalitiesSchema = requiredChatModalities('output');
-const modelBaseConfigSchema = samplingParametersConfigSchema.extend({
+/** Facts intrinsic to a chat model, independent of which agent is using it. */
+const modelBaseConfigSchema = z.object({
   inputModalities: modelInputModalitiesSchema.default((): ContentModality[] => ['text']),
   modelId: z.string(),
   outputModalities: modelOutputModalitiesSchema.default((): ContentModality[] => ['text']),
 });
-const chatModelConfigSchema = modelBaseConfigSchema.extend({
-  contextWindow: z.number().int().positive().optional(),
-});
-const modelConfigSchema = chatModelConfigSchema;
-type ModelConfig = z.infer<typeof modelConfigSchema>;
+/**
+ * What a model is for.
+ *
+ * Discriminated rather than implied by which list a model was declared in,
+ * because one endpoint commonly serves several kinds — the same key and the
+ * same host answer chat and embeddings — and splitting the declaration by kind
+ * would make one configured service into two configured instances that can
+ * disagree about everything else. Adding a kind here is what adding image or
+ * audio models will be; it should not require a second way to configure a
+ * provider.
+ */
+const MODEL_KINDS = ['chat', 'embedding'] as const;
+type ModelKind = (typeof MODEL_KINDS)[number];
 
-function modelInputModalities(model: ModelConfig): readonly ContentModality[] {
+const chatModelConfigSchema = modelBaseConfigSchema
+  .extend({
+    contextWindow: z.number().int().positive().optional(),
+    kind: z.literal('chat').default('chat'),
+  })
+  .strict();
+
+/**
+ * One embedding model, and the two things a store of its vectors must record.
+ *
+ * `dimensions` is declared rather than discovered because whatever holds the
+ * vectors has to allocate for them before it has seen one. It is also half of
+ * the identity a stored vector belongs to: re-embedding the same text with a
+ * different model produces a vector that is silently meaningless next to the
+ * old ones — nothing fails, retrieval just quietly stops being about anything.
+ */
+const embeddingModelConfigSchema = z
+  .object({
+    dimensions: z.number().int().positive(),
+    kind: z.literal('embedding'),
+    /** Longer input is the caller's to split; the provider says where the line is. */
+    maxInputTokens: z.number().int().positive().optional(),
+    modelId: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * A plain union rather than a discriminated one, so that a model declared
+ * before kinds existed still parses. Discriminating requires the discriminator
+ * to be present, and every `modelConfigs` written until now omits it — chat is
+ * what they all were, and chat is what the default makes them. Chat is tried
+ * first for that reason; an embedding model says so and fails the chat literal.
+ */
+const modelConfigSchema = z.union([chatModelConfigSchema, embeddingModelConfigSchema]);
+type ModelConfig = z.infer<typeof modelConfigSchema>;
+type ChatModelConfig = z.infer<typeof chatModelConfigSchema>;
+type EmbeddingModelConfig = z.infer<typeof embeddingModelConfigSchema>;
+
+function isChatModel(model: ModelConfig): model is ChatModelConfig {
+  return model.kind === 'chat';
+}
+function isEmbeddingModel(model: ModelConfig): model is EmbeddingModelConfig {
+  return model.kind === 'embedding';
+}
+
+function modelInputModalities(model: ChatModelConfig): readonly ContentModality[] {
   return model.inputModalities;
 }
-function modelAcceptsInput(model: ModelConfig, modality: ContentModality): boolean {
+function modelAcceptsInput(model: ChatModelConfig, modality: ContentModality): boolean {
   return modelInputModalities(model).includes(modality);
 }
-function modelProducesOutput(model: ModelConfig, modality: ContentModality): boolean {
+function modelProducesOutput(model: ChatModelConfig, modality: ContentModality): boolean {
   return model.outputModalities.includes(modality);
 }
 
@@ -74,76 +130,35 @@ function modelProducesOutput(model: ModelConfig, modality: ContentModality): boo
 const providerConfigShape = {
   maxRetries: z.number().int().nonnegative().default(2),
   maxRetryDelayMs: z.number().nonnegative().default(30_000),
+  /** Every model this instance serves, of whatever kind. */
+  modelConfigs: z.array(modelConfigSchema).optional(),
   retryDelayMs: z.number().nonnegative().default(500),
   timeoutMs: z.number().positive().optional(),
 };
 const providerBaseConfigSchema = z.object(providerConfigShape);
 const providerRuntimeConfigSchema = z.object(providerConfigShape);
 
-/**
- * What a provider that answers the chat contract configures.
- *
- * `modelConfigs` sits here rather than in the base because what a model is
- * differs by contract: a chat model has a context window and modalities, an
- * embedding model has a dimension count and neither. One list typed for both
- * would describe neither correctly.
- */
-const chatProviderConfigShape = {
-  ...providerConfigShape,
-  modelConfigs: z.array(chatModelConfigSchema).optional(),
-};
-const chatProviderConfigSchema = z.object(chatProviderConfigShape);
-const chatProviderRuntimeConfigSchema = z.object(chatProviderConfigShape);
-
-/** What a chat provider reached over the network adds: where it is, and who it says it is. */
-const httpChatProviderConfigSchema = chatProviderConfigSchema.extend({
+/** What a provider reached over the network adds: where it is, and who it says it is. */
+const httpProviderConfigSchema = providerBaseConfigSchema.extend({
   apiKey: secretRefSchema.optional(),
   baseUrl: httpUrlSchema('The HTTP(S) base URL of the provider endpoint.'),
 });
-const httpChatProviderRuntimeConfigSchema = chatProviderRuntimeConfigSchema.extend({
+const httpProviderRuntimeConfigSchema = providerRuntimeConfigSchema.extend({
   // Structural by design: a host capability must survive package/module boundaries.
   apiKey: runtimeSecretSchema.optional(),
   baseUrl: httpUrlSchema('The HTTP(S) base URL of the provider endpoint.'),
 });
 
-/**
- * One embedding model, and the two things a store of its vectors must record.
- *
- * `dimensions` is declared rather than discovered because whatever holds the
- * vectors has to allocate for them before it has seen one. It is also half of
- * the identity a stored vector belongs to: re-embedding the same text with a
- * different model produces a vector that is silently meaningless next to the
- * old ones — nothing fails, retrieval just quietly stops being about anything.
- * A store that keeps `modelId` and `dimensions` beside its vectors can notice.
- */
-const embeddingModelConfigSchema = z.object({
-  dimensions: z.number().int().positive(),
-  /** Longer input is the caller's to split; the provider says where the line is. */
-  maxInputTokens: z.number().int().positive().optional(),
-  modelId: z.string().min(1),
-});
-const embeddingProviderConfigShape = {
-  ...providerConfigShape,
-  modelConfigs: z.array(embeddingModelConfigSchema).optional(),
-};
-const embeddingProviderConfigSchema = z.object(embeddingProviderConfigShape);
-const embeddingProviderRuntimeConfigSchema = z.object(embeddingProviderConfigShape);
-
 type ProviderBaseConfig = z.infer<typeof providerBaseConfigSchema>;
 type ProviderBaseConfigInput = z.input<typeof providerBaseConfigSchema>;
 type ProviderRuntimeConfigInput = z.input<typeof providerRuntimeConfigSchema>;
-type ChatProviderConfigInput = z.input<typeof chatProviderConfigSchema>;
-type ChatProviderRuntimeConfigInput = z.input<typeof chatProviderRuntimeConfigSchema>;
-type HttpChatProviderConfig = z.infer<typeof httpChatProviderConfigSchema>;
-type HttpChatProviderConfigInput = z.input<typeof httpChatProviderConfigSchema>;
-type HttpChatProviderRuntimeConfigInput = z.input<typeof httpChatProviderRuntimeConfigSchema>;
-type EmbeddingModelConfig = z.infer<typeof embeddingModelConfigSchema>;
-type EmbeddingProviderConfigInput = z.input<typeof embeddingProviderConfigSchema>;
-type EmbeddingProviderRuntimeConfigInput = z.input<typeof embeddingProviderRuntimeConfigSchema>;
+type HttpProviderConfig = z.infer<typeof httpProviderConfigSchema>;
+type HttpProviderConfigInput = z.input<typeof httpProviderConfigSchema>;
+type HttpProviderRuntimeConfigInput = z.input<typeof httpProviderRuntimeConfigSchema>;
 
 const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
   metadata: z.record(z.string(), z.unknown()).optional(),
-  model: modelConfigSchema.optional(),
+  model: chatModelConfigSchema.optional(),
   requestId: z.string().optional(),
   signal: z.instanceof(AbortSignal).optional(),
   timeZone: z.string().min(1).optional(),
@@ -500,14 +515,15 @@ function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
  * What every provider is, whichever contract it answers: a named set of models,
  * and a policy for retrying an attempt at one.
  *
- * Generic over the model rather than fixed to the chat one, so that a provider
- * of embeddings registers embedding models and nothing has to pretend a vector
- * has a context window.
+ * One list of models rather than one list per kind: an instance is a service,
+ * and a service that answers chat and embeddings from the same endpoint is one
+ * service. Which of them it can actually perform is answered by what it
+ * implements, not by which list it was declared in.
  */
-abstract class BaseProvider<TModelConfig extends { modelId: string } = ModelConfig> {
+abstract class BaseProvider {
   static readonly configSchema = providerBaseConfigSchema;
   protected timeoutMs?: number;
-  protected modelConfigs: Record<string, TModelConfig> = {};
+  protected modelConfigs: Record<string, ModelConfig> = {};
   protected readonly maxRetries: number;
   protected readonly maxRetryDelayMs: number;
   protected readonly retryDelayMs: number;
@@ -518,33 +534,42 @@ abstract class BaseProvider<TModelConfig extends { modelId: string } = ModelConf
     this.maxRetryDelayMs = config.maxRetryDelayMs;
     this.retryDelayMs = config.retryDelayMs;
     this.timeoutMs = config.timeoutMs;
+    for (const model of config.modelConfigs ?? []) this.addModelConfig(model);
   }
 
   public get modelCount(): number {
     return Object.keys(this.modelConfigs).length;
   }
   public abstract fetchModelIds(): Promise<string[]>;
-  public addModelConfig(model: TModelConfig): void {
+  /** Whether this configured instance can actually perform one model contract. */
+  public abstract supports(kind: ModelKind): boolean;
+  public addModelConfig(model: ModelConfig): void {
     if (this.modelConfigs[model.modelId] !== undefined) {
       throw new Error(`Model config for modelId ${model.modelId} already exists.`);
     }
     this.modelConfigs[model.modelId] = model;
   }
-  public getModelConfig(modelId: string): TModelConfig | undefined {
+  public getModelConfig(modelId: string): ModelConfig | undefined {
     return this.modelConfigs[modelId];
   }
-  public listModelConfigs(): TModelConfig[] {
-    return Object.values(this.modelConfigs);
+  /** Every model, or only the ones of one kind. */
+  public listModelConfigs(kind?: ModelKind): ModelConfig[] {
+    const all = Object.values(this.modelConfigs);
+    return kind === undefined ? all : all.filter((model) => model.kind === kind);
+  }
+  public chatModelConfig(modelId: string): ChatModelConfig | undefined {
+    const model = this.modelConfigs[modelId];
+    return model !== undefined && isChatModel(model) ? model : undefined;
+  }
+  public embeddingModelConfig(modelId: string): EmbeddingModelConfig | undefined {
+    const model = this.modelConfigs[modelId];
+    return model !== undefined && isEmbeddingModel(model) ? model : undefined;
   }
 }
 
 abstract class ChatProvider extends BaseProvider {
-  static override readonly configSchema = chatProviderConfigSchema;
-
-  constructor(input: ChatProviderRuntimeConfigInput) {
-    super(input);
-    const config = parseOrThrow(chatProviderRuntimeConfigSchema, input);
-    for (const model of config.modelConfigs ?? []) this.addModelConfig(model);
+  public supports(kind: ModelKind): boolean {
+    return kind === 'chat';
   }
 
   public getMessageStream(
@@ -605,13 +630,13 @@ abstract class ChatProvider extends BaseProvider {
  * embedder would be designing for a caller that does not exist.
  */
 abstract class HttpChatProvider extends ChatProvider {
-  static override readonly configSchema = httpChatProviderConfigSchema;
+  static override readonly configSchema = httpProviderConfigSchema;
   protected apiKey?: SecretHandle;
   protected baseUrl: string;
 
-  constructor(input: HttpChatProviderRuntimeConfigInput) {
+  constructor(input: HttpProviderRuntimeConfigInput) {
     super(input);
-    const config = parseOrThrow(httpChatProviderRuntimeConfigSchema, input);
+    const config = parseOrThrow(httpProviderRuntimeConfigSchema, input);
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl;
   }
@@ -643,46 +668,87 @@ interface EmbedResult {
 }
 
 /**
- * A provider that turns text into vectors.
+ * Turning text into vectors, as a capability rather than a kind of provider.
  *
- * A sibling of `ChatProvider` rather than a kind of it: both are named sets of
- * models reached the same ways, and neither can answer the other's contract.
+ * An interface and not a class because the same service commonly does both: one
+ * endpoint, one credential, one configured instance that answers chat and
+ * embeddings. Made a sibling class instead, every such service would have to be
+ * configured twice and could then disagree with itself about its own settings.
+ * What a provider can do is answered by what it implements — the same way
+ * disposal is — so a new kind of model is a new capability, never a second way
+ * to configure a provider.
  *
  * The call is a batch because embedding is almost never wanted one text at a
- * time — indexing a corpus one round trip per document is the difference
- * between a pass that finishes and one that does not. Vectors come back
- * normalized to unit length, decided here rather than per adapter so that
- * cosine similarity is a dot product everywhere and no caller has to ask.
+ * time: indexing a corpus one round trip per document is the difference between
+ * a pass that finishes and one that does not. Vectors come back normalized to
+ * unit length, decided here rather than per adapter so that cosine similarity
+ * is a dot product everywhere and no caller has to ask.
  */
-abstract class EmbeddingProvider extends BaseProvider<EmbeddingModelConfig> {
-  static override readonly configSchema = embeddingProviderConfigSchema;
-
-  constructor(input: EmbeddingProviderRuntimeConfigInput) {
-    super(input);
-    const config = parseOrThrow(embeddingProviderRuntimeConfigSchema, input);
-    for (const model of config.modelConfigs ?? []) this.addModelConfig(model);
-  }
-
+interface EmbeddingCapable {
   /** One vector per input text, in the order the texts were given. */
-  public abstract embed(request: EmbedRequest): Promise<EmbedResult>;
+  embed(request: EmbedRequest): Promise<EmbedResult>;
 }
 
-type Provider = ChatProvider;
+function hasProviderSurface(value: unknown): value is BaseProvider {
+  if (typeof value !== 'object' || value === null) return false;
+  return [
+    'addModelConfig',
+    'embeddingModelConfig',
+    'fetchModelIds',
+    'getModelConfig',
+    'listModelConfigs',
+    'chatModelConfig',
+    'supports',
+  ].every((name) => typeof Reflect.get(value, name) === 'function');
+}
+
+function isEmbeddingCapable(value: unknown): value is BaseProvider & EmbeddingCapable {
+  return (
+    hasProviderSurface(value) &&
+    value.supports('embedding') &&
+    typeof Reflect.get(value, 'embed') === 'function'
+  );
+}
+
+/**
+ * Whether a configured provider can hold a conversation.
+ *
+ * Asked rather than assumed, because a provider is a service and not every
+ * service chats: one that serves only embedding models is a provider too, and
+ * so will an image one be. Naming such an instance where a conversation is
+ * expected is a configuration mistake, and this is what lets it be reported as
+ * one instead of failing at the first request.
+ *
+ * Structural by design: compiled extensions resolve the extension API from
+ * their package graph while the host can have bundled its own copy. Their
+ * classes then have different constructor identities even though they implement
+ * the same compatible contract, so `instanceof ChatProvider` would reject a
+ * genuine provider at the extension boundary.
+ */
+function isChatCapable(value: unknown): value is ChatProvider {
+  return (
+    hasProviderSurface(value) &&
+    value.supports('chat') &&
+    typeof Reflect.get(value, 'getMessageStream') === 'function'
+  );
+}
+
+type Provider = BaseProvider;
 
 export {
   BaseProvider,
   chatModelConfigSchema,
   ChatProvider,
-  chatProviderConfigSchema,
-  chatProviderRuntimeConfigSchema,
   embeddingModelConfigSchema,
-  EmbeddingProvider,
-  embeddingProviderConfigSchema,
-  embeddingProviderRuntimeConfigSchema,
   HttpChatProvider,
-  httpChatProviderConfigSchema,
-  httpChatProviderRuntimeConfigSchema,
+  httpProviderConfigSchema,
+  httpProviderRuntimeConfigSchema,
+  isChatCapable,
+  isChatModel,
+  isEmbeddingCapable,
+  isEmbeddingModel,
   isProviderError,
+  MODEL_KINDS,
   modelAcceptsInput,
   modelBaseConfigSchema,
   modelConfigSchema,
@@ -701,17 +767,16 @@ export {
 };
 
 export type {
-  ChatProviderConfigInput,
-  ChatProviderRuntimeConfigInput,
+  ChatModelConfig,
+  EmbeddingCapable,
   EmbeddingModelConfig,
-  EmbeddingProviderConfigInput,
-  EmbeddingProviderRuntimeConfigInput,
   EmbedRequest,
   EmbedResult,
-  HttpChatProviderConfig,
-  HttpChatProviderConfigInput,
-  HttpChatProviderRuntimeConfigInput,
+  HttpProviderConfig,
+  HttpProviderConfigInput,
+  HttpProviderRuntimeConfigInput,
   ModelConfig,
+  ModelKind,
   Provider,
   ProviderBaseConfig,
   ProviderBaseConfigInput,
@@ -720,6 +785,7 @@ export type {
   ProviderRuntimeConfigInput,
   ProviderSourceEvent,
   ProviderStreamEvent,
+  SamplingParametersConfig,
   TextGenerateOptions,
   ToolCallDraft,
   Usage,

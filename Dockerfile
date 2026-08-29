@@ -5,7 +5,10 @@
 # ---------------------------------------------------------------------------
 
 ARG BUN_VERSION=1.3.14
-ARG BUN_IMAGE=oven/bun:${BUN_VERSION}-alpine
+# Transformers.js loads onnxruntime-node, whose Linux binaries target glibc.
+# Keep every stage on the same Debian base so native dependencies are installed
+# for the libc used by the final image.
+ARG BUN_IMAGE=oven/bun:${BUN_VERSION}-slim
 
 
 # --- deps ------------------------------------------------------------------
@@ -26,12 +29,34 @@ RUN bun install --frozen-lockfile --ignore-scripts
 # image platform so its matching libvips binary is present at runtime.
 FROM ${BUN_IMAGE} AS runtime-deps
 
+ARG TARGETARCH
+
 WORKDIR /build
 
 COPY package.json bun.lock ./
 COPY packages/extension-api/package.json ./packages/extension-api/package.json
 COPY src/ui/package.json ./src/ui/package.json
 RUN bun install --frozen-lockfile --ignore-scripts --linker=hoisted --omit peer --production --filter nox
+
+# The upstream ONNX package contains native binaries for every supported OS and
+# architecture in one tarball. The Node build of Transformers bundles its web
+# backend, so the separate onnxruntime-web package is also redundant here.
+# Retain only the native binary that can execute in this image, and discard musl
+# Sharp variants now that the runtime is intentionally glibc-based.
+RUN set -eux; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      amd64) onnx_arch=x64 ;; \
+      arm64) onnx_arch=arm64 ;; \
+      *) echo "Unsupported ONNX Runtime architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    find node_modules/onnxruntime-node/bin/napi-v6 \
+      -mindepth 1 -maxdepth 1 -type d ! -name linux -exec rm -rf '{}' +; \
+    find node_modules/onnxruntime-node/bin/napi-v6/linux \
+      -mindepth 1 -maxdepth 1 -type d ! -name "${onnx_arch}" -exec rm -rf '{}' +; \
+    rm -rf node_modules/onnxruntime-web; \
+    find node_modules -type d \
+      \( -name 'sharp-linuxmusl-*' -o -name 'sharp-libvips-linuxmusl-*' \) \
+      -prune -exec rm -rf '{}' +
 
 # --- build -----------------------------------------------------------------
 FROM ${BUN_IMAGE} AS build
@@ -50,6 +75,7 @@ RUN bun run build:extensions \
  && bun build ./index.ts \
       --target=bun \
       --outfile ./dist/nox.js \
+      --external @huggingface/transformers \
       --external playwright \
       --external sharp \
       --external zod \
@@ -71,11 +97,14 @@ LABEL org.opencontainers.image.title="nox" \
       org.opencontainers.image.base.name="${BUN_IMAGE}"
 
 # Playwright is a lazy client, but a configured local instance needs a browser
-# executable. Alpine's Chromium is musl-native; no Playwright browser download
-# is performed, and no browser process starts until the first browser tool call.
-RUN apk add --no-cache chromium \
- && addgroup -g 10001 nox \
- && adduser -D -H -u 10001 -G nox -s /sbin/nologin nox \
+# executable. Debian's Chromium uses the same glibc as ONNX Runtime; no
+# Playwright browser download is performed, and no browser process starts until
+# the first browser tool call.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates chromium wget \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 nox \
+ && useradd --uid 10001 --gid nox --no-create-home --home-dir /home/nox --shell /usr/sbin/nologin nox \
  && install -d -m 0750 -o nox -g nox /home/nox /etc/nox/config /var/lib/nox \
  && install -d -m 0555 -o root -g root /app \
  && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
@@ -88,6 +117,12 @@ COPY --from=build --chown=root:root /build/dist/extensions /app/extensions
 COPY --from=build --chown=root:root /build/dist/migrations /app/migrations
 COPY --from=build --chown=root:root /build/src/ui/dist /app/ui
 
+# Fail the build if the native ONNX binding ever stops matching the runtime
+# image. Importing Transformers eagerly loads that binding but downloads no
+# model weights.
+RUN cd /app \
+ && bun -e 'const runtime = await import("@huggingface/transformers"); if (typeof runtime.pipeline !== "function") throw new Error("Transformers pipeline export is unavailable")'
+
 # --- environment -----------------------------------------------------------
 # Every variable Nox reads, named here rather than left to a default.
 ENV NODE_ENV=production \
@@ -97,7 +132,7 @@ ENV NODE_ENV=production \
     UI_DIR=/app/ui \
     HOME=/home/nox \
     NODE_PATH=/app/node_modules \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     TZ=UTC
 
 USER 10001:10001

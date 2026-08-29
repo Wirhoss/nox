@@ -112,7 +112,7 @@ const settingsMessages = Object.freeze({
   'settings.provider.idHint': 'Stable ID referenced by agent blueprints.',
   'settings.provider.providerJson': 'Provider JSON',
   'settings.provider.providerJsonHelp':
-    'Full fidelity access for contributed adapters and model sampling fields. Credentials do not belong in this document; each adapter declares what Nox must supply separately.',
+    'Full fidelity access for contributed adapters and intrinsic model capabilities. Conversational sampling belongs to the agent. Credentials do not belong in this document; each adapter declares what Nox must supply separately.',
   'settings.provider.remove': 'Remove provider',
   'settings.provider.removeQuestion': 'Remove provider?',
   'settings.provider.removeWarning':
@@ -130,6 +130,7 @@ const settingsMessages = Object.freeze({
   'settings.schemaMap.keyInvalid': 'This ID is not one this setting accepts.',
   'settings.schemaMap.keyRequired': 'Give this entry an ID.',
   'settings.schemaMap.minItems': 'Choose at least {count}.',
+  'settings.schemaMap.position': 'Entry {position}',
   'settings.schemaMap.removeNamed': 'Remove {entry}',
   'settings.schemaMap.unnamedEntry': 'the unnamed entry',
   'settings.sections.agents.description': 'Agent identities, models, capabilities and gate policy.',
@@ -138,10 +139,6 @@ const settingsMessages = Object.freeze({
   'settings.sections.brokers.description': 'Conversation transports contributed by extensions.',
   'settings.sections.brokers.label': 'Broker',
   'settings.sections.brokers.plural': 'Brokers',
-  'settings.sections.embeddings.description':
-    'Models that turn text into vectors, for the features that search by meaning.',
-  'settings.sections.embeddings.label': 'Embedding model',
-  'settings.sections.embeddings.plural': 'Embedding models',
   'settings.sections.general.description': 'Runtime, access, storage and logging defaults.',
   'settings.sections.general.label': 'General',
   'settings.sections.general.plural': 'General',

@@ -24,10 +24,15 @@ const settings = useSettingsStore()
 const slug = computed(() => routeParam('section') ?? 'general')
 const entryId = computed(() => routeParam('entryId'))
 const definition = computed(() => settingsSection(settings.catalog, slug.value))
-/** The contribution the list offered, when the form was reached by pressing one. */
-const offeredType = computed(() =>
-  typeof route.query.type === 'string' ? route.query.type : undefined,
-)
+/** The unconfigured singleton the list actually offered, never a trusted query-string claim. */
+const offeredType = computed(() => {
+  const type = typeof route.query.type === 'string' ? route.query.type : undefined
+  if (type === undefined) return undefined
+  const contribution = settings.catalog?.sections
+    .find((section) => section.key === definition.value?.key)
+    ?.contributions?.find((candidate) => candidate.type === type)
+  return contribution?.instances === 'single' && !contribution.configured ? type : undefined
+})
 /**
  * A section that is not freely creatable can still be configured from a
  * contribution it is offering. The two are different permissions: you cannot

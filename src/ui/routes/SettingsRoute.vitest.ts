@@ -277,7 +277,7 @@ describe('Settings route', () => {
     const blueprint = {
       context: { foldMinReductionRatio: 0.25 },
       description: 'Local Nox test agent',
-      generation: { seed: 7 },
+      generation: { seed: 7, stop: ['END'] },
       maxIterations: 90,
       memory: { id: 'local', maxTokens: 768 },
       model: 'qwen38-27b',
@@ -328,8 +328,14 @@ describe('Settings route', () => {
               modelConfigs: [
                 {
                   contextWindow: 131_072,
+                  kind: 'chat',
                   modelId: 'qwen38-27b',
                   outputModalities: ['text'],
+                },
+                {
+                  dimensions: 384,
+                  kind: 'embedding',
+                  modelId: 'qwen38-embed',
                 },
               ],
               type: 'openai_completions',
@@ -390,7 +396,17 @@ describe('Settings route', () => {
     if (memoryBudget === null) throw new Error('Expected the selected memory token budget.')
     expect(memoryBudget.value).toBe('768')
     expect(screen.getByPlaceholderText('model-id')).toHaveProperty('value', 'qwen38-27b')
+    expect(
+      [...document.querySelectorAll<HTMLOptionElement>('#agent-model-options option')].map(
+        ({ value }) => value,
+      ),
+    ).toEqual(['qwen38-27b'])
     expect(screen.getByPlaceholderText('You are...')).toHaveProperty('value', 'You are Nox.')
+    const seed = document.querySelector<HTMLInputElement>('#agent-seed')
+    const stop = document.querySelector<HTMLInputElement>('#agent-stop')
+    if (seed === null || stop === null) throw new Error('Expected all agent generation controls.')
+    expect(seed.value).toBe('7')
+    expect(stop.value).toBe('END')
 
     const directPanel = screen.getByRole('heading', { name: 'Direct' }).closest('section')
     const routedPanel = screen.getByRole('heading', { name: 'Routed' }).closest('section')
@@ -402,6 +418,8 @@ describe('Settings route', () => {
 
     await fireEvent.update(screen.getByLabelText(/^Description/), 'Primary personal agent')
     await fireEvent.update(memoryBudget, '1024')
+    await fireEvent.update(seed, '11')
+    await fireEvent.update(stop, 'END, DONE')
     await fireEvent.click(within(directPanel).getByRole('button', { name: '+ Add' }))
     await fireEvent.update(screen.getByLabelText('Search configured Tool Sets'), 'internet')
     await fireEvent.click(
@@ -424,7 +442,7 @@ describe('Settings route', () => {
     expect(savedBody).toMatchObject({
       context: { foldMinReductionRatio: 0.25 },
       description: 'Primary personal agent',
-      generation: { seed: 7 },
+      generation: { seed: 11, stop: ['END', 'DONE'] },
       memory: { id: 'local', maxTokens: 1024 },
       taskModels: { title: { model: 'qwen38-9b' } },
       toolSets: { direct: [{ id: 'internet', tools: ['web_search'] }], routed: [] },
@@ -443,6 +461,8 @@ describe('Settings route', () => {
       modelConfigs: [
         {
           contextWindow: 131_072,
+          inputModalities: ['text'],
+          kind: 'chat',
           modelId: 'qwen38-27b',
           outputModalities: ['text'],
         },
@@ -517,6 +537,8 @@ describe('Settings route', () => {
     expect(screen.getByText('STORED')).toBeTruthy()
 
     await fireEvent.update(screen.getByLabelText(/^Base Url/), 'https://new-models.example/v1')
+    await fireEvent.update(screen.getByLabelText(/^Model Id/), 'qwen38-32b')
+    expect(screen.getByLabelText(/^Model Id/)).toHaveProperty('value', 'qwen38-32b')
     const secretValue = screen.getByLabelText(/^Credential value/)
     expect(secretValue).toHaveProperty('type', 'password')
     await fireEvent.update(secretValue, 'replacement-key')
@@ -533,7 +555,8 @@ describe('Settings route', () => {
       baseUrl: 'https://new-models.example/v1',
       modelConfigs: [
         {
-          modelId: 'qwen38-27b',
+          kind: 'chat',
+          modelId: 'qwen38-32b',
           outputModalities: ['text'],
         },
       ],
@@ -560,7 +583,7 @@ describe('Settings route', () => {
         }),
       ),
       http.get('*/api/config/providers/types', () =>
-        HttpResponse.json({ types: [openAIProviderType()] }),
+        HttpResponse.json({ types: [localProviderType(), openAIProviderType()] }),
       ),
       http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
       http.put('*/api/secrets/SECONDARY_API_KEY', async ({ request }) => {
@@ -588,10 +611,16 @@ describe('Settings route', () => {
       }),
     )
 
-    await renderAt('/settings/providers?create=1')
+    // A `many` type in the query is not a singleton invitation. Generic
+    // creation still asks for an ID and only offers many-instance types.
+    await renderAt('/settings/providers?create=1&type=openai_completions')
 
     expect(await screen.findByRole('heading', { name: 'New provider' })).toBeTruthy()
-    expect(document.querySelector('#provider-type')).not.toBeNull()
+    const providerType = document.querySelector<HTMLSelectElement>('#provider-type')
+    expect(providerType).not.toBeNull()
+    expect(Array.from(providerType?.options ?? []).map((option) => option.value)).toEqual([
+      'openai_completions',
+    ])
     await fireEvent.update(screen.getByPlaceholderText('main'), 'secondary')
     await fireEvent.update(screen.getByLabelText(/^Base Url/), 'https://secondary.example/v1')
     await fireEvent.update(screen.getByLabelText('API credential'), '__new_secret__')
@@ -899,10 +928,83 @@ describe('Settings route', () => {
 
       await renderAt(`/settings/${slug}`)
 
-      expect(await screen.findByRole('link', { name: new RegExp(`${type}.*Configure`, 'i') })).toBeTruthy()
+      const offered = await screen.findByRole('link', {
+        name: new RegExp(`${type}.*Configure`, 'i'),
+      })
+      expect(offered).toBeTruthy()
       expect(screen.queryByRole('link', { name: newLabel })).toBeNull()
     },
   )
+
+  it('configures an unseeded singleton and a structured model entry through the generic form', async () => {
+    let providerBody: unknown
+    const summary = {
+      ...sectionSummary('providers', 'contribution', true, 'providers.json', true),
+      contributions: [
+        {
+          configured: false,
+          extensionId: 'nox.provider.local',
+          instances: 'single',
+          type: 'local',
+        },
+      ],
+    }
+    server.use(
+      ...authenticatedOperator(),
+      http.get('*/api/config', () => HttpResponse.json({ sections: [summary] })),
+      http.get('*/api/config/providers', () => HttpResponse.json({ ...summary, value: {} })),
+      http.get('*/api/config/providers/types', () =>
+        HttpResponse.json({ types: [localProviderType()] }),
+      ),
+      http.get('*/api/secrets', () => HttpResponse.json({ secrets: [] })),
+      http.post('*/api/config/providers/local', async ({ request }) => {
+        providerBody = await request.json()
+        return HttpResponse.json({
+          entryId: 'local',
+          restartRequired: false,
+          section: 'providers',
+          value: providerBody,
+        })
+      }),
+    )
+
+    await renderAt('/settings/providers')
+
+    const offered = await screen.findByRole('link', { name: /local.*Configure/i })
+    expect(screen.queryByRole('link', { name: /New Provider/i })).toBeNull()
+    await fireEvent.click(offered)
+    expect(await screen.findByRole('heading', { name: /New Provider/i })).toBeTruthy()
+    expect(document.querySelector('#provider-entry-id')).toBeNull()
+
+    const [, llmEnabled] = screen.getAllByRole('checkbox', { name: 'Enabled' })
+    const [, llmModel] = screen.getAllByLabelText('Model')
+    if (llmEnabled === undefined || llmModel === undefined) {
+      throw new Error('Expected both local model slots.')
+    }
+    await fireEvent.click(llmEnabled)
+    await fireEvent.update(llmModel, 'test/chat-model')
+    await fireEvent.click(screen.getByRole('button', { name: '+ Add' }))
+    await fireEvent.update(screen.getByLabelText(/^Model Id/), 'test/chat-model')
+
+    // Updating a field inside a list must preserve the array and its visible row.
+    expect(screen.getByLabelText(/^Model Id/)).toHaveProperty('value', 'test/chat-model')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save provider' }))
+    await waitFor(() => {
+      expect(providerBody).toMatchObject({
+        llm: { enabled: true, model: 'test/chat-model' },
+        modelConfigs: [
+          {
+            inputModalities: ['text'],
+            kind: 'chat',
+            modelId: 'test/chat-model',
+            outputModalities: ['text'],
+          },
+        ],
+        type: 'local',
+      })
+    })
+  })
 
   it('edits broker routing and grants while keeping contributed credentials write-only', async () => {
     const writes: string[] = []
@@ -1282,6 +1384,75 @@ function brokerType(
   }
 }
 
+function modelConfigsSchema() {
+  return {
+    items: {
+      anyOf: [
+        {
+          properties: {
+            inputModalities: {
+              default: ['text'],
+              items: { enum: ['text', 'image'], type: 'string' },
+              minItems: 1,
+              type: 'array',
+            },
+            kind: { const: 'chat', default: 'chat', type: 'string' },
+            modelId: { type: 'string' },
+            outputModalities: {
+              default: ['text'],
+              items: { enum: ['text'], type: 'string' },
+              minItems: 1,
+              type: 'array',
+            },
+          },
+          required: ['modelId'],
+          type: 'object',
+        },
+        {
+          properties: {
+            dimensions: { type: 'integer' },
+            kind: { const: 'embedding', type: 'string' },
+            modelId: { type: 'string' },
+          },
+          required: ['dimensions', 'kind', 'modelId'],
+          type: 'object',
+        },
+      ],
+    },
+    type: 'array',
+  }
+}
+
+function localProviderType() {
+  const localModelProperties = {
+    enabled: { default: false, type: 'boolean' },
+    model: { type: 'string' },
+    precision: { default: 'q8', enum: ['fp32', 'fp16', 'q8', 'q4'], type: 'string' },
+    threads: { default: 2, maximum: 64, type: 'integer' },
+  }
+  return {
+    extensionId: 'nox.provider.local',
+    instances: 'single',
+    schema: {
+      properties: {
+        embedding: {
+          properties: {
+            ...localModelProperties,
+            dimensions: { type: 'integer' },
+          },
+          type: 'object',
+        },
+        llm: { properties: localModelProperties, type: 'object' },
+        modelConfigs: modelConfigsSchema(),
+        type: { const: 'local', type: 'string' },
+      },
+      required: ['type'],
+      type: 'object',
+    },
+    type: 'local',
+  }
+}
+
 function openAIProviderType() {
   return {
     extensionId: 'nox.provider.openai',
@@ -1298,6 +1469,7 @@ function openAIProviderType() {
         defaultModel: { nox: { label: 'ui.defaultModel' }, type: 'string' },
         maxRetries: { default: 2, nox: { label: 'ui.maxRetries' }, type: 'integer' },
         maxRetryDelayMs: { default: 30_000, type: 'number' },
+        modelConfigs: modelConfigsSchema(),
         retryDelayMs: { default: 500, type: 'number' },
         timeoutMs: { type: 'number' },
         type: { const: 'openai_completions', type: 'string' },

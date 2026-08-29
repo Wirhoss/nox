@@ -44,11 +44,24 @@ const extensionManifestSchema = z.strictObject({
   main: extensionMainSchema,
   schemaVersion: z.literal(1),
   version: semanticVersionSchema,
+  /**
+   * Entry points this package loads at runtime rather than imports.
+   *
+   * A worker is started from a URL, which no bundler can follow: it would be
+   * left out of a built package and the extension would fail at its first use
+   * rather than at build time. Declaring them is what lets a build emit them
+   * beside the entry point they are resolved against.
+   */
+  workers: z.array(extensionMainSchema).optional(),
 });
 
 function parseExtensionManifest(input: unknown): ExtensionManifest {
   const manifest = parseOrThrow(extensionManifestSchema, input);
-  return Object.freeze({ ...manifest, engines: Object.freeze({ ...manifest.engines }) });
+  return Object.freeze({
+    ...manifest,
+    engines: Object.freeze({ ...manifest.engines }),
+    ...(manifest.workers === undefined ? {} : { workers: Object.freeze([...manifest.workers]) }),
+  });
 }
 
 function satisfiesRange(version: string, range: string): boolean {

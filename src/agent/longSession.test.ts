@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type ChatModelConfig,
   ChatProvider,
   type Message,
-  type ModelConfig,
   type ProviderSourceEvent,
   type TextGenerateOptions,
   type Tool,
@@ -19,7 +19,8 @@ import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from
 import { COMPACT_PROMPT } from './context/prompt';
 import { Session } from './session';
 
-const MODEL: ModelConfig = {
+const MODEL: ChatModelConfig = {
+  kind: 'chat',
   inputModalities: ['text'],
   modelId: 'test-model',
   outputModalities: ['text'],

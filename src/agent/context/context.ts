@@ -1,10 +1,10 @@
 import {
   type AssistantMessage,
   bindTool,
+  type ChatModelConfig,
   type ChatProvider,
   type CompactedMessage,
   type Message,
-  type ModelConfig,
   type Tool,
   type UserMessage,
 } from '@nox/extension-api';
@@ -82,7 +82,7 @@ class Context {
   readonly #compactGuardBeginningTokens: number;
   readonly #compactGuardEndTokens: number;
   readonly #compactMinTokens: number;
-  readonly #compactionModel?: ModelConfig;
+  readonly #compactionModel?: ChatModelConfig;
   readonly #timeZone?: string;
   readonly #compactProvider: ChatProvider;
   readonly #contextWindow?: number;

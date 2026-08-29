@@ -9,6 +9,9 @@ import {
   type FieldOption,
   type FormNode,
   isObject,
+  listEntryDefaults,
+  listEntryNodes,
+  type ListNode,
   mapEntryDefaults,
   mapEntryNodes,
   type MapNode,
@@ -302,6 +305,22 @@ function mapEntryLabel(entryKey: string): string {
   return entryKey.length === 0 ? t('settings.schemaMap.unnamedEntry') : entryKey
 }
 
+function listItems(node: ListNode): readonly unknown[] {
+  const current = valueAt(props.value, node.path)
+  return Array.isArray(current) ? current : []
+}
+
+function addListEntry(node: ListNode): void {
+  emit('update', node.path, [...listItems(node), listEntryDefaults(node)])
+}
+
+function removeListEntry(node: ListNode, index: number): void {
+  const remaining = listItems(node).filter((_item, at) => at !== index)
+  // Emptied back to absent rather than to `[]`, matching how a cleared list of
+  // scalars behaves: an absent optional array is what the schema defaults from.
+  emit('update', node.path, remaining.length === 0 && node.optional ? undefined : remaining)
+}
+
 </script>
 
 <template>
@@ -507,6 +526,52 @@ function mapEntryLabel(entryKey: string): string {
         />
       </div>
 
+      <div v-else-if="node.kind === 'list'" class="schema-fields__nested">
+        <div class="schema-fields__map-head">
+          <p class="schema-fields__nested-title">{{ label(node) }}</p>
+          <button type="button" class="schema-fields__map-add" @click="addListEntry(node)">
+            + {{ t('common.add') }}
+          </button>
+        </div>
+        <p v-if="help(node)" class="schema-fields__hint">{{ help(node) }}</p>
+
+        <div
+          v-for="(_item, index) in listItems(node)"
+          :key="index"
+          class="schema-fields__map-entry"
+        >
+          <div class="schema-fields__map-entry-head">
+            <p class="schema-fields__list-position">
+              {{ t('settings.schemaMap.position', { position: index + 1 }) }}
+            </p>
+            <button
+              type="button"
+              class="schema-fields__map-remove"
+              :aria-label="
+                t('settings.schemaMap.removeNamed', { entry: String(index + 1) })
+              "
+              @click="removeListEntry(node, index)"
+            >
+              {{ t('common.remove') }}
+            </button>
+          </div>
+          <SchemaFieldGroup
+            :credentials="props.credentials"
+            :errors="props.errors"
+            :extension-id="props.extensionId"
+            :nodes="listEntryNodes(node, index)"
+            :secrets="props.secrets"
+            :value="props.value"
+            @credential="(path, state) => emit('credential', path, state)"
+            @update="(path, next) => emit('update', path, next)"
+          />
+        </div>
+
+        <p v-if="listItems(node).length === 0" class="schema-fields__map-empty">
+          {{ t('settings.schemaMap.empty') }}
+        </p>
+      </div>
+
       <div v-else-if="node.kind === 'map'" class="schema-fields__nested">
         <div class="schema-fields__map-head">
           <p class="schema-fields__nested-title">{{ label(node) }}</p>
@@ -624,6 +689,16 @@ function mapEntryLabel(entryKey: string): string {
 
 .schema-fields__field--invalid select {
   border-color: var(--nox-status-danger);
+}
+
+.schema-fields__list-position {
+  margin: 0;
+  color: var(--nox-text-secondary);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--nox-tracking-system);
+  text-transform: uppercase;
 }
 
 .schema-fields__hint {

@@ -9,6 +9,7 @@ import {
   type BrokerHistory,
   type BrokerHost,
   type BrokerSession,
+  type ChatModelConfig,
   ChatProvider,
   type CommandRejection,
   commands,
@@ -16,7 +17,6 @@ import {
   defineExtension,
   type Message,
   type MessageContent,
-  type ModelConfig,
   type OutboundEvent,
   type OutboundRunCompleted,
   type ProviderSourceEvent,
@@ -41,7 +41,8 @@ import { type BrokerConversationGrant, Gateway } from './gateway';
 
 import type { GatePolicyInput } from '../tool/gate';
 
-const MODEL: ModelConfig = {
+const MODEL: ChatModelConfig = {
+  kind: 'chat',
   inputModalities: ['text'],
   modelId: 'test-model',
   outputModalities: ['text'],

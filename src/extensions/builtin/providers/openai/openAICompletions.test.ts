@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type ChatModelConfig,
   isProviderError,
   type Message,
-  type ModelConfig,
   type ProviderErrorCode,
   type ProviderStreamEvent,
   type Tool,
@@ -93,7 +93,7 @@ async function run(
   instance: OpenAICompletions,
   history: Message[] = [],
   tools: Tool[] = [],
-  model?: ModelConfig,
+  model?: ChatModelConfig,
 ): Promise<ProviderStreamEvent[]> {
   return collect(instance.getMessageStream('be brief', history, tools, { model }));
 }
@@ -237,6 +237,33 @@ describe('OpenAICompletions request body', () => {
     expect(body).not.toHaveProperty('tools');
   });
 
+  test('takes sampling policy from request options rather than model metadata', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+    const instance = provider();
+
+    await collect(
+      instance.getMessageStream('be brief', [], [], {
+        maxTokens: 512,
+        model: {
+          inputModalities: ['text'],
+          kind: 'chat',
+          modelId: 'gpt-test',
+          outputModalities: ['text'],
+        },
+        seed: 7,
+        stop: ['END'],
+        temperature: 0.2,
+      }),
+    );
+
+    expect(requests[0]?.body).toMatchObject({
+      max_completion_tokens: 512,
+      seed: 7,
+      stop: ['END'],
+      temperature: 0.2,
+    });
+  });
+
   test('fails when no model is configured at all', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
@@ -317,11 +344,13 @@ describe('OpenAICompletions message mapping', () => {
       ];
 
       await run(instance, history, [], {
+        kind: 'chat',
         inputModalities: ['text', 'image'],
         modelId: 'vision',
         outputModalities: ['text'],
       });
       await run(instance, history, [], {
+        kind: 'chat',
         inputModalities: ['text'],
         modelId: 'text-only',
         outputModalities: ['text'],
@@ -389,7 +418,12 @@ describe('OpenAICompletions message mapping', () => {
           }),
         ],
         [],
-        { inputModalities: ['text', 'image'], modelId: 'vision', outputModalities: ['text'] },
+        {
+          inputModalities: ['text', 'image'],
+          kind: 'chat',
+          modelId: 'vision',
+          outputModalities: ['text'],
+        },
       );
 
       expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toEqual([
@@ -435,7 +469,12 @@ describe('OpenAICompletions message mapping', () => {
           }),
         ],
         [],
-        { inputModalities: ['text', 'image'], modelId: 'vision', outputModalities: ['text'] },
+        {
+          inputModalities: ['text', 'image'],
+          kind: 'chat',
+          modelId: 'vision',
+          outputModalities: ['text'],
+        },
       );
 
       expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toBe(
@@ -494,7 +533,12 @@ describe('OpenAICompletions message mapping', () => {
           }),
         ],
         [],
-        { inputModalities: ['text', 'image'], modelId: 'vision', outputModalities: ['text'] },
+        {
+          inputModalities: ['text', 'image'],
+          kind: 'chat',
+          modelId: 'vision',
+          outputModalities: ['text'],
+        },
       );
 
       expect((requests[0]?.body.messages as { content: unknown }[])[1]?.content).toBe(
@@ -644,6 +688,7 @@ describe('OpenAICompletions message mapping', () => {
       ],
       [],
       {
+        kind: 'chat',
         inputModalities: ['text', 'image'],
         modelId: 'gpt-vision',
         outputModalities: ['text'],
@@ -713,6 +758,7 @@ describe('OpenAICompletions message mapping', () => {
       ],
       [],
       {
+        kind: 'chat',
         inputModalities: ['text'],
         modelId: 'text-only',
         outputModalities: ['text'],
@@ -745,6 +791,7 @@ describe('OpenAICompletions message mapping', () => {
       ],
       [],
       {
+        kind: 'chat',
         inputModalities: ['text', 'audio'],
         modelId: 'audio-model',
         outputModalities: ['text'],
@@ -874,7 +921,8 @@ describe('OpenAICompletions session regression', () => {
   test('sends one tool result with the same nonce in every request of a session', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nox-openai-nonce-'));
     const database = await Database.open({ path: join(directory, 'nox.db') });
-    const model: ModelConfig = {
+    const model: ChatModelConfig = {
+      kind: 'chat',
       inputModalities: ['text'],
       modelId: 'gpt-test',
       outputModalities: ['text'],
@@ -953,7 +1001,8 @@ describe('OpenAICompletions session regression', () => {
   test('persists and replays a folded tool-only reasoning turn into the next request', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nox-openai-fold-'));
     const database = await Database.open({ path: join(directory, 'nox.db') });
-    const model: ModelConfig = {
+    const model: ChatModelConfig = {
+      kind: 'chat',
       inputModalities: ['text'],
       modelId: 'gpt-test',
       outputModalities: ['text'],

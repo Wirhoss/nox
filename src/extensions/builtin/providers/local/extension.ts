@@ -1,26 +1,33 @@
+import { join } from 'node:path';
+
 import {
+  dataDirectoryService,
   defineExtension,
   defineTranslationFragment,
-  embeddingProviderContribution,
-  embeddings,
+  providerContribution,
+  providers,
   translationFragments,
 } from '@nox/extension-api';
 
-import { LocalEmbeddingProvider } from './localEmbeddingProvider';
+import { LocalProvider } from './localProvider';
 import { englishMessages } from './messages';
 import { spanishMessages } from './messages.es';
 
 /**
  * Models Nox runs itself, on the CPU of the machine it is installed on.
  *
- * Contributed as one instance and not several: an entry here is a set of
- * weights loaded into this process, and a second copy of the same model would
- * buy nothing but a second copy of its memory. Two different models are two
- * configured instances of two different kinds, which is what the singleton rule
- * already expresses.
+ * Contributed as one instance and not several: an entry here is the set of
+ * weights loaded into this process, and a second copy of the same engine would
+ * buy nothing but a second copy of its memory. The singleton owns the `local`
+ * entry ID, but remains unconfigured until an operator chooses a model to run.
  */
 const localProviderExtension = defineExtension({
   activate(context) {
+    const dataDirectory = context.services.tryGet(dataDirectoryService);
+    // Under the data directory rather than beside the code: weights are state
+    // this installation accumulated, not something it shipped with.
+    const defaultCacheDirectory =
+      dataDirectory === undefined ? undefined : join(dataDirectory, 'models');
     context.contributions.register(
       translationFragments,
       'nox.provider.local.en',
@@ -40,11 +47,15 @@ const localProviderExtension = defineExtension({
       }),
     );
     context.contributions.register(
-      embeddings,
+      providers,
       'local',
-      embeddingProviderContribution({
-        configSchema: LocalEmbeddingProvider.configSchema,
-        create: (config) => new LocalEmbeddingProvider(config, { logger: context.logger }),
+      providerContribution({
+        configSchema: LocalProvider.configSchema,
+        create: (config) =>
+          new LocalProvider(config, {
+            ...(defaultCacheDirectory === undefined ? {} : { defaultCacheDirectory }),
+            logger: context.logger,
+          }),
       }),
     );
   },

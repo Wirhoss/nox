@@ -1,29 +1,37 @@
 import {
+  BaseProvider,
   defineExtension,
-  EmbeddingProvider,
-  embeddingProviderConfigSchema,
-  embeddingProviderContribution,
-  embeddings,
+  type EmbeddingCapable,
   type EmbedRequest,
   type EmbedResult,
+  type ModelKind,
+  providerBaseConfigSchema,
+  providerContribution,
+  providers,
   z,
 } from '@nox/extension-api';
 
-const configSchema = embeddingProviderConfigSchema.extend({
+const configSchema = providerBaseConfigSchema.extend({
   type: z.literal('counting_test'),
 });
 
 /**
- * An embedder with no model behind it: each text becomes its own character
- * counts, normalized. Deterministic and dependency-free, so a test can assert
- * the contract — batch order, declared dimensions, unit length — rather than
- * the quality of a real model.
+ * A provider that only embeds, with no model behind it.
+ *
+ * It exists to prove that a service which cannot chat is still an ordinary
+ * provider — no second contribution point, no second section. Each text becomes
+ * its own character counts, normalized: deterministic and dependency-free, so
+ * the test asserts the contract rather than the quality of a real model.
  */
-class CountingEmbedder extends EmbeddingProvider {
+class CountingEmbedder extends BaseProvider implements EmbeddingCapable {
   static readonly dimensions = 4;
 
   public fetchModelIds(): Promise<string[]> {
     return Promise.resolve(['counting']);
+  }
+
+  public supports(kind: ModelKind): boolean {
+    return kind === 'embedding';
   }
 
   public embed(request: EmbedRequest): Promise<EmbedResult> {
@@ -53,9 +61,9 @@ function unit(vector: readonly number[]): number[] {
 const countingEmbedderExtension = defineExtension({
   activate(context) {
     context.contributions.register(
-      embeddings,
+      providers,
       'counting_test',
-      embeddingProviderContribution({
+      providerContribution({
         configSchema,
         create: (config) => new CountingEmbedder(config),
       }),

@@ -35,6 +35,7 @@ import {
   chatHubService,
   configAdminService,
   configService,
+  dataDirectoryService,
   loggerService,
   scheduledRunHostService,
   secretStoreService,
@@ -134,6 +135,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     .provide(artifactPipelineService, artifactPipeline)
     .provide(chatHubService, chat)
     .provide(configService, config)
+    .provide(dataDirectoryService, env.dataDir)
     .provide(loggerService, logger)
     .provide(scheduledRunHostService, scheduledRuns)
     .provide(secretStoreService, secretStore);

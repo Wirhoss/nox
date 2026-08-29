@@ -23,6 +23,7 @@ type NumericInputKey =
   | 'memoryMaxTokens'
   | 'presencePenalty'
   | 'reserveForOutput'
+  | 'seed'
   | 'temperature'
   | 'topK'
   | 'topP'
@@ -92,6 +93,7 @@ const numericInputs = reactive<Record<NumericInputKey, string>>({
   memoryMaxTokens: '',
   presencePenalty: '',
   reserveForOutput: '',
+  seed: '',
   temperature: '',
   topK: '',
   topP: '',
@@ -211,6 +213,7 @@ function syncNumericInputs(): void {
   numericInputs.memoryMaxTokens = optionalNumber(configValue(draft.value.memory).maxTokens)
   numericInputs.presencePenalty = optionalNumber(draft.value.generation.presencePenalty)
   numericInputs.reserveForOutput = optionalNumber(draft.value.context.reserveForOutput)
+  numericInputs.seed = optionalNumber(draft.value.generation.seed)
   numericInputs.temperature = optionalNumber(draft.value.generation.temperature)
   numericInputs.topK = optionalNumber(draft.value.generation.topK)
   numericInputs.topP = optionalNumber(draft.value.generation.topP)
@@ -317,6 +320,28 @@ function setOptionalNumber(
     }
   }
   clearFeedback(input)
+}
+
+function stopText(): string {
+  const stop = draft.value.generation.stop
+  return Array.isArray(stop)
+    ? stop.filter((value): value is string => typeof value === 'string').join(', ')
+    : ''
+}
+
+function setStop(value: string): void {
+  const stop = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+  draft.value = {
+    ...draft.value,
+    generation:
+      stop.length === 0
+        ? withoutProperty(draft.value.generation, 'stop')
+        : { ...draft.value.generation, stop },
+  }
+  clearFeedback('stop')
 }
 
 function taskValue(task: TaskName, property: 'model' | 'provider'): string {
@@ -623,6 +648,7 @@ function validateForm(): boolean {
   validateOptionalNumber(errors, 'topK', 1, undefined, true)
   validateOptionalNumber(errors, 'maxTokens', 1, undefined, true)
   validateOptionalNumber(errors, 'memoryMaxTokens', 1, 16_384, true)
+  validateOptionalNumber(errors, 'seed', undefined, undefined, true)
   validateOptionalNumber(errors, 'frequencyPenalty', -2, 2)
   validateOptionalNumber(errors, 'presencePenalty', -2, 2)
   validateOptionalNumber(errors, 'contextWindow', 1, undefined, true)
@@ -764,6 +790,9 @@ function modelIds(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((candidate) => {
     if (!isConfigValue(candidate)) return []
+    const kind = stringValue(candidate.kind)
+    // Kindless declarations predate explicit capabilities and are chat by contract.
+    if (kind.length > 0 && kind !== 'chat') return []
     const modelId = stringValue(candidate.modelId)
     return modelId.length > 0 ? [modelId] : []
   })
@@ -1316,6 +1345,20 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   @update:model-value="
                     setOptionalNumber('generation', 'presencePenalty', 'presencePenalty', $event)
                   "
+                />
+                <NoxTextField
+                  id="agent-seed"
+                  :model-value="numericInputs.seed"
+                  :error="fieldErrors.seed"
+                  :label="t('settings.agent.seed')"
+                  @update:model-value="setOptionalNumber('generation', 'seed', 'seed', $event)"
+                />
+                <NoxTextField
+                  id="agent-stop"
+                  :model-value="stopText()"
+                  :hint="t('settings.agent.stopHint')"
+                  :label="t('settings.agent.stop')"
+                  @update:model-value="setStop($event)"
                 />
               </div>
             </fieldset>

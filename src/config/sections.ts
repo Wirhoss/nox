@@ -1,8 +1,6 @@
 import {
   brokerConfigSchema,
   brokers,
-  embeddingProviderContributionConfigSchema,
-  embeddings,
   memories,
   memoryConfigSchema,
   providerConfigSchema,
@@ -67,21 +65,6 @@ const sections = {
       plural: 'settings.sections.brokers.plural',
       references: ['blueprints'],
       slug: 'brokers',
-    },
-  }),
-  embeddings: contributionSection({
-    applies: 'hot',
-    baseSchema: embeddingProviderContributionConfigSchema,
-    name: 'embeddings.json',
-    point: embeddings,
-    presentation: {
-      description: 'settings.sections.embeddings.description',
-      editor: 'contribution',
-      entrySummary: { description: [], detail: ['type'] },
-      group: 'intelligence',
-      label: 'settings.sections.embeddings.label',
-      plural: 'settings.sections.embeddings.plural',
-      slug: 'embedding-models',
     },
   }),
   memories: contributionSection({

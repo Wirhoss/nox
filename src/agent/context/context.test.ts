@@ -1,7 +1,7 @@
 import {
+  type ChatModelConfig,
   ChatProvider,
   type Message,
-  type ModelConfig,
   type ProviderSourceEvent,
   type TextGenerateOptions,
   type Tool,
@@ -69,7 +69,7 @@ function bytes(messages: readonly Message[]): string[] {
 
 interface CapturedRequest {
   history: Message[];
-  model?: ModelConfig;
+  model?: ChatModelConfig;
   systemPrompt: string;
   tools: Tool[];
 }
@@ -203,7 +203,8 @@ describe('Context compaction', () => {
     const beginningTokens = estimator.estimateMessage(requireValue(messages[0]));
     const endTokens = estimator.estimateMessage(requireValue(messages[3]));
     const provider = new SummaryProvider(['small handoff']);
-    const compactionModel: ModelConfig = {
+    const compactionModel: ChatModelConfig = {
+      kind: 'chat',
       inputModalities: ['text'],
       modelId: 'compact-model',
       outputModalities: ['text'],

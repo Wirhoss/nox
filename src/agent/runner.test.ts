@@ -1,5 +1,6 @@
 import {
   bindTool,
+  type ChatModelConfig,
   ChatProvider,
   contentToString,
   type Memory,
@@ -7,7 +8,6 @@ import {
   type MemoryRetainRequest,
   type Message,
   type MessageContent,
-  type ModelConfig,
   ProviderError,
   type ProviderSourceEvent,
   type TextGenerateOptions,
@@ -34,7 +34,8 @@ import type {
 } from '../artifact/output';
 import type { AgentEvent } from './events';
 
-const MODEL: ModelConfig = {
+const MODEL: ChatModelConfig = {
+  kind: 'chat',
   inputModalities: ['text'],
   modelId: 'test-model',
   outputModalities: ['text'],
@@ -67,6 +68,7 @@ async function settle(): Promise<void> {
 }
 
 class ScriptedProvider extends ChatProvider {
+  public readonly options: (TextGenerateOptions | undefined)[] = [];
   public readonly requests: Message[][] = [];
 
   readonly #scripts: Script[];
@@ -88,6 +90,7 @@ class ScriptedProvider extends ChatProvider {
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
     this.requests.push([...messageHistory]);
+    this.options.push(_opts);
     const script = this.#scripts.shift();
     if (script === undefined) throw new Error('Provider ran out of scripted responses.');
     yield* script(signal, _opts);
@@ -253,6 +256,27 @@ describe('Runner', () => {
     expect(events.snapshot()[0]).toMatchObject({ modelId: 'test-model', trigger: 'user' });
     expect(events.snapshot().at(-1)).toMatchObject({ status: 'completed' });
     expect(runner.state).toBe('idle');
+  });
+
+  test('sends agent generation policy as request options, not model metadata', async () => {
+    const provider = new ScriptedProvider([says('hello')]);
+    const context = new Context('system', provider);
+    const runner = new Runner(context, new EventLog<AgentEvent>(), provider, MODEL, {
+      agentId: 'test-agent',
+      generation: { seed: 7, stop: ['END'], temperature: 0.2 },
+      sessionId: 'session-1',
+    });
+
+    runner.send(user('hi'));
+    await runner.idle;
+
+    expect(provider.options[0]).toMatchObject({
+      model: MODEL,
+      seed: 7,
+      stop: ['END'],
+      temperature: 0.2,
+    });
+    expect(provider.options[0]?.model).not.toHaveProperty('temperature');
   });
 
   describe('long-term memory', () => {

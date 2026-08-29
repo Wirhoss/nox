@@ -228,6 +228,8 @@ interface ExtensionManifest {
   readonly main: string;
   readonly schemaVersion: 1;
   readonly version: string;
+  /** Entry points loaded at runtime rather than imported; a build must emit them too. */
+  readonly workers?: readonly string[];
 }
 
 interface ExtensionContext {

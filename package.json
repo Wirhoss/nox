@@ -2,12 +2,36 @@
   "name": "nox",
   "version": "0.1.0",
   "module": "index.ts",
-  "type": "module",
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "croner": "^10.0.1",
+    "drizzle-orm": "^0.45.2",
+    "elysia": "^1.4.29",
+    "jose": "^6.2.10",
+    "nanoid": "^6.0.1",
+    "playwright": "^1.62.1",
+    "semver": "^7.8.5",
+    "sharp": "^0.35.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@nox/extension-api": "workspace:*",
+    "@types/bun": "latest",
+    "@types/semver": "^7.8.0",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-perfectionist": "^5.10.1",
+    "globals": "^17.11.0",
+    "jiti": "^2.7.0",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.67.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
   "private": true,
-  "workspaces": [
-    "packages/extension-api",
-    "src/ui"
-  ],
   "scripts": {
     "start": "NODE_PATH=./node_modules bun run index.ts",
     "build:extension-api": "bun --cwd=packages/extension-api run build",
@@ -30,32 +54,9 @@
     "check:ui": "bun --cwd=src/ui run check",
     "check": "bun run check:kernel && bun run check:ui"
   },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@nox/extension-api": "workspace:*",
-    "@types/bun": "latest",
-    "@types/semver": "^7.8.0",
-    "drizzle-kit": "^0.31.10",
-    "eslint": "^10.8.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-perfectionist": "^5.10.1",
-    "globals": "^17.11.0",
-    "jiti": "^2.7.0",
-    "prettier": "^3.9.6",
-    "typescript-eslint": "^8.67.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "croner": "^10.0.1",
-    "drizzle-orm": "^0.45.2",
-    "elysia": "^1.4.29",
-    "jose": "^6.2.10",
-    "nanoid": "^6.0.1",
-    "playwright": "^1.62.1",
-    "semver": "^7.8.5",
-    "sharp": "^0.35.3",
-    "zod": "^4.4.3"
-  }
+  "type": "module",
+  "workspaces": [
+    "packages/extension-api",
+    "src/ui"
+  ]
 }

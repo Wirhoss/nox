@@ -1,9 +1,10 @@
 import {
   type ArtifactPipeline,
   type ArtifactRef,
+  type ChatModelConfig,
   HttpChatProvider,
-  httpChatProviderConfigSchema,
-  httpChatProviderRuntimeConfigSchema,
+  httpProviderConfigSchema,
+  httpProviderRuntimeConfigSchema,
   isArtifactProcessorOutputError,
   isArtifactRepresentationUnavailableError,
   type Logger,
@@ -11,7 +12,6 @@ import {
   type MessageContent,
   modalitiesIn,
   modelAcceptsInput,
-  type ModelConfig,
   ProviderError,
   type ProviderErrorCode,
   type ProviderSourceEvent,
@@ -29,12 +29,12 @@ import {
 } from '@nox/extension-api';
 import { z } from 'zod';
 
-const openAICompletionsConfigSchema = httpChatProviderConfigSchema.extend({
+const openAICompletionsConfigSchema = httpProviderConfigSchema.extend({
   defaultModel: z.string().min(1).optional(),
   type: z.literal('openai_completions'),
 });
 
-const openAICompletionsRuntimeConfigSchema = httpChatProviderRuntimeConfigSchema.extend({
+const openAICompletionsRuntimeConfigSchema = httpProviderRuntimeConfigSchema.extend({
   defaultModel: z.string().min(1).optional(),
   type: z.literal('openai_completions'),
 });
@@ -406,11 +406,11 @@ class OpenAICompletions extends HttpChatProvider {
 
   /** Resolves the model the way `buildBody` does, so logs name the same one. */
   private resolveModel(opts: TextGenerateOptions | undefined): {
-    model?: ModelConfig;
+    model?: ChatModelConfig;
     modelId: string;
   } {
     const configuredModel =
-      this.defaultModel === undefined ? undefined : this.getModelConfig(this.defaultModel);
+      this.defaultModel === undefined ? undefined : this.chatModelConfig(this.defaultModel);
     const model = opts?.model ?? configuredModel;
     const modelId = model?.modelId ?? this.defaultModel;
 
@@ -430,7 +430,6 @@ class OpenAICompletions extends HttpChatProvider {
     const { model, modelId } = this.resolveModel(opts);
     if (model !== undefined) this.assertInputModalities(model, messageHistory);
 
-    const sampling = { ...model, ...opts };
     const body: Record<string, unknown> = {
       messages: await this.toOpenAIMessages(systemPrompt, messageHistory, model, opts?.timeZone),
       model: modelId,
@@ -439,20 +438,20 @@ class OpenAICompletions extends HttpChatProvider {
     };
 
     if (tools.length > 0) body.tools = this.toOpenAITools(tools);
-    if (sampling.maxTokens !== undefined) body.max_completion_tokens = sampling.maxTokens;
-    if (sampling.temperature !== undefined) body.temperature = sampling.temperature;
-    if (sampling.topP !== undefined) body.top_p = sampling.topP;
-    if (sampling.stop !== undefined) body.stop = sampling.stop;
-    if (sampling.seed !== undefined) body.seed = sampling.seed;
-    if (sampling.frequencyPenalty !== undefined) body.frequency_penalty = sampling.frequencyPenalty;
-    if (sampling.presencePenalty !== undefined) body.presence_penalty = sampling.presencePenalty;
+    if (opts?.maxTokens !== undefined) body.max_completion_tokens = opts.maxTokens;
+    if (opts?.temperature !== undefined) body.temperature = opts.temperature;
+    if (opts?.topP !== undefined) body.top_p = opts.topP;
+    if (opts?.stop !== undefined) body.stop = opts.stop;
+    if (opts?.seed !== undefined) body.seed = opts.seed;
+    if (opts?.frequencyPenalty !== undefined) body.frequency_penalty = opts.frequencyPenalty;
+    if (opts?.presencePenalty !== undefined) body.presence_penalty = opts.presencePenalty;
 
     return body;
   }
   private async toOpenAIMessages(
     systemPrompt: string,
     history: Message[],
-    model: ModelConfig | undefined,
+    model: ChatModelConfig | undefined,
     timeZone?: string,
   ): Promise<OpenAIMessage[]> {
     const messages: OpenAIMessage[] = [{ content: systemPrompt, role: 'system' }];
@@ -596,7 +595,7 @@ class OpenAICompletions extends HttpChatProvider {
 
   private async toOpenAIUserContent(
     content: readonly MessageContent[],
-    model: ModelConfig | undefined,
+    model: ChatModelConfig | undefined,
   ): Promise<OpenAIContentPart[] | string> {
     const parts: OpenAIContentPart[] = [];
     for (const part of content) {
@@ -679,7 +678,7 @@ class OpenAICompletions extends HttpChatProvider {
     }
   }
 
-  private assertInputModalities(model: ModelConfig, history: readonly Message[]): void {
+  private assertInputModalities(model: ChatModelConfig, history: readonly Message[]): void {
     for (const message of history) {
       const content =
         message.role === 'user' || message.role === 'compacted'

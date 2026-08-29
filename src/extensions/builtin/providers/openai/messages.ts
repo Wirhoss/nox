@@ -1,6 +1,7 @@
 const englishMessages = Object.freeze({
   'ui.adapter': 'ADAPTER',
-  'ui.additionalFields': 'Additional sampling fields are preserved and available in JSON mode.',
+  'ui.additionalFields':
+    'Additional intrinsic model metadata is preserved and available in JSON mode.',
   'ui.addModel': 'Add model configuration',
   'ui.apiCredential': 'API credential',
   'ui.baseUrl': 'Base URL',
@@ -25,7 +26,7 @@ const englishMessages = Object.freeze({
   'ui.model': 'MODEL',
   'ui.modelCatalog': 'Model catalog',
   'ui.modelCatalogHelp':
-    'Declared model metadata anchors context accounting and optional sampling defaults.',
+    'Declared model metadata anchors context accounting and modality validation.',
   'ui.modelId': 'Model ID',
   'ui.models': 'MODELS',
   'ui.modality.audio': 'Audio',

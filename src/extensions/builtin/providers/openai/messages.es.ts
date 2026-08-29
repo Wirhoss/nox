@@ -1,7 +1,7 @@
 const spanishMessages = Object.freeze({
   'ui.adapter': 'ADAPTADOR',
   'ui.additionalFields':
-    'Los campos de muestreo adicionales se conservan y están disponibles en modo JSON.',
+    'Los metadatos intrínsecos adicionales del modelo se conservan y están disponibles en modo JSON.',
   'ui.addModel': 'Añadir configuración de modelo',
   'ui.apiCredential': 'Credencial de la API',
   'ui.baseUrl': 'URL base',
@@ -28,7 +28,7 @@ const spanishMessages = Object.freeze({
   'ui.model': 'MODELO',
   'ui.modelCatalog': 'Catálogo de modelos',
   'ui.modelCatalogHelp':
-    'Los metadatos declarados del modelo fijan la contabilidad del contexto y los valores predeterminados opcionales de muestreo.',
+    'Los metadatos declarados del modelo fijan la contabilidad del contexto y la validación de modalidades.',
   'ui.modelId': 'ID del modelo',
   'ui.models': 'MODELOS',
   'ui.modality.audio': 'Audio',

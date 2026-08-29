@@ -16,7 +16,13 @@ import type { Logger } from '../logger/logger';
 import type { GateEvaluator, GatePolicyInput } from '../tool/gate';
 import type { ContextOptions } from './context/options';
 import type { RunnerOptions } from './runner';
-import type { ChatProvider, Memory, ModelConfig, ToolSetGrant } from '@nox/extension-api';
+import type {
+  ChatModelConfig,
+  ChatProvider,
+  Memory,
+  SamplingParametersConfig,
+  ToolSetGrant,
+} from '@nox/extension-api';
 
 interface AgentOptions extends RunnerOptions {
   /**
@@ -33,7 +39,7 @@ interface AgentOptions extends RunnerOptions {
    */
   agentId: string;
   /** Provider and model used for compaction; each defaults to the agent's main one. */
-  compactionModel?: ModelConfig;
+  compactionModel?: ChatModelConfig;
   compactionProvider?: ChatProvider;
   /** Context policy, minus what a session supplies: history, sink and tools. */
   context?: Omit<
@@ -57,7 +63,7 @@ interface AgentOptions extends RunnerOptions {
    */
   timeZone?: string;
   /** Provider and model used to name sessions; each defaults to the agent's main one. */
-  titleModel?: ModelConfig;
+  titleModel?: ChatModelConfig;
   titleProvider?: ChatProvider;
 }
 
@@ -115,7 +121,7 @@ class Agent {
   readonly #agentId: string;
   readonly #artifacts?: ArtifactPipeline;
   readonly #authorities: AuthorityCatalog;
-  readonly #compactionModel?: ModelConfig;
+  readonly #compactionModel?: ChatModelConfig;
   readonly #compactionProvider: ChatProvider;
   readonly #context?: Omit<
     ContextOptions,
@@ -125,22 +131,23 @@ class Agent {
   readonly #directToolSets: readonly ToolSetGrant[];
   readonly #gate?: GatePolicyInput;
   readonly #gateEvaluators: readonly GateEvaluator[];
+  readonly #generation: SamplingParametersConfig;
   readonly #logger?: Logger;
   readonly #maxIterations?: 'unlimited' | number;
   readonly #memory?: Memory;
   readonly #memoryMaxTokens?: number;
-  readonly #model: ModelConfig;
+  readonly #model: ChatModelConfig;
   readonly #provider: ChatProvider;
   readonly #routedToolSets: readonly ToolSetGrant[];
   readonly #systemPrompt: string;
   readonly #timeZone?: string;
-  readonly #titleModel?: ModelConfig;
+  readonly #titleModel?: ChatModelConfig;
   readonly #titleProvider: ChatProvider;
 
   constructor(
     database: Database,
     provider: ChatProvider,
-    model: ModelConfig,
+    model: ChatModelConfig,
     options: AgentOptions,
   ) {
     this.#agentId = options.agentId;
@@ -155,6 +162,7 @@ class Agent {
     this.#directToolSets = options.directToolSets ?? [];
     this.#gate = options.gate;
     this.#gateEvaluators = Object.freeze([...(options.gateEvaluators ?? [])]);
+    this.#generation = Object.freeze({ ...options.generation });
     this.#logger = options.logger;
     this.#maxIterations = options.maxIterations;
     this.#memory = options.memory;
@@ -171,7 +179,7 @@ class Agent {
     return this.#agentId;
   }
 
-  public get model(): ModelConfig {
+  public get model(): ChatModelConfig {
     return this.#model;
   }
 
@@ -180,7 +188,7 @@ class Agent {
       [
         ...new Set([
           this.#model.modelId,
-          ...this.#provider.listModelConfigs().map((model) => model.modelId),
+          ...this.#provider.listModelConfigs('chat').map((model) => model.modelId),
         ]),
       ].sort((a, b) => a.localeCompare(b)),
     );
@@ -195,7 +203,7 @@ class Agent {
     const model =
       options.modelId === undefined || options.modelId === this.#model.modelId
         ? this.#model
-        : this.#provider.getModelConfig(options.modelId);
+        : this.#provider.chatModelConfig(options.modelId);
     if (model === undefined) {
       throw new Error(
         `Model "${options.modelId ?? ''}" is not available to agent "${this.#agentId}".`,
@@ -246,6 +254,7 @@ class Agent {
       },
       gate: this.#gate,
       gateEvaluators: this.#gateEvaluators,
+      generation: this.#generation,
       logger: this.#logger,
       maxIterations: this.#maxIterations,
       ...(this.#memory === undefined ? {} : { memory: this.#memory }),

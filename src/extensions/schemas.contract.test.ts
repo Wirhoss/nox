@@ -1,4 +1,4 @@
-import { httpChatProviderConfigSchema, httpUrlSchema } from '@nox/extension-api';
+import { httpProviderConfigSchema, httpUrlSchema } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 const url = httpUrlSchema('An endpoint.');
@@ -33,7 +33,7 @@ describe('httpUrlSchema', () => {
 
 describe('provider base URLs', () => {
   test('carry the same refusal, since a base URL is logged verbatim', () => {
-    const configured = (baseUrl: string) => httpChatProviderConfigSchema.safeParse({ baseUrl });
+    const configured = (baseUrl: string) => httpProviderConfigSchema.safeParse({ baseUrl });
 
     expect(configured('https://llama.example/v1').success).toBeTrue();
     expect(configured('https://nox:hunter2@llama.example/v1').success).toBeFalse();

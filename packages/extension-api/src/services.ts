@@ -5,15 +5,7 @@ import type { ChatSurfaceHub } from './chat.js';
 import type { MessageContent } from './content.js';
 import type { BrokerHostPolicy } from './contributions.js';
 
-const CONFIG_KEYS = [
-  'app',
-  'blueprints',
-  'brokers',
-  'embeddings',
-  'memories',
-  'providers',
-  'toolSets',
-] as const;
+const CONFIG_KEYS = ['app', 'blueprints', 'brokers', 'memories', 'providers', 'toolSets'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 type ConfigEntryKey = Exclude<ConfigKey, 'app'>;
 type ConfigApply = 'hot' | 'restart';
@@ -33,8 +25,7 @@ interface ConfigUpdate<T> {
   readonly value: T;
 }
 
-type RuntimeComponentKind =
-  'agent' | 'application' | 'broker' | 'embedding' | 'memory' | 'provider' | 'toolSet';
+type RuntimeComponentKind = 'agent' | 'application' | 'broker' | 'memory' | 'provider' | 'toolSet';
 type RuntimeComponentState = 'active' | 'applying' | 'failed' | 'restartRequired' | 'unavailable';
 
 interface RuntimeComponentStatus {
@@ -205,6 +196,15 @@ const artifactPipelineService = createServiceToken<ArtifactPipeline>('nox.artifa
 const chatHubService = createServiceToken<ChatSurfaceHub>('nox.chat-hub');
 const configAdminService = createServiceToken<ConfigurationAdmin>('nox.config-admin');
 const configService = createServiceToken<ExtensionConfiguration>('nox.config');
+/**
+ * The directory this installation keeps its own files in.
+ *
+ * Offered because an extension that needs disk otherwise has to invent a place,
+ * and the places it would invent — beside the code, in the working directory —
+ * are the ones that do not survive an upgrade or a `cd`. Anything written here
+ * belongs to this Nox and moves with it.
+ */
+const dataDirectoryService = createServiceToken<string>('nox.data-directory');
 const loggerService = createServiceToken<Logger>('nox.logger');
 const scheduledRunHostService = createServiceToken<ScheduledRunHost>('nox.scheduled-run-host');
 const secretStoreService = createServiceToken<SecretMetadataReader>('nox.secret-store');
@@ -215,6 +215,7 @@ export {
   CONFIG_KEYS,
   configAdminService,
   configService,
+  dataDirectoryService,
   loggerService,
   scheduledRunHostService,
   secretStoreService,

@@ -82,8 +82,6 @@ function componentSection(
       return 'app';
     case 'broker':
       return 'brokers';
-    case 'embedding':
-      return 'embeddings';
     case 'memory':
       return 'memories';
     case 'provider':

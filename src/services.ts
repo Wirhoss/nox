@@ -4,6 +4,7 @@ import {
   chatHubService as extensionChatHubService,
   configAdminService as extensionConfigAdminService,
   configService as extensionConfigService,
+  dataDirectoryService as extensionDataDirectoryService,
   loggerService as extensionLoggerService,
   scheduledRunHostService as extensionScheduledRunHostService,
   secretStoreService as extensionSecretStoreService,
@@ -26,6 +27,7 @@ const artifactPipelineService = hostView<ArtifactPipeline>(extensionArtifactPipe
 const chatHubService = hostView<ChatHub>(extensionChatHubService);
 const configAdminService = hostView<ConfigurationAdmin>(extensionConfigAdminService);
 const configService = hostView<Config>(extensionConfigService);
+const dataDirectoryService = hostView<string>(extensionDataDirectoryService);
 const loggerService = hostView<Logger>(extensionLoggerService);
 const scheduledRunHostService = hostView<ScheduledRunHost>(extensionScheduledRunHostService);
 const secretStoreService = hostView<SecretStore>(extensionSecretStoreService);
@@ -35,6 +37,7 @@ export {
   chatHubService,
   configAdminService,
   configService,
+  dataDirectoryService,
   loggerService,
   scheduledRunHostService,
   secretStoreService,
