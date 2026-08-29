@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 import {
   type ChatProvider,
-  providerBaseConfigSchema,
+  chatProviderConfigSchema,
+  httpChatProviderConfigSchema,
   providerContribution,
   providers,
   type ToolSet,
@@ -621,7 +622,7 @@ describe('Config', () => {
 
 /** A provider kind that exists only here, to prove the union is built from the
  *  registry rather than from anything the kernel imported. */
-const fakeSchema = providerBaseConfigSchema.extend({ type: z.literal('fake_provider') });
+const fakeSchema = httpChatProviderConfigSchema.extend({ type: z.literal('fake_provider') });
 
 function registryWith(...ids: string[]): ContributionRegistry {
   const registry = new ContributionRegistry();
@@ -632,7 +633,7 @@ function registryWith(...ids: string[]): ContributionRegistry {
       id,
       providerContribution({
         instances: 'many',
-        configSchema: providerBaseConfigSchema.extend({ type: z.literal(id) }),
+        configSchema: httpChatProviderConfigSchema.extend({ type: z.literal(id) }),
         create: () => ({}) as unknown as ChatProvider,
       }),
     );
@@ -647,7 +648,7 @@ function singletonRegistry(id: string): ContributionRegistry {
     providers,
     id,
     providerContribution({
-      configSchema: providerBaseConfigSchema.extend({ type: z.literal(id) }),
+      configSchema: httpChatProviderConfigSchema.extend({ type: z.literal(id) }),
       create: () => ({}) as unknown as ChatProvider,
     }),
   );
@@ -680,7 +681,7 @@ describe('contributed sections', () => {
 
     await config.resolve(registryWith('fake_provider'));
 
-    expect(config.get('providers')).toEqual({
+    expect(config.get('providers') as Record<string, unknown>).toEqual({
       local: {
         baseUrl: 'https://local.test',
         maxRetries: 2,
@@ -703,6 +704,27 @@ describe('contributed sections', () => {
     await config.resolve(registryWith('fake_provider'));
 
     expect(Object.keys(config.get('providers'))).toEqual(['one', 'two']);
+  });
+
+  test('configures a provider that has no endpoint to name', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', { in_process: { type: 'in_process' } });
+    const config = await loadedConfig(dir);
+    const registry = new ContributionRegistry();
+    registry.scoped('test.extension', new DisposableStore()).register(
+      providers,
+      'in_process',
+      providerContribution({
+        configSchema: chatProviderConfigSchema.extend({ type: z.literal('in_process') }),
+        create: () => ({}) as unknown as ChatProvider,
+      }),
+    );
+
+    await config.resolve(registry);
+
+    // The point of the split: a provider holding its model in this process has
+    // no URL to give, and configuration no longer makes it invent one.
+    expect(Object.keys(config.get('providers'))).toEqual(['in_process']);
   });
 
   test('rejects a kind nobody registered, naming the kinds there are', async () => {
@@ -741,7 +763,7 @@ describe('contributed sections', () => {
     const config = await loadedConfig(dir);
     await config.resolve(registryWith('fake_provider'));
 
-    const result = await config.update('providers', {
+    const desired = {
       local: {
         baseUrl: 'https://local.test',
         maxRetries: 2,
@@ -749,7 +771,8 @@ describe('contributed sections', () => {
         retryDelayMs: 500,
         type: 'fake_provider',
       },
-    });
+    };
+    const result = await config.update('providers', desired);
 
     expect(result.restartRequired).toBeFalse();
     expect(await read(dir, 'providers.json')).toEqual(result.value);

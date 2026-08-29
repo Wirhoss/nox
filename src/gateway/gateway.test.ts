@@ -76,7 +76,7 @@ async function openDatabase(): Promise<Database> {
 /** Answers in two fragments, so a streaming broker has something to stream. */
 class TwoFragmentProvider extends ChatProvider {
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -100,7 +100,7 @@ class TwoFragmentProvider extends ChatProvider {
 /** Thinks out loud, calls a tool, then answers — one run with something of every kind in it. */
 class VerboseProvider extends ChatProvider {
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -139,7 +139,7 @@ class SayingProvider extends ChatProvider {
   readonly #text: string;
 
   constructor(text: string) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#text = text;
   }
 
@@ -163,7 +163,7 @@ class SayingProvider extends ChatProvider {
 /** Calls the guarded tool once, then answers. */
 class ToolCallingProvider extends ChatProvider {
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -202,7 +202,7 @@ class ToolCallingProvider extends ChatProvider {
  */
 class SlowProvider extends ChatProvider {
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -249,7 +249,7 @@ class PausingProvider extends ChatProvider {
   #releaseFirst?: () => void;
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.firstPaused = new Promise<void>((resolve) => {
       this.#markFirstPaused = resolve;
     });

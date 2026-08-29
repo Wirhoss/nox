@@ -535,7 +535,6 @@ describe('OpenAICompletions message mapping', () => {
     await run(provider(), [
       message({ content: [{ text: 'working', type: 'text' }], role: 'assistant' }),
       message({
-        anchorMessageId: 'assistant',
         content: [{ text: '3 historical calls', type: 'text' }],
         foldedMessageIds: ['x'],
         role: 'folded',
@@ -756,17 +755,16 @@ describe('OpenAICompletions message mapping', () => {
     expect(requests).toHaveLength(0);
   });
 
-  test('keeps a textless fold anchor separate from its runtime reference', async () => {
+  test('drops a textless anchor whose tool calls were folded away', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
     await run(provider(), [
       message({ content: [{ text: 'do it', type: 'text' }], role: 'user' }),
       message({ content: [{ text: 'thinking', type: 'text' }], role: 'reasoning' }),
-      // ProviderStream materializes this turn when a model emits tool calls
-      // without visible assistant text. The fold remains assistant-anchored.
+      // A textless turn a fold already reclaimed the calls of. It cannot be
+      // produced any more, and it still must never reach the wire.
       message({ content: [], messageId: 'anchor', role: 'assistant' }),
       message({
-        anchorMessageId: 'anchor',
         content: [{ text: '2 historical calls', type: 'text' }],
         foldedMessageIds: ['c1', 'r1'],
         role: 'folded',
@@ -776,7 +774,6 @@ describe('OpenAICompletions message mapping', () => {
     expect(requests[0]?.body.messages).toEqual([
       { content: 'be brief', role: 'system' },
       { content: '[from test-broker:alice · 1970-01-01 00:00 GMT]\ndo it', role: 'user' },
-      { content: null, role: 'assistant' },
       {
         content:
           '[Nox runtime record: historical tool activity, not authored by the user or assistant]\n' +
@@ -784,6 +781,72 @@ describe('OpenAICompletions message mapping', () => {
         role: 'user',
       },
     ]);
+  });
+
+  test('names the speaker in the turn header when the transport had a name', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(provider(), [
+      message({
+        content: [{ text: 'yo soy Wirhoss', type: 'text' }],
+        origin: { ...testOrigin('222120611298672640'), displayName: 'Wirhoss' },
+        role: 'user',
+      }),
+    ]);
+
+    expect(requests[0]?.body.messages).toContainEqual({
+      content:
+        '[from Wirhoss <test-broker:222120611298672640> · 1970-01-01 00:00 GMT]\nyo soy Wirhoss',
+      role: 'user',
+    });
+  });
+
+  test('falls back to the principal alone when the transport had no name', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(provider(), [message({ content: [{ text: 'hola', type: 'text' }], role: 'user' })]);
+
+    expect(requests[0]?.body.messages).toContainEqual({
+      content: '[from test-broker:alice · 1970-01-01 00:00 GMT]\nhola',
+      role: 'user',
+    });
+  });
+
+  test('never sends an assistant turn with neither content nor tool calls', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(provider(), [
+      message({ content: [{ text: 'do it', type: 'text' }], role: 'user' }),
+      message({ content: [], role: 'assistant' }),
+      message({ content: [{ text: 'and again', type: 'text' }], role: 'user' }),
+    ]);
+
+    expect(requests[0]?.body.messages).not.toContainEqual({ content: null, role: 'assistant' });
+  });
+
+  test('anchors tool calls on themselves rather than on an earlier spoken turn', async () => {
+    stubFetch(() => sse(textDelta('hi')));
+
+    await run(provider(), [
+      message({ content: [{ text: 'earlier answer', type: 'text' }], role: 'assistant' }),
+      message({ content: [], role: 'assistant' }),
+      message({ arguments: {}, name: 'echo', role: 'toolCall', trackId: 'call_1' }),
+      message({
+        execution: 'immediate',
+        name: 'echo',
+        response: [{ text: 'echoed', type: 'text' }],
+        role: 'toolResponse',
+        trackId: 'call_1',
+      }),
+    ]);
+
+    const sent = requests[0]?.body.messages as Record<string, unknown>[];
+    expect(sent[1]).toEqual({ content: 'earlier answer', role: 'assistant' });
+    expect(sent[2]).toEqual({
+      content: null,
+      role: 'assistant',
+      tool_calls: [{ function: { arguments: '{}', name: 'echo' }, id: 'call_1', type: 'function' }],
+    });
   });
 
   test('surfaces a late deferred result as correlated user content', async () => {
@@ -958,8 +1021,8 @@ describe('OpenAICompletions session regression', () => {
       expect(secondWire.map(({ role }) => role)).toEqual(['system', 'user', 'assistant', 'tool']);
       expect(secondWire[2]).toMatchObject({ content: null, role: 'assistant' });
 
-      // Reopen from storage, not from the live Context. The fold and its
-      // synthetic assistant anchor must both survive and reconnect by ID.
+      // Reopen from storage, not from the live Context. The fold has to come
+      // back having reclaimed the synthetic turn the stream inserted.
       const resumed = await Session.open(database, instance, model, {
         agentId: 'test',
         authorities: testCatalog(),
@@ -969,13 +1032,15 @@ describe('OpenAICompletions session regression', () => {
         systemPrompt: 'be brief',
       });
       const transcript = resumed.getTranscript();
-      const anchor = transcript.find(
+      const scaffold = transcript.find(
         (entry) => entry.role === 'assistant' && entry.content.length === 0,
       );
       const fold = transcript.find((entry) => entry.role === 'folded');
 
-      expect(anchor?.role).toBe('assistant');
-      expect(fold?.role === 'folded' ? fold.anchorMessageId : undefined).toBe(anchor?.messageId);
+      expect(scaffold?.role).toBe('assistant');
+      expect(fold?.role === 'folded' ? fold.foldedMessageIds : []).toContain(
+        scaffold?.messageId ?? '',
+      );
 
       resumed.send('what happened?', testOrigin());
       await resumed.idle;

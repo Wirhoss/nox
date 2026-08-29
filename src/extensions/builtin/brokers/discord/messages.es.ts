@@ -18,6 +18,8 @@ const spanishMessages = Object.freeze({
   'ui.namesHelp':
     'Palabras que cuentan como dirigirse a Nox donde el canal responde a su nombre. Su propio usuario de Discord siempre cuenta.',
   'ui.observe': 'Mensajes que no le hablan',
+  'ui.observe.channel': 'Todo lo que se dice en el canal',
+  'ui.observe.none': 'Solo lo que se le dice a Nox',
   'ui.observeHelp':
     'Si el resto de la sala entra en el transcript. Leer el canal cuesta contexto y deja la sesión permanentemente en modo compartido, donde toda llamada con efectos necesita la aprobación de quien la originó.',
   'ui.respondTo': 'Responde cuando',
@@ -27,6 +29,8 @@ const spanishMessages = Object.freeze({
   'ui.sendersHelp':
     'Quiénes pueden hacer que el agente conteste acá: IDs de usuario, o roles como «role:<id>». Vacío significa cualquiera que ya pueda hablar en el canal. Esto decide si una ejecución arranca, que es distinto de lo que las concesiones dejan hacer una vez que arrancó.',
   'ui.threads': 'Hilos',
+  'ui.threads.ignore': 'No admitidos',
+  'ui.threads.inherit': 'Admitidos con el canal',
   'ui.threadsHelp':
     'Si los hilos de este canal quedan admitidos con él. Un hilo es su propia conversación con su propio transcript, y por eso es la forma de empezar un tema de cero.',
   'ui.token': 'Token del bot',

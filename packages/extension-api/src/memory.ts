@@ -18,6 +18,15 @@ interface MemoryScope {
 /** A provider-neutral, text projection of one conversational message. */
 interface MemoryMessage {
   readonly createdAt: Date;
+  /**
+   * What the transport called this speaker, when it had a name for it.
+   *
+   * Presentation only, exactly as on `MessageOrigin`: `principal` remains what
+   * anything is decided from. It travels with the projection so a memory read
+   * back months later still says who spoke, instead of arriving as unattributed
+   * text the model has to guess an owner for.
+   */
+  readonly displayName?: string;
   readonly messageId: string;
   readonly principal?: PrincipalRef;
   readonly role: 'assistant' | 'user';

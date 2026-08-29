@@ -72,7 +72,7 @@ class ScriptedProvider extends ChatProvider {
   readonly #scripts: Script[];
 
   constructor(scripts: Script[]) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#scripts = [...scripts];
   }
 
@@ -1215,7 +1215,9 @@ describe('Runner', () => {
       'toolResponse',
       'assistant',
     ]);
-    expect(context.getHistory()[3]).toMatchObject({ isError: true });
+    expect(
+      context.getFullHistory().find((message) => message.role === 'toolResponse'),
+    ).toMatchObject({ isError: true });
   });
 
   test('abort leaves every tool call paired with a response', async () => {

@@ -67,7 +67,7 @@ class ScriptedProvider extends ChatProvider {
   readonly #scripts: Script[];
 
   constructor(scripts: Script[]) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#scripts = [...scripts];
   }
 

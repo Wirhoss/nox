@@ -66,7 +66,7 @@ class RuleProvider extends ChatProvider {
   #turn = 0;
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {

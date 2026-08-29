@@ -159,6 +159,24 @@ function principalToString(reference: PrincipalRef): string {
   return `${reference.issuer}:${reference.subject}`;
 }
 
+/**
+ * Who said it, as the model should read it.
+ *
+ * The principal is always there and is always what anything was decided from. A
+ * display name goes in front when the transport had one, because a shared
+ * transcript where everyone is an opaque ID is one the model cannot talk about:
+ * it cannot address anyone, or notice that two messages came from the same
+ * person, without comparing digits.
+ *
+ * The name never replaces the principal. Names are chosen, repeat, and change,
+ * so a transcript carrying only names is one where two people can be made to
+ * look like one.
+ */
+function originToString(origin: MessageOrigin): string {
+  const subject = principalToString(origin.principal);
+  return origin.displayName === undefined ? subject : `${origin.displayName} <${subject}>`;
+}
+
 interface MessageBase {
   readonly createdAt: Date;
   readonly messageId: string;
@@ -183,9 +201,15 @@ interface CompactedMessage extends MessageBase {
   readonly compactedMessageIds: readonly string[];
 }
 
+/**
+ * Tool traffic the model has already consumed, replaced by a record of it.
+ *
+ * A fold takes the place of its first folded message, which is the whole of
+ * what fixes its position: the messages it replaces are the messages it stands
+ * in for, and it stands where they stood.
+ */
 interface FoldedMessage extends MessageBase {
   readonly role: 'folded';
-  readonly anchorMessageId: string;
   readonly foldedMessageIds: readonly string[];
   readonly content: readonly MessageContent[];
 }
@@ -269,7 +293,7 @@ function timestampForModel(at: Date, timeZone: string): string {
 function userContentForModel(message: UserMessage, timeZone = 'UTC'): readonly MessageContent[] {
   const said = timestampForModel(message.createdAt, timeZone);
   return [
-    { text: `[from ${principalToString(message.origin.principal)} · ${said}]\n`, type: 'text' },
+    { text: `[from ${originToString(message.origin)} · ${said}]\n`, type: 'text' },
     ...message.content,
   ];
 }
@@ -289,6 +313,7 @@ export {
   MEDIA_MODALITIES,
   mediaTypeOf,
   modalitiesIn,
+  originToString,
   principalToString,
   speechContentSchema,
   textFromContent,

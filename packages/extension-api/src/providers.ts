@@ -59,27 +59,87 @@ function modelProducesOutput(model: ModelConfig, modality: ContentModality): boo
   return model.outputModalities.includes(modality);
 }
 
+/**
+ * What every provider has, whatever it talks to.
+ *
+ * An endpoint and a credential are deliberately absent: they belong to a
+ * provider reached over the network, and a provider running inside this process
+ * has neither. Requiring them here would force a local model to invent a URL it
+ * never calls, and configuration would be stating something untrue.
+ *
+ * The retry settings do stay, because retrying is `ChatProvider`'s, not HTTP's:
+ * whatever an adapter talks to, it is the streaming contract that decides an
+ * attempt failed and can be made again.
+ */
 const providerConfigShape = {
-  baseUrl: httpUrlSchema('The HTTP(S) base URL of the provider endpoint.'),
   maxRetries: z.number().int().nonnegative().default(2),
   maxRetryDelayMs: z.number().nonnegative().default(30_000),
-  modelConfigs: z.array(modelConfigSchema).optional(),
   retryDelayMs: z.number().nonnegative().default(500),
   timeoutMs: z.number().positive().optional(),
 };
-const providerBaseConfigSchema = z.object({
+const providerBaseConfigSchema = z.object(providerConfigShape);
+const providerRuntimeConfigSchema = z.object(providerConfigShape);
+
+/**
+ * What a provider that answers the chat contract configures.
+ *
+ * `modelConfigs` sits here rather than in the base because what a model is
+ * differs by contract: a chat model has a context window and modalities, an
+ * embedding model has a dimension count and neither. One list typed for both
+ * would describe neither correctly.
+ */
+const chatProviderConfigShape = {
   ...providerConfigShape,
+  modelConfigs: z.array(chatModelConfigSchema).optional(),
+};
+const chatProviderConfigSchema = z.object(chatProviderConfigShape);
+const chatProviderRuntimeConfigSchema = z.object(chatProviderConfigShape);
+
+/** What a chat provider reached over the network adds: where it is, and who it says it is. */
+const httpChatProviderConfigSchema = chatProviderConfigSchema.extend({
   apiKey: secretRefSchema.optional(),
+  baseUrl: httpUrlSchema('The HTTP(S) base URL of the provider endpoint.'),
 });
-const providerRuntimeConfigSchema = z.object({
-  ...providerConfigShape,
+const httpChatProviderRuntimeConfigSchema = chatProviderRuntimeConfigSchema.extend({
   // Structural by design: a host capability must survive package/module boundaries.
   apiKey: runtimeSecretSchema.optional(),
+  baseUrl: httpUrlSchema('The HTTP(S) base URL of the provider endpoint.'),
 });
+
+/**
+ * One embedding model, and the two things a store of its vectors must record.
+ *
+ * `dimensions` is declared rather than discovered because whatever holds the
+ * vectors has to allocate for them before it has seen one. It is also half of
+ * the identity a stored vector belongs to: re-embedding the same text with a
+ * different model produces a vector that is silently meaningless next to the
+ * old ones — nothing fails, retrieval just quietly stops being about anything.
+ * A store that keeps `modelId` and `dimensions` beside its vectors can notice.
+ */
+const embeddingModelConfigSchema = z.object({
+  dimensions: z.number().int().positive(),
+  /** Longer input is the caller's to split; the provider says where the line is. */
+  maxInputTokens: z.number().int().positive().optional(),
+  modelId: z.string().min(1),
+});
+const embeddingProviderConfigShape = {
+  ...providerConfigShape,
+  modelConfigs: z.array(embeddingModelConfigSchema).optional(),
+};
+const embeddingProviderConfigSchema = z.object(embeddingProviderConfigShape);
+const embeddingProviderRuntimeConfigSchema = z.object(embeddingProviderConfigShape);
 
 type ProviderBaseConfig = z.infer<typeof providerBaseConfigSchema>;
 type ProviderBaseConfigInput = z.input<typeof providerBaseConfigSchema>;
 type ProviderRuntimeConfigInput = z.input<typeof providerRuntimeConfigSchema>;
+type ChatProviderConfigInput = z.input<typeof chatProviderConfigSchema>;
+type ChatProviderRuntimeConfigInput = z.input<typeof chatProviderRuntimeConfigSchema>;
+type HttpChatProviderConfig = z.infer<typeof httpChatProviderConfigSchema>;
+type HttpChatProviderConfigInput = z.input<typeof httpChatProviderConfigSchema>;
+type HttpChatProviderRuntimeConfigInput = z.input<typeof httpChatProviderRuntimeConfigSchema>;
+type EmbeddingModelConfig = z.infer<typeof embeddingModelConfigSchema>;
+type EmbeddingProviderConfigInput = z.input<typeof embeddingProviderConfigSchema>;
+type EmbeddingProviderRuntimeConfigInput = z.input<typeof embeddingProviderRuntimeConfigSchema>;
 
 const textGenerateOptionsSchema = samplingParametersConfigSchema.extend({
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -436,46 +496,57 @@ function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-abstract class BaseProvider {
+/**
+ * What every provider is, whichever contract it answers: a named set of models,
+ * and a policy for retrying an attempt at one.
+ *
+ * Generic over the model rather than fixed to the chat one, so that a provider
+ * of embeddings registers embedding models and nothing has to pretend a vector
+ * has a context window.
+ */
+abstract class BaseProvider<TModelConfig extends { modelId: string } = ModelConfig> {
   static readonly configSchema = providerBaseConfigSchema;
-  protected apiKey?: SecretHandle;
-  protected baseUrl: string;
   protected timeoutMs?: number;
-  protected modelConfigs: Record<string, ModelConfig> = {};
+  protected modelConfigs: Record<string, TModelConfig> = {};
   protected readonly maxRetries: number;
   protected readonly maxRetryDelayMs: number;
   protected readonly retryDelayMs: number;
 
   constructor(input: ProviderRuntimeConfigInput) {
     const config = parseOrThrow(providerRuntimeConfigSchema, input);
-    this.baseUrl = config.baseUrl;
-    this.apiKey = config.apiKey;
     this.maxRetries = config.maxRetries;
     this.maxRetryDelayMs = config.maxRetryDelayMs;
     this.retryDelayMs = config.retryDelayMs;
     this.timeoutMs = config.timeoutMs;
-    for (const model of config.modelConfigs ?? []) this.addModelConfig(model);
   }
 
   public get modelCount(): number {
     return Object.keys(this.modelConfigs).length;
   }
   public abstract fetchModelIds(): Promise<string[]>;
-  public addModelConfig(model: ModelConfig): void {
+  public addModelConfig(model: TModelConfig): void {
     if (this.modelConfigs[model.modelId] !== undefined) {
       throw new Error(`Model config for modelId ${model.modelId} already exists.`);
     }
     this.modelConfigs[model.modelId] = model;
   }
-  public getModelConfig(modelId: string): ModelConfig | undefined {
+  public getModelConfig(modelId: string): TModelConfig | undefined {
     return this.modelConfigs[modelId];
   }
-  public listModelConfigs(): ModelConfig[] {
+  public listModelConfigs(): TModelConfig[] {
     return Object.values(this.modelConfigs);
   }
 }
 
 abstract class ChatProvider extends BaseProvider {
+  static override readonly configSchema = chatProviderConfigSchema;
+
+  constructor(input: ChatProviderRuntimeConfigInput) {
+    super(input);
+    const config = parseOrThrow(chatProviderRuntimeConfigSchema, input);
+    for (const model of config.modelConfigs ?? []) this.addModelConfig(model);
+  }
+
   public getMessageStream(
     systemPrompt: string,
     messageHistory: Message[],
@@ -523,12 +594,94 @@ abstract class ChatProvider extends BaseProvider {
   }
 }
 
+/**
+ * A chat provider that reaches its models over HTTP.
+ *
+ * Separate from `ChatProvider` rather than folded into it, because an adapter
+ * that loads its model into this process answers the same streaming contract
+ * while having no endpoint and no credential to configure. Kept as a subclass
+ * of the chat hierarchy rather than a parallel one: there is one HTTP adapter
+ * today, and inventing a way to share these two fields with a future HTTP
+ * embedder would be designing for a caller that does not exist.
+ */
+abstract class HttpChatProvider extends ChatProvider {
+  static override readonly configSchema = httpChatProviderConfigSchema;
+  protected apiKey?: SecretHandle;
+  protected baseUrl: string;
+
+  constructor(input: HttpChatProviderRuntimeConfigInput) {
+    super(input);
+    const config = parseOrThrow(httpChatProviderRuntimeConfigSchema, input);
+    this.apiKey = config.apiKey;
+    this.baseUrl = config.baseUrl;
+  }
+}
+
+/** One batch of text to turn into vectors. */
+interface EmbedRequest {
+  /**
+   * Which configured model to use. Omitted, the provider picks its only one and
+   * fails if it has several — guessing would attach the wrong model's identity
+   * to vectors that outlive the call.
+   */
+  readonly modelId?: string;
+  readonly signal?: AbortSignal;
+  readonly texts: readonly string[];
+}
+
+/**
+ * Vectors, and what they are vectors from.
+ *
+ * `modelId` and `dimensions` come back rather than being assumed from the
+ * request, because they are what a store has to keep beside each vector to know
+ * later whether it is still comparable to the ones next to it.
+ */
+interface EmbedResult {
+  readonly dimensions: number;
+  readonly modelId: string;
+  readonly vectors: readonly (readonly number[])[];
+}
+
+/**
+ * A provider that turns text into vectors.
+ *
+ * A sibling of `ChatProvider` rather than a kind of it: both are named sets of
+ * models reached the same ways, and neither can answer the other's contract.
+ *
+ * The call is a batch because embedding is almost never wanted one text at a
+ * time — indexing a corpus one round trip per document is the difference
+ * between a pass that finishes and one that does not. Vectors come back
+ * normalized to unit length, decided here rather than per adapter so that
+ * cosine similarity is a dot product everywhere and no caller has to ask.
+ */
+abstract class EmbeddingProvider extends BaseProvider<EmbeddingModelConfig> {
+  static override readonly configSchema = embeddingProviderConfigSchema;
+
+  constructor(input: EmbeddingProviderRuntimeConfigInput) {
+    super(input);
+    const config = parseOrThrow(embeddingProviderRuntimeConfigSchema, input);
+    for (const model of config.modelConfigs ?? []) this.addModelConfig(model);
+  }
+
+  /** One vector per input text, in the order the texts were given. */
+  public abstract embed(request: EmbedRequest): Promise<EmbedResult>;
+}
+
 type Provider = ChatProvider;
 
 export {
   BaseProvider,
   chatModelConfigSchema,
   ChatProvider,
+  chatProviderConfigSchema,
+  chatProviderRuntimeConfigSchema,
+  embeddingModelConfigSchema,
+  EmbeddingProvider,
+  embeddingProviderConfigSchema,
+  embeddingProviderRuntimeConfigSchema,
+  HttpChatProvider,
+  httpChatProviderConfigSchema,
+  httpChatProviderRuntimeConfigSchema,
   isProviderError,
   modelAcceptsInput,
   modelBaseConfigSchema,
@@ -548,6 +701,16 @@ export {
 };
 
 export type {
+  ChatProviderConfigInput,
+  ChatProviderRuntimeConfigInput,
+  EmbeddingModelConfig,
+  EmbeddingProviderConfigInput,
+  EmbeddingProviderRuntimeConfigInput,
+  EmbedRequest,
+  EmbedResult,
+  HttpChatProviderConfig,
+  HttpChatProviderConfigInput,
+  HttpChatProviderRuntimeConfigInput,
   ModelConfig,
   Provider,
   ProviderBaseConfig,

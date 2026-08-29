@@ -84,7 +84,7 @@ class SummaryProvider extends ChatProvider {
   #active = 0;
 
   constructor(responses: string[], wait?: () => Promise<void>) {
-    super({ baseUrl: 'https://provider.invalid' });
+    super({});
     this.#responses = [...responses];
     this.#wait = wait;
   }

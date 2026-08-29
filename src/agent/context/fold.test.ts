@@ -77,7 +77,6 @@ function response(messageId: string, trackId: string, size = 2000): Message {
 
 function foldEvent(overrides: Partial<FoldedMessage> = {}): FoldedMessage {
   return freezeMessage({
-    anchorMessageId: 'anchor',
     content: [{ text: 'fold', type: 'text' }],
     createdAt: CREATED_AT,
     foldedMessageIds: ['call', 'response'],
@@ -127,7 +126,7 @@ describe('foldHistory', () => {
     expect(result.events[0]?.foldedMessageIds).toEqual(['call', 'response']);
   });
 
-  test('keeps one fold across reasoning and synthetic anchors between tool calls', () => {
+  test('keeps one fold across reasoning and synthetic turns between tool calls', () => {
     const history = [
       emptyAssistant('anchor'),
       call('call-1', 'track-1'),
@@ -146,8 +145,8 @@ describe('foldHistory', () => {
     });
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0]?.anchorMessageId).toBe('anchor');
     expect(result.events[0]?.foldedMessageIds).toEqual([
+      'anchor',
       'call-1',
       'response-1',
       'synthetic-anchor',
@@ -162,17 +161,16 @@ describe('foldHistory', () => {
     expect(foldedContent.text.includes('-----Folded tool calls-----\n---\n')).toBeFalse();
     expect(foldedContent.text.endsWith('\n---')).toBeFalse();
     expect(result.history.map((message) => message.messageId)).toEqual([
-      'anchor',
       requireValue(result.events[0]).messageId,
       'reasoning-between',
       'final-reasoning',
       'answer',
     ]);
-    expect(result.history[2]).toBe(history[3]);
-    expect(result.history[3]).toBe(history[7]);
+    expect(result.history[1]).toBe(history[3]);
+    expect(result.history[2]).toBe(history[7]);
   });
 
-  test("does not consume the next loop's anchor when the range ends before its call", () => {
+  test("does not consume the next loop's textless turn when the range ends before its call", () => {
     const history = [
       emptyAssistant('anchor'),
       call('call-1', 'track-1'),
@@ -189,7 +187,7 @@ describe('foldHistory', () => {
     });
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0]?.foldedMessageIds).toEqual(['call-1', 'response-1']);
+    expect(result.events[0]?.foldedMessageIds).toEqual(['anchor', 'call-1', 'response-1']);
     expect(result.history.at(-2)).toBe(history[4]);
     expect(result.history.at(-1)).toBe(history[5]);
   });
@@ -266,7 +264,7 @@ describe('foldHistory', () => {
     expect(result.history.at(-1)).toBe(deferred);
   });
 
-  test('tool traffic without a valid assistant anchor is left untouched instead of throwing', () => {
+  test('folds tool traffic that no assistant turn precedes', () => {
     const history = [user('request'), call('call', 'track'), response('response', 'track')];
 
     const result = foldHistory(history, {
@@ -274,8 +272,12 @@ describe('foldHistory', () => {
       minReductionRatio: 0.01,
     });
 
-    expect(result.events).toEqual([]);
-    expect(result.history).toEqual(history);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.foldedMessageIds).toEqual(['call', 'response']);
+    expect(result.history.map((message) => message.messageId)).toEqual([
+      'request',
+      requireValue(result.events[0]).messageId,
+    ]);
   });
 
   test('rejects missing and reversed explicit ranges', () => {
@@ -312,23 +314,6 @@ describe('applyFold invariants', () => {
     );
     expect(() => applyFold(history, foldEvent({ foldedMessageIds: ['fold'] }))).toThrow(
       'cannot fold itself',
-    );
-    expect(() => applyFold(history, foldEvent({ foldedMessageIds: ['anchor'] }))).toThrow(
-      'cannot fold its own anchor',
-    );
-  });
-
-  test('rejects missing, invalid and temporally impossible anchors', () => {
-    expect(() => applyFold(history, foldEvent({ anchorMessageId: 'missing' }))).toThrow(
-      'missing anchor',
-    );
-    expect(() =>
-      applyFold(history, foldEvent({ anchorMessageId: 'call', foldedMessageIds: ['response'] })),
-    ).toThrow('is not an assistant message');
-
-    const lateAnchor = [call('call', 'track'), assistant('anchor')];
-    expect(() => applyFold(lateAnchor, foldEvent({ foldedMessageIds: ['call'] }))).toThrow(
-      'precedes its anchor',
     );
   });
 

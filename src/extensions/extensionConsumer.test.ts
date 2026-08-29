@@ -118,16 +118,18 @@ describe('external Extension API consumers', () => {
       retryDelayMs: 500,
       type: 'openai_completions',
     };
-    const first = factory?.create({
+    const openAiConfig = {
       ...sharedRuntimeDefaults,
       apiKey: new SecretHandle('OPENAI_API_KEY', 'first-value'),
       baseUrl: 'https://api.openai.com/v1',
-    });
-    const second = factory?.create({
+    };
+    const deepSeekConfig = {
       ...sharedRuntimeDefaults,
       apiKey: new SecretHandle('DEEPSEEK_API_KEY', 'second-value'),
       baseUrl: 'https://api.deepseek.com/v1',
-    });
+    };
+    const first = factory?.create(openAiConfig);
+    const second = factory?.create(deepSeekConfig);
 
     expect(first).toBeInstanceOf(ChatProvider);
     expect(second).toBeInstanceOf(ChatProvider);

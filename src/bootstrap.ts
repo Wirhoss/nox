@@ -142,6 +142,10 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   // using the database before the file closes.
   application.own(toDisposable(() => database.close()));
   application.own(scheduledRuns);
+  // Taken through the relay rather than beside the runtime it releases: by the
+  // time the concrete runtime exists Nox is running and no longer accepts
+  // resources. What it holds is released once the sessions using it have closed.
+  application.own(configurationRuntime);
 
   // One catalog for the whole process: the agents are composed from it, and the
   // surface that validates a blueprint asks it the same question the agents

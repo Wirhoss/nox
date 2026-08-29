@@ -8,10 +8,10 @@ import {
   brokerContribution,
   brokers,
   type ChatProvider,
+  httpChatProviderConfigSchema,
   memories,
   type Memory,
   memoryContribution,
-  providerBaseConfigSchema,
   providerContribution,
   providers,
   type RuntimeComponentStatus,
@@ -54,6 +54,18 @@ const NOX = { model: 'gpt-test', provider: 'main', systemPrompt: 'be exact' };
 const PROVIDER = { baseUrl: 'https://main.test', type: 'fake_provider' };
 
 /** Never built here: these routes validate configuration, they do not compose it. */
+
+/**
+ * Reads the endpoint past the section's floor.
+ *
+ * `providers.json` is typed by what every provider has, and an endpoint is not
+ * that — it belongs to the ones reached over the network, which is what these
+ * entries configure.
+ */
+function endpointOf(entry: unknown): string | undefined {
+  return (entry as undefined | { baseUrl?: string })?.baseUrl;
+}
+
 class FakeTools extends ToolSet {
   constructor(config: { enabledTools?: readonly string[] }) {
     super('Fake tools', 'Tools that exist only in this test.', config.enabledTools);
@@ -114,7 +126,7 @@ function registry(): ContributionRegistry {
     'fake_provider',
     providerContribution({
       instances: 'many',
-      configSchema: providerBaseConfigSchema.extend({ type: z.literal('fake_provider') }),
+      configSchema: httpChatProviderConfigSchema.extend({ type: z.literal('fake_provider') }),
       create: () => ({}) as unknown as ChatProvider,
     }),
   );
@@ -175,7 +187,7 @@ class ProviderRuntime implements ConfigurationRuntime {
     const generation = ++this.#generation;
     const entry = this.#config.get('providers').main;
     this.#statuses =
-      entry?.baseUrl === 'https://broken.test'
+      endpointOf(entry) === 'https://broken.test'
         ? [
             {
               activeGeneration: Math.max(1, generation - 1),
@@ -292,6 +304,7 @@ describe('reading configuration', () => {
       'app',
       'blueprints',
       'brokers',
+      'embeddings',
       'memories',
       'providers',
       'toolSets',
@@ -564,7 +577,7 @@ describe('runtime recovery', () => {
     };
 
     expect(failed.status).toBe(200);
-    expect(nox.config.get('providers').main?.baseUrl).toBe('https://broken.test');
+    expect(endpointOf(nox.config.get('providers').main)).toBe('https://broken.test');
     expect(failedBody.revertAvailable).toBeTrue();
     expect(
       failedBody.runtime.some(
@@ -581,7 +594,7 @@ describe('runtime recovery', () => {
 
     expect(reverted.status).toBe(200);
     expect(revertedBody.revertAvailable).toBeFalse();
-    expect(nox.config.get('providers').main?.baseUrl).toBe('https://main.test');
+    expect(endpointOf(nox.config.get('providers').main)).toBe('https://main.test');
   });
 
   test('reloads mounted files independently and retains a valid active document on failure', async () => {
@@ -598,7 +611,7 @@ describe('runtime recovery', () => {
       method: 'POST',
     });
     expect(loaded.status).toBe(200);
-    expect(nox.config.get('providers').main?.baseUrl).toBe('https://mounted.test');
+    expect(endpointOf(nox.config.get('providers').main)).toBe('https://mounted.test');
 
     await writeFile(providersPath, '{ broken');
     const degraded = await fetch(`${nox.url}/config/reload`, {
@@ -612,7 +625,7 @@ describe('runtime recovery', () => {
     };
 
     expect(degraded.status).toBe(200);
-    expect(nox.config.get('providers').main?.baseUrl).toBe('https://mounted.test');
+    expect(endpointOf(nox.config.get('providers').main)).toBe('https://mounted.test');
     expect(degradedBody.sections.find((section) => section.key === 'providers')?.error).toContain(
       'valid JSON',
     );
@@ -639,7 +652,7 @@ describe('runtime recovery', () => {
       headers: nox.headers,
       method: 'POST',
     });
-    expect(nox.config.get('providers').main?.baseUrl).toBe('https://mounted.test');
+    expect(endpointOf(nox.config.get('providers').main)).toBe('https://mounted.test');
   });
 });
 

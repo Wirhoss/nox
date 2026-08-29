@@ -40,7 +40,6 @@ describe('isIndexable', () => {
       role: 'compacted',
     };
     const folded: Message = {
-      anchorMessageId: 'u1',
       content: [{ text: 'summary', type: 'text' }],
       createdAt: CREATED_AT,
       foldedMessageIds: ['u1'],

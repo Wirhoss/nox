@@ -216,7 +216,6 @@ function toRow(sessionId: string, seq: number, message: Message): MessageRowInse
     case 'folded':
       return {
         ...base,
-        anchorMessageId: message.anchorMessageId,
         content: message.content,
         refMessageIds: message.foldedMessageIds,
         role: 'folded',
@@ -282,7 +281,6 @@ function toMessage(row: MessageRow): Message {
       };
     case 'folded':
       return {
-        anchorMessageId: row.anchorMessageId ?? fail(row, 'anchorMessageId'),
         content: row.content ?? fail(row, 'content'),
         createdAt,
         foldedMessageIds: row.refMessageIds ?? fail(row, 'refMessageIds'),

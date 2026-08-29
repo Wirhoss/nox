@@ -31,7 +31,7 @@ class ArtifactReadingProvider extends ChatProvider {
   readonly #artifactId: string;
 
   constructor(artifactId: string) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#artifactId = artifactId;
   }
 
@@ -82,7 +82,7 @@ class ArtifactProvider extends ChatProvider {
   public readonly requestedTools: Tool[][] = [];
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {

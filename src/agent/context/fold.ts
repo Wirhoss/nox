@@ -43,33 +43,15 @@ function applyFold(history: readonly Message[], fold: FoldedMessage): Message[] 
   if (foldedIds.has(fold.messageId)) {
     throw new Error(`Fold ${fold.messageId} cannot fold itself.`);
   }
-  if (foldedIds.has(fold.anchorMessageId)) {
-    throw new Error(`Fold ${fold.messageId} cannot fold its own anchor ${fold.anchorMessageId}.`);
-  }
-
-  const anchorIndex = history.findIndex((message) => message.messageId === fold.anchorMessageId);
-  if (anchorIndex === -1) {
-    throw new Error(`Fold ${fold.messageId} references a missing anchor ${fold.anchorMessageId}.`);
-  }
-  if (history[anchorIndex]?.role !== 'assistant') {
-    throw new Error(
-      `Fold ${fold.messageId} anchor ${fold.anchorMessageId} is not an assistant message.`,
-    );
-  }
 
   const foundIds = new Set<string>();
   const folded: Message[] = [];
   let placed = false;
 
-  for (const [index, message] of history.entries()) {
+  for (const message of history) {
     if (!foldedIds.has(message.messageId)) {
       folded.push(message);
       continue;
-    }
-    if (index < anchorIndex) {
-      throw new Error(
-        `Fold ${fold.messageId} folds ${message.messageId}, which precedes its anchor.`,
-      );
     }
     foundIds.add(message.messageId);
     if (!placed) {
@@ -195,20 +177,12 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
 
   const events: FoldedMessage[] = [];
   let accumulator = createAccumulator();
-  let anchor = history
-    .slice(0, from)
-    .findLast((message): message is AssistantMessage => message.role === 'assistant');
-  let pendingAnchor: AssistantMessage | undefined;
+  let scaffold: AssistantMessage | undefined;
 
   const flush = (): void => {
     if (isEmpty(accumulator)) return;
-    if (anchor === undefined) {
-      accumulator = createAccumulator();
-      return;
-    }
 
     const candidate = freezeMessage<FoldedMessage>({
-      anchorMessageId: anchor.messageId,
       content: [{ text: renderFold(accumulator), type: 'text' }],
       createdAt: new Date(),
       foldedMessageIds: accumulator.messages.map((message) => message.messageId),
@@ -222,15 +196,15 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
     accumulator = createAccumulator();
   };
 
-  const commitPendingAnchor = (): void => {
-    if (pendingAnchor === undefined) return;
-    accumulator.messages.push(pendingAnchor);
-    pendingAnchor = undefined;
+  const commitScaffold = (): void => {
+    if (scaffold === undefined) return;
+    accumulator.messages.push(scaffold);
+    scaffold = undefined;
   };
 
   for (const message of history.slice(from, to + 1)) {
     if (message.role === 'toolCall') {
-      commitPendingAnchor();
+      commitScaffold();
       trackedPush(accumulator.calls, message.trackId, message);
       accumulator.messages.push(message);
       continue;
@@ -238,7 +212,7 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
 
     if (message.role === 'toolResponse') {
       if (message.execution !== 'deferredResult') {
-        commitPendingAnchor();
+        commitScaffold();
         trackedPush(accumulator.responses, message.trackId, message);
         accumulator.messages.push(message);
         continue;
@@ -250,27 +224,19 @@ function foldHistory(history: readonly Message[], options: FoldOptions): FoldRes
     // a placeholder per call.
     if (message.role === 'reasoning') continue;
 
-    // Provider streams materialize a textless assistant turn before a tool call.
-    // Hold it until more tool traffic proves that it is structural scaffolding
-    // for the same loop. If the selected range ends here, it remains the anchor
-    // of the still-in-flight loop instead of being reclaimed too early.
-    if (
-      message.role === 'assistant' &&
-      message.content.length === 0 &&
-      anchor !== undefined &&
-      !isEmpty(accumulator) &&
-      pendingAnchor === undefined
-    ) {
-      pendingAnchor = message;
+    // Provider streams materialize a textless assistant turn to carry tool
+    // calls. It said nothing, so it is scaffolding rather than speech: held
+    // until tool traffic claims it, and then folded away with the very calls it
+    // was there to carry. Left behind instead, it is a turn with neither content
+    // nor tool calls — which is not a message any provider will accept.
+    if (message.role === 'assistant' && message.content.length === 0) {
+      scaffold = message;
       continue;
     }
 
     flush();
-    if (pendingAnchor !== undefined) {
-      anchor = pendingAnchor;
-      pendingAnchor = undefined;
-    }
-    if (message.role === 'assistant') anchor = message;
+    // A scaffold no tool traffic ever claimed is left where it is.
+    scaffold = undefined;
   }
 
   flush();

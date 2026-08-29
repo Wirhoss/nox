@@ -1,5 +1,7 @@
 import {
   type ContributionReader,
+  type Disposable,
+  isDisposable,
   type ToolSet,
   type ToolSetConfig,
   type ToolSetGrant,
@@ -11,6 +13,12 @@ import { composeWithSecrets, type SecretStore } from '../config/secrets';
 import { stableStringify } from '../utils/json';
 
 import type { ToolSetGrantConfig } from '../config/blueprint';
+
+/** One instance the catalog has replaced or dropped, for its owner to release. */
+interface SupersededToolSet {
+  readonly id: string;
+  readonly instance: Disposable;
+}
 
 interface ToolSetCatalogOptions {
   /**
@@ -51,6 +59,7 @@ class ToolSetCatalog {
   readonly #problems = new Map<string, string>();
   readonly #runtimeSignature?: () => unknown;
   readonly #secretStore: SecretStore;
+  readonly #superseded: SupersededToolSet[] = [];
 
   constructor(options: ToolSetCatalogOptions) {
     this.#configured = options.configured;
@@ -137,12 +146,35 @@ class ToolSetCatalog {
         }
       }),
     );
-    for (const toolSetId of this.#opened.keys()) {
-      if (!configuredIds.has(toolSetId)) this.#opened.delete(toolSetId);
+    for (const [toolSetId, open] of this.#opened) {
+      if (configuredIds.has(toolSetId)) continue;
+      this.#opened.delete(toolSetId);
+      this.#supersede(toolSetId, open.toolSet);
     }
     for (const toolSetId of this.#problems.keys()) {
       if (!configuredIds.has(toolSetId)) this.#problems.delete(toolSetId);
     }
+  }
+
+  /**
+   * Hands over the instances this catalog has replaced or dropped, and forgets
+   * them.
+   *
+   * The catalog does not release them itself because it cannot know when it is
+   * safe to: an instance it replaced is still inside every agent that was
+   * granted it, and only whoever rebuilds agents knows whether that has
+   * happened. Deliberately kept out of here — this catalog answers what a
+   * configured tool set exposes, and knowing about agents would make it a
+   * second, disagreeing account of how they are composed.
+   */
+  public takeSuperseded(): readonly SupersededToolSet[] {
+    return this.#superseded.splice(0, this.#superseded.length);
+  }
+
+  /** Moves every open instance into the superseded queue, for a shutting-down owner. */
+  public retire(): void {
+    for (const [toolSetId, open] of this.#opened) this.#supersede(toolSetId, open.toolSet);
+    this.#opened.clear();
   }
 
   /** Opens the desired instance, retaining but never returning stale state after a failed change. */
@@ -182,12 +214,22 @@ class ToolSetCatalog {
         (config) => contribution.value.create(config),
       );
       this.#opened.set(toolSetId, { signature, toolSet });
+      if (existing !== undefined) this.#supersede(toolSetId, existing.toolSet);
       this.#problems.delete(toolSetId);
       return toolSet;
     } catch (error) {
       this.#problems.set(toolSetId, error instanceof Error ? error.message : String(error));
       throw error;
     }
+  }
+
+  /**
+   * Most tool sets hold nothing that outlives a garbage collection; the ones
+   * that do — a spawned process, an open connection — say so by being
+   * disposable.
+   */
+  #supersede(toolSetId: string, toolSet: ToolSet): void {
+    if (isDisposable(toolSet)) this.#superseded.push({ id: toolSetId, instance: toolSet });
   }
 
   /**

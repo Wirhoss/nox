@@ -18,6 +18,8 @@ const englishMessages = Object.freeze({
   'ui.namesHelp':
     'Words that count as addressing Nox where a channel responds to its name. Its own Discord username always counts.',
   'ui.observe': 'Unaddressed messages',
+  'ui.observe.channel': 'Everything said in the channel',
+  'ui.observe.none': 'Only what is said to Nox',
   'ui.observeHelp':
     'Whether the rest of the room enters the transcript. Reading the channel costs context and puts the session permanently into shared mode, where every effectful tool call needs its originator’s approval.',
   'ui.respondTo': 'Answers when',
@@ -27,6 +29,8 @@ const englishMessages = Object.freeze({
   'ui.sendersHelp':
     'Who can make the agent answer here: user IDs, or roles as “role:<id>”. Empty means anyone the channel already lets speak. This is whether a run starts at all, which is a different question from what grants let a run do.',
   'ui.threads': 'Threads',
+  'ui.threads.ignore': 'Not admitted',
+  'ui.threads.inherit': 'Admitted with the channel',
   'ui.threadsHelp':
     'Whether threads under this channel are admitted with it. A thread is its own conversation with its own transcript, which makes it the way to start a topic over.',
   'ui.token': 'Bot token',

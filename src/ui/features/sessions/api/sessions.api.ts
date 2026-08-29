@@ -30,7 +30,7 @@ const transcriptEntrySchema = z.discriminatedUnion('role', [
   messageBase.extend({ content: z.array(contentPartSchema), role: z.literal('reasoning') }),
   messageBase.extend({
     content: z.array(contentPartSchema),
-    delivery: z.enum(['message', 'steer']).optional(),
+    delivery: z.enum(['message', 'observation', 'steer']).optional(),
     origin: z.object({ principal: principalSchema, transportMessageId: z.string() }),
     role: z.literal('user'),
   }),
@@ -40,7 +40,6 @@ const transcriptEntrySchema = z.discriminatedUnion('role', [
     role: z.literal('compacted'),
   }),
   messageBase.extend({
-    anchorMessageId: z.string(),
     content: z.array(contentPartSchema),
     foldedMessageIds: z.array(z.string()),
     role: z.literal('folded'),

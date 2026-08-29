@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "nox.test.embedding.counting",
+  "version": "0.1.0",
+  "main": "extension.ts",
+  "engines": {
+    "nox": "^0.1.0",
+    "extensionApi": "^0.1.0"
+  }
+}

@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import {
   authorities,
   type ChatProvider,
+  httpChatProviderConfigSchema,
   memories,
   type Memory,
   memoryContribution,
-  providerBaseConfigSchema,
   providerContribution,
   providers,
   type Tool,
@@ -111,7 +111,7 @@ function registry(): ContributionRegistry {
     'fake_provider',
     providerContribution({
       instances: 'many',
-      configSchema: providerBaseConfigSchema.extend({ type: z.literal('fake_provider') }),
+      configSchema: httpChatProviderConfigSchema.extend({ type: z.literal('fake_provider') }),
       create: () => ({}) as unknown as ChatProvider,
     }),
   );

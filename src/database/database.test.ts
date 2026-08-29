@@ -269,7 +269,6 @@ describe('Database schema', () => {
             trackId: 'track-1',
           },
           {
-            anchorMessageId: 'user-1',
             content: [{ text: 'summary', type: 'text' }],
             createdAt,
             messageId: 'folded-1',

@@ -1,9 +1,9 @@
 import {
+  httpChatProviderRuntimeConfigSchema,
   modelAcceptsInput,
   modelConfigSchema,
   modelInputModalities,
   modelProducesOutput,
-  providerRuntimeConfigSchema,
 } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
@@ -20,7 +20,7 @@ describe('provider runtime configuration', () => {
     }
 
     const handle = new ForeignSecretHandle();
-    const parsed = providerRuntimeConfigSchema.parse({
+    const parsed = httpChatProviderRuntimeConfigSchema.parse({
       apiKey: handle,
       baseUrl: 'https://api.deepseek.com/v1',
     });

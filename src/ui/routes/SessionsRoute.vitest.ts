@@ -122,6 +122,7 @@ describe('Sessions route', () => {
 
     expect(await screen.findByRole('heading', { name: 'Inspect the machine' })).toBeTruthy()
     expect(screen.getByText('Submit it.')).toBeTruthy()
+    expect(screen.getByText('An operator joined the room.')).toBeTruthy()
     expect(screen.getByText('Form submitted.')).toBeTruthy()
 
     await fireEvent.click(screen.getByRole('button', { name: /^Audit/ }))
@@ -210,6 +211,17 @@ function sessionHandlers() {
                   role: 'user',
                 },
                 {
+                  content: [{ text: 'An operator joined the room.', type: 'text' }],
+                  createdAt: '2026-08-27T13:59:30.000Z',
+                  delivery: 'observation',
+                  messageId: 'observation-1',
+                  origin: {
+                    principal: { issuer: 'web', subject: 'operator-2' },
+                    transportMessageId: 'transport-2',
+                  },
+                  role: 'user',
+                },
+                {
                   createdAt: '2026-08-27T14:00:07.000Z',
                   execution: 'immediate',
                   isError: false,
@@ -226,7 +238,7 @@ function sessionHandlers() {
           params.sessionId === 'session-1'
             ? session
             : { ...session, sessionId: 'session-2', title: 'Quiet conversation' },
-        total: params.sessionId === 'session-1' ? 2 : 0,
+        total: params.sessionId === 'session-1' ? 3 : 0,
       }),
     ),
     http.get('*/api/sessions/:sessionId/audit', ({ params }) =>

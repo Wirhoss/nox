@@ -11,7 +11,6 @@ import { sessions } from './sessions';
 const messages = sqliteTable(
   'messages',
   {
-    anchorMessageId: text('anchor_message_id'),
     arguments: text('arguments', { mode: 'json' }).$type<Readonly<Record<string, unknown>>>(),
     content: text('content', { mode: 'json' }).$type<readonly MessageContent[]>(),
     createdAt: integer('created_at').notNull(),

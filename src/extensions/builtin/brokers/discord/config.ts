@@ -83,7 +83,14 @@ const discordObserveSchema = z.enum(['channel', 'none']);
  */
 const discordChannelSchema = z.strictObject({
   observe: discordObserveSchema.prefault('none').meta({
-    nox: { help: 'ui.observeHelp', label: 'ui.observe' },
+    nox: {
+      help: 'ui.observeHelp',
+      label: 'ui.observe',
+      options: {
+        channel: 'ui.observe.channel',
+        none: 'ui.observe.none',
+      },
+    },
   }),
   /**
    * Who may make the agent answer here. Empty means anyone the channel already
@@ -110,7 +117,18 @@ const discordChannelSchema = z.strictObject({
     .min(1)
     .readonly()
     .prefault(['mention', 'reply'])
-    .meta({ nox: { help: 'ui.respondToHelp', label: 'ui.respondTo' } }),
+    .meta({
+      nox: {
+        help: 'ui.respondToHelp',
+        label: 'ui.respondTo',
+        options: {
+          all: 'ui.trigger.all',
+          mention: 'ui.trigger.mention',
+          name: 'ui.trigger.name',
+          reply: 'ui.trigger.reply',
+        },
+      },
+    }),
   /**
    * Whether threads under this channel are admitted with it. Inheriting is the
    * default because a thread is the natural unit of "one conversation with a
@@ -121,7 +139,16 @@ const discordChannelSchema = z.strictObject({
   threads: z
     .enum(['ignore', 'inherit'])
     .prefault('inherit')
-    .meta({ nox: { help: 'ui.threadsHelp', label: 'ui.threads' } }),
+    .meta({
+      nox: {
+        help: 'ui.threadsHelp',
+        label: 'ui.threads',
+        options: {
+          ignore: 'ui.threads.ignore',
+          inherit: 'ui.threads.inherit',
+        },
+      },
+    }),
 });
 
 /**

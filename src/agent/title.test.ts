@@ -20,7 +20,7 @@ class AnsweringProvider extends ChatProvider {
   readonly #answer: string;
 
   constructor(answer: string) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#answer = answer;
   }
 

@@ -18,7 +18,7 @@ class ScriptedProvider extends ChatProvider {
   readonly #script: Attempt[];
 
   constructor(script: Attempt[], maxRetries = 2, retryDelayMs = 1, maxRetryDelayMs = 30_000) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries, maxRetryDelayMs, retryDelayMs });
+    super({ maxRetries, maxRetryDelayMs, retryDelayMs });
     this.#script = [...script];
   }
 

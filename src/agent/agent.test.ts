@@ -83,7 +83,7 @@ class RecordingProvider extends ChatProvider {
   }
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -115,7 +115,7 @@ class ToolCallingProvider extends ChatProvider {
   }
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
@@ -147,7 +147,7 @@ class RoutingProvider extends ChatProvider {
   public readonly toolNames: string[][] = [];
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {

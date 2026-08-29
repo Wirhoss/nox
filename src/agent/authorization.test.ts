@@ -70,7 +70,7 @@ class EchoingProvider extends ChatProvider {
   public readonly userTurns: string[][] = [];
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -127,7 +127,7 @@ class SelectiveToolProvider extends ChatProvider {
   readonly #toolName: string;
 
   constructor(toolName = 'echo', failAfterCall = false) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#failAfterCall = failAfterCall;
     this.#toolName = toolName;
   }
@@ -172,7 +172,7 @@ class AttachingProvider extends ChatProvider {
   readonly #artifactId: string;
 
   constructor(artifactId: string) {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
     this.#artifactId = artifactId;
   }
 
@@ -214,7 +214,7 @@ class RoutingProvider extends ChatProvider {
   #calls = 0;
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {
@@ -255,7 +255,7 @@ class DeferringProvider extends ChatProvider {
   #started = false;
 
   constructor() {
-    super({ baseUrl: 'https://provider.invalid', maxRetries: 0 });
+    super({ maxRetries: 0 });
   }
 
   public override fetchModelIds(): Promise<string[]> {

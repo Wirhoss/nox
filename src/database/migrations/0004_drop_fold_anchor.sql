@@ -1,0 +1,1 @@
+ALTER TABLE `messages` DROP COLUMN `anchor_message_id`;

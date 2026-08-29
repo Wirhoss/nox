@@ -24,9 +24,14 @@ const localMemoryConfigSchema = z.object({
   type: z.literal('local'),
 });
 
+// Attribution is optional throughout: rows written before it existed still
+// parse, and the assistant's own turns are never handed a principal. What is
+// absent renders exactly as it always did.
 const storedMessageSchema = z.object({
   createdAt: z.string(),
+  displayName: z.string().optional(),
   messageId: z.string(),
+  principal: z.object({ issuer: z.string(), subject: z.string() }).optional(),
   role: z.enum(['assistant', 'user']),
   text: z.string(),
 });
@@ -42,6 +47,7 @@ const storedTurnSchema = z.object({
 
 type LocalMemoryConfig = z.infer<typeof localMemoryConfigSchema>;
 type LocalMemoryConfigInput = z.input<typeof localMemoryConfigSchema>;
+type StoredMessage = z.infer<typeof storedMessageSchema>;
 type StoredTurn = z.infer<typeof storedTurnSchema>;
 
 interface RankedTurn {
@@ -120,12 +126,28 @@ function storedTurn(value: unknown): StoredTurn | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+/**
+ * Who a remembered line belongs to.
+ *
+ * A memory read back into a shared conversation is text with no speaker unless
+ * one is written down. `User:` alone leaves the model to infer an owner, and in
+ * a room with more than one person it infers wrong — so the principal that was
+ * stored travels with the line, and the display name goes in front of it on the
+ * same terms as everywhere else: presentation, never identity.
+ */
+function speakerOf(message: StoredMessage): string {
+  if (message.role === 'assistant') return 'Assistant';
+  if (message.principal === undefined) return 'User';
+  const subject = `${message.principal.issuer}:${message.principal.subject}`;
+  return message.displayName === undefined
+    ? `User (${subject})`
+    : `User (${message.displayName} <${subject}>)`;
+}
+
 function renderTurn(turn: StoredTurn): string {
   return [
     `Conversation memory from ${turn.completedAt}:`,
-    ...turn.messages.map(
-      (message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.text}`,
-    ),
+    ...turn.messages.map((message) => `${speakerOf(message)}: ${message.text}`),
   ].join('\n');
 }
 
@@ -234,7 +256,16 @@ class LocalMemory implements Memory {
       completedAt: request.completedAt.toISOString(),
       messages: request.messages.map((message) => ({
         createdAt: message.createdAt.toISOString(),
+        ...(message.displayName === undefined ? {} : { displayName: message.displayName }),
         messageId: message.messageId,
+        ...(message.principal === undefined
+          ? {}
+          : {
+              principal: {
+                issuer: message.principal.issuer,
+                subject: message.principal.subject,
+              },
+            }),
         role: message.role,
         text: message.text,
       })),

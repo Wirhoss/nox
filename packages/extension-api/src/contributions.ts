@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
 import { type ConfigurableContribution, createContributionPoint } from './core.js';
-import { type ChatProvider, providerBaseConfigSchema } from './providers.js';
+import {
+  type ChatProvider,
+  chatProviderConfigSchema,
+  type EmbeddingProvider,
+  embeddingProviderConfigSchema,
+} from './providers.js';
 import { identifierSchema, localeSchema } from './schemas.js';
 
 import type { Broker } from './brokers.js';
@@ -130,10 +135,10 @@ const brokers = createContributionPoint<BrokerContribution>('nox.brokers');
 
 // Provider configuration is defined beside the provider base class so adapters
 // and the host validate from one schema object.
-const providerConfigSchema = providerBaseConfigSchema.extend({ type: z.string() });
+const providerConfigSchema = chatProviderConfigSchema.extend({ type: z.string() });
 type ProviderConfig = z.infer<typeof providerConfigSchema>;
 type ProviderConfigSchema = z.ZodObject<
-  { type: z.ZodLiteral<string> } & typeof providerBaseConfigSchema.shape
+  { type: z.ZodLiteral<string> } & typeof chatProviderConfigSchema.shape
 >;
 type ProviderContribution = ConfigurableContribution<ProviderConfigSchema, ChatProvider>;
 function providerContribution<TSchema extends ProviderConfigSchema>(
@@ -142,6 +147,32 @@ function providerContribution<TSchema extends ProviderConfigSchema>(
   return contribution;
 }
 const providers = createContributionPoint<ProviderContribution>('nox.providers');
+
+/**
+ * Embedding providers are configured like chat providers and for the same
+ * reason: an instance is one endpoint or one loaded model, and a deployment may
+ * want more than one. They get their own point rather than sharing `providers`
+ * because everything that resolves a provider by ID expects to be able to chat
+ * with it — one list would turn naming the wrong instance from a schema error
+ * into a failure at activation.
+ */
+const embeddingProviderContributionConfigSchema = embeddingProviderConfigSchema.extend({
+  type: z.string(),
+});
+type EmbeddingProviderConfig = z.infer<typeof embeddingProviderContributionConfigSchema>;
+type EmbeddingProviderConfigSchema = z.ZodObject<
+  { type: z.ZodLiteral<string> } & typeof embeddingProviderConfigSchema.shape
+>;
+type EmbeddingProviderContribution = ConfigurableContribution<
+  EmbeddingProviderConfigSchema,
+  EmbeddingProvider
+>;
+function embeddingProviderContribution<TSchema extends EmbeddingProviderConfigSchema>(
+  contribution: ConfigurableContribution<TSchema, EmbeddingProvider>,
+): ConfigurableContribution<TSchema, EmbeddingProvider> {
+  return contribution;
+}
+const embeddings = createContributionPoint<EmbeddingProviderContribution>('nox.embeddings');
 
 /**
  * Memory implementations have no common storage configuration beyond their
@@ -190,6 +221,9 @@ export {
   brokerSenderIdSchema,
   defineLanguagePack,
   defineTranslationFragment,
+  embeddingProviderContribution,
+  embeddingProviderContributionConfigSchema,
+  embeddings,
   languagePacks,
   languagePackSchema,
   localeSchema,
@@ -213,6 +247,9 @@ export type {
   BrokerConfigSchema,
   BrokerContribution,
   BrokerHostPolicy,
+  EmbeddingProviderConfig,
+  EmbeddingProviderConfigSchema,
+  EmbeddingProviderContribution,
   LanguagePack,
   LanguagePackInput,
   MemoryConfig,

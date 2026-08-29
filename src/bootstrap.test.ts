@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { commands, memories, providers, toolSets } from '@nox/extension-api';
+import { commands, embeddings, memories, providers, toolSets } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { AuthStore } from './api/auth/store';
@@ -64,6 +64,8 @@ interface BootOptions {
   brokers?: unknown;
   configWatch?: boolean;
   dataDir?: string;
+  embeddings?: unknown;
+  extensionsDir?: string;
   memories?: unknown;
   providers?: unknown;
   secrets?: Readonly<Record<string, string>>;
@@ -76,6 +78,7 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
   // Port 0 unless a test says otherwise: every boot listens, and no two boots
   // — or a Nox already running on this machine — fight over the same socket.
   writeFileSync(join(configDir, 'app.json'), JSON.stringify(options.app ?? { api: { port: 0 } }));
+  writeFileSync(join(configDir, 'embeddings.json'), JSON.stringify(options.embeddings ?? {}));
   writeFileSync(join(configDir, 'memories.json'), JSON.stringify(options.memories ?? {}));
   writeFileSync(join(configDir, 'providers.json'), JSON.stringify(options.providers ?? PROVIDERS));
   writeFileSync(join(configDir, 'brokers.json'), JSON.stringify(options.brokers ?? {}));
@@ -106,6 +109,7 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
       ? { CONFIG_WATCH: 'true', CONFIG_WATCH_DEBOUNCE_MS: '50' }
       : {}),
     DATA_DIR: dataDir,
+    ...(options.extensionsDir === undefined ? {} : { EXTENSIONS_DIR: options.extensionsDir }),
     NODE_ENV: 'test',
   };
 }
@@ -250,6 +254,7 @@ describe('bootstrap', () => {
       'app',
       'blueprints',
       'brokers',
+      'embeddings',
       'memories',
       'providers',
       'toolSets',
@@ -371,7 +376,8 @@ describe('bootstrap', () => {
 
     expect(application.services.get(configService).get('app').logLevel).toBeString();
     expect(application.services.get(artifactPipelineService).directory).toContain('artifacts');
-    expect(application.services.get(configService).get('providers').main?.apiKey).toMatchObject({
+    const provider: unknown = application.services.get(configService).get('providers').main;
+    expect((provider as { apiKey?: unknown }).apiKey).toMatchObject({
       $secret: 'OPENAI_API_KEY',
     });
     expect(application.services.get(loggerService)).toBe(silentLogger);
@@ -852,5 +858,105 @@ describe('bootstrap', () => {
         stored: false,
       },
     ]);
+  });
+
+  test('releases a memory the configuration has replaced, and only once its agents are rebuilt', async () => {
+    const ledger = join(temporary('nox-ledger-'), 'released.log');
+    const extensionsDir = join(import.meta.dir, 'runtime', 'fixtures');
+    const memory = { ledger, type: 'disposable_test' };
+    const env = await seed({
+      blueprints: { nox: { ...NOX, memory: { id: 'disposable_test' } } },
+      configWatch: true,
+      extensionsDir,
+      memories: { disposable_test: memory },
+    });
+    const configDir = env.CONFIG_DIR;
+    if (configDir === undefined) throw new Error('Expected a config directory.');
+    booted = await bootstrap({ env, logger: silentLogger });
+    expect(booted.getAgent('nox')).toBeDefined();
+    expect(existsSync(ledger)).toBeFalse();
+
+    // A new instance replaces the old one, and the agent holding it is rebuilt
+    // in the same pass because its signature folds in the memory's config.
+    writeFileSync(
+      join(configDir, 'memories.json'),
+      JSON.stringify({ disposable_test: { ...memory, ledger: `${ledger}.2` } }),
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (existsSync(ledger)) break;
+      await Bun.sleep(10);
+    }
+
+    expect(readFileSync(ledger, 'utf8').trim()).toBe('released');
+    expect(booted.state).toBe('running');
+  });
+
+  test('activates a contributed embedding provider and embeds a batch through it', async () => {
+    const application = await boot({
+      embeddings: { counting_test: { type: 'counting_test' } },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+    });
+    const statuses = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .filter((component) => component.kind === 'embedding');
+
+    expect(statuses).toMatchObject([{ id: 'counting_test', state: 'active' }]);
+
+    const contribution = application.contributions.get(embeddings, 'counting_test');
+    const provider = contribution?.value.create({ type: 'counting_test' } as never);
+    const result = await provider?.embed({ texts: ['first', 'second and longer'] });
+
+    // The contract, not the model: one vector per text in the order given, the
+    // declared dimension count, and unit length so similarity is a dot product.
+    expect(result?.vectors).toHaveLength(2);
+    expect(result?.dimensions).toBe(4);
+    expect(result?.vectors[0]).toHaveLength(4);
+    for (const vector of result?.vectors ?? []) {
+      expect(Math.hypot(...vector)).toBeCloseTo(1, 10);
+    }
+  });
+
+  test('releases a tool set the configuration has replaced', async () => {
+    const ledger = join(temporary('nox-ledger-'), 'released.log');
+    const toolSet = { ledger, type: 'disposable_test' };
+    const env = await seed({
+      blueprints: { nox: { ...NOX, toolSets: { direct: ['disposable_test'] } } },
+      configWatch: true,
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      toolSets: { disposable_test: toolSet },
+    });
+    const configDir = env.CONFIG_DIR;
+    if (configDir === undefined) throw new Error('Expected a config directory.');
+    booted = await bootstrap({ env, logger: silentLogger });
+    expect(booted.getAgent('nox')).toBeDefined();
+    expect(existsSync(ledger)).toBeFalse();
+
+    writeFileSync(
+      join(configDir, 'toolsets.json'),
+      JSON.stringify({ disposable_test: { ...toolSet, ledger: `${ledger}.2` } }),
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (existsSync(ledger)) break;
+      await Bun.sleep(10);
+    }
+
+    expect(readFileSync(ledger, 'utf8').trim()).toBe('released');
+    expect(booted.state).toBe('running');
+  });
+
+  test('releases what it still holds when the application stops', async () => {
+    const ledger = join(temporary('nox-ledger-'), 'released.log');
+    await boot({
+      blueprints: { nox: { ...NOX, memory: { id: 'disposable_test' } } },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: { disposable_test: { ledger, type: 'disposable_test' } },
+    });
+    expect(existsSync(ledger)).toBeFalse();
+
+    await booted?.stop();
+    booted = undefined;
+
+    expect(readFileSync(ledger, 'utf8').trim()).toBe('released');
   });
 });

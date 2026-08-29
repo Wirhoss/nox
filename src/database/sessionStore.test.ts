@@ -93,7 +93,6 @@ function everyRole(): Message[] {
       trust: 'untrusted',
     },
     {
-      anchorMessageId: 'a1',
       content: [{ text: 'folded traffic', type: 'text' }],
       createdAt: CREATED_AT,
       foldedMessageIds: ['c1', 'p1'],

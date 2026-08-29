@@ -67,6 +67,23 @@ interface DisposableRegistry {
   add<T extends Disposable>(disposable: T): T;
 }
 
+/**
+ * Whether a contributed instance wants to be told when it is superseded.
+ *
+ * Structural rather than declared, because most contributions hold nothing that
+ * outlives a garbage collection and should not have to say so. The ones that do
+ * — a worker, a socket, a file handle — opt in by having the method, and the
+ * host disposes them when the configuration that created them stops being the
+ * live one.
+ */
+function isDisposable(value: unknown): value is Disposable {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'dispose') === 'function'
+  );
+}
+
 interface ExtensionStateEntry<T> {
   readonly key: string;
   readonly value: T;
@@ -251,6 +268,7 @@ export {
   defineExtension,
   EXTENSION_API_VERSION,
   isConfigurable,
+  isDisposable,
   isExtensionDefinition,
   Mutex,
   silentLogger,

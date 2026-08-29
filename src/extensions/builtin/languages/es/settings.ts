@@ -126,6 +126,13 @@ const settingsMessages = Object.freeze({
     'La configuración del proveedor debe ser un único objeto JSON.',
   'settings.provider.validation.curatedFormUnavailable':
     'Este tipo de proveedor aportado no tiene un formulario específico. Continúa en modo JSON.',
+  'settings.schemaMap.empty': 'Todavía no hay entradas. Agrega una para configurarla.',
+  'settings.schemaMap.key': 'ID de la entrada',
+  'settings.schemaMap.keyInvalid': 'Este ID no es uno que acepte este ajuste.',
+  'settings.schemaMap.keyRequired': 'Dale un ID a esta entrada.',
+  'settings.schemaMap.minItems': 'Elige al menos {count}.',
+  'settings.schemaMap.removeNamed': 'Eliminar {entry}',
+  'settings.schemaMap.unnamedEntry': 'la entrada sin nombre',
   'settings.sections.agents.description':
     'Identidades, modelos, capacidades y política de puerta de los agentes.',
   'settings.sections.agents.label': 'Agente',
@@ -133,6 +140,10 @@ const settingsMessages = Object.freeze({
   'settings.sections.brokers.description': 'Transportes de conversación aportados por extensiones.',
   'settings.sections.brokers.label': 'Bróker',
   'settings.sections.brokers.plural': 'Brókeres',
+  'settings.sections.embeddings.description':
+    'Modelos que convierten texto en vectores, para las funciones que buscan por significado.',
+  'settings.sections.embeddings.label': 'Modelo de embeddings',
+  'settings.sections.embeddings.plural': 'Modelos de embeddings',
   'settings.sections.general.description':
     'Valores predeterminados de entorno, acceso, almacenamiento y registro.',
   'settings.sections.general.label': 'General',

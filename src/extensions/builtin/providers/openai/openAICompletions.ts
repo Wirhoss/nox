@@ -1,7 +1,9 @@
 import {
   type ArtifactPipeline,
   type ArtifactRef,
-  ChatProvider,
+  HttpChatProvider,
+  httpChatProviderConfigSchema,
+  httpChatProviderRuntimeConfigSchema,
   isArtifactProcessorOutputError,
   isArtifactRepresentationUnavailableError,
   type Logger,
@@ -10,10 +12,8 @@ import {
   modalitiesIn,
   modelAcceptsInput,
   type ModelConfig,
-  providerBaseConfigSchema,
   ProviderError,
   type ProviderErrorCode,
-  providerRuntimeConfigSchema,
   type ProviderSourceEvent,
   type RepresentationProfile,
   silentLogger,
@@ -29,12 +29,12 @@ import {
 } from '@nox/extension-api';
 import { z } from 'zod';
 
-const openAICompletionsConfigSchema = providerBaseConfigSchema.extend({
+const openAICompletionsConfigSchema = httpChatProviderConfigSchema.extend({
   defaultModel: z.string().min(1).optional(),
   type: z.literal('openai_completions'),
 });
 
-const openAICompletionsRuntimeConfigSchema = providerRuntimeConfigSchema.extend({
+const openAICompletionsRuntimeConfigSchema = httpChatProviderRuntimeConfigSchema.extend({
   defaultModel: z.string().min(1).optional(),
   type: z.literal('openai_completions'),
 });
@@ -259,7 +259,7 @@ function* emitFragments(fragments: StreamFragments): Generator<ProviderSourceEve
  * the runner needs fragments as they arrive, and `stream_options.include_usage`
  * is the one place this API reports what the request actually cost.
  */
-class OpenAICompletions extends ChatProvider {
+class OpenAICompletions extends HttpChatProvider {
   static override readonly configSchema = openAICompletionsConfigSchema;
 
   private readonly artifacts?: ArtifactPipeline;
@@ -456,6 +456,11 @@ class OpenAICompletions extends ChatProvider {
     timeZone?: string,
   ): Promise<OpenAIMessage[]> {
     const messages: OpenAIMessage[] = [{ content: systemPrompt, role: 'system' }];
+    // A textless assistant turn only exists to carry tool calls. Held back
+    // until one arrives, because an assistant message with neither content nor
+    // `tool_calls` is rejected outright. The fold reclaims such a turn together
+    // with its calls, so this is the second line rather than the first.
+    let pendingScaffold = false;
     const pendingToolMedia: { readonly content: MessageContent[]; readonly label: string }[] = [];
     const flushToolMedia = async (): Promise<void> => {
       for (const result of pendingToolMedia.splice(0)) {
@@ -475,6 +480,11 @@ class OpenAICompletions extends ChatProvider {
       // synthetic user content instead of splitting that protocol sequence.
       if (message.role !== 'toolResponse') await flushToolMedia();
 
+      // The scaffold only carries the calls that immediately follow it; anything
+      // else in between means its own calls are gone and it is dropped.
+      const scaffolded: boolean = pendingScaffold;
+      pendingScaffold = false;
+
       switch (message.role) {
         case 'user': {
           messages.push({
@@ -484,7 +494,12 @@ class OpenAICompletions extends ChatProvider {
           break;
         }
         case 'assistant': {
-          messages.push({ content: this.toAssistantText(message.content), role: 'assistant' });
+          const content = this.toAssistantText(message.content);
+          if (content === null) {
+            pendingScaffold = true;
+            break;
+          }
+          messages.push({ content, role: 'assistant' });
           break;
         }
         case 'compacted': {
@@ -510,11 +525,13 @@ class OpenAICompletions extends ChatProvider {
         case 'reasoning': {
           // Never sent back: this API has no field for it, and replaying it as
           // assistant text invites the model to imitate its own scratchpad.
+          // Being invisible, it also does not separate a scaffold from its calls.
+          pendingScaffold = scaffolded;
           break;
         }
         case 'toolCall': {
           const toolCall = this.toOpenAIToolCall(message);
-          const previous = messages.at(-1);
+          const previous = scaffolded ? undefined : messages.at(-1);
 
           if (previous?.role === 'assistant') {
             previous.tool_calls = [...(previous.tool_calls ?? []), toolCall];

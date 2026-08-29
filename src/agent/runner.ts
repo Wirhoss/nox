@@ -203,6 +203,9 @@ function memoryMessages(messages: readonly Message[]): MemoryMessage[] {
         messageId: message.messageId,
         ...(message.role === 'user'
           ? {
+              ...(message.origin.displayName === undefined
+                ? {}
+                : { displayName: message.origin.displayName }),
               principal: Object.freeze({ ...message.origin.principal }),
               role: 'user' as const,
             }

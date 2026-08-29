@@ -2,8 +2,7 @@ import {
   type ContentMessage,
   contentToString,
   type Message,
-  type MessageOrigin,
-  principalToString,
+  originToString,
   type ToolCallMessage,
   type ToolResponseMessage,
 } from '@nox/extension-api';
@@ -21,24 +20,6 @@ const MESSAGE_ROLES = [
 type MessageRole = (typeof MESSAGE_ROLES)[number];
 type AssertNever<T extends never> = T;
 type _EveryRoleIsListed = AssertNever<Exclude<Message['role'], MessageRole>>;
-
-/**
- * Who said it, as the model should read it.
- *
- * The principal is always there and is always what anything was decided from. A
- * display name goes in front when the transport had one, because a shared
- * transcript where everyone is an opaque ID is one the model cannot talk about:
- * it cannot address anyone, or notice that two messages came from the same
- * person, without comparing digits.
- *
- * The name never replaces the principal. Names are chosen, repeat, and change,
- * so a transcript carrying only names is one where two people can be made to
- * look like one.
- */
-function originToString(origin: MessageOrigin): string {
-  const subject = principalToString(origin.principal);
-  return origin.displayName === undefined ? subject : `${origin.displayName} <${subject}>`;
-}
 
 /**
  * The artifacts a message actually carries.
@@ -92,8 +73,7 @@ function messageToString(message: Message): string {
       );
     case 'folded':
       return (
-        `Role: ${message.role}\nAnchor Message ID: ${message.anchorMessageId}` +
-        `\nFolded Message IDs: ${message.foldedMessageIds.join(', ')}` +
+        `Role: ${message.role}\nFolded Message IDs: ${message.foldedMessageIds.join(', ')}` +
         `\nContent:\n${contentToString(message.content)}` +
         `\n${messageIdentityToString(message)}`
       );

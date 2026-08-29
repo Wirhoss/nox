@@ -151,6 +151,33 @@ describe('LocalMemory', () => {
     expect(result.memories.map(({ id }) => id)).toEqual(['third', 'second']);
   });
 
+  test('attributes a remembered line to the person who said it', async () => {
+    const storage = new MemoryExtensionStorageProvider();
+    const local = memory(storage);
+    const request = retainRequest('agent-a', ALICE, 'name', 'Yo soy Wirhoss.', 1);
+
+    await local.retain({
+      ...request,
+      messages: request.messages.map((entry) =>
+        entry.role === 'user' ? { ...entry, displayName: 'Wirhoss' } : entry,
+      ),
+    });
+    const result = await local.recall(recallRequest('agent-a', ALICE, 'Wirhoss'));
+
+    expect(result.memories[0]?.text).toContain('User (Wirhoss <web:alice>): Yo soy Wirhoss.');
+    expect(result.memories[0]?.text).toContain('Assistant: Stored name.');
+  });
+
+  test('renders the principal alone when the transport never had a name', async () => {
+    const storage = new MemoryExtensionStorageProvider();
+    const local = memory(storage);
+
+    await local.retain(retainRequest('agent-a', ALICE, 'anon', 'Yo soy alguien.', 1));
+    const result = await local.recall(recallRequest('agent-a', ALICE, 'alguien'));
+
+    expect(result.memories[0]?.text).toContain('User (web:alice): Yo soy alguien.');
+  });
+
   test('bounds its own recalled payload before the runner applies its final guard', async () => {
     const storage = new MemoryExtensionStorageProvider();
     const local = memory(storage);

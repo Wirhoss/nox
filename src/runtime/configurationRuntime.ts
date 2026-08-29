@@ -1,6 +1,11 @@
 import {
   type ChatProvider,
   type ContributionReader,
+  type Disposable,
+  type EmbeddingProvider,
+  type EmbeddingProviderConfig,
+  embeddings,
+  isDisposable,
   memories,
   type Memory,
   type MemoryConfig,
@@ -45,6 +50,11 @@ interface ConfigurationRuntimeOptions {
   readonly toolSets: ToolSetCatalog;
 }
 
+interface ActiveEmbedding {
+  readonly embedding: EmbeddingProvider;
+  readonly signature: string;
+}
+
 interface ActiveMemory {
   readonly memory: Memory;
   readonly signature: string;
@@ -58,6 +68,35 @@ interface ActiveProvider {
 interface TaskModel {
   readonly model: ModelConfig;
   readonly provider: ChatProvider;
+}
+
+type InstanceKind = 'embedding' | 'memory' | 'provider' | 'toolSet';
+
+/** One instance the configuration has replaced or dropped, waiting to be released. */
+interface SupersededInstance {
+  readonly id: string;
+  readonly instance: Disposable;
+  readonly kind: InstanceKind;
+}
+
+function blueprintUses(blueprint: Blueprint, kind: InstanceKind, id: string): boolean {
+  // Nothing in a blueprint names an embedding provider yet. Whatever starts to
+  // — a memory that vectorizes what it stores is the obvious first — has to be
+  // answered here too, or its instance will be released while still in use.
+  if (kind === 'embedding') return false;
+  if (kind === 'memory') return blueprint.memory?.id === id;
+  if (kind === 'toolSet') {
+    return [...blueprint.toolSets.direct, ...blueprint.toolSets.routed].some(
+      (grant) => (typeof grant === 'string' ? grant : grant.id) === id,
+    );
+  }
+  // A task model without its own provider runs on the agent's, so naming the
+  // blueprint's provider is what covers every task that did not name one.
+  return (
+    blueprint.provider === id ||
+    blueprint.taskModels.compaction?.provider === id ||
+    blueprint.taskModels.title?.provider === id
+  );
 }
 
 function message(error: unknown): string {
@@ -87,6 +126,14 @@ class ConfigurationRuntimeRelay implements ConfigurationRuntime {
   public statuses(): readonly RuntimeComponentStatus[] {
     return this.#host?.statuses() ?? [];
   }
+
+  /**
+   * Held by the application from the start, because the concrete runtime is
+   * composed after Nox is already running and can no longer be handed one.
+   */
+  public async dispose(): Promise<void> {
+    if (isDisposable(this.#host)) await this.#host.dispose();
+  }
 }
 
 class ConfigurationRuntimeController implements ConfigurationRuntime {
@@ -100,12 +147,14 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
   readonly #contributions: ContributionReader;
   readonly #createBroker?: (brokerId: string) => Promise<BrokerGrant>;
   readonly #database: Database;
+  readonly #embeddings = new Map<string, ActiveEmbedding>();
   readonly #logger: Logger;
   readonly #memories = new Map<string, ActiveMemory>();
   readonly #mutex = new Mutex();
   readonly #providers = new Map<string, ActiveProvider>();
   readonly #secretStore: SecretStore;
   readonly #statuses = new Map<string, RuntimeComponentStatus>();
+  readonly #superseded: SupersededInstance[] = [];
   readonly #toolSets: ToolSetCatalog;
 
   #gateway?: Gateway;
@@ -149,12 +198,42 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       const generation = ++this.#generation;
       this.#logger.setLevel?.(this.#config.get('app').logLevel);
       await this.#attempt('providers', () => this.#reconcileProviders(generation));
+      await this.#attempt('embedding providers', () => this.#reconcileEmbeddings(generation));
       await this.#attempt('memories', () => this.#reconcileMemories(generation));
       await this.#attempt('tool sets', () => this.#reconcileToolSets(generation));
       await this.#attempt('agents', () => this.#reconcileAgents(generation));
       await this.#attempt('brokers', () => this.#reconcileBrokers(generation));
       await this.#attempt('retired agents', () => this.#reconcileAgentRemovals(generation));
+      // Last, and only here: an instance replaced earlier in this pass may still
+      // be held by an agent that has not been rebuilt yet.
+      await this.#attempt('superseded instances', () => this.#releaseSuperseded(generation));
     });
+  }
+
+  /**
+   * Releases every instance this runtime created, whether or not an agent is
+   * still holding it. Called once the application has closed its sessions, so
+   * by then nothing is.
+   */
+  public async dispose(): Promise<void> {
+    for (const [providerId, active] of this.#providers) {
+      this.#supersede('provider', providerId, active.provider);
+    }
+    this.#providers.clear();
+    for (const [memoryId, active] of this.#memories) {
+      this.#supersede('memory', memoryId, active.memory);
+    }
+    this.#memories.clear();
+    for (const [embeddingId, active] of this.#embeddings) {
+      this.#supersede('embedding', embeddingId, active.embedding);
+    }
+    this.#embeddings.clear();
+    this.#toolSets.retire();
+    for (const { id, instance } of this.#toolSets.takeSuperseded()) {
+      this.#superseded.push({ id, instance, kind: 'toolSet' });
+    }
+    for (const entry of this.#superseded) await this.#release(entry);
+    this.#superseded.length = 0;
   }
 
   public statuses(): readonly RuntimeComponentStatus[] {
@@ -260,6 +339,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       try {
         const provider = await this.#createProvider(providerId, entry);
         this.#providers.set(providerId, { provider, signature });
+        if (active !== undefined) this.#supersede('provider', providerId, active.provider);
         this.#active('provider', providerId, generation);
       } catch (error) {
         const activeGeneration = this.#statuses.get(componentKey)?.activeGeneration;
@@ -292,7 +372,9 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
         });
         continue;
       }
+      const dropped = this.#providers.get(providerId);
       this.#providers.delete(providerId);
+      if (dropped !== undefined) this.#supersede('provider', providerId, dropped.provider);
     }
     this.#dropAbsent('provider', visible);
   }
@@ -308,6 +390,69 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       entry,
       this.#secretStore,
       { extensionId: contribution.extensionId, location: `providers.${providerId}` },
+      (resolved) => contribution.value.create(resolved),
+    );
+  }
+
+  async #reconcileEmbeddings(generation: number): Promise<void> {
+    const configured = this.#config.get('embeddings');
+    const desired = new Set(Object.keys(configured));
+
+    for (const [embeddingId, entry] of Object.entries(configured)) {
+      const componentKey = key('embedding', embeddingId);
+      const signature = stableStringify({ entry, secretRevision: this.#secretStore.revision });
+      const active = this.#embeddings.get(embeddingId);
+      if (active?.signature === signature) {
+        this.#active('embedding', embeddingId, generation);
+        continue;
+      }
+
+      this.#applying('embedding', embeddingId, generation, active !== undefined);
+      try {
+        const embedding = await this.#createEmbedding(embeddingId, entry);
+        this.#embeddings.set(embeddingId, { embedding, signature });
+        if (active !== undefined) this.#supersede('embedding', embeddingId, active.embedding);
+        this.#active('embedding', embeddingId, generation);
+      } catch (error) {
+        const activeGeneration = this.#statuses.get(componentKey)?.activeGeneration;
+        this.#statuses.set(componentKey, {
+          ...(activeGeneration === undefined ? {} : { activeGeneration }),
+          desiredGeneration: generation,
+          error: message(error),
+          id: embeddingId,
+          kind: 'embedding',
+          state: active === undefined ? 'unavailable' : 'failed',
+        });
+        this.#logger.error(
+          { embeddingId, err: error },
+          'Embedding provider configuration did not activate.',
+        );
+      }
+    }
+
+    for (const embeddingId of this.#embeddings.keys()) {
+      if (desired.has(embeddingId)) continue;
+      const dropped = this.#embeddings.get(embeddingId);
+      this.#embeddings.delete(embeddingId);
+      if (dropped !== undefined) this.#supersede('embedding', embeddingId, dropped.embedding);
+    }
+    this.#dropAbsent('embedding', desired);
+  }
+
+  async #createEmbedding(
+    embeddingId: string,
+    entry: EmbeddingProviderConfig,
+  ): Promise<EmbeddingProvider> {
+    const contribution = this.#contributions.get(embeddings, entry.type);
+    if (contribution === undefined) {
+      throw new Error(
+        `Embedding provider "${embeddingId}" is of type "${entry.type}", which no extension contributed.`,
+      );
+    }
+    return composeWithSecrets(
+      entry,
+      this.#secretStore,
+      { extensionId: contribution.extensionId, location: `embeddings.${embeddingId}` },
       (resolved) => contribution.value.create(resolved),
     );
   }
@@ -329,6 +474,7 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       try {
         const memory = await this.#createMemory(memoryId, entry);
         this.#memories.set(memoryId, { memory, signature });
+        if (active !== undefined) this.#supersede('memory', memoryId, active.memory);
         this.#active('memory', memoryId, generation);
       } catch (error) {
         const activeGeneration = this.#statuses.get(componentKey)?.activeGeneration;
@@ -361,7 +507,9 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
         });
         continue;
       }
+      const dropped = this.#memories.get(memoryId);
       this.#memories.delete(memoryId);
+      if (dropped !== undefined) this.#supersede('memory', memoryId, dropped.memory);
     }
     this.#dropAbsent('memory', visible);
   }
@@ -664,6 +812,68 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       timeZone,
       toolSets: Object.fromEntries(toolSetIds.map((id) => [id, configuredToolSets[id]])),
     });
+  }
+
+  /**
+   * Queues an instance for release. Most contributions hold nothing worth
+   * releasing and are simply dropped; the ones that do say so by being
+   * disposable.
+   */
+  #supersede(kind: InstanceKind, id: string, instance: unknown): void {
+    if (isDisposable(instance)) this.#superseded.push({ id, instance, kind });
+  }
+
+  /**
+   * Releases what nothing can reach any more, and keeps the rest for the next
+   * pass. Waiting is the point: `#agentSignature` folds in the configuration of
+   * the provider and memory a blueprint names, so replacing either rebuilds its
+   * agents in this same pass — but a rebuild that fails keeps the agent that was
+   * already running, and that agent is still holding the instance being retired.
+   * Releasing it there would turn an agent that merely failed to update into one
+   * that cannot answer at all, which is exactly what this runtime promises never
+   * to do.
+   */
+  async #releaseSuperseded(generation: number): Promise<void> {
+    for (const { id, instance } of this.#toolSets.takeSuperseded()) {
+      this.#superseded.push({ id, instance, kind: 'toolSet' });
+    }
+    if (this.#superseded.length === 0) return;
+    const retained: SupersededInstance[] = [];
+    for (const entry of this.#superseded) {
+      if (this.#stillHeld(entry.kind, entry.id, generation)) {
+        retained.push(entry);
+        continue;
+      }
+      await this.#release(entry);
+    }
+    this.#superseded.length = 0;
+    this.#superseded.push(...retained);
+  }
+
+  async #release(entry: SupersededInstance): Promise<void> {
+    try {
+      await entry.instance.dispose();
+    } catch (error) {
+      this.#logger.error(
+        { err: error, id: entry.id, kind: entry.kind },
+        'A superseded component did not release cleanly.',
+      );
+    }
+  }
+
+  /** Whether an agent that is still answering could be holding this instance. */
+  #stillHeld(kind: InstanceKind, id: string, generation: number): boolean {
+    const blueprints = this.#config.get('blueprints');
+    for (const agentId of this.#application.agentIds) {
+      const blueprint = blueprints[agentId];
+      // Serving without a blueprint means the agent was retired and kept alive
+      // by a broker route. Nothing left in configuration says what it holds.
+      if (blueprint === undefined) return true;
+      if (!blueprintUses(blueprint, kind, id)) continue;
+      const status = this.#statuses.get(key('agent', agentId));
+      if (status?.state !== 'active' || status.activeGeneration !== generation) return true;
+    }
+    return false;
   }
 
   #active(kind: RuntimeComponentKind, id: string, generation: number): void {

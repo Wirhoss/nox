@@ -6,10 +6,16 @@ import { NEW_SECRET } from '../model/managedSecrets'
 import {
   type ConfigLike,
   type FieldNode,
+  type FieldOption,
   type FormNode,
   isObject,
+  mapEntryDefaults,
+  mapEntryNodes,
+  type MapNode,
   valueAt,
   type VariantNode,
+  withoutKey,
+  withRenamedKey,
 } from '../model/schemaForm'
 
 /**
@@ -63,7 +69,16 @@ function label(node: FieldNode | VariantNode | { label?: string; name: string })
   return humanize(node.name)
 }
 
-function help(node: FieldNode): string | undefined {
+function optionLabel(option: FieldOption): string {
+  const message =
+    option.messageKey === undefined
+      ? undefined
+      : `${props.extensionId}.${option.messageKey}`
+  if (message !== undefined && hasMessage(message)) return t(message)
+  return option.label
+}
+
+function help(node: { description?: string; help?: string }): string | undefined {
   const message = node.help === undefined ? undefined : `${props.extensionId}.${node.help}`
   if (message !== undefined && hasMessage(message)) return t(message)
   return node.description
@@ -97,6 +112,22 @@ function listText(node: FieldNode): string {
   return Array.isArray(current) ? current.map((item) => String(item)).join(', ') : ''
 }
 
+function checklistValues(node: FieldNode): readonly string[] {
+  const current = valueAt(props.value, node.path)
+  return Array.isArray(current) ? current.map((item) => String(item)) : []
+}
+
+function checklistChecked(node: FieldNode, option: FieldOption): boolean {
+  return checklistValues(node).includes(String(option.value))
+}
+
+function checklistError(node: FieldNode): string | undefined {
+  if (node.minItems !== undefined && checklistValues(node).length < node.minItems) {
+    return t('settings.schemaMap.minItems', { count: node.minItems })
+  }
+  return error(node.path)
+}
+
 function checked(node: FieldNode): boolean {
   return valueAt(props.value, node.path) === true
 }
@@ -128,6 +159,18 @@ function setList(node: FieldNode, next: string): void {
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
   emit('update', node.path, items.length === 0 ? undefined : items)
+}
+
+function toggleChecklist(node: FieldNode, option: FieldOption, on: boolean): void {
+  const selectedValues = new Set(checklistValues(node))
+  if (on) selectedValues.add(String(option.value))
+  else selectedValues.delete(String(option.value))
+
+  // Schema order keeps persisted values stable regardless of the operator's click order.
+  const next = node.options
+    .filter((candidate) => selectedValues.has(String(candidate.value)))
+    .map((candidate) => candidate.value)
+  emit('update', node.path, next.length === 0 && !node.required ? undefined : next)
 }
 
 function setBoolean(node: FieldNode, next: boolean): void {
@@ -195,6 +238,68 @@ function chosenVariant(node: VariantNode): string {
 function variantChildren(node: VariantNode): readonly FormNode[] {
   const chosen = chosenVariant(node)
   return node.variants.find((variant) => variant.value === chosen)?.children ?? []
+}
+
+/**
+ * The record a map node edits. Absent reads as empty rather than as an error: a
+ * map with a default of `{}` is not written until something is put in it.
+ */
+function mapRecord(node: MapNode): ConfigLike {
+  const current = valueAt(props.value, node.path)
+  return isObject(current) ? current : {}
+}
+
+/**
+ * The keys on screen, in the order the record holds them.
+ *
+ * Rows are keyed by position rather than by the key itself, because renaming is
+ * what typing a key *is* — keying by it would tear down and rebuild the input on
+ * every character and take the caret with it.
+ */
+function mapKeys(node: MapNode): readonly string[] {
+  return Object.keys(mapRecord(node))
+}
+
+/**
+ * Whether a key is one this map will accept, per its `propertyNames`.
+ *
+ * A pattern that will not compile is treated as no pattern rather than thrown:
+ * it comes from an extension's schema, and one bad regex should cost that field
+ * its client-side check — the server still refuses the key — not the whole form.
+ */
+function mapKeyError(node: MapNode, entryKey: string): string | undefined {
+  if (entryKey.length === 0) return t('settings.schemaMap.keyRequired')
+  if (node.keyPattern === undefined) return undefined
+
+  let pattern: RegExp
+  try {
+    pattern = new RegExp(node.keyPattern, 'u')
+  } catch {
+    return undefined
+  }
+  return pattern.test(entryKey) ? undefined : t('settings.schemaMap.keyInvalid')
+}
+
+/**
+ * Adds an entry with no key yet, which the operator then names. Refused while
+ * one is already unnamed: a second blank key would land on the first.
+ */
+function addMapEntry(node: MapNode): void {
+  const record = mapRecord(node)
+  if (Object.keys(record).includes('')) return
+  emit('update', node.path, { ...record, '': mapEntryDefaults(node) })
+}
+
+function removeMapEntry(node: MapNode, entryKey: string): void {
+  emit('update', node.path, withoutKey(mapRecord(node), entryKey))
+}
+
+function renameMapEntry(node: MapNode, from: string, to: string): void {
+  emit('update', node.path, withRenamedKey(mapRecord(node), from, to.trim()))
+}
+
+function mapEntryLabel(entryKey: string): string {
+  return entryKey.length === 0 ? t('settings.schemaMap.unnamedEntry') : entryKey
 }
 
 </script>
@@ -286,7 +391,7 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
             :key="String(option.value)"
             :value="String(option.value)"
           >
-            {{ option.label }}
+            {{ optionLabel(option) }}
           </option>
         </select>
         <p v-if="help(node)" class="schema-fields__hint">{{ help(node) }}</p>
@@ -318,6 +423,37 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
         :required="node.required"
         @update:model-value="setNumber(node, $event)"
       />
+
+      <fieldset
+        v-else-if="node.kind === 'field' && node.control === 'checklist'"
+        class="schema-fields__checklist"
+        :class="{ 'schema-fields__checklist--invalid': checklistError(node) }"
+      >
+        <legend>
+          {{ label(node) }}
+          <small v-if="node.required">{{ t('common.requiredShort') }}</small>
+        </legend>
+        <div class="schema-fields__checklist-options">
+          <label
+            v-for="option in node.options"
+            :key="String(option.value)"
+            class="schema-fields__checklist-option"
+          >
+            <input
+              type="checkbox"
+              :checked="checklistChecked(node, option)"
+              @change="
+                toggleChecklist(node, option, ($event.target as HTMLInputElement).checked)
+              "
+            />
+            <span>{{ optionLabel(option) }}</span>
+          </label>
+        </div>
+        <p v-if="help(node)" class="schema-fields__hint">{{ help(node) }}</p>
+        <p v-if="checklistError(node)" class="schema-fields__error">
+          {{ checklistError(node) }}
+        </p>
+      </fieldset>
 
       <NoxTextField
         v-else-if="node.kind === 'field' && node.control === 'list'"
@@ -369,6 +505,57 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
           @credential="(path, state) => emit('credential', path, state)"
           @update="(path, next) => emit('update', path, next)"
         />
+      </div>
+
+      <div v-else-if="node.kind === 'map'" class="schema-fields__nested">
+        <div class="schema-fields__map-head">
+          <p class="schema-fields__nested-title">{{ label(node) }}</p>
+          <button type="button" class="schema-fields__map-add" @click="addMapEntry(node)">
+            + {{ t('common.add') }}
+          </button>
+        </div>
+        <p v-if="help(node)" class="schema-fields__hint">{{ help(node) }}</p>
+
+        <div
+          v-for="(entryKey, index) in mapKeys(node)"
+          :key="index"
+          class="schema-fields__map-entry"
+        >
+          <div class="schema-fields__map-entry-head">
+            <NoxTextField
+              :id="`${fieldId(node.path)}-key-${index}`"
+              :model-value="entryKey"
+              :error="mapKeyError(node, entryKey)"
+              :label="t('settings.schemaMap.key')"
+              required
+              @update:model-value="renameMapEntry(node, entryKey, $event)"
+            />
+            <button
+              type="button"
+              class="schema-fields__map-remove"
+              :aria-label="
+                t('settings.schemaMap.removeNamed', { entry: mapEntryLabel(entryKey) })
+              "
+              @click="removeMapEntry(node, entryKey)"
+            >
+              {{ t('common.remove') }}
+            </button>
+          </div>
+          <SchemaFieldGroup
+            :credentials="props.credentials"
+            :errors="props.errors"
+            :extension-id="props.extensionId"
+            :nodes="mapEntryNodes(node, entryKey)"
+            :secrets="props.secrets"
+            :value="props.value"
+            @credential="(path, state) => emit('credential', path, state)"
+            @update="(path, next) => emit('update', path, next)"
+          />
+        </div>
+
+        <p v-if="mapKeys(node).length === 0" class="schema-fields__map-empty">
+          {{ t('settings.schemaMap.empty') }}
+        </p>
       </div>
 
       <div v-else class="schema-fields__nested">
@@ -481,6 +668,61 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
   color: var(--nox-text-muted);
 }
 
+.schema-fields__checklist {
+  display: grid;
+  gap: var(--nox-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.schema-fields__checklist legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  color: var(--nox-text-secondary);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--nox-tracking-system);
+  text-transform: uppercase;
+}
+
+.schema-fields__checklist legend small {
+  color: var(--nox-text-muted);
+  font-size: 0.62rem;
+}
+
+.schema-fields__checklist-options {
+  display: grid;
+  gap: var(--nox-space-2);
+  padding: var(--nox-space-4);
+  border: 1px solid var(--nox-border-subtle);
+  background: var(--nox-surface-1);
+}
+
+.schema-fields__checklist-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--nox-space-3);
+  color: var(--nox-text-secondary);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  cursor: pointer;
+}
+
+.schema-fields__checklist-option input {
+  accent-color: var(--nox-action-primary);
+}
+
+.schema-fields__checklist--invalid .schema-fields__checklist-options {
+  border-color: var(--nox-status-danger);
+}
+
 .schema-fields__secret {
   display: grid;
   gap: var(--nox-space-4);
@@ -530,5 +772,62 @@ function variantChildren(node: VariantNode): readonly FormNode[] {
   font-size: var(--nox-text-xs);
   letter-spacing: 0.07em;
   text-transform: uppercase;
+}
+
+.schema-fields__map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nox-space-3);
+}
+
+.schema-fields__map-add {
+  min-height: 2.25rem;
+  padding: 0 var(--nox-space-4);
+  border: 1px dashed var(--nox-border-strong);
+  color: var(--nox-text-secondary);
+  background: transparent;
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  cursor: pointer;
+}
+
+.schema-fields__map-add:hover,
+.schema-fields__map-remove:hover {
+  border-color: var(--nox-action-primary);
+  color: var(--nox-action-primary);
+  background: var(--nox-surface-hover);
+}
+
+.schema-fields__map-entry {
+  display: grid;
+  gap: var(--nox-space-4);
+  padding: var(--nox-space-4);
+  border: 1px dashed var(--nox-border-subtle);
+  background: color-mix(in srgb, var(--nox-surface-1) 82%, transparent);
+}
+
+.schema-fields__map-entry-head {
+  display: grid;
+  align-items: start;
+  grid-template-columns: 1fr auto;
+  gap: var(--nox-space-3);
+}
+
+.schema-fields__map-remove {
+  min-height: var(--nox-control-height);
+  padding: 0 var(--nox-space-4);
+  border: 1px solid var(--nox-border-subtle);
+  color: var(--nox-text-muted);
+  background: transparent;
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  cursor: pointer;
+}
+
+.schema-fields__map-empty {
+  margin: 0;
+  color: var(--nox-text-muted);
+  font-size: var(--nox-text-xs);
 }
 </style>
