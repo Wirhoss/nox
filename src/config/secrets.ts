@@ -115,16 +115,15 @@ class SecretHandle implements SecretHandleContract {
 /**
  * Host-owned, application-managed secret storage. Values are encrypted in the
  * Nox database and can be created, replaced and deleted by an administrative
- * surface without becoming ordinary configuration. The local master key is
+ * surface without becoming ordinary configuration; the local master key is
  * generated once in DATA_DIR and never enters the database.
  *
- * Resolved values are snapshots. Replacing a secret affects future handles;
- * already composed generations keep the old handle while their current work settles.
- *
- * What the store knows is wider than what it holds. An ID is known because a
- * value was written for it, because configuration names it, or both, and `list`
- * is that union — so a credential something needs is something an operator can
- * see and answer, rather than something a failed boot reports.
+ * Resolved values are snapshots: replacing a secret affects future handles,
+ * while already composed generations keep the old handle until their work
+ * settles. An ID is known because a value was written for it, because
+ * configuration names it, or both, and `list` is that union — so a credential
+ * something needs is something an operator can see and answer, rather than a
+ * failed boot report.
  */
 class SecretStore {
   readonly #cache = new Map<string, Promise<string>>();

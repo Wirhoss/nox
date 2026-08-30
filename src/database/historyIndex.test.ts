@@ -238,7 +238,7 @@ describe('artifact references', () => {
         arguments: { artifactId: 'art_abcdefgh' },
         createdAt: CREATED_AT,
         messageId: 'c1',
-        name: 'read_artifact',
+        name: 'artifact_read',
         role: 'toolCall',
         trackId: 'track-c1',
       },

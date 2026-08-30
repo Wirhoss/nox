@@ -150,6 +150,29 @@ class DiscordRest {
   }
 
   /**
+   * Whether the bot can reach this channel, by asking Discord for it.
+   *
+   * The cheapest question that has the same answer as posting: `GET /channels`
+   * needs the same reachability a message does, and costs nothing that has to
+   * be taken back if the answer is no. 404 and 403 are the two ways an address
+   * is wrong — gone, or never visible to this bot — and both are reported as
+   * unreachable rather than raised, because a caller checking an address wants
+   * a verdict. Every other failure is thrown: not being able to ask is not the
+   * same as having asked and been told no.
+   */
+  public async canReach(channelId: string): Promise<boolean> {
+    try {
+      await this.#request(`channel:${channelId}`, 'GET', `/channels/${channelId}`, undefined);
+      return true;
+    } catch (error) {
+      if (error instanceof DiscordRestError && (error.status === 403 || error.status === 404)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Posts a message, and answers with the ID Discord gave it.
    *
    * Files ride along as multipart, which is the only way Discord accepts bytes:
@@ -205,17 +228,12 @@ class DiscordRest {
 
   /**
    * Replaces the command list with exactly this one, in one guild or everywhere.
-   *
-   * A full replace rather than an incremental update because the catalog is a
-   * declaration: a command Nox no longer offers must stop being offered, and
-   * reconciling additions without removals is how a palette grows commands that
-   * do nothing.
-   *
-   * The two routes are one method because they are one decision. A guild list is
-   * registered instantly and belongs to that server alone; the global list is the
-   * only one a second server or a direct message ever sees. Which of the two a
-   * deployment wants is configuration, and nothing below this line is different
-   * between them.
+   * A full replace rather than an incremental update: the catalog is a
+   * declaration, so a command Nox no longer offers must stop being offered, and
+   * additions without removals is how a palette grows commands that do nothing.
+   * The two routes are one method because they are one decision — which of the
+   * two a deployment wants is configuration, and nothing below this line
+   * differs between them.
    */
   public async publishCommands(
     applicationId: string,
@@ -248,7 +266,7 @@ class DiscordRest {
 
   async #request<T>(
     routeKey: string,
-    method: 'PATCH' | 'POST' | 'PUT',
+    method: 'GET' | 'PATCH' | 'POST' | 'PUT',
     path: string,
     body: unknown,
   ): Promise<T | undefined> {
@@ -256,7 +274,7 @@ class DiscordRest {
   }
 
   async #send<T>(
-    method: 'PATCH' | 'POST' | 'PUT',
+    method: 'GET' | 'PATCH' | 'POST' | 'PUT',
     path: string,
     body: unknown,
   ): Promise<T | undefined> {

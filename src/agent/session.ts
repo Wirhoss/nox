@@ -30,6 +30,7 @@ import type {
   ChatModelConfig,
   ChatProvider,
   Memory,
+  MemoryBlockDeclaration,
   Message,
   MessageContent,
   MessageOrigin,
@@ -58,6 +59,7 @@ interface SessionOptions extends RunnerOptions {
   logger?: Logger;
   /** The single long-term memory selected by the owning agent. */
   memory?: Memory;
+  memoryBlocks?: readonly MemoryBlockDeclaration[];
   memoryMaxTokens?: number;
   metadata?: Readonly<Record<string, unknown>>;
   /** Omit to start a new session; pass one to resume it. */
@@ -111,13 +113,10 @@ function toUserMessage(
 }
 
 /**
- * The store, narrowed to what the history tools are allowed to do with it and
- * fixed to one agent.
- *
- * The narrowing is the point. `SessionStore` can read any session of any agent;
- * what reaches the context is two calls that can only ever answer about this
- * agent, so the tools need no agent parameter and the model is never in a
- * position to supply one.
+ * The store, narrowed to what the history tools may do with it and fixed to one
+ * agent: `SessionStore` can read any session, but what reaches the context can
+ * only answer about this one, so the tools need no agent parameter and the
+ * model is never in a position to supply one.
  */
 function createHistoryArchive(store: SessionStore, agentId: string): HistoryArchive {
   return {
@@ -142,12 +141,9 @@ function createHistoryArchive(store: SessionStore, agentId: string): HistoryArch
 
 /**
  * One agent's conversation: a transcript, the context derived from it, and the
- * runner that drives them.
- *
- * The session owns the one path out of the transcript. Every append — replies,
- * tool traffic, and the folds and compactions the context writes on its own —
- * reaches storage and the event log through the same sink, so neither can miss
- * a message by forgetting to subscribe somewhere.
+ * runner that drives them. The session owns the one path out of the transcript:
+ * every append — replies, tool traffic, folds, compactions — reaches storage
+ * and the event log through the same sink, so neither can miss a message.
  */
 class Session {
   readonly #agentId: string;
@@ -260,6 +256,7 @@ class Session {
       logger: options.logger,
       maxIterations: options.maxIterations,
       ...(options.memory === undefined ? {} : { memory: options.memory }),
+      ...(options.memoryBlocks === undefined ? {} : { memoryBlocks: options.memoryBlocks }),
       ...(options.memoryMaxTokens === undefined
         ? {}
         : { memoryMaxTokens: options.memoryMaxTokens }),
@@ -558,17 +555,11 @@ class Session {
   }
 
   /**
-   * Names the session once there is something to name it after.
-   *
-   * The first completed run is that point: the transcript then holds what was
-   * asked and what came back, which is the whole of what a title is about.
-   * Watching the event log rather than hooking the runner keeps this out of the
-   * turn — the reply is already delivered when the request goes out, and a slow
-   * or failing titling call cannot hold up a conversation it is not part of.
-   *
-   * One attempt per session, not one per run. A title that keeps changing under
-   * whoever is reading the list is worse than one that never arrived, and the
-   * session already has an id to be found by.
+   * Names the session after its first completed run, when the transcript holds
+   * what was asked and what came back. Watching the event log keeps this out of
+   * the turn — a slow or failing titling call cannot hold up a conversation it
+   * is not part of. One attempt per session: a title that keeps changing is
+   * worse than one that never arrived.
    */
   async #watchForTitle(): Promise<void> {
     if (this.#title !== undefined) return;

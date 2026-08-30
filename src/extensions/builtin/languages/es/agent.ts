@@ -50,6 +50,16 @@ const agentMessages = Object.freeze({
   'settings.agent.memoryMaxTokens': 'Presupuesto de tokens de memoria',
   'settings.agent.memoryMaxTokensHint':
     'Máximo de memoria recuperada que se inyecta de forma efímera en cada ejecución del modelo.',
+  'settings.agent.memoryTool.memory_forget':
+    'Retira un hecho vigente de la recuperación y conserva su historial de auditoría.',
+  'settings.agent.memoryTool.memory_search':
+    'Busca hechos vigentes y obtiene sus identificadores opacos.',
+  'settings.agent.memoryTool.memory_update':
+    'Sustituye un hecho vigente por una versión corregida.',
+  'settings.agent.memoryTool.memory_write': 'Escribe un hecho duradero explícito.',
+  'settings.agent.memoryTools': 'Herramientas agénticas de memoria',
+  'settings.agent.memoryToolsHint':
+    'Ninguna herramienta se concede de forma implícita. Selecciona solo las operaciones que este blueprint puede exponer directamente a su modelo.',
   'settings.agent.model': 'Modelo',
   'settings.agent.modelContext': 'CONTEXTO DEL MODELO',
   'settings.agent.modelHint': 'ID exacto del modelo expuesto por el proveedor seleccionado.',

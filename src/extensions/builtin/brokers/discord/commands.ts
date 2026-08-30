@@ -118,19 +118,18 @@ function optionFor(
 }
 
 /**
- * One command as Discord can publish it, or why it cannot be.
+ * One command as Discord can publish it, or why it cannot be. The mapping is
+ * derived from the declared schema, never from a list of command names: the
+ * catalog grows, and a transport that hard-coded today's commands would publish
+ * a stale palette the first time one is added.
  *
- * The mapping is derived from the declared schema and never from a list of
- * command names: the catalog grows, and a transport that hard-coded today's
- * commands would publish a stale palette the first time one is added.
+ * Where a command does not fit, it is left unpublished rather than degraded
+ * into a single free-text field holding raw JSON — asking a person in a chat to
+ * type an object by hand is worse than not offering the command there, and it
+ * remains available on every surface that can draw the real form.
  *
- * Where a command does not fit, it is left unpublished rather than degraded into
- * a single free-text field holding raw JSON. Asking a person in a chat to type
- * an object by hand is worse than not offering the command there; it remains
- * available on every surface that can draw the real form.
- *
- * A global command says where it may be used and a guild one does not, because
- * for a guild command there is nothing to say: it exists in exactly one server.
+ * A global command says where it may be used and a guild one does not: it
+ * exists in exactly one server.
  */
 function toDiscordCommand(spec: BrokerCommandSpec, global = false): CommandMapping {
   if (!NAME_PATTERN.test(spec.name)) return { skip: { reason: 'unusableName' } };

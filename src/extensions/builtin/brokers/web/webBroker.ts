@@ -36,26 +36,22 @@ interface SequencedChatEvent {
 }
 
 /**
- * Nox's own web surface, as a broker.
+ * Nox's own web surface, as a broker — the first transport that does not dial
+ * out: connections are handed to it by the browser, and its ingress rule is the
+ * access token the route already checked. That changes nothing about what a
+ * broker is: it delivers what arrived and renders what it is handed, and knows
+ * nothing about agents, sessions or the transcript.
  *
- * It is the first transport that does not dial out. A bot elsewhere opens a
- * connection to a chat service; this one is handed connections by the browser,
- * and its ingress rule is the access token the route already checked. That
- * changes nothing about what a broker is: it delivers what arrived and renders
- * what it is handed, and it knows nothing about agents, sessions or the
- * transcript.
- *
- * Both capabilities are declared because both are real here. The stream can
- * show a reply while it is being written, and a person is on the other end of
- * it — which is exactly what the gateway is asking when it decides whether to
- * send a permission request at all.
+ * Both capabilities are declared because both are real here: the stream can
+ * show a reply while it is being written, and a person is on the other end —
+ * exactly what the gateway is asking when it decides whether to send a
+ * permission request at all.
  */
 class WebBroker implements Broker, ChatTransport {
   /**
    * It takes everything, and that is the difference between this transport and a
-   * bot in a channel. A chat service can post text; this one is a surface built
-   * over the runtime itself, where a tool call, a compaction or a run that ended
-   * at `maxIterations` each have somewhere to go — a card, a fold, a status. A
+   * bot in a channel: a chat service can post text, while this surface gives a
+   * tool call, a compaction or a run cut at `maxIterations` somewhere to go. A
    * client still decides what it draws, but nothing is decided for it upstream.
    */
   public readonly capabilities: BrokerCapabilities = Object.freeze({

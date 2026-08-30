@@ -82,15 +82,13 @@ function attachmentsOf(value: unknown): readonly DiscordAttachment[] {
 
 /**
  * Pulls one attachment into Nox's artifact store and answers with the reference
- * that stands for it in a message.
+ * that stands for it in a message. Bytes are streamed, never read into memory,
+ * and the media type Discord declared is passed as declared: the pipeline
+ * detects the real one and keeps both, which is what makes a file that lied
+ * about itself visible instead of trusted.
  *
- * The bytes are streamed through rather than read into memory, and the media
- * type Discord declared is passed as declared: the pipeline detects the real one
- * and keeps both, which is what makes a file that lied about itself visible
- * instead of trusted.
- *
- * The scope is the conversation's, as the host names it. An artifact posted into
- * a channel belongs to that channel's transcript and to nothing else — a
+ * The scope is the conversation's, as the host names it: an artifact posted
+ * into a channel belongs to that channel's transcript and to nothing else — a
  * reference that leaked across conversations would be a way to read another
  * room's files by ID.
  */

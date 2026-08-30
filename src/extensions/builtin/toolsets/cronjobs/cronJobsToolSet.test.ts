@@ -10,9 +10,19 @@ import type {
   CronRunSubmission,
 } from './model';
 import type { CronJobManager } from './scheduler';
-import type { MessageContent, ToolExecution } from '@nox/extension-api';
+import type {
+  MessageContent,
+  ScheduledRunDelivery,
+  ToolExecution,
+  ToolSessionContext,
+} from '@nox/extension-api';
 
-const SESSION = { agentId: 'author-agent', metadata: {}, sessionId: 'session-a' } as const;
+const SESSION = {
+  agentId: 'author-agent',
+  metadata: {},
+  principal: { issuer: 'test', subject: 'alice' },
+  sessionId: 'session-a',
+} as const;
 
 function job(input: CreateCronJobInput): CronJob {
   const now = new Date().toISOString();
@@ -51,6 +61,14 @@ class RecordingManager implements CronJobManager {
     return Promise.resolve(['discord']);
   }
 
+  public deliveryHere(sessionId: string): Promise<ScheduledRunDelivery | undefined> {
+    return Promise.resolve(
+      sessionId === 'session-on-discord'
+        ? { brokerId: 'discord', channelId: 'channel-1' }
+        : undefined,
+    );
+  }
+
   public create(
     input: CreateCronJobInput,
     policy: CronJobPolicy,
@@ -85,13 +103,21 @@ class RecordingManager implements CronJobManager {
   }
 }
 
-async function output(execution: ToolExecution): Promise<MessageContent[]> {
+async function output(
+  execution: ToolExecution,
+  session: ToolSessionContext = SESSION,
+): Promise<MessageContent[]> {
   const result = await execution.run({
     abortSignal: new AbortController().signal,
-    session: SESSION,
+    session,
     toolSetId: 'automation',
   });
   return 'ack' in result ? result.ack : result;
+}
+
+function textOf(content: MessageContent[]): string {
+  const first = content[0];
+  return first?.type === 'text' ? first.text : '';
 }
 
 describe('CronJobsToolSet', () => {
@@ -148,8 +174,25 @@ describe('CronJobsToolSet', () => {
     const toolSet = new CronJobsToolSet({ type: 'cronjobs' }, new RecordingManager());
     const content = await output(toolSet.prepare('cron_agents', {}));
     expect(content[0]).toMatchObject({ type: 'text' });
-    expect(content[0]?.type === 'text' && content[0].text).toContain('mail-agent');
-    expect(content[0]?.type === 'text' && content[0].text).toContain('discord');
+    expect(textOf(content)).toContain('mail-agent');
+    expect(textOf(content)).toContain('discord');
+  });
+
+  test('names the channel this conversation is already on, and omits it when there is none', async () => {
+    const toolSet = new CronJobsToolSet({ type: 'cronjobs' }, new RecordingManager());
+
+    const onDiscord = await output(toolSet.prepare('cron_agents', {}), {
+      ...SESSION,
+      sessionId: 'session-on-discord',
+    });
+    expect(JSON.parse(textOf(onDiscord))).toMatchObject({
+      deliveryHere: { brokerId: 'discord', channelId: 'channel-1' },
+    });
+
+    // A session no transport owns offers no address. The absence is the point:
+    // it is what stops the answer from being a channel ID that was made up.
+    const headless = await output(toolSet.prepare('cron_agents', {}));
+    expect(JSON.parse(textOf(headless))).not.toHaveProperty('deliveryHere');
   });
 
   test('rejects malformed expressions, missing agent IDs, and per-job non-IANA zones', () => {

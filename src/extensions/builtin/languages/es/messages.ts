@@ -5,6 +5,7 @@ import { brokerMessages } from './broker';
 import { chatMessages } from './chat';
 import { commonMessages } from './common';
 import { generalMessages } from './general';
+import { memoryMessages } from './memory';
 import { secretMessages } from './secrets';
 import { sessionMessages } from './sessions';
 import { settingsMessages } from './settings';
@@ -17,6 +18,7 @@ const messages = Object.freeze({
   ...chatMessages,
   ...commonMessages,
   ...generalMessages,
+  ...memoryMessages,
   ...secretMessages,
   ...sessionMessages,
   ...settingsMessages,

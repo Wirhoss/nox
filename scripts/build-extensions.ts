@@ -11,6 +11,7 @@ const manifestName = 'nox-extension.json';
 interface BuildManifest {
   readonly id: string;
   readonly main: string;
+  readonly migrations?: string;
   readonly workers?: readonly string[];
   readonly [key: string]: unknown;
 }
@@ -98,6 +99,18 @@ for (const manifestPath of await manifests(sourceRoot)) {
       target: 'bun',
     });
     assertBuild(built, `${manifest.id} workers`);
+  }
+
+  // Copied rather than built: they are SQL the host reads at activation, not
+  // modules anything imports, so a bundle that only followed imports would ship
+  // a package whose schema never arrives. The declared path is kept as it is,
+  // because the manifest that names it travels unchanged.
+  if (manifest.migrations !== undefined) {
+    await cp(
+      resolve(dirname(manifestPath), manifest.migrations),
+      join(destination, manifest.migrations),
+      { recursive: true },
+    );
   }
 
   await writeFile(

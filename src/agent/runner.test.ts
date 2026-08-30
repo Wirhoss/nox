@@ -69,6 +69,7 @@ async function settle(): Promise<void> {
 
 class ScriptedProvider extends ChatProvider {
   public readonly options: (TextGenerateOptions | undefined)[] = [];
+  public readonly prompts: string[] = [];
   public readonly requests: Message[][] = [];
 
   readonly #scripts: Script[];
@@ -83,12 +84,13 @@ class ScriptedProvider extends ChatProvider {
   }
 
   protected override async *attempt(
-    _systemPrompt: string,
+    systemPrompt: string,
     messageHistory: Message[],
     _tools: Tool[],
     _opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
+    this.prompts.push(systemPrompt);
     this.requests.push([...messageHistory]);
     this.options.push(_opts);
     const script = this.#scripts.shift();
@@ -280,6 +282,71 @@ describe('Runner', () => {
   });
 
   describe('long-term memory', () => {
+    test('carries declared memory blocks in the system prompt, empty ones included', async () => {
+      const written: { label: string; value: string }[] = [];
+      const stored = new Map([['human', 'Alice, works in Madrid.']]);
+      const memory: Memory = {
+        blocks: {
+          read: ({ labels }) =>
+            labels.flatMap((label) => {
+              const value = stored.get(label);
+              return value === undefined ? [] : [{ label, value }];
+            }),
+          write: ({ label, value }) => {
+            written.push({ label, value });
+            stored.set(label, value);
+            return { label, value };
+          },
+        },
+        recall: () => ({ memories: [] }),
+        retain: () => undefined,
+      };
+
+      const provider = new ScriptedProvider([says('noted')]);
+      const context = new Context('be helpful', provider, { tools: {} });
+      const runner = new Runner(context, new EventLog<AgentEvent>(), provider, MODEL, {
+        agentId: 'test-agent',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
+        memory,
+        memoryBlocks: [
+          { description: 'Who you are talking to.', label: 'human' },
+          { description: 'Who you are.', label: 'persona' },
+        ],
+        sessionId: 'session-1',
+      });
+
+      runner.send(user('hi'));
+      await runner.idle;
+
+      const prompt = provider.prompts[0] ?? '';
+      // The configured prompt is kept whole and the blocks are appended to it.
+      expect(prompt.startsWith('be helpful')).toBe(true);
+      expect(prompt).toContain('[human] — Who you are talking to.');
+      expect(prompt).toContain('Alice, works in Madrid.');
+      // An unfilled block is still shown: an agent that cannot see the block
+      // exists has no reason to ever fill it.
+      expect(prompt).toContain('[persona] — Who you are.');
+      expect(prompt).toContain('(empty)');
+      expect(prompt).toContain('memory_block_write');
+    });
+
+    test('leaves the system prompt alone when no blocks are declared', async () => {
+      const provider = new ScriptedProvider([says('noted')]);
+      const context = new Context('be helpful', provider, { tools: {} });
+      const runner = new Runner(context, new EventLog<AgentEvent>(), provider, MODEL, {
+        agentId: 'test-agent',
+        authorities: testCatalog(),
+        authorization: permissiveAuthorization,
+        sessionId: 'session-1',
+      });
+
+      runner.send(user('hi'));
+      await runner.idle;
+
+      expect(provider.prompts[0]).toBe('be helpful');
+    });
+
     test('recalls scoped untrusted context ephemerally and retains only the completed turn', async () => {
       const memory = new RecordingMemory();
       memory.recalledText =
@@ -494,6 +561,24 @@ describe('Runner', () => {
     ]);
   });
 
+  test('binds a tool execution to the principal that owns its run', async () => {
+    let received: ToolContext | undefined;
+    const inspect = immediateTool('inspect', (context) => {
+      received = context;
+      return Promise.resolve([{ text: 'inspected', type: 'text' }]);
+    });
+    const { runner } = setup([calls('inspect', 'track-principal'), says('done')], [inspect]);
+
+    runner.send(user('inspect this', 'bob'));
+    await runner.idle;
+
+    expect(received?.session).toMatchObject({
+      agentId: 'test-agent',
+      principal: { issuer: 'test-broker', subject: 'bob' },
+      sessionId: 'session-1',
+    });
+  });
+
   test('a tool call feeds the next request and the run ends when nothing is left', async () => {
     const { context, provider, runner } = setup(
       [calls('echo', 'track-1'), says('done')],
@@ -581,7 +666,7 @@ describe('Runner', () => {
     };
     const { context, runner } = setup(
       [
-        callsWith('read_artifact', 'track-read', { artifactId: known.artifactId }),
+        callsWith('artifact_read', 'track-read', { artifactId: known.artifactId }),
         says('understood'),
       ],
       [readArtifactTool()],
@@ -620,7 +705,7 @@ describe('Runner', () => {
     };
     const { context, runner } = setup(
       [
-        callsWith('read_artifact', 'track-read-hidden', { artifactId: 'art_hidden0001' }),
+        callsWith('artifact_read', 'track-read-hidden', { artifactId: 'art_hidden0001' }),
         says('unavailable'),
       ],
       [readArtifactTool()],
@@ -655,7 +740,7 @@ describe('Runner', () => {
     };
     const { context, runner } = setup(
       [
-        callsWith('read_artifact', 'track-read-past', { artifactId: 'art_frompast1' }),
+        callsWith('artifact_read', 'track-read-past', { artifactId: 'art_frompast1' }),
         says('read it'),
       ],
       [readArtifactTool()],
@@ -677,7 +762,7 @@ describe('Runner', () => {
 
     // Nothing in this transcript ever carried the artifact and no conversation
     // owns it here; the only claim is that a session of this agent received it
-    // once. That is what makes a reference found through search_sessions
+    // once. That is what makes a reference found through history_sessions_search
     // followable instead of a dead ID.
     const response = context.getFullHistory().find((message) => message.role === 'toolResponse');
     expect(asked).toEqual(['art_frompast1']);
@@ -737,8 +822,8 @@ describe('Runner', () => {
       output: { artifacts: true },
     };
     const router = new ToolRouter([bindTool(producer, 'routed-set')]);
-    const callTool = router.tools.call_tool;
-    if (callTool === undefined) throw new Error('Router did not expose call_tool.');
+    const callTool = router.tools.tool_call;
+    if (callTool === undefined) throw new Error('Router did not expose tool_call.');
     let toolProvenance: ArtifactOutputProvenance | undefined;
     const artifactOutputs: ArtifactOutputHost = {
       adopt: () => Promise.resolve(undefined),
@@ -752,7 +837,7 @@ describe('Runner', () => {
     };
     const { runner } = setup(
       [
-        callsWith('call_tool', 'track-routed', {
+        callsWith('tool_call', 'track-routed', {
           name: 'routed_producer',
           params: '{}',
         }),
@@ -816,7 +901,7 @@ describe('Runner', () => {
     const { context, runner } = setup(
       [
         calls('publish', 'track-output'),
-        callsWith('attach_artifact', 'track-attach', { artifactId: 'art_generated1' }),
+        callsWith('artifact_attach', 'track-attach', { artifactId: 'art_generated1' }),
         says('ready'),
       ],
       [publish, attachArtifactTool()],
@@ -874,12 +959,12 @@ describe('Runner', () => {
         return Promise.resolve(copy);
       },
       publisher: () => ({ publish: () => Promise.resolve(copy) }),
-      // Owned by no conversation here: this is the artifact search_sessions
+      // Owned by no conversation here: this is the artifact history_sessions_search
       // surfaced from a conversation that is not this one.
       reference: () => Promise.resolve(undefined),
     };
     const { context, runner } = setup(
-      [callsWith('attach_artifact', 'track-adopt', { artifactId: foreign })],
+      [callsWith('artifact_attach', 'track-adopt', { artifactId: foreign })],
       [attachArtifactTool()],
       1,
       undefined,
@@ -920,7 +1005,7 @@ describe('Runner', () => {
     };
     const { context, runner } = setup(
       [
-        callsWith('attach_artifact', 'track-deny', { artifactId: 'art_nobodyknows' }),
+        callsWith('artifact_attach', 'track-deny', { artifactId: 'art_nobodyknows' }),
         says('cannot'),
       ],
       [attachArtifactTool()],
@@ -965,7 +1050,7 @@ describe('Runner', () => {
     };
     const { context, runner } = setup(
       [
-        callsWith('attach_artifact', 'track-select', {
+        callsWith('artifact_attach', 'track-select', {
           artifactId: generated.artifact.artifactId,
         }),
       ],

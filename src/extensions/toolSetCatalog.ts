@@ -34,23 +34,19 @@ interface ToolSetCatalogOptions {
 }
 
 /**
- * The configured tool-set instances, opened once each and shared.
+ * The configured tool-set instances, opened once each and shared. Sharing is the
+ * point rather than an optimization: two agents naming one instance are talking
+ * to one service through one set of connection settings — and it is what forces
+ * a blueprint's allowlist onto the grant, since a cut stored on the instance
+ * would be a cut for everyone.
  *
- * Sharing is the point rather than an optimization: two agents naming one
- * instance are talking to one service through one set of connection settings,
- * and opening it twice would make that two. It is also what forces a blueprint's
- * allowlist onto the grant — the instance is common property, so a cut stored on
- * it would be a cut for everyone.
- *
- * Instances are cached by desired-configuration signature. A changed entry is
+ * Instances are cached by desired-configuration signature: a changed entry is
  * built beside its previous generation and replaces it only after construction
- * succeeds; sessions already holding the old object remain internally consistent.
- *
- * It exists as its own thing, rather than inside whatever composes the agents,
- * because asking what a configured tool set actually exposes is a question worth
- * answering before anything runs — a surface validating a blueprint needs the
- * same answer the agent will get, and any second way of computing it is a second
- * answer waiting to disagree.
+ * succeeds, so sessions already holding the old object stay consistent. The
+ * catalog exists on its own rather than inside whatever composes the agents,
+ * because a surface validating a blueprint must get the same answer the agent
+ * will get, and any second way of computing it is a second answer waiting to
+ * disagree.
  */
 class ToolSetCatalog {
   readonly #configured: () => Record<string, ToolSetConfig>;

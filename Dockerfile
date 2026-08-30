@@ -42,7 +42,9 @@ RUN bun install --frozen-lockfile --ignore-scripts --linker=hoisted --omit peer 
 # architecture in one tarball. The Node build of Transformers bundles its web
 # backend, so the separate onnxruntime-web package is also redundant here.
 # Retain only the native binary that can execute in this image, and discard musl
-# Sharp variants now that the runtime is intentionally glibc-based.
+# Sharp variants now that the runtime is intentionally glibc-based. sqlite-vec
+# resolves its loadable extension by platform, so the ones built for other
+# operating systems are dead weight in a Linux image.
 RUN set -eux; \
     case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
       amd64) onnx_arch=x64 ;; \
@@ -55,7 +57,8 @@ RUN set -eux; \
       -mindepth 1 -maxdepth 1 -type d ! -name "${onnx_arch}" -exec rm -rf '{}' +; \
     rm -rf node_modules/onnxruntime-web; \
     find node_modules -type d \
-      \( -name 'sharp-linuxmusl-*' -o -name 'sharp-libvips-linuxmusl-*' \) \
+      \( -name 'sharp-linuxmusl-*' -o -name 'sharp-libvips-linuxmusl-*' \
+         -o -name 'sqlite-vec-darwin-*' -o -name 'sqlite-vec-windows-*' \) \
       -prune -exec rm -rf '{}' +
 
 # --- build -----------------------------------------------------------------
@@ -78,6 +81,7 @@ RUN bun run build:extensions \
       --external @huggingface/transformers \
       --external playwright \
       --external sharp \
+      --external sqlite-vec \
       --external zod \
       --minify-whitespace \
       --minify-syntax \
@@ -117,11 +121,14 @@ COPY --from=build --chown=root:root /build/dist/extensions /app/extensions
 COPY --from=build --chown=root:root /build/dist/migrations /app/migrations
 COPY --from=build --chown=root:root /build/src/ui/dist /app/ui
 
-# Fail the build if the native ONNX binding ever stops matching the runtime
-# image. Importing Transformers eagerly loads that binding but downloads no
-# model weights.
+# Fail the build if a native binding ever stops matching the runtime image.
+# Importing Transformers eagerly loads that binding but downloads no model
+# weights; loading sqlite-vec proves this platform's loadable extension is
+# present and that this SQLite accepts it, which is otherwise first discovered
+# by whichever extension opens its database earliest.
 RUN cd /app \
- && bun -e 'const runtime = await import("@huggingface/transformers"); if (typeof runtime.pipeline !== "function") throw new Error("Transformers pipeline export is unavailable")'
+ && bun -e 'const runtime = await import("@huggingface/transformers"); if (typeof runtime.pipeline !== "function") throw new Error("Transformers pipeline export is unavailable")' \
+ && bun -e 'const { Database } = await import("bun:sqlite"); const vec = await import("sqlite-vec"); const db = new Database(":memory:"); vec.load(db); db.run("CREATE VIRTUAL TABLE probe USING vec0(embedding float[4])"); db.close()'
 
 # --- environment -----------------------------------------------------------
 # Every variable Nox reads, named here rather than left to a default.

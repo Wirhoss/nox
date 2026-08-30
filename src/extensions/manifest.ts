@@ -20,14 +20,15 @@ const semanticVersionRangeSchema = z
   .string()
   .refine((value) => validRange(value) !== null, 'Expected a valid semantic version range.');
 
-const extensionMainSchema = z
+/** Any path a manifest gives: relative to the package, and unable to leave it. */
+const packagePathSchema = z
   .string()
   .trim()
   .min(1)
-  .refine((value) => !isAbsolute(value), 'The extension entry point must be relative.')
+  .refine((value) => !isAbsolute(value), 'A manifest path must be relative.')
   .refine(
     (value) => !value.replaceAll('\\', '/').split('/').includes('..'),
-    'The extension entry point cannot leave its package directory.',
+    'A manifest path cannot leave its package directory.',
   );
 
 /**
@@ -41,7 +42,17 @@ const extensionManifestSchema = z.strictObject({
     nox: semanticVersionRangeSchema,
   }),
   id: identifierSchema,
-  main: extensionMainSchema,
+  main: packagePathSchema,
+  /**
+   * Directory of `.sql` files applied under this extension's migration history
+   * in the shared extension database before it activates.
+   *
+   * Declared rather than created at runtime, for the same reason the kernel's
+   * own schema is: an installation upgraded three times has to arrive at the
+   * schema a fresh one starts with, and only a recorded, ordered set of
+   * statements makes that true.
+   */
+  migrations: packagePathSchema.optional(),
   schemaVersion: z.literal(1),
   version: semanticVersionSchema,
   /**
@@ -52,7 +63,7 @@ const extensionManifestSchema = z.strictObject({
    * rather than at build time. Declaring them is what lets a build emit them
    * beside the entry point they are resolved against.
    */
-  workers: z.array(extensionMainSchema).optional(),
+  workers: z.array(packagePathSchema).optional(),
 });
 
 function parseExtensionManifest(input: unknown): ExtensionManifest {

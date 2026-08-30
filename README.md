@@ -375,15 +375,15 @@ The corresponding field inside `blueprints/nox.json`:
 
 At session open, Nox appends the names and descriptions of routed tool sets to
 the runtime system context. This gives the model enough of a capability map to
-decide whether to call `search_tool` and which keywords to use without paying for
+decide whether to call `tool_search` and which keywords to use without paying for
 every routed tool schema in the request head. The exact names and schemas
-returned by `search_tool` remain authoritative.
+returned by `tool_search` remain authoritative.
 
 `web_extract` returns the page as files rather than as prose: the cleaned HTML,
 the pictures it found (fetched and published, bounded in count and size), and on
 request a screenshot, a PDF or Markdown. The transcript keeps only what has to be
 read — the title, where each file went, and a bounded excerpt — leaving
-`attach_artifact` to decide what reaches the user. The browser is a family of
+`artifact_attach` to decide what reaches the user. The browser is a family of
 tools rather than one tool with an `action` argument — `browser_open`,
 `browser_snapshot`, `browser_inspect`, `browser_click`, `browser_type` and the
 rest — and which of them exist is the configured module's answer, so a backend
@@ -537,7 +537,7 @@ a provider as `TextGenerateOptions.artifactOutput` and to an executing tool as
 `ToolContext.artifacts`. A producer streams bytes into `publish(...)`; Nox, not the producer, assigns
 the conversation scope and provider/tool provenance, and returns a `ContentArtifact` containing only
 the canonical reference. Creation does not imply presentation: tool artifacts remain tool results
-until the model explicitly calls the core `attach_artifact` tool for each file it has decided the
+until the model explicitly calls the core `artifact_attach` tool for each file it has decided the
 user should receive. Tools that declare `output: { artifacts: true }` receive a provider-visible
 notice explaining that selection step and forbidding inline/base64 file bytes. Those selections are
 appended to the next assistant message, or emitted alone
@@ -546,7 +546,7 @@ answer and enters the normalized stream as an `artifact` event. Assistant messag
 brokers and the UI all carry the same reference, and later model calls replay it as a stable
 descriptor.
 
-The companion core `read_artifact` tool inspects only IDs already referenced by the conversation.
+The companion core `artifact_read` tool inspects only IDs already referenced by the conversation.
 It requests the versioned `nox.agent.text-read` representation profile: compatible textual originals
 are streamed in bounded Unicode-character pages, while registered deterministic processors may
 produce and cache textual renditions for formats such as PDF or Office documents. If no textual
@@ -857,7 +857,7 @@ reload. External extension package loading still waits in `idk_yet/plugin/host.t
 | Context engine — transcript, fold, compact, tokens, bounded BM25 retrieval | Ported and tested |
 | Agent, session, runner, event log, session store | Ported and tested |
 | Contribution contract, `NoxApplication` | Ported and tested |
-| Tools, tool sets, the `search_tool`/`call_tool` router | Ported and tested |
+| Tools, tool sets, the `tool_search`/`tool_call` router | Ported and tested |
 | Config (zod-validated sections), SQLite via Drizzle, logger | Ported and tested |
 | Provider layer | `BaseProvider`, `ChatProvider`, `ProviderStream` and retries |
 | OpenAI Chat Completions, as a self-contained builtin provider extension | Ported and tested |

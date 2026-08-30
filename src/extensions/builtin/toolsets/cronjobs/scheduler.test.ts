@@ -13,6 +13,7 @@ import { CronJobStore } from './store';
 import type { CronJob, CronJobPolicy } from './model';
 import type {
   ExtensionStorage,
+  ScheduledRunDelivery,
   ScheduledRunHost,
   ScheduledRunRequest,
   ScheduledRunResult,
@@ -24,13 +25,32 @@ const SCOPE = { toolSetId: 'automation' } as const;
 
 class RecordingHost implements ScheduledRunHost {
   public readonly requests: ScheduledRunRequest[] = [];
+  public readonly checked: ScheduledRunDelivery[] = [];
+  /**
+   * Channels this stand-in transport refuses. Empty by default, so a test that
+   * is not about addressing is not made to care about it.
+   */
+  public unreachable = new Set<string>();
 
   public agentIds(): Promise<readonly string[]> {
     return Promise.resolve(['mail-agent', 'research-agent']);
   }
 
+  public canDeliverTo(delivery: ScheduledRunDelivery): Promise<boolean> {
+    this.checked.push(delivery);
+    return Promise.resolve(!this.unreachable.has(delivery.channelId));
+  }
+
   public deliveryBrokerIds(): Promise<readonly string[]> {
     return Promise.resolve(['discord']);
+  }
+
+  public deliveryOrigin(sessionId: string): Promise<ScheduledRunDelivery | undefined> {
+    return Promise.resolve(
+      sessionId === 'session-on-discord'
+        ? { brokerId: 'discord', channelId: 'channel-1' }
+        : undefined,
+    );
   }
 
   public runScheduledAgent(request: ScheduledRunRequest): Promise<ScheduledRunResult> {
@@ -82,15 +102,17 @@ interface Harness {
   readonly host: RecordingHost;
   readonly scheduler: CronScheduler;
   readonly storage: ExtensionStorage;
+  readonly storageProvider: DatabaseExtensionStorageProvider;
   readonly store: CronJobStore;
 }
 
 async function harness(host = new RecordingHost()): Promise<Harness> {
   const directory = mkdtempSync(join(tmpdir(), 'nox-cron-'));
   const database = await Database.open({ path: join(directory, 'nox.db') });
-  const storage = new DatabaseExtensionStorageProvider(database).forExtension(
-    'nox.toolset.cronjobs',
-  );
+  const storageProvider = new DatabaseExtensionStorageProvider({
+    path: join(directory, 'extensions.db'),
+  });
+  const storage = await storageProvider.forExtension({ extensionId: 'nox.toolset.cronjobs' });
   const store = new CronJobStore(storage);
   const scheduler = new CronScheduler({
     host,
@@ -98,7 +120,7 @@ async function harness(host = new RecordingHost()): Promise<Harness> {
     policyFor: (toolSetId) => (toolSetId === SCOPE.toolSetId ? POLICY : undefined),
     store,
   });
-  return { database, directory, host, scheduler, storage, store };
+  return { database, directory, host, scheduler, storage, storageProvider, store };
 }
 
 function removeDirectory(directory: string): void {
@@ -111,6 +133,7 @@ function removeDirectory(directory: string): void {
 
 async function close(state: Harness): Promise<void> {
   await state.scheduler.dispose();
+  await state.storageProvider.close();
   await state.database.close();
   removeDirectory(state.directory);
 }
@@ -396,6 +419,53 @@ describe('CronScheduler', () => {
       await replacement?.dispose();
       await state.database.close();
       removeDirectory(state.directory);
+    }
+  });
+
+  test('refuses a job whose channel the transport says it cannot reach', async () => {
+    const host = new RecordingHost();
+    host.unreachable.add('222120611298672640');
+    const state = await harness(host);
+    try {
+      const creation = state.scheduler.create(
+        {
+          agentId: 'mail-agent',
+          createdFromSessionId: 'authoring-session',
+          delivery: { brokerId: 'discord', channelId: '222120611298672640' },
+          name: 'Wrong channel',
+          prompt: 'Say hello.',
+          schedule: { at: future(), type: 'at' },
+          scope: SCOPE,
+        },
+        POLICY,
+        new AbortController().signal,
+      );
+      expect(creation).rejects.toThrow('cannot deliver to channel "222120611298672640"');
+      await creation.catch(() => undefined);
+
+      // Refused before it was stored: a job that only fails at its firing time
+      // fails with nobody there to be told, which is the whole failure this
+      // check exists to move forward in time.
+      expect(await state.store.list(SCOPE, { limit: 10 })).toHaveLength(0);
+      expect(host.checked).toEqual([{ brokerId: 'discord', channelId: '222120611298672640' }]);
+    } finally {
+      await close(state);
+    }
+  });
+
+  test('answers where the session asking is already being spoken to', async () => {
+    const state = await harness();
+    try {
+      expect(
+        await state.scheduler.deliveryHere('session-on-discord', new AbortController().signal),
+      ).toEqual({ brokerId: 'discord', channelId: 'channel-1' });
+      // A session no transport owns has no address to offer, which is a caller's
+      // cue to ask for one rather than to invent one.
+      expect(
+        await state.scheduler.deliveryHere('headless-session', new AbortController().signal),
+      ).toBeUndefined();
+    } finally {
+      await close(state);
     }
   });
 

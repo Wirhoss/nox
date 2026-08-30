@@ -164,7 +164,7 @@ describe('Context cache stability', () => {
     expect(Object.isFrozen(first)).toBeTrue();
     // No archive is wired into a bare context, so the searches are absent and
     // only the transcript-backed reader is offered.
-    expect(Object.keys(first)).toEqual(['alpha', 'read_tool_result', 'zebra']);
+    expect(Object.keys(first)).toEqual(['alpha', 'history_read_result', 'zebra']);
     for (const name of Object.keys(first)) expect(second[name]).toBe(first[name]);
   });
 
@@ -173,7 +173,7 @@ describe('Context cache stability', () => {
     const conflicting: Tool<typeof parameters> = {
       authority: TEST_AUTHORITY,
       description: 'conflict',
-      name: 'search_sessions',
+      name: 'history_sessions_search',
       parameters,
       prepare: () => ({
         run: () => Promise.resolve([]),
@@ -185,7 +185,7 @@ describe('Context cache stability', () => {
     expect(
       () =>
         new Context('system', new SummaryProvider([]), {
-          tools: { search_sessions: conflicting },
+          tools: { history_sessions_search: conflicting },
         }),
     ).toThrow('conflicts with a context history tool');
   });

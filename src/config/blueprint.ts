@@ -2,6 +2,7 @@ import { samplingParametersConfigSchema } from '@nox/extension-api';
 import { z } from 'zod';
 
 import { contextPolicySchema } from '../agent/context/options';
+import { MEMORY_TOOL_NAMES } from '../agent/memoryToolNames';
 import { gatePolicySchema } from '../tool/gate/config';
 
 const taskModelConfigSchema = z.object({
@@ -32,22 +33,44 @@ const taskModelsConfigSchema = z.object({
 const maxIterationsSchema = z.union([z.number().int().positive(), z.literal('unlimited')]);
 
 /** Exactly one configured memory instance may be attached to an agent. */
+/**
+ * One always-present block this agent carries in its system prompt. Declared
+ * here rather than created by the agent, because a block is in every request
+ * whether or not it earned its place — letting the agent open new ones would
+ * let it grow its own system prompt, and nothing downstream would push back.
+ * The blueprint decides what exists; the agent decides what goes in.
+ */
+const memoryBlockConfigSchema = z.object({
+  /** Shown to the model beside the value, so it knows what belongs here. */
+  description: z.string().min(1).max(200).optional(),
+  label: z
+    .string()
+    .min(1)
+    .max(64)
+    // Addressed by name in a tool call, so it has to be something a model can
+    // reproduce exactly rather than an arbitrary string with spaces in it.
+    .regex(/^[a-z][a-z0-9_]*$/u, 'A memory block label is lowercase letters, digits and _.'),
+});
+
 const memoryConfigSchema = z.object({
+  /** Absent grants no always-present memory; each entry is one declared block. */
+  blocks: z.array(memoryBlockConfigSchema).max(8).optional(),
   id: z.string().min(1),
   maxTokens: z.number().int().positive().max(16_384).default(2048),
+  /** Absent grants no agentic access; a present allowlist is deliberately closed. */
+  tools: z.array(z.enum(MEMORY_TOOL_NAMES)).min(1).optional(),
 });
 
 /**
  * A granted tool set, and how much of it this agent gets. The bare string is
  * the whole set; the object form is an allowlist over it.
  *
- * The cut belongs to the grant rather than to the instance because one
- * configured instance is shared by every blueprint that names it: `toolsets.json`
- * decides what the instance exposes at all, and a recut stored there would be a
- * recut for every agent at once. The two compose — the instance decides what
- * exists, the blueprint decides how much of it reaches this agent.
+ * The cut belongs to the grant rather than to the instance, because one
+ * configured instance is shared by every blueprint that names it: the instance
+ * decides what exists, the blueprint decides how much of it reaches this agent,
+ * and a recut stored at the instance would cut for every agent at once.
  *
- * An allowlist and not an `exclude`, because a denylist goes stale in silence: a
+ * An allowlist and not an `exclude`: a denylist goes stale in silence, and a
  * tool added to the set later would be granted without anyone having said so.
  */
 const toolSetGrantConfigSchema = z.union([

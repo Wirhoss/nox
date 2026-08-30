@@ -18,6 +18,7 @@ const account = computed(() =>
 const logoutError = ref<string>()
 const loggingOut = ref(false)
 const sessionsActive = computed(() => route.path.startsWith('/sessions'))
+const memoryActive = computed(() => route.path.startsWith('/memory'))
 const settingsActive = computed(() => route.path.startsWith('/settings'))
 
 async function logout(): Promise<void> {
@@ -56,11 +57,19 @@ async function logout(): Promise<void> {
         </RouterLink>
         <RouterLink
           class="sidebar__item"
+          :class="{ 'sidebar__item--active': memoryActive }"
+          :aria-current="memoryActive ? 'page' : undefined"
+          :to="{ name: 'memory' }"
+        >
+          <span>03</span> {{ t('navigation.memory') }}
+        </RouterLink>
+        <RouterLink
+          class="sidebar__item"
           :class="{ 'sidebar__item--active': settingsActive }"
           :aria-current="settingsActive ? 'page' : undefined"
           :to="{ name: 'settings', params: { section: 'general' } }"
         >
-          <span>03</span> {{ t('navigation.settings') }}
+          <span>04</span> {{ t('navigation.settings') }}
         </RouterLink>
       </nav>
 

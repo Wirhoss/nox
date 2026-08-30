@@ -4,6 +4,7 @@ import type { ArtifactPipeline } from './artifacts.js';
 import type { ChatSurfaceHub } from './chat.js';
 import type { MessageContent } from './content.js';
 import type { BrokerHostPolicy } from './contributions.js';
+import type { ModelAccess } from './providers.js';
 
 const CONFIG_KEYS = ['app', 'blueprints', 'brokers', 'memories', 'providers', 'toolSets'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
@@ -186,9 +187,49 @@ interface ScheduledRunResult {
   readonly startedAt: Date;
   readonly status: 'aborted' | 'completed' | 'failed' | 'maxIterations';
 }
+/**
+ * Whether the runtime is doing anything a person is waiting on.
+ *
+ * Deliberately one question and no clock. Extensions that want to work while
+ * Nox is quiet each need a different definition of quiet — long enough to be
+ * worth a model load, short enough to finish before the next message — and a
+ * host that picked one would be choosing on their behalf. So the host answers
+ * only what it alone knows, and the extension keeps its own timer.
+ *
+ * "Busy" is a run in flight, not a session left open: an idle conversation
+ * nobody has closed is exactly when background work should be happening.
+ */
+interface RuntimeActivity {
+  /** True while any live session is inside a run. */
+  busy(): boolean;
+}
+
 interface ScheduledRunHost {
   agentIds(signal: AbortSignal): Promise<readonly string[]>;
+  /**
+   * Whether this address is one its transport will accept.
+   *
+   * Asked before a schedule is stored, because the alternative is finding out
+   * at the moment the run fires — when the person who could have corrected the
+   * address is not there, and the only record is a run that says it delivered.
+   *
+   * A broker that cannot answer answers true: this is a check that catches a
+   * wrong address, not a permission system, and a transport with no way to ask
+   * should leave a caller exactly where it was rather than blocking it.
+   */
+  canDeliverTo(delivery: ScheduledRunDelivery, signal: AbortSignal): Promise<boolean>;
   deliveryBrokerIds(signal: AbortSignal): Promise<readonly string[]>;
+  /**
+   * Where the transport that owns this session is being spoken to, if one does.
+   *
+   * The answer to "deliver it back to me": a session reached over a broker
+   * knows its own channel, and without this the only way to schedule a reply
+   * into the conversation asking for it is for the agent to guess an ID that
+   * nothing in its context contains. Undefined for a session with no transport
+   * behind it — a scheduled run, or a local one — which is a caller's cue to
+   * ask rather than assume.
+   */
+  deliveryOrigin(sessionId: string, signal: AbortSignal): Promise<ScheduledRunDelivery | undefined>;
   runScheduledAgent(request: ScheduledRunRequest): Promise<ScheduledRunResult>;
 }
 
@@ -206,6 +247,24 @@ const configService = createServiceToken<ExtensionConfiguration>('nox.config');
  */
 const dataDirectoryService = createServiceToken<string>('nox.data-directory');
 const loggerService = createServiceToken<Logger>('nox.logger');
+/**
+ * The configured models an extension may use for work of its own.
+ *
+ * Separate from the provider contribution point, which is how a model gets into
+ * Nox: this is how one is taken back out. The two are opposite directions and
+ * an extension commonly wants both — a memory contributes nothing to providers
+ * and still has to embed what it stores.
+ */
+const modelAccessService = createServiceToken<ModelAccess>('nox.model-access');
+/**
+ * Whether a person is waiting on the runtime right now.
+ *
+ * Offered because the alternative an extension has is to guess from its own
+ * traffic, and its own traffic is precisely what does not tell it: a memory
+ * hears about a turn when the turn is already over, at the exact moment the
+ * next one is most likely to start.
+ */
+const runtimeActivityService = createServiceToken<RuntimeActivity>('nox.runtime-activity');
 const scheduledRunHostService = createServiceToken<ScheduledRunHost>('nox.scheduled-run-host');
 const secretStoreService = createServiceToken<SecretMetadataReader>('nox.secret-store');
 
@@ -217,6 +276,8 @@ export {
   configService,
   dataDirectoryService,
   loggerService,
+  modelAccessService,
+  runtimeActivityService,
   scheduledRunHostService,
   secretStoreService,
 };
@@ -237,6 +298,7 @@ export type {
   ConfigUpdate,
   ConfigurationAdmin,
   ExtensionConfiguration,
+  RuntimeActivity,
   RuntimeComponentKind,
   RuntimeComponentState,
   RuntimeComponentStatus,

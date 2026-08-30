@@ -5,11 +5,13 @@ import type {
   ArtifactOutputPublisher,
   ArtifactResponseAttacher,
 } from './artifacts.js';
-import type { MessageContent } from './content.js';
+import type { MessageContent, PrincipalRef } from './content.js';
 
 interface ToolSessionContext {
   readonly agentId: string;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /** The immutable principal whose message or command owns this tool execution. */
+  readonly principal: PrincipalRef;
   readonly sessionId: string;
 }
 
@@ -116,7 +118,7 @@ class UnknownToolError extends ToolError {
     super(
       'unknown_tool',
       toolName,
-      `Tool "${toolName}" not found. Use search_tool to discover available tools.`,
+      `Tool "${toolName}" not found. Use tool_search to discover available tools.`,
     );
     this.name = 'UnknownToolError';
   }
@@ -162,7 +164,7 @@ function toolParametersSchema(tool: Tool): JsonSchema {
 function toolDescription(tool: Tool): string {
   const notice =
     'Output: Works with durable artifact references. Tool artifacts are not attached ' +
-    'automatically; call attach_artifact with an artifact ID only when you decide the user ' +
+    'automatically; call artifact_attach with an artifact ID only when you decide the user ' +
     'should receive it. Do not encode file bytes as base64 or inline them in text.';
   return tool.output?.artifacts === true ? `${tool.description}\n\n${notice}` : tool.description;
 }

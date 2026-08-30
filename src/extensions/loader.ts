@@ -114,7 +114,11 @@ async function discoverExtensions(
     }
 
     try {
-      const entryPoint = await packageEntryPoint(candidate);
+      const entryPoint = await packagePath(candidate, manifest.main, 'entry point');
+      const migrations =
+        manifest.migrations === undefined
+          ? undefined
+          : await packagePath(candidate, manifest.migrations, 'migrations directory');
       const loaded: unknown = await import(pathToFileURL(entryPoint).href);
       const definition =
         typeof loaded === 'object' && loaded !== null
@@ -135,7 +139,8 @@ async function discoverExtensions(
               'Extension activation failed.',
             );
           },
-        }),
+        },
+        migrations),
       );
     } catch (error) {
       catalog.fail(key, error);
@@ -208,14 +213,25 @@ async function extensionCandidates(
   });
 }
 
-async function packageEntryPoint(candidate: ParsedCandidate): Promise<string> {
+/**
+ * Resolves one manifest path against the package, following symlinks.
+ *
+ * The schema already refuses an absolute path or one containing `..`; this is
+ * the half it cannot check, because a link only points outside once the disk is
+ * consulted.
+ */
+async function packagePath(
+  candidate: ParsedCandidate,
+  declared: string,
+  kind: string,
+): Promise<string> {
   const packageDirectory = await realpath(candidate.directory);
-  const entryPoint = await realpath(resolve(packageDirectory, candidate.manifest.main));
-  const within = relative(packageDirectory, entryPoint);
+  const resolved = await realpath(resolve(packageDirectory, declared));
+  const within = relative(packageDirectory, resolved);
   if (within === '..' || within.startsWith(`..${sep}`) || within.length === 0) {
-    throw new Error('The extension entry point must be a file inside its package directory.');
+    throw new Error(`The extension ${kind} must be inside its package directory.`);
   }
-  return entryPoint;
+  return resolved;
 }
 
 function duplicateIds(candidates: readonly ParsedCandidate[]): ReadonlySet<string> {

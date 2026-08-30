@@ -24,6 +24,8 @@ describe('AuthorityCatalog', () => {
       'nox.history.search',
       'nox.history.sessions',
       'nox.history.sessions.search',
+      'nox.memory.read',
+      'nox.memory.write',
       'nox.tools.call',
       'nox.tools.search',
     ]);

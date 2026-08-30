@@ -13,19 +13,16 @@ import type {
 
 /**
  * Something a person does to a conversation, rather than something they say.
- *
- * Speech and commands are different things and the split is deliberate. A
- * message — including a steer — is attributed, deduplicated and appended to the
- * transcript, because it is what someone said. A command is not in the
+ * A message — including a steer — is attributed, deduplicated and appended to
+ * the transcript, because it is what someone said. A command is not in the
  * transcript at all: it acts on the conversation, and the model never reads it.
  *
- * It is shaped like a tool on purpose. A name, a description and a zod schema is
- * already how this codebase describes a named operation with typed parameters to
- * a consumer that has to render it and may send it garbage; a command is that
- * same problem with a person on the other end instead of a model. Which means a
- * command with a list parameter, a multiple choice or a nested object costs
- * nothing extra: the schema is the whole declaration, and every surface derives
- * what it draws from it.
+ * Shaped like a tool on purpose: a name, a description and a zod schema is
+ * already how this codebase describes a named operation with typed parameters,
+ * and a command is that same problem with a person on the other end. A list
+ * parameter, a multiple choice or a nested object costs nothing extra — the
+ * schema is the whole declaration, and every surface derives what it draws
+ * from it.
  */
 interface BrokerCommand<T extends z.ZodObject = z.ZodObject> extends Omit<
   Command<T>,

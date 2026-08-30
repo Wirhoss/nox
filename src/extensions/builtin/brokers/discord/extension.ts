@@ -14,17 +14,15 @@ import { spanishMessages } from './messages.es';
 
 /**
  * Nox on Discord, contributed the way any third-party transport would be.
- *
- * `authorization: 'grants'` is the declaration that matters here. One bot holds
+ * `authorization: 'grants'` is the declaration that matters here: one bot holds
  * one connection per credential and reaches every channel it can see under a
- * single issuer, so the instance cannot be the trust boundary: who may use what
- * comes from `grants`, which is empty by default, and a `conversations` override
- * is what makes one channel a different boundary from another.
+ * single issuer, so the instance cannot be the trust boundary. Who may use what
+ * comes from `grants` — empty by default — and a `conversations` override makes
+ * one channel a different boundary from another.
  *
- * The contribution keeps the default single-instance policy, so its one entry
- * is named `discord`, exactly like the contribution that owns it. A second bot
- * would be a second contributed transport with its own ID rather than an
- * arbitrary duplicate of this one. `selectableAgent` is left off: a Discord
+ * The contribution keeps the single-instance policy, so its one entry is named
+ * `discord`. A second bot would be a second contributed transport with its own
+ * ID, not an arbitrary duplicate. `selectableAgent` is left off: a Discord
  * conversation is a channel, and which agent answers it is a decision
  * configuration makes, not one a person picks per message.
  */

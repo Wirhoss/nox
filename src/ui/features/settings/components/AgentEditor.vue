@@ -30,6 +30,13 @@ type NumericInputKey =
 
 type ToolGrant = string | { readonly id: string; readonly tools?: readonly string[] }
 
+const MEMORY_TOOL_OPTIONS = [
+  'memory_search',
+  'memory_write',
+  'memory_update',
+  'memory_forget',
+] as const
+
 interface ToolSetOption {
   readonly available: boolean
   readonly description: string
@@ -45,7 +52,7 @@ interface AgentDraft extends ConfigValue {
   description: string
   generation: ConfigValue
   maxIterations: 'unlimited' | number
-  memory?: { id: string; maxTokens?: number }
+  memory?: { id: string; maxTokens?: number; tools?: readonly string[] }
   model: string
   provider: string
   systemPrompt: string
@@ -269,6 +276,9 @@ function setMemory(value: string): void {
       memory: {
         id: value,
         maxTokens: typeof current.maxTokens === 'number' ? current.maxTokens : 2048,
+        ...(Array.isArray(current.tools) && current.tools.length > 0
+          ? { tools: current.tools }
+          : {}),
       },
     }
     numericInputs.memoryMaxTokens = String(configValue(draft.value.memory).maxTokens)
@@ -288,6 +298,24 @@ function setMemoryMaxTokens(value: string): void {
     }
   }
   clearFeedback('memoryMaxTokens')
+}
+
+function grantedMemoryTools(): readonly string[] {
+  const tools = configValue(draft.value.memory).tools
+  return Array.isArray(tools) ? tools.filter((tool): tool is string => typeof tool === 'string') : []
+}
+
+function toggleMemoryTool(name: string, event: Event): void {
+  const selected = new Set(grantedMemoryTools())
+  if ((event.target as HTMLInputElement).checked) selected.add(name)
+  else selected.delete(name)
+
+  const current = configValue(draft.value.memory)
+  const tools = MEMORY_TOOL_OPTIONS.filter((tool) => selected.has(tool))
+  const memory =
+    tools.length === 0 ? withoutProperty(current, 'tools') : { ...current, tools: [...tools] }
+  draft.value = { ...draft.value, memory } as AgentDraft
+  clearFeedback('memoryTools')
 }
 
 function setMaxIterations(value: string): void {
@@ -1012,6 +1040,26 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                 required
                 @update:model-value="setMemoryMaxTokens($event)"
               />
+              <div
+                v-if="memoryId().length > 0"
+                class="agent-editor__field agent-editor__memory-tools"
+              >
+                <label>{{ t('settings.agent.memoryTools') }}</label>
+                <p class="agent-editor__hint">{{ t('settings.agent.memoryToolsHint') }}</p>
+                <div class="agent-editor__tool-allowlist" role="group">
+                  <label v-for="tool in MEMORY_TOOL_OPTIONS" :key="tool">
+                    <input
+                      type="checkbox"
+                      :checked="grantedMemoryTools().includes(tool)"
+                      @change="toggleMemoryTool(tool, $event)"
+                    />
+                    <span>
+                      <strong>{{ tool }}</strong>
+                      <small>{{ t(`settings.agent.memoryTool.${tool}`) }}</small>
+                    </span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -1959,6 +2007,10 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
 
 .agent-editor__grant-scope button small {
   color: currentcolor;
+}
+
+.agent-editor__memory-tools {
+  grid-column: 1 / -1;
 }
 
 .agent-editor__tool-allowlist {

@@ -34,18 +34,16 @@ interface SectionPolicy {
 type SectionPolicies = Partial<Record<ConfigKey, SectionPolicy>>;
 
 /**
- * Every judgement the configuration surface makes, in one table.
+ * Every judgement the configuration surface makes, in one table. A table rather
+ * than branches in the store: these are not exceptions to how configuration is
+ * administered, they are what each section happens to require, and a section
+ * with nothing to say gains a row the day it does — without the store learning
+ * its name.
  *
- * A table rather than branches in the store, because these are not exceptions to
- * how configuration is administered — they are what each section happens to
- * require, and the store's job is to apply whatever that is. A section with
- * nothing to say has no row, and gains one the day it does without the store
- * learning its name.
- *
- * Note that the rows are two halves of one fact read from opposite ends: a
- * blueprint may not name a provider that does not exist, and a provider may not
- * stop existing while a blueprint names it. Keeping them side by side is what
- * makes it obvious they have to agree.
+ * The rows are two halves of one fact read from opposite ends: a blueprint may
+ * not name a provider that does not exist, and a provider may not stop existing
+ * while a blueprint names it. Keeping them side by side makes it obvious they
+ * have to agree.
  */
 function configPolicies(context: BlueprintContext): SectionPolicies {
   const { config } = context;

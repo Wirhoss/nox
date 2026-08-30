@@ -18,7 +18,9 @@ function request(signal: AbortSignal): ScheduledRunRequest {
 function host(received: ScheduledRunRequest[] = []): ScheduledRunHost {
   return {
     agentIds: () => Promise.resolve(['agent-a']),
+    canDeliverTo: () => Promise.resolve(true),
     deliveryBrokerIds: () => Promise.resolve(['discord']),
+    deliveryOrigin: () => Promise.resolve(undefined),
     runScheduledAgent: (input) => {
       received.push(input);
       const now = new Date();

@@ -52,18 +52,15 @@ function workerFile(): string {
 let nextCallId = 0;
 
 /**
- * Owns the thread a local model runs on.
- *
- * A thread rather than this process, because inference is a long block of
- * arithmetic and tokenization: run on the main loop it would stall the gateway
- * mid-request, and the symptom — a server that goes briefly deaf — would look
- * like anything but a model. There is one host per configured instance, so the
- * chat model and the embedding model do not queue behind each other and no
- * scheduler has to decide which of them waits.
+ * Owns the thread a local model runs on. A thread rather than this process:
+ * inference is a long block of arithmetic, and on the main loop it would stall
+ * the gateway mid-request with a symptom — a server that goes briefly deaf —
+ * that looks like anything but a model. One host per configured instance, so
+ * chat and embedding models never queue behind each other.
  *
  * The worker is spawned on the first call and never eagerly: loading weights
- * costs hundreds of megabytes and seconds of startup, and an instance that is
- * configured but unused should cost neither.
+ * costs hundreds of megabytes and seconds of startup, and a configured-but-
+ * unused instance should cost neither.
  */
 class ModelHost {
   readonly #engineOptions: Readonly<Record<string, unknown>>;

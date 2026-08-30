@@ -29,23 +29,20 @@ interface SecretRoutesOptions {
 
 /**
  * What a secret looks like from outside: where configuration names it, whether a
- * value has been written for it, when that happened, and who has asked for it
- * since this process started. Never the value — not on create, not on read, not
- * on delete. A route that could return one is a route that eventually does.
+ * value has been written, when, and who has asked for it since this process
+ * started. Never the value — a route that could return one is a route that
+ * eventually does.
  *
- * `references` and `consumers` are close but not the same, and the difference is
- * the point. A reference is a fact about the configuration as it stands, known
- * whether or not anything has been composed from it. A consumer is something
- * known to have resolved a snapshot in this process, which identifies what a
- * replacement generation may need to recompose.
+ * `references` and `consumers` are close but not the same: a reference is a fact
+ * about the configuration as it stands; a consumer is something known to have
+ * resolved a snapshot in this process, which identifies what a replacement
+ * generation may need to recompose. A row with references and `stored: false`
+ * is the case this surface exists to make visible: configuration names a
+ * credential nobody has supplied yet.
  *
- * A row with references and `stored: false` is the case this surface exists to
- * make visible: configuration names a credential nobody has supplied yet.
- *
- * Resolved handles remain immutable for in-flight turns, while the secret store
- * asks the configuration runtime to compose a new generation before the write
- * returns. A failed candidate is visible in runtime status and keeps the last
- * working generation; it never turns credential rotation into a process restart.
+ * Resolved handles stay immutable for in-flight turns while the store composes a
+ * new generation before the write returns; a failed candidate keeps the last
+ * working generation, so rotation never becomes a process restart.
  */
 function describe(
   summary: SecretSummary,

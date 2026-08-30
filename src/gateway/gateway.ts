@@ -24,6 +24,7 @@ import {
   type MessageOrigin,
   type OutboundBody,
   type OutboundEvent,
+  type ScheduledRunDelivery,
   type ScheduledRunHost,
   type ScheduledRunRequest,
   type ScheduledRunResult,
@@ -144,9 +145,8 @@ async function scheduledCompletion(
 
 /**
  * One stored message in the vocabulary a transport speaks, or nothing when it
- * never asked for that kind of thing. The live stream and a transcript read back
- * both come through here, so scrolling up shows the same conversation watching
- * it would have — one place decides what a surface sees, not two.
+ * never asked for that kind of thing. Live stream and transcript reads both
+ * come through here, so one place decides what a surface sees.
  */
 function bodyOf(broker: Broker, message: Message): MessageBody | undefined {
   switch (message.role) {
@@ -200,17 +200,16 @@ function bodyOf(broker: Broker, message: Message): MessageBody | undefined {
           }
         : undefined;
     case 'user':
-      // Whether a transport sees what another participant said is about who may
-      // see it, not about what can be drawn — so nothing about it is decided by
-      // a capability, and the live stream does not carry it at all.
+      // Whether a transport sees another participant's speech is a question of
+      // who may see it, not of what can be drawn — no capability decides it.
       return undefined;
   }
 }
 
 /**
  * One stored message as a transcript entry. This is the one place a user message
- * crosses: a conversation read back by the transport that owns it is not a
- * broadcast, and half a transcript is not a transcript.
+ * crosses to the transport that owns it: a conversation read back by that
+ * transport is not a broadcast, and half a transcript is not a transcript.
  */
 function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | undefined {
   const at = message.createdAt;
@@ -234,16 +233,13 @@ function historyEntry(broker: Broker, message: Message): BrokerHistoryEntry | un
 
 /**
  * The message gateway: conversations on transports, answered by agents.
- *
  * Everything between a transport and a session lives here — which agent answers
- * a chat, which session that chat is, whether it is a new one or the one it was
- * already having, and what of a run is worth sending back. Brokers know none of
- * it, and an agent knows nothing about transports; the binding between the two
- * is a row in storage, which is what lets a conversation survive a restart with
- * its transcript rather than starting over.
- *
- * Work is serialized per conversation. Two messages arriving together are two
- * turns of one session, never two sessions racing to be the one that chat is.
+ * a chat, which session that chat is, and what of a run is worth sending back.
+ * Brokers know none of it and an agent knows nothing about transports; the
+ * binding is a row in storage, which is what lets a conversation survive a
+ * restart with its transcript rather than starting over. Work is serialized per
+ * conversation: two messages arriving together are two turns of one session,
+ * never two sessions racing to be the one that chat is.
  */
 class Gateway implements MessageGateway, ScheduledRunHost {
   readonly #activeBrokers = new Set<string>();
@@ -307,13 +303,11 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   }
 
   /**
-   * Starts every transport, and survives the ones that cannot start.
-   *
-   * A transport is not the gateway. One broker with a bad credential taking
-   * every other channel down with it — and the control plane that could repair
-   * it — is worse than a Nox that reports one route as failed and keeps
-   * carrying the rest. The failure is recorded against the broker that caused
-   * it, which is where an operator goes looking.
+   * Starts every transport, and survives the ones that cannot start. A transport
+   * is not the gateway: one broker with a bad credential taking every other
+   * channel down with it is worse than a Nox that reports one route as failed
+   * and keeps carrying the rest. The failure is recorded against the broker that
+   * caused it, which is where an operator goes looking.
    */
   public async start(): Promise<void> {
     if (this.#state !== 'created') {
@@ -400,9 +394,8 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     try {
       await grant.broker.stop();
     } catch (error) {
-      // The route remains the last published generation when a transport could
-      // not confirm that it stopped. New messages may transparently reopen the
-      // sessions retired above while configuration exposes the failed removal.
+      // The last published generation stays the route when the transport could not
+      // confirm the stop; new messages may reopen the sessions retired above.
       this.#activeBrokers.add(brokerId);
       throw error;
     }
@@ -463,11 +456,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     await Promise.all(retirements);
   }
 
-  /**
-   * Retires live snapshots of one agent after their current turns. Per-conversation
-   * queueing makes later messages wait, then transparently reopen the same stored
-   * transcript through the newly published agent generation.
-   */
+  /** Retires live sessions carried by one agent after their current turns settle. */
   public async retireAgentSessions(agentId: string): Promise<void> {
     const retirements = [...this.#conversations.entries()]
       .filter(([, conversation]) => conversation.session.agentId === agentId)
@@ -508,6 +497,47 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       return Promise.reject(new Error('The runtime is not available for scheduled work.'));
     }
     return Promise.resolve(this.brokerIds);
+  }
+
+  /** Asks the transport itself whether it would take a delivery addressed here. */
+  public async canDeliverTo(
+    delivery: ScheduledRunDelivery,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    signal.throwIfAborted();
+    if (this.#state !== 'running') {
+      throw new Error('The runtime is not available for scheduled work.');
+    }
+    const grant = this.#grants.get(delivery.brokerId);
+    if (grant === undefined || !this.#activeBrokers.has(grant.brokerId)) return false;
+    // An unanswered address is an accepted one: a transport with no way to ask
+    // must not become one nothing can be scheduled on.
+    if (grant.broker.canDeliverTo === undefined) return true;
+    return grant.broker.canDeliverTo(delivery.channelId, signal);
+  }
+
+  /**
+   * The channel a live session is being spoken to on.
+   *
+   * Read from the live conversations rather than from the session store,
+   * because the question is where a reply would go *now*: a conversation whose
+   * binding was retired is no longer somewhere this gateway delivers, and
+   * answering with its old channel would hand a caller an address that only
+   * looks current.
+   */
+  public deliveryOrigin(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<ScheduledRunDelivery | undefined> {
+    signal.throwIfAborted();
+    for (const conversation of this.#conversations.values()) {
+      if (conversation.session.sessionId !== sessionId) continue;
+      return Promise.resolve({
+        brokerId: conversation.key.brokerId,
+        channelId: conversation.key.conversationId,
+      });
+    }
+    return Promise.resolve(undefined);
   }
 
   /** Runs one occurrence in a new session and optionally posts its final response to a channel. */
@@ -667,9 +697,9 @@ class Gateway implements MessageGateway, ScheduledRunHost {
 
   /**
    * Something said into a conversation, and the two ways of saying it. A steer
-   * explicitly marks new direction for the run in flight, but queues like any
-   * other speech and never cancels the active operation. Both are attributed,
-   * deduplicated and serialized in exactly the same way.
+   * explicitly marks new direction for the run in flight but queues like any
+   * other speech and never cancels; both are attributed, deduplicated and
+   * serialized exactly the same way.
    */
   async #handleSpeech(
     grant: BrokerGrant,
@@ -688,8 +718,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
 
     // A transport that retries a delivery must not produce a second turn. This
     // is remembered per live conversation, not stored: a duplicate arriving
-    // after a restart is indistinguishable from a real message, and pretending
-    // otherwise would need a table of every id a chat has ever sent.
+    // after a restart is indistinguishable from a real message.
     if (conversation.seenIds.has(message.messageId)) {
       this.#logger.debug(
         { brokerId: grant.brokerId, messageId: message.messageId },
@@ -715,8 +744,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     };
 
     // An observation is not a turn and does not make the conversation newer:
-    // the agent was not spoken to, and a channel that is merely busy should not
-    // climb a list ordered by when someone last talked to Nox.
+    // the agent was not spoken to.
     if (message.type === 'observation') {
       conversation.session.observe(content, origin, message.receivedAt);
       return;
@@ -1158,24 +1186,22 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   }
 
   /**
-   * Turns one session's events into what its transport can show.
+   * Turns one session's events into what its transport can show. Every event a
+   * run produces is offered here; what leaves is what the broker declared it
+   * renders. That split is the point — whether reasoning, tool activity or
+   * token counts belong on a surface is a question about the surface, not one
+   * the gateway should answer for transports it has never seen.
    *
-   * Every event a run produces is offered here, and what leaves is what the
-   * broker declared it renders. That split is the point: whether reasoning,
-   * tool activity or token counts belong on a surface is a question about the
-   * surface, and a gateway answering it for everyone would be doing product
-   * design for transports it has never seen.
-   *
-   * Two things stay behind, and neither is about rendering. What another
-   * participant said, and which principal was allowed to use which authority,
-   * are questions about who may see what.
+   * Two things stay behind, and neither is about rendering: what another
+   * participant said, and which principal used which authority, are questions
+   * about who may see what.
    */
   async #watch(conversation: Conversation): Promise<void> {
     const { broker } = conversation.grant;
-    // Whether anyone may answer is no longer a property of the transport: the
-    // one person who can is the principal whose run raised the request, and they
-    // are by definition in this conversation. All that is left to ask is whether
-    // the transport can put the question in front of them at all.
+    // Whether anyone may answer is no longer the transport's question: the one
+    // person who can is the principal whose run raised the request, and they are
+    // in this conversation by definition. Only whether the transport can put the
+    // question in front of them at all remains.
     const asks = shows(broker, 'permissions');
 
     for await (const event of conversation.session.events) {

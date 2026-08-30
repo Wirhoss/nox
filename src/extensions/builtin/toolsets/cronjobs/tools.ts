@@ -48,16 +48,27 @@ function cronTools(manager: CronJobManager, policy: CronJobPolicy): readonly Too
   const agentsParameters = z.object({});
   const agents: Tool<typeof agentsParameters> = {
     authority: CRON_READ_AUTHORITY,
-    description: 'List configured agents and brokers available to cron jobs.',
+    description:
+      'List configured agents and brokers available to cron jobs, and the delivery ' +
+      'target of the conversation this runs in.',
     name: 'cron_agents',
     parameters: agentsParameters,
     prepare: () => ({
       run: async (ctx) => {
-        const [agentIds, deliveryBrokerIds] = await Promise.all([
+        // `deliveryHere` is the whole reason a channel ID never has to be
+        // guessed: a broker list names transports, and a transport is not an
+        // address. Absent means this session came from no channel, which is a
+        // reason to ask for one rather than to invent one.
+        const [agentIds, deliveryBrokerIds, deliveryHere] = await Promise.all([
           manager.agents(ctx.abortSignal),
           manager.deliveryBrokers(ctx.abortSignal),
+          manager.deliveryHere(invocation(ctx).createdFromSessionId, ctx.abortSignal),
         ]);
-        return text({ agentIds, deliveryBrokerIds });
+        return text({
+          agentIds,
+          deliveryBrokerIds,
+          ...(deliveryHere === undefined ? {} : { deliveryHere }),
+        });
       },
       title: 'List cron agents',
       type: 'immediate',

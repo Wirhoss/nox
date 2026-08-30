@@ -28,7 +28,9 @@ import { createLogger, type Logger } from './logger/logger';
 import {
   ConfigurationRuntimeController,
   ConfigurationRuntimeRelay,
+  type MemoryRuntime,
 } from './runtime/configurationRuntime';
+import { ModelAccessRelay } from './runtime/modelAccess';
 import { ScheduledRunRelay } from './scheduler/scheduledRun';
 import {
   artifactPipelineService,
@@ -37,6 +39,8 @@ import {
   configService,
   dataDirectoryService,
   loggerService,
+  modelAccessService,
+  runtimeActivityService,
   scheduledRunHostService,
   secretStoreService,
 } from './services';
@@ -73,6 +77,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
   const appConfig = config.get('app');
   const logger = options.logger ?? createLogger('nox', { level: appConfig.logLevel });
   const configurationRuntime = new ConfigurationRuntimeRelay();
+  const modelAccess = new ModelAccessRelay();
 
   await Promise.all([
     mkdir(env.dataDir, { recursive: true }),
@@ -130,13 +135,20 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     extensions: discovered.extensions,
     logger,
     noxVersion: NOX_VERSION,
-    storage: new DatabaseExtensionStorageProvider(database),
+    storage: new DatabaseExtensionStorageProvider({
+      // Separate from the kernel database, so extension SQL has no connection
+      // through which it could reach accounts, secrets, sessions or messages.
+      kernel: database,
+      logger: logger.child('extensions'),
+      path: join(env.dataDir, 'extensions.db'),
+    }),
   })
     .provide(artifactPipelineService, artifactPipeline)
     .provide(chatHubService, chat)
     .provide(configService, config)
     .provide(dataDirectoryService, env.dataDir)
     .provide(loggerService, logger)
+    .provide(modelAccessService, modelAccess)
     .provide(scheduledRunHostService, scheduledRuns)
     .provide(secretStoreService, secretStore);
 
@@ -170,6 +182,10 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     toolSets: toolSetCatalog,
   });
   application.provide(configAdminService, configuration);
+  // Provided from here rather than in the chain above because it answers about
+  // the application, which does not exist yet where the other services are
+  // handed over.
+  application.provide(runtimeActivityService, { busy: () => application.busy() });
   const api = application.own(
     openApi(
       application,
@@ -179,6 +195,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       artifactPipeline,
       chat,
       configuration,
+      configurationRuntime,
       database,
       secretStore,
       discovered.catalog,
@@ -216,6 +233,8 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
       toolSets: toolSetCatalog,
     });
     configurationRuntime.connect(runtime);
+    // Before any contribution is created, so a memory that names a model finds it.
+    modelAccess.connect(runtime);
 
     // The control plane comes up before optional runtime components. A broken
     // provider, agent or broker must remain repairable from a headless install.
@@ -254,6 +273,7 @@ function openApi(
   artifacts: ArtifactPipeline,
   chat: ChatHub,
   configuration: ConfigStore,
+  memories: MemoryRuntime,
   database: Database,
   secrets: SecretStore,
   extensions: ExtensionCatalog,
@@ -275,6 +295,7 @@ function openApi(
     languages: application.contributions,
     locale,
     logger: logger.child('api'),
+    memories,
     secrets,
     sessions: new SessionStore(database, { logger: logger.child('sessions') }),
     uiDirectory,

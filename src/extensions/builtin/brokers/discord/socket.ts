@@ -1,21 +1,18 @@
 import type { Logger, SecretHandle } from '@nox/extension-api';
 
 /**
- * What the bot asks Discord to send it.
- *
- * Two of these are privileged and have to be enabled on the application.
+ * What the bot asks Discord to send it. Two of these are privileged and have to
+ * be enabled on the application.
  *
  * `MESSAGE_CONTENT`, or every message arrives with an empty body and the ingress
  * rule passes on nothing at all.
  *
- * `GUILD_MEMBERS`, because grants and `senders` can be written against roles.
- * Role IDs ride along on every message, so reading them needs nothing extra —
- * what this intent buys is `GUILD_MEMBER_UPDATE`, which is the only way losing a
- * role takes effect before its holder happens to speak again. Authority that
- * outlives the role it came from is the failure worth an extra intent.
- *
- * Nothing else is requested: presence and the rest are traffic this transport
- * would receive and drop.
+ * `GUILD_MEMBERS`, because grants and `senders` can be written against roles:
+ * role IDs ride on every message, and this intent buys `GUILD_MEMBER_UPDATE`,
+ * the only way losing a role takes effect before its holder speaks again —
+ * authority that outlives the role it came from is the failure worth an extra
+ * intent. Nothing else is requested: presence and the rest would be traffic
+ * this transport receives and drops.
  */
 const INTENT_GUILDS = 1 << 0;
 const INTENT_GUILD_MEMBERS = 1 << 1;

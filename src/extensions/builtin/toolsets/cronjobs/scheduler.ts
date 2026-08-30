@@ -29,6 +29,11 @@ type CronPolicyResolver = (toolSetId: string) => CronJobPolicy | undefined;
 interface CronJobManager {
   agents(signal: AbortSignal): Promise<readonly string[]>;
   deliveryBrokers(signal: AbortSignal): Promise<readonly string[]>;
+  /** Where the transport that owns this session is being spoken to, if one does. */
+  deliveryHere(
+    askingSessionId: string,
+    signal: AbortSignal,
+  ): Promise<ScheduledRunDelivery | undefined>;
   create(input: CreateCronJobInput, policy: CronJobPolicy, signal: AbortSignal): Promise<CronJob>;
   delete(scope: CronJobScope, jobId: string): Promise<boolean>;
   get(scope: CronJobScope, jobId: string): Promise<CronJob | undefined>;
@@ -119,6 +124,15 @@ class CronScheduler implements CronJobManager, Disposable {
     await this.start();
     this.#assertActive();
     return this.#host.deliveryBrokerIds(signal);
+  }
+
+  public async deliveryHere(
+    askingSessionId: string,
+    signal: AbortSignal,
+  ): Promise<ScheduledRunDelivery | undefined> {
+    await this.start();
+    this.#assertActive();
+    return this.#host.deliveryOrigin(askingSessionId, signal);
   }
 
   public async create(
@@ -300,11 +314,23 @@ class CronScheduler implements CronJobManager, Disposable {
   ): Promise<void> {
     if (delivery === undefined) return;
     const brokers = await this.#host.deliveryBrokerIds(signal);
-    if (brokers.includes(delivery.brokerId)) return;
+    if (!brokers.includes(delivery.brokerId)) {
+      throw new Error(
+        brokers.length === 0
+          ? `No configured broker can deliver to channel "${delivery.channelId}".`
+          : `Broker "${delivery.brokerId}" is not configured. Available: ${brokers.join(', ')}.`,
+      );
+    }
+
+    // The broker being real says nothing about the channel being real, and the
+    // channel is the half a caller invents. Checked here rather than at the
+    // first run because this is the last moment someone is still present to be
+    // told: a schedule stored with a wrong address fires into nothing, at a
+    // time chosen precisely because nobody is watching.
+    if (await this.#host.canDeliverTo(delivery, signal)) return;
     throw new Error(
-      brokers.length === 0
-        ? `No configured broker can deliver to channel "${delivery.channelId}".`
-        : `Broker "${delivery.brokerId}" is not configured. Available: ${brokers.join(', ')}.`,
+      `Broker "${delivery.brokerId}" cannot deliver to channel "${delivery.channelId}". ` +
+        'Check the channel ID, or use the one this conversation is already on.',
     );
   }
 

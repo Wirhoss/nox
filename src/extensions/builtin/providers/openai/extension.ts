@@ -13,24 +13,18 @@ import { OpenAICompletions } from './openAICompletions';
 
 /**
  * The OpenAI Chat Completions adapter, contributed the way any third-party
- * provider would be. Nothing in the kernel imports `OpenAICompletions`; it
- * arrives here and nowhere else.
+ * provider would be: nothing in the kernel imports `OpenAICompletions`.
  *
- * The adapter's own schema is handed over rather than validated in here: what a
- * valid config for it looks like is exactly what `providers.json` has to be
- * checked against, and the configuration module is the thing that reads that
- * file. An extension that parsed its config privately would leave the file
- * unvalidatable by anything but itself.
+ * Its schema is handed over rather than validated here, so `providers.json` is
+ * checked against exactly what the adapter accepts — an extension that parsed
+ * its config privately would leave the file unvalidatable by anything but
+ * itself. The credential is handed over for the same reason: `OPENAI_API_KEY`
+ * is a shared name, and any adapter speaking to the same vendor merges into
+ * one credential an operator fills once.
  *
- * The credential it needs is handed over for the same reason. `OPENAI_API_KEY`
- * is a shared name, not this extension's property: any other adapter speaking to
- * the same vendor declares the same ID and the two merge into one credential an
- * operator fills once. Naming it here is what makes it appear as something to
- * fill in before a provider is configured, rather than as a failed boot after.
- *
- * Optional, because `baseUrl` is free: an OpenAI-compatible endpoint on a
- * private network commonly wants no credential at all, and declaring the key
- * required would make every such deployment look permanently misconfigured.
+ * Optional, because `baseUrl` is free: a private-network endpoint commonly
+ * wants no credential at all, and requiring one would make every such
+ * deployment look permanently misconfigured.
  */
 const openAIExtension = defineExtension({
   activate(context) {

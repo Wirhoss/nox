@@ -55,13 +55,13 @@ class ArtifactReadingProvider extends ChatProvider {
     }
 
     const response = history.findLast(
-      (message) => message.role === 'toolResponse' && message.name === 'read_artifact',
+      (message) => message.role === 'toolResponse' && message.name === 'artifact_read',
     );
     if (response?.role !== 'toolResponse') {
       yield {
         toolCall: {
           arguments: { artifactId: this.#artifactId },
-          name: 'read_artifact',
+          name: 'artifact_read',
           role: 'toolCall',
           trackId: 'read-upload',
         },
@@ -198,9 +198,9 @@ describe('agent artifact output', () => {
     const payload = await artifacts.open(part.artifact.artifactId, scope);
 
     const attachmentTool = provider.requestedTools[0]?.find(
-      (tool) => tool.name === 'attach_artifact',
+      (tool) => tool.name === 'artifact_attach',
     );
-    const readerTool = provider.requestedTools[0]?.find((tool) => tool.name === 'read_artifact');
+    const readerTool = provider.requestedTools[0]?.find((tool) => tool.name === 'artifact_read');
     expect(attachmentTool).toMatchObject({
       authority: 'nox.artifacts.attach',
       trust: 'trusted',

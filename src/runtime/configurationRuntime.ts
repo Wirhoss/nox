@@ -17,6 +17,8 @@ import {
 } from '@nox/extension-api';
 
 import { Agent } from '../agent/agent';
+import { memoryToolSetGrant } from '../agent/memoryToolSet';
+import { composeSessionTools } from '../agent/tools';
 import { composeWithSecrets, type SecretStore } from '../config/secrets';
 import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
@@ -30,10 +32,23 @@ import type { Database } from '../database/database';
 import type { ToolSetCatalog } from '../extensions/toolSetCatalog';
 import type { BrokerGrant, Gateway } from '../gateway/gateway';
 import type { Logger } from '../logger/logger';
+import type { ProviderRegistry } from './modelAccess';
 
 interface ConfigurationRuntime {
   reconcile(): Promise<void>;
   statuses(): readonly RuntimeComponentStatus[];
+}
+
+interface RuntimeMemorySummary {
+  readonly editable: boolean;
+  readonly id: string;
+  readonly inspectable: boolean;
+}
+
+/** Active memory generations exposed only to the owner-facing audit API. */
+interface MemoryRuntime {
+  memory(memoryId: string): Memory | undefined;
+  memoryInventory(): readonly RuntimeMemorySummary[];
 }
 
 interface ConfigurationRuntimeOptions {
@@ -102,11 +117,19 @@ function key(kind: RuntimeComponentKind, id: string): string {
  * components. Failed candidates never evict the last generation that worked.
  */
 /** Stable API-facing handle connected once the concrete runtime has composed. */
-class ConfigurationRuntimeRelay implements ConfigurationRuntime {
-  #host?: ConfigurationRuntime;
+class ConfigurationRuntimeRelay implements ConfigurationRuntime, MemoryRuntime {
+  #host?: ConfigurationRuntime & MemoryRuntime;
 
-  public connect(host: ConfigurationRuntime): void {
+  public connect(host: ConfigurationRuntime & MemoryRuntime): void {
     this.#host = host;
+  }
+
+  public memory(memoryId: string): Memory | undefined {
+    return this.#host?.memory(memoryId);
+  }
+
+  public memoryInventory(): readonly RuntimeMemorySummary[] {
+    return this.#host?.memoryInventory() ?? [];
   }
 
   public reconcile(): Promise<void> {
@@ -126,7 +149,9 @@ class ConfigurationRuntimeRelay implements ConfigurationRuntime {
   }
 }
 
-class ConfigurationRuntimeController implements ConfigurationRuntime {
+class ConfigurationRuntimeController
+  implements ConfigurationRuntime, MemoryRuntime, ProviderRegistry
+{
   readonly #activeBrokerAgentIds = new Map<string, ReadonlySet<string>>();
   readonly #agentSignatures = new Map<string, string>();
   readonly #application: NoxApplication;
@@ -218,6 +243,49 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
     }
     for (const entry of this.#superseded) await this.#release(entry);
     this.#superseded.length = 0;
+  }
+
+  /**
+   * One activated provider instance, by the name it is configured under.
+   *
+   * Public because an extension reaches a model through `ModelAccess`, and what
+   * it is allowed to reach is exactly what an agent is: an instance this pass
+   * brought up. Which contract that instance can answer is left to the caller,
+   * because chat and embedding refuse for different reasons and each says so in
+   * its own terms.
+   */
+  public memory(memoryId: string): Memory | undefined {
+    return this.#memories.get(memoryId)?.memory;
+  }
+
+  public memoryInventory(): readonly RuntimeMemorySummary[] {
+    return Object.freeze(
+      [...this.#memories.entries()]
+        .map(([id, { memory }]) => ({
+          editable: memory.editor !== undefined,
+          id,
+          inspectable: memory.inspector !== undefined,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    );
+  }
+
+  public provider(providerId: string): BaseProvider {
+    const status = this.#statuses.get(key('provider', providerId));
+    const active = this.#providers.get(providerId);
+    if (active === undefined) {
+      throw new Error(
+        status?.error === undefined
+          ? `Provider "${providerId}" is not configured.`
+          : `Provider "${providerId}" is unavailable: ${status.error}`,
+      );
+    }
+    if (status?.state === 'failed') {
+      throw new Error(
+        `Provider "${providerId}" did not activate: ${status.error ?? 'unknown error'}`,
+      );
+    }
+    return active.provider;
   }
 
   public statuses(): readonly RuntimeComponentStatus[] {
@@ -585,8 +653,29 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
         throw new Error(`Tool set "${toolSetId}" is unavailable: ${problem}`);
     }
 
-    const directToolSets = await this.#toolSets.grant(blueprint.toolSets.direct);
+    const configuredDirectToolSets = await this.#toolSets.grant(blueprint.toolSets.direct);
     const routedToolSets = await this.#toolSets.grant(blueprint.toolSets.routed);
+    let directToolSets = configuredDirectToolSets;
+    if (blueprint.memory?.tools !== undefined) {
+      if (memory?.editor === undefined) {
+        throw new Error(
+          `Memory "${blueprint.memory.id}" does not expose the editing surface required by its granted tools.`,
+        );
+      }
+      directToolSets = [
+        ...configuredDirectToolSets,
+        memoryToolSetGrant(
+          memory.editor,
+          blueprint.memory.tools,
+          memory.blocks,
+          blueprint.memory.blocks?.map((block) => block.label),
+        ),
+      ];
+    }
+    // Fail the candidate now, rather than opening an agent whose first session
+    // discovers a collision between configured and memory-owned tool names.
+    composeSessionTools(directToolSets, routedToolSets, this.#authorities);
+
     return new Agent(this.#database, provider, model, {
       agentId,
       artifacts: this.#artifacts,
@@ -601,7 +690,13 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
       maxIterations: blueprint.maxIterations,
       ...(memory === undefined
         ? {}
-        : { memory, memoryMaxTokens: blueprint.memory?.maxTokens ?? 2048 }),
+        : {
+            memory,
+            ...(blueprint.memory?.blocks === undefined
+              ? {}
+              : { memoryBlocks: blueprint.memory.blocks }),
+            memoryMaxTokens: blueprint.memory?.maxTokens ?? 2048,
+          }),
       routedToolSets,
       systemPrompt: blueprint.systemPrompt,
       timeZone,
@@ -695,27 +790,14 @@ class ConfigurationRuntimeController implements ConfigurationRuntime {
 
   /** The provider an agent named, refused here unless it can actually hold a conversation. */
   #requiredProvider(providerId: string): ChatProvider {
-    const status = this.#statuses.get(key('provider', providerId));
-    const active = this.#providers.get(providerId);
-    if (active === undefined) {
-      throw new Error(
-        status?.error === undefined
-          ? `Provider "${providerId}" is not configured.`
-          : `Provider "${providerId}" is unavailable: ${status.error}`,
-      );
-    }
-    if (status?.state === 'failed') {
-      throw new Error(
-        `Provider "${providerId}" did not activate: ${status.error ?? 'unknown error'}`,
-      );
-    }
-    if (!isChatCapable(active.provider)) {
+    const active = this.provider(providerId);
+    if (!isChatCapable(active)) {
       throw new Error(
         `Provider "${providerId}" serves no chat model, so an agent cannot talk through it. ` +
           'Name a provider that does.',
       );
     }
-    return active.provider;
+    return active;
   }
 
   #agentSignature(blueprint: Blueprint, timeZone: string): string {
@@ -850,4 +932,9 @@ function modelConfigFor(provider: ChatProvider, modelId: string): ChatModelConfi
 
 export { ConfigurationRuntimeController, ConfigurationRuntimeRelay };
 
-export type { ConfigurationRuntime, ConfigurationRuntimeOptions };
+export type {
+  ConfigurationRuntime,
+  ConfigurationRuntimeOptions,
+  MemoryRuntime,
+  RuntimeMemorySummary,
+};

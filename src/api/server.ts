@@ -9,6 +9,7 @@ import { configRoutes } from './config/routes';
 import { extensionRoutes } from './extensions/routes';
 import { health, type ReadinessChecks } from './health';
 import { languageRoutes } from './i18n/routes';
+import { memoryRoutes } from './memories/routes';
 import { API_PREFIX } from './prefix';
 import { secretRoutes } from './secrets/routes';
 import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './serverConfig';
@@ -18,6 +19,7 @@ import { ui } from './ui';
 import type { ArtifactPipeline } from '../artifact/pipeline';
 import type { SecretStore } from '../config/secrets';
 import type { ExtensionCatalog } from '../extensions/catalog';
+import type { MemoryRuntime } from '../runtime/configurationRuntime';
 import type { RegistrationWindow } from './auth/registration';
 import type { AuthStore } from './auth/store';
 import type { ChatHub } from './chat/transport';
@@ -65,6 +67,8 @@ interface ApiServerOptions extends ApiConfigInput {
   /** Language packs and extension-owned translation fragments exposed to the UI. */
   languages?: ContributionReader;
   logger?: Logger;
+  /** Active optional memory inspection and editing surfaces. Requires `auth`. */
+  memories?: MemoryRuntime;
   /**
    * Mounts `/api/secrets`, where the credentials behind every outbound call are
    * written. Values only ever go in; the routes have no way to read one back,
@@ -83,14 +87,11 @@ interface ApiServerOptions extends ApiConfigInput {
  * the application: it holds nothing, and every answer it gives comes from
  * something handed to it.
  *
- * Building it and opening the port are separate acts, because they belong to
- * different moments. The surface is assembled while Nox is still configurable,
- * which is when whoever composes it can hand it over to be released on
- * shutdown; the socket opens last, once the runtime behind it is whole. A port
- * that is answering is a promise that there is something to answer with.
- *
- * It is a `Disposable`, so whoever composes it can hand it to the application
- * and let the shutdown that closes everything else close this too.
+ * Building it and opening the port are separate acts that belong to different
+ * moments: the surface is assembled while Nox is still configurable, and the
+ * socket opens last, once the runtime behind it is whole — a port that is
+ * answering is a promise that there is something to answer with. It is a
+ * `Disposable`, so the shutdown that closes everything else closes this too.
  */
 class ApiServer implements Disposable {
   readonly #app: AnyElysia;
@@ -138,6 +139,9 @@ class ApiServer implements Disposable {
       api.use(authRoutes(options.auth));
       if (options.sessions !== undefined) {
         api.use(sessionRoutes({ sessions: options.sessions, store: options.auth.store }));
+      }
+      if (options.memories !== undefined) {
+        api.use(memoryRoutes({ memories: options.memories, store: options.auth.store }));
       }
       if (options.artifacts !== undefined) {
         api.use(artifactRoutes({ artifacts: options.artifacts, store: options.auth.store }));

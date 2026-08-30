@@ -169,7 +169,7 @@ class RoutingProvider extends ChatProvider {
       yield {
         toolCall: {
           arguments: { name: 'version', params: '{}' },
-          name: 'call_tool',
+          name: 'tool_call',
           role: 'toolCall',
           trackId: `version-${String(this.toolNames.length)}`,
         },
@@ -378,7 +378,7 @@ describe('Agent', () => {
     await session.stop();
   });
 
-  test('gates the selected routed tool rather than the call_tool wrapper', async () => {
+  test('gates the selected routed tool rather than the tool_call wrapper', async () => {
     const agent = new Agent(await openDatabase(), new RoutingProvider(), MODEL, {
       agentId: 'test',
       authorities: testCatalog(),
@@ -411,7 +411,7 @@ describe('Agent', () => {
 
     const response = session
       .getTranscript()
-      .find((message) => message.role === 'toolResponse' && message.name === 'call_tool');
+      .find((message) => message.role === 'toolResponse' && message.name === 'tool_call');
     expect(response?.role === 'toolResponse' ? response.response : []).toEqual([
       { text: 'one', type: 'text' },
     ]);
@@ -440,8 +440,8 @@ describe('Agent', () => {
     expect(sent[1]?.systemPrompt).toBe('you are nox');
     expect(sent[0]?.toolNames).toEqual(sent[1]?.toolNames ?? []);
     expect(sent[0]?.toolNames).toContain('echo');
-    expect(sent[0]?.toolNames).not.toContain('call_tool');
-    expect(sent[0]?.toolNames).not.toContain('search_tool');
+    expect(sent[0]?.toolNames).not.toContain('tool_call');
+    expect(sent[0]?.toolNames).not.toContain('tool_search');
 
     await first.stop();
     await second.stop();
@@ -492,11 +492,11 @@ describe('Agent', () => {
       [
         'you are nox',
         '',
-        'Routed tool sets available through search_tool:',
+        'Routed tool sets available through tool_search:',
         '- File tools: Read and search local files.',
         '- Web tools: Drive a real browser, extract pages and search the public web.',
         '',
-        'Use these descriptions to decide when to call search_tool and which capability keywords to search. Its results are authoritative for exact tool names and parameter schemas.',
+        'Use these descriptions to decide when to call tool_search and which capability keywords to search. Its results are authoritative for exact tool names and parameter schemas.',
       ].join('\n'),
     );
 
@@ -533,8 +533,8 @@ describe('Agent', () => {
     ]);
     expect(provider.toolNames[0]).toContain('alpha');
     expect(provider.toolNames[0]).not.toContain('beta');
-    expect(provider.toolNames[0]).toContain('call_tool');
-    expect(provider.toolNames[0]).toContain('search_tool');
+    expect(provider.toolNames[0]).toContain('tool_call');
+    expect(provider.toolNames[0]).toContain('tool_search');
     expect(provider.toolNames[0]).not.toContain('version');
     await first.stop();
 

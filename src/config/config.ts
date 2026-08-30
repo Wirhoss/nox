@@ -78,12 +78,10 @@ function isDeferred(section: ConfigSection): boolean {
  * data elsewhere; this holds the values, validates every write against the
  * section's own schema and reports whether the change needs a restart.
  *
- * Loading happens in two phases, and the split is real rather than an
- * implementation detail. Static sections are read first because the process
- * needs them to exist at all — the log level and the database path are required
- * before anything can be started. Sections backed by a contribution point cannot
- * be read yet, because the schemas that validate them arrive with the extensions
- * that have not activated. `resolve` is the second phase, and until it runs
+ * Loading happens in two phases, and the split is real: static sections are
+ * read first because the process needs them to exist at all, while sections
+ * backed by a contribution point cannot be read until the extensions that own
+ * their schemas have activated. `resolve` is the second phase; until it runs,
  * those sections have no value rather than a wrong one.
  */
 class Config {
@@ -197,16 +195,11 @@ class Config {
 
   /**
    * Every secret the configuration names right now, with the location naming it.
-   *
    * Read from the values held here rather than from what has been composed, so a
-   * credential is knowable the moment it is configured: a tool set no agent was
-   * granted, a provider saved a second ago through the settings surface, and one
-   * a running adapter already holds all answer the same way.
-   *
-   * Every loaded section is walked rather than a chosen few. A reference only
-   * survives validation where a contribution's schema declared `secretRefSchema`,
-   * so there is nothing to exclude — and a section that gains credentials later
-   * needs no change here.
+   * credential is knowable the moment it is configured. Every loaded section is
+   * walked rather than a chosen few: a reference only survives validation where
+   * a contribution's schema declared `secretRefSchema`, so there is nothing to
+   * exclude and a section that gains credentials later needs no change here.
    */
   public secretReferences(): readonly SecretReference[] {
     return Object.freeze(
@@ -306,21 +299,13 @@ class Config {
   }
 
   /**
-   * Writes one instance of a contributed section. Unlike a directory entry this
-   * is a read-modify-write of a shared document, so it happens here rather than
-   * in a caller: reading the record, replacing one key and writing it back is
-   * only safe while nothing else may write between the read and the write, and
-   * this is the lock that guarantees it.
-   *
-   * The whole document is re-validated, which is the point — an instance is
-   * validated against the union assembled from what extensions contributed, and
-   * one that names a `type` nobody registered is refused with the rest of the
-   * file unchanged.
-   *
-   * `validate` sees the parsed instance before anything is written, exactly as
-   * `updateEntry` shows it a parsed entry. The two are the same promise made
-   * about the two ways a section stores entries, so a caller can insist on
-   * something without first asking which kind of section it is writing to.
+   * Writes one instance of a contributed section. This is a read-modify-write
+   * of a shared document, so it happens under the config lock rather than in a
+   * caller: reading the record, replacing one key and writing it back is only
+   * safe while nothing else may write in between. The whole document is
+   * re-validated, so an instance naming a `type` nobody registered is refused
+   * with the rest of the file unchanged. `validate` sees the parsed instance
+   * before anything is written, the same promise `updateEntry` makes.
    */
   public async updateInstance<K extends ContributionKey>(
     key: K,

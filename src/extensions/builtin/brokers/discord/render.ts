@@ -37,17 +37,15 @@ function hardSplit(line: string, limit: number): string[] {
 }
 
 /**
- * One reply as a sequence of messages Discord will accept.
+ * One reply as a sequence of messages Discord will accept. Splitting is on line
+ * boundaries — a chat message is read rather than parsed, and a sentence cut
+ * mid-word reads as a bug. The one structure actively repaired is the code
+ * fence: a block split across two messages would render as prose in the first
+ * and as an unterminated block in the second, so the fence is closed at the end
+ * of one chunk and reopened, with its language, at the start of the next.
  *
- * Splitting is on line boundaries, because a chat message is read rather than
- * parsed and a sentence cut in half mid-word reads as a bug. The one structure
- * that is actively repaired is the code fence: a block split across two messages
- * would render as prose in the first and as an unterminated block in the second,
- * so the fence is closed at the end of one chunk and reopened, with its language,
- * at the start of the next.
- *
- * Text that is already short enough comes back as itself, which is the case that
- * matters — most replies are one message and pay nothing for this.
+ * Text already short enough comes back as itself — the case that matters, since
+ * most replies are one message and pay nothing for this.
  */
 function chunkMessage(text: string, limit: number = MESSAGE_LIMIT): readonly string[] {
   const trimmed = text.trim();

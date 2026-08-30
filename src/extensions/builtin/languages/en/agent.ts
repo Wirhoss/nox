@@ -49,6 +49,14 @@ const agentMessages = Object.freeze({
   'settings.agent.memoryMaxTokens': 'Memory token budget',
   'settings.agent.memoryMaxTokensHint':
     'Maximum recalled memory injected ephemerally into each model run.',
+  'settings.agent.memoryTool.memory_forget':
+    'Retire a current fact from recall while preserving its audit history.',
+  'settings.agent.memoryTool.memory_search': 'Search current facts and obtain their opaque IDs.',
+  'settings.agent.memoryTool.memory_update': 'Replace a current fact with a corrected version.',
+  'settings.agent.memoryTool.memory_write': 'Write one explicit durable fact.',
+  'settings.agent.memoryTools': 'Agentic memory tools',
+  'settings.agent.memoryToolsHint':
+    'No tool is granted implicitly. Select only the operations this blueprint may expose directly to its model.',
   'settings.agent.model': 'Model',
   'settings.agent.modelContext': 'MODEL CONTEXT',
   'settings.agent.modelHint': 'Exact model ID exposed by the selected provider.',

@@ -167,19 +167,16 @@ class OwnerAuthorizationProvider implements AuthorizationProvider {
 type SubjectGroups = (subject: string) => readonly string[];
 
 /**
- * Authorization from configured grants, scoped to a single issuer.
- *
- * One instance belongs to one broker: the issuer is that broker's configured ID,
- * and the subjects are the sender IDs it authenticates. A principal from any
- * other issuer is unknown here and is denied — the same subject on a different
- * transport is a different person, and this is where that stays true.
+ * Authorization from configured grants, scoped to a single issuer. One instance
+ * belongs to one broker: the issuer is that broker's configured ID, the subjects
+ * are the sender IDs it authenticates, and a principal from any other issuer is
+ * denied — the same subject on a different transport is a different person.
  *
  * A grant key is either a sender the transport authenticates or a group it
- * reports that sender belongs to. Both are looked up the same way and neither
- * outranks the other: authority is the union, because a grant is a permission
- * and two permissions do not subtract. Restricting someone who holds a
- * permissive role is done by not giving them the role, not by a narrower entry
- * that would silently never apply.
+ * reports that sender belongs to; both are looked up the same way and neither
+ * outranks the other — authority is the union, because two permissions do not
+ * subtract. Restricting someone who holds a permissive role is done by not
+ * giving them the role, not by a narrower entry that would silently never apply.
  */
 class GrantAuthorizationProvider implements AuthorizationProvider {
   public readonly id: string;
@@ -189,9 +186,8 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
   readonly #issuer: string;
 
   /**
-   * Grants are validated here rather than on first use, so an authority nobody
-   * registered fails at load with the entry that named it, instead of becoming a
-   * grant that silently never matches anything.
+   * Grants are validated at load, so an authority nobody registered fails beside
+   * the entry that named it instead of becoming a grant that silently never matches.
    */
   constructor(
     issuer: string,

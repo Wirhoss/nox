@@ -60,13 +60,13 @@ const HISTORY_TOOL_SET_ID = 'nox.history';
  * The reservation cannot depend on the archive: a name that is taken in
  * production but free in a context composed without storage is a collision
  * nobody discovers until the day it matters. Composing a tool called
- * `search_sessions` is refused either way.
+ * `history_sessions_search` is refused either way.
  */
 const HISTORY_TOOL_NAMES = Object.freeze([
-  'list_sessions',
-  'read_tool_result',
-  'search_history',
-  'search_sessions',
+  'history_read_result',
+  'history_search',
+  'history_sessions',
+  'history_sessions_search',
 ] as const);
 
 /**
@@ -156,7 +156,7 @@ const searchSessionsSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Restrict the search to one session, as reported by list_sessions. Omit it to search ' +
+      'Restrict the search to one session, as reported by history_sessions. Omit it to search ' +
         'every session held with you.',
     ),
 });
@@ -224,7 +224,7 @@ function toBudgetedContent(
 interface HistorySearchOptions {
   /**
    * Storage for the transcripts. Without it the messages held in memory are all
-   * there is, so only `read_tool_result` is offered — a search tool with no
+   * there is, so only `history_read_result` is offered — a search tool with no
    * index behind it would answer every question with silence, which reads to a
    * model as "it never happened".
    */
@@ -241,7 +241,7 @@ class HistorySearchToolSet extends ToolSet {
   readonly #transcript: Transcript;
 
   constructor(transcript: Transcript, options: HistorySearchOptions = {}) {
-    super('history_search', 'Searches and reads this session and the ones before it.');
+    super('History', 'Searches and reads this session and the ones before it.');
     this.#archive = options.archive;
     this.#maxSearchCharacters = options.maxSearchCharacters ?? DEFAULT_MAX_SEARCH_CHARACTERS;
     this.#sessionId = options.sessionId ?? '';
@@ -255,7 +255,7 @@ class HistorySearchToolSet extends ToolSet {
       description:
         'Read an earlier tool result by track ID. Results are bounded; if the response ' +
         'reports a next offset, call the tool again from that offset.',
-      name: 'read_tool_result' satisfies HistoryToolName,
+      name: 'history_read_result' satisfies HistoryToolName,
       parameters: readToolResultSchema,
       prepare: ({ trackId, offset, maxCharacters }) => ({
         run: () => Promise.resolve(this.#transcript.readToolResult(trackId, offset, maxCharacters)),
@@ -276,7 +276,7 @@ class HistorySearchToolSet extends ToolSet {
         'best-matching excerpts. Use it to recover earlier facts, requirements, decisions, ' +
         'commands, errors, or exact identifiers instead of guessing or asking the user to ' +
         'repeat them.',
-      name: 'search_history' satisfies HistoryToolName,
+      name: 'history_search' satisfies HistoryToolName,
       parameters: searchHistorySchema,
       prepare: ({ query, limit }) => ({
         run: async () =>
@@ -296,8 +296,8 @@ class HistorySearchToolSet extends ToolSet {
       description:
         'List the sessions held with you, most recently active first, with their IDs, titles ' +
         'and timestamps. Use it to find out what you have worked on before, or to get a ' +
-        'session ID to point search_sessions at.',
-      name: 'list_sessions' satisfies HistoryToolName,
+        'session ID to point history_sessions_search at.',
+      name: 'history_sessions' satisfies HistoryToolName,
       parameters: listSessionsSchema,
       prepare: ({ limit, offset }) => ({
         run: async () => [
@@ -319,7 +319,7 @@ class HistorySearchToolSet extends ToolSet {
         'get back the best-matching excerpts with the session each came from. Use it to recover ' +
         'something said in an earlier conversation — a decision, a path, a preference the user ' +
         'stated once. Narrow it with sessionId when you already know which session.',
-      name: 'search_sessions' satisfies HistoryToolName,
+      name: 'history_sessions_search' satisfies HistoryToolName,
       parameters: searchSessionsSchema,
       prepare: ({ query, limit, sessionId }) => ({
         run: async () =>

@@ -318,6 +318,9 @@ class TestBroker implements Broker {
   public starts = 0;
   public stopped = false;
 
+  /** Channels this transport refuses, the way Discord refuses an unknown one. */
+  public readonly unreachable = new Set<string>();
+
   #host?: BrokerHost;
   #messages = 0;
 
@@ -325,7 +328,14 @@ class TestBroker implements Broker {
     this.capabilities = capabilities;
   }
 
+  public canDeliverTo(channelId: string): Promise<boolean> {
+    return Promise.resolve(!this.unreachable.has(channelId));
+  }
+
   public deliver(event: OutboundEvent): Promise<void> {
+    if (this.unreachable.has(event.conversationId)) {
+      return Promise.reject(new Error(`Refused a message addressed to "${event.conversationId}".`));
+    }
     this.delivered.push(event);
     return Promise.resolve();
   }
@@ -594,6 +604,62 @@ describe('Gateway', () => {
     ).toMatchObject([{ content: [{ text: 'selected agent result', type: 'text' }] }]);
     const starts = broker.delivered.filter((event) => event.type === 'runStarted');
     expect(starts.map((event) => event.trigger)).toEqual(['user']);
+  });
+
+  test('records a refused scheduled delivery as an error instead of a delivery', async () => {
+    // The original failure: Discord answered 404 to the post, the broker logged
+    // it and returned, and the run was stored as delivered at the very instant
+    // the message bounced. Nothing a person could read said it had not arrived.
+    const broker = new TestBroker();
+    broker.unreachable.add('222120611298672640');
+    const harnessed = await harness(await openDatabase(), broker);
+
+    const result = await harnessed.gateway.runScheduledAgent({
+      agentId: 'assistant',
+      causeId: 'cron-run-404',
+      delivery: { brokerId: 'test', channelId: '222120611298672640' },
+      name: 'Greeting',
+      prompt: 'say hello',
+      sessionId: 'cron-session-404',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.deliveredAt).toBeUndefined();
+    expect(result.deliveryError).toContain('222120611298672640');
+    // The run itself completed — the agent did its work. Only the delivery
+    // failed, and the two stay separately true.
+    expect(result.status).toBe('completed');
+  });
+
+  test('answers whether a transport will take an address, and where a session already is', async () => {
+    const broker = new TestBroker();
+    broker.unreachable.add('222120611298672640');
+    const harnessed = await harness(await openDatabase(), broker);
+    const signal = new AbortController().signal;
+
+    expect(
+      await harnessed.gateway.canDeliverTo(
+        { brokerId: 'test', channelId: '222120611298672640' },
+        signal,
+      ),
+    ).toBe(false);
+    expect(
+      await harnessed.gateway.canDeliverTo({ brokerId: 'test', channelId: 'chat-1' }, signal),
+    ).toBe(true);
+    expect(
+      await harnessed.gateway.canDeliverTo({ brokerId: 'absent', channelId: 'chat-1' }, signal),
+    ).toBe(false);
+
+    broker.say('chat-1', 'hola');
+    await settle(harnessed);
+    const sessionId = harnessed.application.sessions[0]?.session.sessionId;
+    expect(sessionId).toBeDefined();
+
+    expect(await harnessed.gateway.deliveryOrigin(sessionId ?? '', signal)).toEqual({
+      brokerId: 'test',
+      channelId: 'chat-1',
+    });
+    expect(await harnessed.gateway.deliveryOrigin('no-such-session', signal)).toBeUndefined();
   });
 
   test('preserves structured media from broker ingress through transcript and history', async () => {

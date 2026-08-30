@@ -1,10 +1,12 @@
+import { type ContributionReader, memories, type MemoryEditor } from '@nox/extension-api';
+
+import { memoryToolSetGrant } from '../../agent/memoryToolSet';
 import { composeSessionTools } from '../../agent/tools';
 
 import type { AuthorityCatalog } from '../../auth/authority';
 import type { Blueprint, ToolSetGrantConfig } from '../../config/blueprint';
 import type { Config } from '../../config/config';
 import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
-import type { ContributionReader } from '@nox/extension-api';
 
 /**
  * A blueprint that could not activate as a replacement generation. Saving one is how
@@ -38,6 +40,14 @@ interface BlueprintContext {
 function reason(error: unknown): string {
   return error instanceof Error ? error.message.replace(/\.$/, '') : String(error);
 }
+
+/** Shape-only stand-in: blueprint validation composes tools but never executes them. */
+const VALIDATION_MEMORY_EDITOR: MemoryEditor = Object.freeze({
+  forget: () => false,
+  search: () => [],
+  update: () => undefined,
+  write: () => ({ id: 'validation', text: 'validation' }),
+});
 
 /** The instance ID out of either form a tool-set grant may take. */
 function grantId(grant: ToolSetGrantConfig): string {
@@ -74,13 +84,31 @@ async function assertBlueprintReferences(
   }
   if (blueprint.memory !== undefined && !Object.hasOwn(configuredMemories, blueprint.memory.id)) {
     problems.push(`memories.json configures no memory "${blueprint.memory.id}"`);
+  } else if (blueprint.memory?.tools !== undefined) {
+    const configuredMemory = configuredMemories[blueprint.memory.id];
+    const contribution =
+      configuredMemory === undefined
+        ? undefined
+        : context.contributions.get(memories, configuredMemory.type);
+    if (contribution?.value.capabilities?.tools !== true) {
+      problems.push(
+        `memory "${blueprint.memory.id}" does not declare support for agentic memory tools`,
+      );
+    }
   }
 
   if (problems.length > 0) throw new BlueprintReferenceError(agentId, problems);
 
   try {
-    const direct = await context.toolSets.grant(blueprint.toolSets.direct);
+    const configuredDirect = await context.toolSets.grant(blueprint.toolSets.direct);
     const routed = await context.toolSets.grant(blueprint.toolSets.routed);
+    const direct =
+      blueprint.memory?.tools === undefined
+        ? configuredDirect
+        : [
+            ...configuredDirect,
+            memoryToolSetGrant(VALIDATION_MEMORY_EDITOR, blueprint.memory.tools),
+          ];
 
     composeSessionTools(direct, routed, context.authorities());
   } catch (error) {

@@ -34,18 +34,18 @@ describe('ToolRouter', () => {
   test('exposes only its two direct routing tools in name order', () => {
     const router = new ToolRouter([immediateTool('read_file'), immediateTool('send_email')]);
 
-    expect(Object.keys(router.tools)).toEqual(['call_tool', 'search_tool']);
+    expect(Object.keys(router.tools)).toEqual(['tool_call', 'tool_search']);
     expect(Object.isFrozen(router.tools)).toBe(true);
   });
 
   test('routes a call under the routed tool own trust, not the router own', () => {
-    // `call_tool` is a doorway: it returns the routed tool's execution, already
+    // `tool_call` is a doorway: it returns the routed tool's execution, already
     // stamped. If the router restamped it, every scraped page would arrive
     // wearing the trust of a core tool.
     const scraper = immediateTool('fetch_page');
     const router = new ToolRouter([bindTool(scraper, 'scraper')]);
-    const callTool = router.tools.call_tool;
-    if (callTool === undefined) throw new Error('The router exposes call_tool.');
+    const callTool = router.tools.tool_call;
+    if (callTool === undefined) throw new Error('The router exposes tool_call.');
     const routed = bindTool(callTool, 'nox.router');
 
     const execution = routed.prepare({ name: 'fetch_page', params: '{}' });
@@ -54,8 +54,8 @@ describe('ToolRouter', () => {
 
     // The catalog it renders is Nox describing its own tool table, so that one
     // is trusted — and it is the only tool in here that is.
-    const searchTool = router.tools.search_tool;
-    if (searchTool === undefined) throw new Error('The router exposes search_tool.');
+    const searchTool = router.tools.tool_search;
+    if (searchTool === undefined) throw new Error('The router exposes tool_search.');
     const search = bindTool(searchTool, 'nox.router');
     expect(search.prepare({ query: 'fetch' }).gateSubject?.trust).toBe('trusted');
   });
@@ -73,7 +73,7 @@ describe('ToolRouter', () => {
       reverse.search('weather city').map((tool) => tool.name),
     );
 
-    const execution = forward.prepare('search_tool', { query: 'weather city' });
+    const execution = forward.prepare('tool_search', { query: 'weather city' });
     expect(execution.type).toBe('immediate');
     if (execution.type !== 'immediate') throw new Error('Expected immediate execution.');
     const response = await execution.run({ abortSignal: new AbortController().signal });
@@ -83,7 +83,7 @@ describe('ToolRouter', () => {
 
     expect(payload.tools).toContain('Tool: weather_forecast');
     expect(payload.tools).toContain('Description: Get a weather forecast for a city.');
-    expect(payload.tools).toContain('call attach_artifact with an artifact ID');
+    expect(payload.tools).toContain('call artifact_attach with an artifact ID');
     expect(payload.tools).toContain('Do not encode file bytes as base64');
     expect(payload.tools).not.toContain('Tool: calendar_events');
   });
@@ -111,7 +111,7 @@ describe('ToolRouter', () => {
     };
     const router = new ToolRouter([readFile]);
 
-    const execution = router.prepare('call_tool', {
+    const execution = router.prepare('tool_call', {
       name: 'read_file',
       params: '{"path":"README.md"}',
     });
@@ -124,7 +124,7 @@ describe('ToolRouter', () => {
     expect(response).toEqual(text('read README.md'));
   });
 
-  test('preserves deferred execution instead of running it inside call_tool', async () => {
+  test('preserves deferred execution instead of running it inside tool_call', async () => {
     const result = Promise.resolve(text('finished'));
     const deferred: Tool = {
       authority: TEST_AUTHORITY,
@@ -139,7 +139,7 @@ describe('ToolRouter', () => {
     };
     const router = new ToolRouter([deferred]);
 
-    const execution = router.prepare('call_tool', { name: 'background_job', params: '{}' });
+    const execution = router.prepare('tool_call', { name: 'background_job', params: '{}' });
     expect(execution.type).toBe('deferred');
     if (execution.type !== 'deferred') throw new Error('Expected deferred execution.');
 
@@ -163,13 +163,13 @@ describe('ToolRouter', () => {
     };
     const router = new ToolRouter([counted]);
 
-    expect(() => router.prepare('call_tool', { name: 'count', params: '{not json}' })).toThrow(
+    expect(() => router.prepare('tool_call', { name: 'count', params: '{not json}' })).toThrow(
       SyntaxError,
     );
     expect(() =>
-      router.prepare('call_tool', { name: 'count', params: '{"count":"many"}' }),
+      router.prepare('tool_call', { name: 'count', params: '{"count":"many"}' }),
     ).toThrow(InvalidToolParamsError);
-    expect(() => router.prepare('call_tool', { name: 'missing', params: '{}' })).toThrow(
+    expect(() => router.prepare('tool_call', { name: 'missing', params: '{}' })).toThrow(
       UnknownToolError,
     );
   });
@@ -178,8 +178,8 @@ describe('ToolRouter', () => {
     expect(() => new ToolRouter([immediateTool('same'), immediateTool('same')])).toThrow(
       'Routed tool same is registered more than once.',
     );
-    expect(() => new ToolRouter([immediateTool('call_tool')])).toThrow(
-      'Routed tool call_tool conflicts with a tool router tool.',
+    expect(() => new ToolRouter([immediateTool('tool_call')])).toThrow(
+      'Routed tool tool_call conflicts with a tool router tool.',
     );
   });
 });

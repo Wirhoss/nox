@@ -8,9 +8,9 @@ import {
 } from '@nox/extension-api';
 
 /**
- * A Discord snowflake. Validated rather than accepted as any string because
- * every ID in this file is pasted by a human out of a client, and a mistyped
- * channel is otherwise a broker that silently listens to nothing.
+ * A Discord snowflake. Validated because every ID here is pasted by a human out
+ * of a client, and a mistyped channel is otherwise a broker that silently
+ * listens to nothing.
  */
 const snowflakeSchema = z
   .string()
@@ -21,12 +21,10 @@ const snowflakeSchema = z
 const ROLE_PREFIX = 'role:';
 
 /**
- * Who an entry speaks for: one member, or everyone holding one role.
- *
- * Both halves of Discord's world are snowflakes and nothing in the ID says which
- * kind it is, so the prefix is what distinguishes them. Without it a role pasted
- * where a user was expected is a grant that quietly matches nobody, which is the
- * failure this whole file is written to avoid.
+ * Who an entry speaks for: one member, or everyone holding one role. Both are
+ * snowflakes and nothing in the ID says which kind it is, so the prefix
+ * distinguishes them; without it a role pasted where a user was expected is a
+ * grant that quietly matches nobody.
  */
 const discordPrincipalRefSchema = z
   .string()
@@ -42,44 +40,29 @@ function isRoleRef(reference: string): boolean {
 }
 
 /**
- * What makes a message in a guild channel something said *to* Nox.
- *
- * All four are deterministic on purpose, and they are the whole of the rule for
- * now. `all` is the honest name for "this channel exists for the bot": every
- * message in it is addressed, which is what a dedicated channel or a thread the
- * bot was invited into actually means.
- *
- * A non-deterministic gate — the bot reading the room and deciding whether it
- * has anything to say — is a later layer, and it sits *after* this one rather
- * than replacing it: it needs the unaddressed traffic to read, which is what
- * `observe` collects.
+ * What makes a message in a guild channel something said *to* Nox. All four are
+ * deterministic on purpose; `all` is the honest name for "this channel exists
+ * for the bot". A non-deterministic gate — the bot deciding whether it has
+ * anything to say — is a later layer that sits *after* this one, because it
+ * needs the unaddressed traffic `observe` collects.
  */
 const discordTriggerSchema = z.enum(['all', 'mention', 'name', 'reply']);
 
 /**
- * What the agent is told about a channel it was not addressed in.
- *
- * `none` means the transcript contains only what was said to Nox, with the rest
- * of the room missing — which reads, to the model, as its own replies separated
- * by silence.
- *
- * `channel` is the truthful one and it is not free. Unaddressed traffic costs
- * context and gets folded and compacted like anything else, and — because a
- * second principal's words enter the transcript — it puts the session into the
- * shared-conversation floor permanently: every effectful tool call needs the
- * originator's explicit approval, and session-scoped approvals stop applying.
- * That is the correct consequence, not an accident, which is why the default is
- * `none` and turning it on is a deliberate act.
+ * What the agent is told about a channel it was not addressed in. `none` leaves
+ * the rest of the room missing, which reads to the model as its own replies
+ * separated by silence. `channel` is the truthful one and it is not free:
+ * unaddressed traffic costs context, and a second principal's words put the
+ * session into the shared-conversation floor permanently — every effectful call
+ * needs the originator's explicit approval. That is the correct consequence,
+ * which is why the default is `none` and turning it on is a deliberate act.
  */
 const discordObserveSchema = z.enum(['channel', 'none']);
 
 /**
- * One admitted guild channel.
- *
- * Admission and authority are separate decisions and stay in separate places: a
- * channel listed here is one Nox reads, and it grants nothing. Who may make the
- * agent *act* in it is `grants` and `conversations` on the broker itself, which
- * default to nobody.
+ * One admitted guild channel. Admission and authority are separate decisions: a
+ * channel listed here is one Nox reads, and it grants nothing — who may make the
+ * agent *act* in it is `grants` and `conversations`, which default to nobody.
  */
 const discordChannelSchema = z.strictObject({
   observe: discordObserveSchema.prefault('none').meta({
@@ -95,17 +78,10 @@ const discordChannelSchema = z.strictObject({
   /**
    * Who may make the agent answer here. Empty means anyone the channel already
    * lets speak, which is Discord's own decision and a reasonable one for a
-   * private team channel.
-   *
-   * It is a different question from `grants`, and both are worth having. Grants
+   * private team channel. It is a different question from `grants`: grants
    * decide what a principal may *do* once a run is theirs; this decides whether
-   * a run starts at all. Without it, a channel opened to a wider audience turns
-   * every passer-by into someone who can spend model calls, even with no
-   * authority to reach a single tool.
-   *
-   * What a listed sender does not change is what an unlisted one costs: their
-   * messages are still observed where the channel observes, because the room is
-   * the room.
+   * a run starts at all. Unlisted senders are still observed where the channel
+   * observes — the room is the room.
    */
   senders: z
     .array(discordPrincipalRefSchema)
@@ -131,10 +107,8 @@ const discordChannelSchema = z.strictObject({
     }),
   /**
    * Whether threads under this channel are admitted with it. Inheriting is the
-   * default because a thread is the natural unit of "one conversation with a
-   * beginning and an end" on Discord — a thread is a channel, so it is its own
-   * conversation with its own transcript — and needing to edit configuration
-   * before the bot may answer in one would make that unusable.
+   * default because a thread is a channel: its own conversation with its own
+   * transcript, and the natural unit of one chat with a beginning and an end.
    */
   threads: z
     .enum(['ignore', 'inherit'])
@@ -152,11 +126,9 @@ const discordChannelSchema = z.strictObject({
 });
 
 /**
- * What of a run reaches the channel, beyond the reply itself.
- *
- * These become the broker's declared capabilities, so they decide what the
- * gateway sends *and* what a transcript read back through this transport
- * contains. Turning one off later does not hide what was already posted; it
+ * What of a run reaches the channel, beyond the reply itself. These become the
+ * broker's declared capabilities, so they decide what the gateway sends *and*
+ * what a transcript read back through this transport contains — turning one off
  * hides that kind of thing from then on, in both directions.
  */
 const discordVerbositySchema = z.strictObject({
@@ -204,16 +176,11 @@ const discordConfigShape = {
     .prefault({})
     .meta({ nox: { help: 'ui.channelsHelp', label: 'ui.channels' } }),
   /**
-   * Who may open a direct message with the bot, by user ID.
-   *
-   * A DM needs no ingress rule and does not get one: there is one person in it,
-   * everything they say is addressed to Nox, and the session never becomes
-   * shared. The only question a DM raises is admission, and this answers it once
-   * rather than per message.
-   *
-   * The conversation ID of a DM is its channel ID, which Discord issues and
-   * nobody can know in advance — so a `conversations` override for a DM can only
-   * be written after the first one has been opened.
+   * Who may open a direct message with the bot, by user ID. A DM needs no
+   * ingress rule: there is one person in it, everything they say is addressed to
+   * Nox, and the session never becomes shared. Its conversation ID is the
+   * channel ID, which nobody can know in advance — so a `conversations` override
+   * for a DM can only be written after the first one has been opened.
    */
   dms: z
     .array(snowflakeSchema)
@@ -221,23 +188,17 @@ const discordConfigShape = {
     .prefault([])
     .meta({ nox: { help: 'ui.dmsHelp', label: 'ui.dms' } }),
   /**
-   * Where slash commands are published, or nothing to publish them globally.
-   *
-   * A guild registers them immediately, which is what an operator wants while
-   * setting one up. Global is the other real case and not a worse one: a guild
-   * command list belongs to a single server and cannot be used in a direct
-   * message at all, so a bot that is in more than one server, or that is talked
-   * to in DMs, needs its commands published globally. The cost is Discord's own —
-   * about an hour to propagate — and it is the operator's call to make, not this
-   * schema's.
+   * Where slash commands are published, or nothing to publish them globally. A
+   * guild registers them immediately; a guild list cannot be used in DMs at all,
+   * so a bot in several servers or in DMs needs them global. The cost — about an
+   * hour to propagate — is the operator's call to make, not this schema's.
    */
   guildId: snowflakeSchema
     .optional()
     .meta({ nox: { help: 'ui.guildIdHelp', label: 'ui.guildId' } }),
   /**
    * Extra words that count as being addressed where `respondTo` includes `name`.
-   * The bot's own Discord username always counts and never needs listing; this
-   * is for the name people actually use, which is rarely the account's.
+   * The bot's own username always counts; this is for the name people actually use.
    */
   names: z
     .array(z.string().trim().min(1).max(32))
@@ -249,12 +210,10 @@ const discordConfigShape = {
 
 /**
  * Configuration for the Discord transport, as `brokers.json` holds it.
- *
- * `agent`, `grants` and `conversations` come from the broker floor and mean the
- * same here as anywhere: `grants` is empty by default, and a per-conversation
- * override is what makes one channel a different security boundary from
- * another. That matters more on this transport than on any other, because a
- * single bot connection reaches every channel it can see with one issuer.
+ * `grants` is empty by default, and a per-conversation override is what makes
+ * one channel a different security boundary from another — which matters more
+ * here than anywhere, because one bot connection reaches every channel it can
+ * see with a single issuer.
  */
 const discordBrokerConfigSchema = brokerBaseConfigSchema.extend({
   ...discordConfigShape,

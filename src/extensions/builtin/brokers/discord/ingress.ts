@@ -30,19 +30,17 @@ interface IngressMessage {
 }
 
 /**
- * What Nox does with a message that arrived.
+ * What Nox does with a message that arrived. `address` is a turn: attributed to
+ * its sender, it enters the transcript and starts a run under that principal's
+ * authority. `observe` is the same message as context and nothing else — it
+ * belongs to the transcript, grants nothing, and wakes no agent. `ignore` never
+ * existed as far as Nox is concerned.
  *
- * `address` is a turn: it is attributed to its sender, enters the transcript and
- * starts a run under that principal's authority. `observe` is the same message
- * as context and nothing else — it belongs to the transcript, it grants nothing,
- * and it wakes no agent. `ignore` never existed as far as Nox is concerned.
- *
- * The three are separate because the interesting future layer sits exactly
- * between the last two: a gate that reads what was observed and decides whether
- * there is anything worth saying. It cannot promote an observation into a turn
- * under the speaker's authority — nobody asked Nox for anything — so when it
- * exists it will speak under a system principal, which starts with nothing
- * granted.
+ * The three are separate because the interesting future layer sits between the
+ * last two: a gate that reads what was observed and decides whether anything is
+ * worth saying. It cannot promote an observation into a turn under the
+ * speaker's authority — nobody asked for anything — so it will speak under a
+ * system principal, which starts with nothing granted.
  */
 type IngressDecision =
   | { readonly kind: 'address' }

@@ -24,6 +24,7 @@ const commonMessages = Object.freeze({
   'navigation.disconnect': 'Disconnect',
   'navigation.identity': 'IDENTITY',
   'navigation.logoutFailed': 'Logout failed',
+  'navigation.memory': 'Memory',
   'navigation.primary': 'Primary navigation',
   'navigation.sessions': 'Sessions',
   'navigation.settings': 'Settings',

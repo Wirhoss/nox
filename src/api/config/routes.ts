@@ -104,17 +104,15 @@ function notEntried(section: string): Record<string, string> {
 /**
  * Configuration as an administrable surface — all of it, through one door: the
  * sections, their documents, and the entries inside the sections that hold
- * several. The blueprints are among those entries and not beside them, because
- * a second route onto the same files is a second set of checks to keep in step
+ * several. Blueprints are among those entries and not beside them, because a
+ * second route onto the same files is a second set of checks to keep in step
  * with this one.
  *
- * Every write reports `restartRequired` from the section or field-level runtime
- * policy rather than assuming it. Hot generations and infrastructure changes
- * therefore share one surface without either being mislabeled.
- *
- * Authenticated throughout. A blueprint is the whole of what an agent will do,
- * providers name the endpoints Nox talks to, tool sets decide what tools exist
- * at all, and `app.json` holds the token lifetimes protecting this very route.
+ * Every write reports `restartRequired` from section or field-level runtime
+ * policy, so hot generations and infrastructure changes share one surface
+ * without either being mislabeled. Authenticated throughout: a blueprint is the
+ * whole of what an agent will do, providers name the endpoints Nox talks to,
+ * and `app.json` holds the token lifetimes protecting this very route.
  */
 function createConfigRoutes(options: ConfigRoutesOptions) {
   const { config, store } = options;

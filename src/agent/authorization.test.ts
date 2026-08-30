@@ -197,7 +197,7 @@ class AttachingProvider extends ChatProvider {
       yield {
         toolCall: {
           arguments: { artifactId: this.#artifactId },
-          name: 'attach_artifact',
+          name: 'artifact_attach',
           role: 'toolCall',
           trackId: 'attach-approved',
         },
@@ -210,7 +210,7 @@ class AttachingProvider extends ChatProvider {
   }
 }
 
-/** Routes through `call_tool`, so the router's own name is not the subject. */
+/** Routes through `tool_call`, so the router's own name is not the subject. */
 class RoutingProvider extends ChatProvider {
   #calls = 0;
 
@@ -235,7 +235,7 @@ class RoutingProvider extends ChatProvider {
       yield {
         toolCall: {
           arguments: { name: 'version', params: '{}' },
-          name: 'call_tool',
+          name: 'tool_call',
           role: 'toolCall',
           trackId: `routed-${String(this.#calls)}`,
         },
@@ -692,8 +692,8 @@ describe('what a tool asks for', () => {
   test('the router own tools declare explicit authorities rather than inheriting one', () => {
     const router = new ToolRouter([versionTool({ count: 0 })]);
 
-    expect(router.tools.search_tool?.authority).toBe(TOOL_SEARCH_AUTHORITY);
-    expect(router.tools.call_tool?.authority).toBe(TOOL_CALL_AUTHORITY);
+    expect(router.tools.tool_search?.authority).toBe(TOOL_SEARCH_AUTHORITY);
+    expect(router.tools.tool_call?.authority).toBe(TOOL_CALL_AUTHORITY);
     // Both are registered, so neither can be granted by accident or by typo.
     expect(CATALOG.has(TOOL_SEARCH_AUTHORITY)).toBeTrue();
     expect(CATALOG.has(TOOL_CALL_AUTHORITY)).toBeTrue();

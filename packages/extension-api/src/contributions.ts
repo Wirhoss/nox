@@ -158,10 +158,20 @@ const providers = createContributionPoint<ProviderContribution>('nox.providers')
 const memoryConfigSchema = z.object({ type: z.string() });
 type MemoryConfig = z.infer<typeof memoryConfigSchema>;
 type MemoryConfigSchema = z.ZodObject<{ type: z.ZodLiteral<string> }>;
-type MemoryContribution = ConfigurableContribution<MemoryConfigSchema, Memory>;
+interface MemoryCapabilities {
+  /** The created memory exposes an owner-facing `Memory.inspector` projection. */
+  readonly inspection?: true;
+  /** The created memory exposes `Memory.editor` and can back Nox's standard memory tools. */
+  readonly tools?: true;
+}
+type MemoryContribution = ConfigurableContribution<MemoryConfigSchema, Memory> & {
+  readonly capabilities?: MemoryCapabilities;
+};
 function memoryContribution<TSchema extends MemoryConfigSchema>(
-  contribution: ConfigurableContribution<TSchema, Memory>,
-): ConfigurableContribution<TSchema, Memory> {
+  contribution: ConfigurableContribution<TSchema, Memory> & {
+    readonly capabilities?: MemoryCapabilities;
+  },
+): ConfigurableContribution<TSchema, Memory> & { readonly capabilities?: MemoryCapabilities } {
   return contribution;
 }
 const memories = createContributionPoint<MemoryContribution>('nox.memories');
@@ -222,6 +232,7 @@ export type {
   BrokerHostPolicy,
   LanguagePack,
   LanguagePackInput,
+  MemoryCapabilities,
   MemoryConfig,
   MemoryConfigSchema,
   MemoryContribution,

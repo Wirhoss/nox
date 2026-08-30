@@ -1,7 +1,7 @@
 import {
-  ATTACH_ARTIFACT_TOOL_NAME,
+  ARTIFACT_ATTACH_TOOL_NAME,
+  ARTIFACT_READ_TOOL_NAME,
   attachArtifactTool,
-  READ_ARTIFACT_TOOL_NAME,
   readArtifactTool,
 } from './artifactTool';
 import { Session } from './session';
@@ -20,6 +20,7 @@ import type {
   ChatModelConfig,
   ChatProvider,
   Memory,
+  MemoryBlockDeclaration,
   SamplingParametersConfig,
   ToolSetGrant,
 } from '@nox/extension-api';
@@ -52,6 +53,8 @@ interface AgentOptions extends RunnerOptions {
   logger?: Logger;
   /** The single long-term memory selected by this agent's blueprint. */
   memory?: Memory;
+  /** The always-present blocks this agent's blueprint declared. */
+  memoryBlocks?: readonly MemoryBlockDeclaration[];
   memoryMaxTokens?: number;
   routedToolSets?: readonly ToolSetGrant[];
   systemPrompt: string;
@@ -103,10 +106,10 @@ function withRoutedToolSetCatalog(systemPrompt: string, grants: readonly ToolSet
   if (summaries.size === 0) return systemPrompt;
 
   const catalog = [
-    'Routed tool sets available through search_tool:',
+    'Routed tool sets available through tool_search:',
     ...[...summaries].sort((a, b) => a.localeCompare(b)),
     '',
-    'Use these descriptions to decide when to call search_tool and which capability keywords to ' +
+    'Use these descriptions to decide when to call tool_search and which capability keywords to ' +
       'search. Its results are authoritative for exact tool names and parameter schemas.',
   ].join('\n');
   return `${systemPrompt}\n\n${catalog}`;
@@ -135,6 +138,7 @@ class Agent {
   readonly #logger?: Logger;
   readonly #maxIterations?: 'unlimited' | number;
   readonly #memory?: Memory;
+  readonly #memoryBlocks?: readonly MemoryBlockDeclaration[];
   readonly #memoryMaxTokens?: number;
   readonly #model: ChatModelConfig;
   readonly #provider: ChatProvider;
@@ -166,6 +170,7 @@ class Agent {
     this.#logger = options.logger;
     this.#maxIterations = options.maxIterations;
     this.#memory = options.memory;
+    if (options.memoryBlocks !== undefined) this.#memoryBlocks = options.memoryBlocks;
     this.#memoryMaxTokens =
       options.memory === undefined ? undefined : (options.memoryMaxTokens ?? 2048);
     this.#routedToolSets = options.routedToolSets ?? [];
@@ -229,8 +234,8 @@ class Agent {
       }
       tools = Object.freeze({
         ...configuredTools,
-        [ATTACH_ARTIFACT_TOOL_NAME]: attachmentTool,
-        [READ_ARTIFACT_TOOL_NAME]: readerTool,
+        [ARTIFACT_ATTACH_TOOL_NAME]: attachmentTool,
+        [ARTIFACT_READ_TOOL_NAME]: readerTool,
       });
     }
     const systemPrompt = withRoutedToolSetCatalog(this.#systemPrompt, this.#routedToolSets);
@@ -258,6 +263,7 @@ class Agent {
       logger: this.#logger,
       maxIterations: this.#maxIterations,
       ...(this.#memory === undefined ? {} : { memory: this.#memory }),
+      ...(this.#memoryBlocks === undefined ? {} : { memoryBlocks: this.#memoryBlocks }),
       ...(this.#memoryMaxTokens === undefined ? {} : { memoryMaxTokens: this.#memoryMaxTokens }),
       systemPrompt,
       ...(this.#timeZone === undefined ? {} : { timeZone: this.#timeZone }),

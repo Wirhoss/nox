@@ -1,18 +1,14 @@
 /**
- * A form built from the schema the server validates against.
- *
- * Every configurable kind — a tool set today, anything contributed later —
- * publishes its own JSON Schema, so the editor renders whatever an extension
- * declared instead of carrying a copy of one extension's fields. That is the
- * whole point: a module added to a capability, or a field added to a module,
- * appears here without this file learning its name.
+ * A form built from the schema the server validates against. Every configurable
+ * kind publishes its own JSON Schema, so the editor renders whatever an
+ * extension declared — a module added to a capability appears here without this
+ * file learning its name.
  *
  * What is understood is a deliberate subset: objects, maps whose keys the
- * operator writes, a `oneOf` of objects discriminated by a constant (which is
- * what a choice between implementations looks like), scalars, enums, lists, and
- * the credential reference Nox uses everywhere. Anything outside it is left to
- * the JSON surface rather than guessed at, because a form that renders a field
- * it cannot round-trip is worse than no form.
+ * operator writes, a `oneOf` of objects discriminated by a constant, scalars,
+ * enums, lists, and the credential reference Nox uses everywhere. Anything
+ * outside it is left to the JSON surface rather than guessed at, because a form
+ * that renders a field it cannot round-trip is worse than no form.
  */
 
 type JsonSchema = Readonly<Record<string, unknown>>
@@ -56,23 +52,15 @@ interface ObjectNode {
 /**
  * An object whose keys are written by the operator rather than by the schema:
  * admitted channels by ID, grants by principal, anything else declared as a
- * record.
- *
- * It is not an object node with unknown children. The shape of one *value* is
- * fixed and the keys are the variable part, which is the opposite of what an
- * object models — so children are derived per key by `mapEntryNodes` rather
- * than stored, because a child's path contains the key and the keys exist only
- * in the value being edited.
+ * record. The shape of one *value* is fixed and the keys are the variable part,
+ * so children are derived per key by `mapEntryNodes` — a child's path contains
+ * the key, and the keys exist only in the value being edited.
  */
 interface MapNode {
   /** The schema of one entry's value; `mapEntryNodes` turns it into fields. */
   readonly entry: JsonSchema
   readonly help?: string
-  /**
-   * What `propertyNames` demands of a key. Carried so the form can refuse a
-   * mistyped key where it was typed, rather than leaving it to a save that
-   * comes back rejected with no field to point at.
-   */
+  /** What `propertyNames` demands of a key, so a mistyped key is refused where it was typed. */
   readonly keyPattern?: string
   readonly kind: 'map'
   readonly label?: string
@@ -100,13 +88,9 @@ interface VariantBranch {
 
 /**
  * An array whose entries have a shape rather than a value: model declarations,
- * and anything else written as a list of objects.
- *
- * A sibling of `MapNode` and for the same reason — the shape of one entry is
- * fixed and the variable part is how many there are — with the position taking
- * the place of the key. Children are derived per index by `listEntryNodes`,
- * because an entry's path contains its position and positions exist only in the
- * value being edited.
+ * and anything else written as a list of objects. A sibling of `MapNode` for
+ * the same reason — the shape of one entry is fixed and the variable part is
+ * how many there are — with the position taking the place of the key.
  */
 interface ListNode {
   /** The schema of one entry; `listEntryNodes` turns it into fields. */
@@ -172,9 +156,9 @@ function branches(schema: JsonSchema): readonly JsonSchema[] {
 }
 
 /**
- * The property every branch pins to a different constant. It is what makes a
- * union a choice rather than a guess, and there is no fallback: a union without
- * one is not something this form can edit.
+ * The property every branch pins to a different constant — what makes a union a
+ * choice rather than a guess. There is no fallback: a union without one is not
+ * something this form can edit.
  */
 function discriminatorOf(options: readonly JsonSchema[]): string | undefined {
   const first = schemaOf(options[0]?.properties)
@@ -235,12 +219,11 @@ function optionsOf(
 
 /**
  * The value schema of a record, or nothing if this object is a plain object.
- *
  * The two are told apart by which half is declared: an object names its
  * properties, a record names what every unnamed property must look like. An
- * object also carries `additionalProperties: false` when it is strict, which is
- * a boolean and not a schema — so reading it through `schemaOf` is what keeps a
- * strict object from being mistaken for a map of nothing.
+ * object's strictness is `additionalProperties: false`, a boolean and not a
+ * schema — reading it through `schemaOf` keeps a strict object from being
+ * mistaken for a map of nothing.
  */
 function mapEntryOf(schema: JsonSchema): JsonSchema | undefined {
   if (schemaOf(schema.properties) !== undefined) return undefined
@@ -284,10 +267,8 @@ function fieldNode(
 
 /**
  * A choice between shapes, as a node, or nothing when the schema is not one.
- *
- * Separate from `nodeFor` because a union is not only ever a property: an entry
- * of a list or a map can be one too, and there the node's path is the entry
- * itself rather than a property inside it.
+ * Separate from `nodeFor` because a union is not only ever a property: a list
+ * or map entry can be one too, and there the node's path is the entry itself.
  */
 function variantNode(
   name: string,
@@ -316,14 +297,11 @@ function variantNode(
 }
 
 /**
- * The fields of one entry of a list or a map.
- *
- * Not `childrenOf`, which reads `properties` and nothing else: an entry is a
- * value, and a value is not always an object. Where it is a choice between
- * shapes — a model that is either a chat model or an embedding one — its fields
- * depend on which shape was chosen, and reading only `properties` produced an
- * entry with nothing in it at all. The variant is named after its discriminator
- * so the selector reads as what it chooses.
+ * The fields of one entry of a list or a map. Not `childrenOf`, which reads
+ * `properties` and nothing else: an entry is a value, and a value is not always
+ * an object — where it is a choice between shapes, its fields depend on which
+ * shape was chosen. The variant is named after its discriminator so the
+ * selector reads as what it chooses.
  */
 function entryNodes(entry: JsonSchema, path: readonly string[]): readonly FormNode[] {
   const union = branches(entry)
@@ -456,10 +434,9 @@ function valueAt(value: ConfigLike, path: readonly string[]): unknown {
 
 /**
  * Writes through objects and arrays without changing either container's shape.
- *
- * List entry paths use their array position as one segment. Treating every
- * segment as an object key turns an array into `{ "0": ... }` as soon as one
- * field in a row is edited, which makes the row disappear on the next render.
+ * List entry paths use their array position as one segment; treating every
+ * segment as an object key would turn an array into `{ "0": ... }` on the first
+ * edit and make the row disappear on the next render.
  */
 function updatedAt(current: unknown, path: readonly string[], next: unknown): unknown {
   const [step, ...rest] = path

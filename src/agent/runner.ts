@@ -5,6 +5,7 @@ import {
   fenceUntrustedText,
   isProviderError,
   type Memory,
+  type MemoryBlockDeclaration,
   type MemoryMessage,
   type Message,
   type MessageContent,
@@ -40,8 +41,9 @@ import {
   SYSTEM_ISSUER,
   systemAuthority,
 } from '../auth/principal';
-import { ATTACH_ARTIFACT_TOOL_NAME, READ_ARTIFACT_TOOL_NAME } from './artifactTool';
+import { ARTIFACT_ATTACH_TOOL_NAME, ARTIFACT_READ_TOOL_NAME } from './artifactTool';
 import { freezeMessage, freezeValue } from './context/immutable';
+import { MEMORY_BLOCK_WRITE_TOOL_NAME } from './memoryToolNames';
 
 import type { ArtifactContentReader, ArtifactOutputHost } from '../artifact/output';
 import type { ArtifactRef } from '../artifact/types';
@@ -87,12 +89,9 @@ interface RunnerConstructionOptions extends RunnerOptions {
   /** Privileged storage reader, narrowed by the runner to conversation-known artifact IDs. */
   artifactReader?: ArtifactContentReader;
   /**
-   * Whether an artifact was ever handed to any transcript this agent holds.
-   *
-   * Separate from `artifactOutputs`, which answers about the conversation that
-   * produced an artifact. This one answers about the agent that received it,
-   * which is the only reason a session may read what an earlier session of its
-   * own was given.
+   * Whether an artifact was ever handed to any transcript this agent holds. Separate
+   * from `artifactOutputs`: this asks about the agent that received it, the only reason
+   * a session may read what an earlier one of its own was given.
    */
   artifactHistory?: (artifactId: string) => Promise<boolean>;
   /** Where both halves of the decision pipeline write their one timeline. */
@@ -100,14 +99,15 @@ interface RunnerConstructionOptions extends RunnerOptions {
   /** Every authority this Nox knows. Absent means nothing can be authorized. */
   authorities?: AuthorityCatalog;
   /**
-   * Consulted per tool call, never snapshotted: the tool catalog is stable for a
-   * conversation, but who may use what can change while it is still going.
-   * Absent is not permissive — it denies, like every other unanswered question.
+   * Consulted per call, never snapshotted: the catalog is stable, but who may use
+   * what can change mid-conversation. Absent denies, like every unanswered question.
    */
   authorization?: AuthorizationProvider;
   gate?: SessionGate;
   /** At most one memory is attached to an agent generation. */
   memory?: Memory;
+  /** The always-present blocks this agent's blueprint declared. */
+  memoryBlocks?: readonly MemoryBlockDeclaration[];
   memoryMaxTokens?: number;
   participants?: ConversationParticipants;
   sessionId: string;
@@ -115,11 +115,8 @@ interface RunnerConstructionOptions extends RunnerOptions {
 
 /**
  * Something waiting to enter the context, and the authority it would run under.
- *
- * A run takes the authority of the item that started it and keeps it to the end.
- * Anything that joins the queue afterwards is context, not authority: in a shared
- * conversation other people keep talking, and a run does not change hands because
- * somebody spoke into it.
+ * A run takes the authority of the item that started it and keeps it to the end;
+ * anything queued afterwards is context, not authority.
  */
 interface QueuedMessage {
   readonly authority: RunAuthority;
@@ -128,10 +125,8 @@ interface QueuedMessage {
   /** Commands can wake a retry without manufacturing a transcript message. */
   readonly message?: Message;
   /**
-   * Context, never a turn. It carries an authority so the transcript can say who
-   * spoke, and that authority is never the one a run executes under: an
-   * observation is drained into the context at the next opening and starts
-   * nothing.
+   * Context, never a turn: drained into the context at the next opening and starts
+   * nothing. It carries an authority only so the transcript can say who spoke.
    */
   readonly observation?: true;
   readonly responseAttachments?: readonly ArtifactRef[];
@@ -248,13 +243,9 @@ function renderMemories(memories: readonly RecalledMemory[], maxTokens: number):
 
 /**
  * The engine of a session: one long-lived runner, one queue, one run at a time.
- *
- * Everything that wants to reach the model goes on the same queue — replies the
- * user sent and results deferred tools finished — and the loop drains it at the
- * top of every iteration, right before the request. That is what makes idleness
- * safe to act on: a run only ends with the queue empty, so a result landing
- * mid-run is never left unseen, and only a result landing while idle has to
- * wake anything.
+ * Everything that reaches the model goes through the same queue, drained at the
+ * top of every iteration — so a run only ends with the queue empty, and a result
+ * landing mid-run is never left unseen.
  */
 class Runner {
   readonly #agentId: string;
@@ -272,6 +263,8 @@ class Runner {
   readonly #logger?: Logger;
   readonly #maxIterations: number;
   readonly #memory?: Memory;
+  readonly #memoryBlocks: readonly MemoryBlockDeclaration[];
+  #memoryBlockValues = new Map<string, string>();
   readonly #memoryMaxTokens: number;
   readonly #memoryTasks = new Set<Promise<void>>();
   readonly #metadata: Readonly<Record<string, unknown>>;
@@ -324,6 +317,7 @@ class Runner {
     this.#logger = options.logger;
     this.#maxIterations = resolveMaxIterations(options.maxIterations);
     this.#memory = options.memory;
+    this.#memoryBlocks = Object.freeze([...(options.memoryBlocks ?? [])]);
     this.#memoryMaxTokens = resolveMemoryMaxTokens(options.memoryMaxTokens);
     this.#metadata = Object.freeze({ ...options.metadata });
     this.#participants =
@@ -397,16 +391,9 @@ class Runner {
 
   /**
    * Records something said in the conversation that was not said to Nox.
-   *
-   * It never wakes the runner and never joins the run in flight. Idle, it goes
-   * straight into the context, because there is nothing for it to race. Running,
-   * it waits in the queue and is drained at the next opening — injecting into a
-   * turn while its context is being assembled is exactly the race `#drainOwn`
-   * exists to avoid, and an observation is in no hurry.
-   *
-   * The speaker is observed as a participant regardless. That is the whole point:
-   * a transcript that now contains a second person's words is a shared
-   * conversation, whether or not they were talking to the agent.
+   * Never wakes the runner: idle it goes straight into the context; running, it
+   * waits for the next opening, because injecting mid-turn is the race `#drainOwn`
+   * exists to avoid. The speaker is still observed as a participant.
    */
   public observe(message: UserMessage): void {
     this.#participants.observe(message.origin.principal);
@@ -455,17 +442,10 @@ class Runner {
 
   /**
    * Takes the longest run of queued entries this run is entitled to absorb, and
-   * stops at the first one belonging to somebody else.
-   *
-   * This is the whole of what keeps one principal's words out of another's run.
-   * A run's authority is fixed when it starts, so anything it swallows is read
-   * by the model *under that authority* — which means a message from Bob landing
-   * mid-turn could ask for a tool and have it authorized as Alice. It waits for
-   * its own run instead.
-   *
-   * It stops at the first foreign entry rather than picking its own out of the
-   * middle, because the transcript is a record of a conversation and reordering
-   * who spoke when to suit whose turn it is would make it a false one.
+   * stops at the first one belonging to somebody else — the whole of what keeps
+   * one principal's words out of another's run. It stops at the first foreign
+   * entry rather than picking its own out of the middle, because the transcript
+   * is a record of a conversation and reordering who spoke when would make it a false one.
    */
   #drainOwn(authority: RunAuthority): void {
     let owned = 0;
@@ -483,11 +463,7 @@ class Runner {
     }
   }
 
-  /**
-   * The next entry that is actually a turn, with everything that is only context
-   * absorbed on the way to it. Observations at the head of the queue are drained
-   * rather than run: nobody asked Nox for anything by saying them.
-   */
+  /** The next entry that is actually a turn; observations at the head are drained, not run. */
   #nextTurn(): QueuedMessage | undefined {
     while (this.#queue[0]?.observation === true) {
       const entry = this.#queue.shift();
@@ -528,13 +504,9 @@ class Runner {
   }
 
   /**
-   * Drains the queue as a chain of runs, one per principal in the order they
-   * spoke, and stays busy until nothing is left.
-   *
-   * A turn that ends with somebody else's message waiting is not the end of the
-   * work — it is the end of *that person's* work. Chaining here rather than
-   * returning to idle is what makes `idle` still mean "the conversation has
-   * caught up" now that one queue can hold several people's turns.
+   * Drains the queue as a chain of runs, one per principal in the order they spoke,
+   * and stays busy until nothing is left. A turn that ends with somebody else's
+   * message waiting is not the end of the work — it is the end of *that person's*.
    */
   async #execute(): Promise<void> {
     // Set before the first await: a second enqueue in this same tick has to see
@@ -550,17 +522,14 @@ class Runner {
         if (this.#session.signal.aborted) break;
 
         if (status === 'aborted') {
-          // Abort cancels the current owner's turn, not unrelated work already
-          // requested by another principal. Same-owner messages that arrived in
-          // the interrupted turn are recorded without silently restarting it.
+          // Abort cancels the current owner's turn; same-owner messages that arrived
+          // in it are recorded without silently restarting it.
           this.#drainOwn(next.authority);
         }
-        // A provider failure is local to its run. The next queued item explicitly
-        // requested its own run and must not be consumed as collateral damage.
+        // A provider failure is local to its run; the next queued item asked for its own.
       }
     } finally {
-      // Session shutdown may leave entries behind. They still belong to the
-      // append-only transcript, but a stopped runner starts no further work.
+      // Leftover entries still belong to the append-only transcript, but a stopped runner starts nothing.
       this.#drainAll();
       this.#runAuthority = undefined;
       this.#runAuthorityGrants = undefined;
@@ -580,8 +549,7 @@ class Runner {
     this.#responseAttachments.clear();
 
     const runId = nanoid();
-    // Fixed here and read by every tool call this run makes. Nothing that lands
-    // in the queue afterwards can move it.
+    // Fixed here and read by every tool call this run makes; nothing queued later can move it.
     this.#runAuthority = authority;
     this.#runAuthorityGrants = authorityGrants;
     this.#runId = runId;
@@ -609,8 +577,7 @@ class Runner {
       return status;
     } catch (error) {
       const failure = toError(error);
-      // Any permission detached from partial provider output must close before
-      // that uncommitted call can ever execute.
+      // Any permission detached from partial provider output closes before that uncommitted call can execute.
       this.#run.abort(failure);
       this.#discardUnpublishedOperations(runId);
       this.#flushResponseAttachments();
@@ -644,8 +611,7 @@ class Runner {
    * after the stream closes, so a slow tool overlaps the rest of the reply.
    */
   async #request(usage: Usage): Promise<ToolResponseMessage[]> {
-    // Usage reported at the end belongs to this exact input snapshot, not to
-    // the assistant output or tool results appended while the call is running.
+    // Usage reported at the end belongs to this input snapshot, not to output or tool results appended meanwhile.
     const requestHistory = this.#historyWithMemory();
     const requestTokenEstimate =
       this.#context.getTokenEstimate() +
@@ -665,7 +631,7 @@ class Runner {
       signal,
     );
     const stream = this.#provider.getMessageStream(
-      this.#context.getSystemPrompt(),
+      this.#systemPrompt(),
       requestHistory,
       Object.values(this.#context.getTools()),
       {
@@ -738,6 +704,69 @@ class Runner {
     if (index === -1) history.unshift(memory);
     else history.splice(index, 0, memory);
     return history;
+  }
+
+  /**
+   * The agent's own prompt, plus whatever it is carrying. Appended rather than
+   * merged, and rendered even when every declared block is empty: an agent that
+   * cannot see a block exists has no reason to fill it. The section is identical
+   * on every request of a run, so it stays inside the part a provider can cache.
+   */
+  #systemPrompt(): string {
+    const configured = this.#context.getSystemPrompt();
+    if (this.#memoryBlocks.length === 0) return configured;
+
+    const rendered = this.#memoryBlocks.map((declaration) => {
+      const value = this.#memoryBlockValues.get(declaration.label);
+      const purpose = declaration.description === undefined ? '' : ` — ${declaration.description}`;
+      return [
+        `[${declaration.label}]${purpose}`,
+        value === undefined || value.length === 0 ? '(empty)' : value,
+      ].join('\n');
+    });
+
+    return [
+      configured,
+      '',
+      '## Memory blocks',
+      '',
+      'Notes you keep about this person and this work. They are here on every request,',
+      'they are yours to maintain, and nothing else keeps them current. Update one with',
+      `${MEMORY_BLOCK_WRITE_TOOL_NAME} when what it holds stops being true.`,
+      '',
+      rendered.join('\n\n'),
+    ].join('\n');
+  }
+
+  /**
+   * Loads the declared blocks for this run. Once per iteration, not per session:
+   * the agent can rewrite a block with a tool call and must then see what it
+   * wrote — a stale copy would let it read its own edit as unapplied and redo it.
+   */
+  async #readMemoryBlocks(): Promise<void> {
+    const blocks = this.#memory?.blocks;
+    if (blocks === undefined || this.#memoryBlocks.length === 0) return;
+    const authority = this.#authority();
+    try {
+      const current = await blocks.read({
+        labels: this.#memoryBlocks.map((declaration) => declaration.label),
+        scope: Object.freeze({
+          agentId: this.#agentId,
+          metadata: this.#metadata,
+          principal: Object.freeze({ ...authority.principal }),
+          sessionId: this.#sessionId,
+        }),
+        signal: this.#runSignal(),
+      });
+      this.#memoryBlockValues = new Map(current.map((block) => [block.label, block.value]));
+    } catch (error) {
+      if (!this.#runSignal().aborted) {
+        this.#logger?.warn(
+          { agentId: this.#agentId, err: error, sessionId: this.#sessionId },
+          'Could not read memory blocks; continuing with what was last read.',
+        );
+      }
+    }
   }
 
   /** Recalls once per distinct set of user messages absorbed by the current run. */
@@ -930,6 +959,7 @@ class Runner {
       this.#drainOwn(authority);
       await this.#context.compact();
       await this.#recall();
+      await this.#readMemoryBlocks();
 
       const responses = await this.#requestWithinBudget(usage);
       for (const response of responses) {
@@ -943,11 +973,8 @@ class Runner {
       }
 
       if (responses.length === 0) {
-        // The model answered instead of asking for another tool, so it has
-        // consumed the results and this run's mechanical traffic is settled.
-        // Folding it here is deterministic and lossless — the originals stay in
-        // the transcript — and a fold that reclaims too little to pay for the
-        // head rewrite is rejected inside the context.
+        // The model answered instead of asking for another tool; folding here is
+        // deterministic and lossless — the originals stay in the transcript.
         await this.#context.fold();
         if (!this.#hasOwnQueued(authority)) return 'completed';
       }
@@ -966,14 +993,10 @@ class Runner {
   }
 
   /**
-   * The provider is the authority on what fits. A refusal for length is not a
-   * failed run: it is the measurement that proves the local estimate wrong, and
-   * the only answer to it is to reduce and ask again. A length refusal rejects
-   * the request before any of it streams back, so nothing of the turn was
-   * committed and the retry re-asks from an unchanged history.
-   *
-   * Once. A pass that reclaimed nothing will reclaim nothing the second time,
-   * and the run has genuinely run out of room.
+   * The provider is the authority on what fits. A length refusal is not a failed
+   * run — it proves the local estimate wrong, rejects before anything streams, and
+   * the retry re-asks from an unchanged history. Retried once: a pass that
+   * reclaimed nothing will reclaim nothing the second time.
    */
   async #requestWithinBudget(usage: Usage): Promise<ToolResponseMessage[]> {
     try {
@@ -982,9 +1005,8 @@ class Runner {
       if (!isProviderError(error) || error.code !== 'context_limit') throw error;
       let refusal = error;
 
-      // Recalled context is optional and ephemeral. It is the first thing to
-      // remove when the provider proves the estimate wrong; memory must never
-      // turn an otherwise valid user turn into a failed one.
+      // Recalled context is optional and ephemeral; memory must never turn a
+      // valid user turn into a failed one, so it goes first when the estimate is wrong.
       if (this.#recalledMemory !== undefined) {
         this.#recalledMemory = undefined;
         this.#logger?.warn(
@@ -1025,16 +1047,13 @@ class Runner {
 
     const startedAt = Date.now();
     try {
-      // Preparation is side-effect free by contract, which is what makes it safe
-      // to run before anyone has decided this call may happen at all. Everything
-      // needed to decide — authority, risk, params, preview — exists by now.
+      // Preparation is side-effect free by contract, so it is safe before anyone
+      // has decided this call may happen at all.
       const prepared = prepareToolCall(tool, call.arguments);
       const execution = freezeValue(prepared.execution);
       const subject = execution.gateSubject;
       if (subject === undefined) {
-        // A tool reached the model without being bound to a set, so nothing can
-        // say what it is allowed to do. That is a wiring bug, and the only safe
-        // reading of it is no.
+        // A wiring bug, and the only safe reading of it is no.
         this.#logger?.error(
           { toolName: call.name },
           'Refused a tool call that carries no execution subject.',
@@ -1053,19 +1072,17 @@ class Runner {
       const rejected = await this.#gateCall(call, execution, subject);
       if (rejected !== undefined) return rejected;
 
-      // Deciding takes real time: a provider over the network, an evaluator, a
-      // human answering a prompt. If the run was abandoned while that ran, the
-      // answer arrives for something nobody is waiting on any more.
-      //
-      // This matters most for deferred work, which is deliberately handed the
-      // session signal so it outlives an abort — without this check an aborted
-      // run would still start background work, and the abort would be a lie.
+      // Deciding takes real time; if the run was abandoned meanwhile, the answer
+      // arrives for something nobody waits on any more. Deferred work is handed
+      // the session signal on purpose so it outlives an abort — without this
+      // check, an aborted run would still start background work.
       if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
 
       const outputSignal = execution.type === 'deferred' ? this.#session.signal : this.#runSignal();
       const toolContext = this.#toolContext(
         call,
         subject,
+        this.#authority(),
         outputSignal,
         this.#currentRunId(),
         this.#responseAttachments,
@@ -1093,8 +1110,8 @@ class Runner {
     } catch (error) {
       if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
 
-      // Reported to the model as tool output, and to the operator as a log: an
-      // error only the model can see is an error nobody can debug.
+      // Reported to the model as tool output and to the operator as a log:
+      // an error only the model can see is one nobody can debug.
       this.#logger?.error(
         { durationMs: Date.now() - startedAt, err: error, toolName: call.name },
         'Tool call failed.',
@@ -1111,6 +1128,7 @@ class Runner {
   #toolContext(
     call: ToolCallMessage,
     subject: ToolExecutionSubject,
+    authority: RunAuthority,
     signal: AbortSignal,
     runId: string,
     responseAttachmentTarget?: Map<string, ArtifactRef>,
@@ -1133,7 +1151,7 @@ class Runner {
         : undefined;
 
     const mayReadArtifact =
-      subject.authority === ARTIFACT_READ_AUTHORITY && subject.toolName === READ_ARTIFACT_TOOL_NAME;
+      subject.authority === ARTIFACT_READ_AUTHORITY && subject.toolName === ARTIFACT_READ_TOOL_NAME;
     const artifactReader =
       this.#artifactReader === undefined || !mayReadArtifact
         ? undefined
@@ -1144,7 +1162,7 @@ class Runner {
               // artifact: this transcript was handed it, this conversation
               // produced it, or an earlier session of this same agent was
               // handed it. The last is what makes an artifact found through
-              // `search_sessions` openable instead of a dead reference.
+              // `history_sessions_search` openable instead of a dead reference.
               const owned =
                 this.#knownArtifactIds().has(input.artifactId) ||
                 (await this.#artifactOutputs?.reference(input.artifactId)) !== undefined ||
@@ -1160,7 +1178,7 @@ class Runner {
     const mayAttachArtifact =
       responseAttachmentTarget !== undefined &&
       subject.authority === ARTIFACT_ATTACH_AUTHORITY &&
-      subject.toolName === ATTACH_ARTIFACT_TOOL_NAME;
+      subject.toolName === ARTIFACT_ATTACH_TOOL_NAME;
     const responseAttachments =
       this.#artifactOutputs === undefined || !mayAttachArtifact
         ? undefined
@@ -1201,6 +1219,7 @@ class Runner {
       session: {
         agentId: this.#agentId,
         metadata: this.#metadata,
+        principal: authority.principal,
         sessionId: this.#sessionId,
       },
       toolSetId: subject.toolSetId,
@@ -1221,13 +1240,10 @@ class Runner {
 
   /**
    * The half that asks who is acting, before the half that asks what they are
-   * doing. It runs on every call — including one the Gate has already memoized an
-   * approval for — because a memo is about a decision somebody made, and a grant
-   * can be taken away between two calls of the same conversation.
-   *
-   * Deliberately not a `GateEvaluator`: the Gate consults its session memo before
-   * some evaluators run, so authorization living there could be skipped by an
-   * approval given earlier.
+   * doing. Runs on every call — even one the Gate has memoized — because a memo
+   * is about a decision somebody made, and a grant can be taken away between
+   * two calls. Not a `GateEvaluator`: the Gate consults its memo before some
+   * evaluators run, so authorization there could be skipped by an earlier approval.
    */
   async #authorizeCall(
     call: ToolCallMessage,
@@ -1246,8 +1262,7 @@ class Runner {
     if (this.#runSignal().aborted) return this.#abortedToolResponse(call);
     if (decision.allowed) return undefined;
 
-    // No permission request follows. Someone without `use` has not asked a
-    // question a human could answer; there is nothing to put a button on.
+    // No permission request follows: without `use` there is nothing to put a button on.
     return this.#noxResponse(
       call,
       'immediate',
@@ -1548,6 +1563,7 @@ class Runner {
       const toolContext = this.#toolContext(
         operation.call,
         operation.subject,
+        operation.authority,
         this.#session.signal,
         operation.runId,
         operation.responseAttachments,
@@ -1582,12 +1598,7 @@ class Runner {
     return this.#session.signal.aborted;
   }
 
-  /**
-   * A string is Nox reporting why the approved call never ran; content is what
-   * the tool returned. That is the same split the two builders make, kept
-   * visible here rather than folded into an `isError` the caller has to get
-   * right.
-   */
+  /** A string is Nox reporting why the approved call never ran; content is what the tool returned. */
   #completePendingOperation(
     operation: PendingOwnedOperation,
     response: readonly MessageContent[] | string,
@@ -1709,11 +1720,9 @@ class Runner {
   /**
    * Nox speaking about a call rather than reporting its output: an unknown tool,
    * a refused authority, a policy denial, a timeout, an abort, a thrown error,
-   * or the receipt for a call still waiting on permission.
-   *
-   * Always trusted. These are the system's own words, and fencing them as
-   * untrusted data would tell the model to disregard the very messages it most
-   * needs to act on.
+   * or the receipt for a call still waiting on permission. Always trusted: these
+   * are the system's own words, and fencing them would tell the model to disregard
+   * the very messages it most needs to act on.
    */
   #noxResponse(
     call: ToolCallMessage,
@@ -1725,10 +1734,9 @@ class Runner {
   }
 
   /**
-   * A response carrying what a tool returned. It reads trust off the execution's
-   * own subject rather than off an argument, so tool output cannot be recorded
-   * without the verdict the tool declared — and on a routed call that subject is
-   * the routed tool's, not `call_tool`'s.
+   * A response carrying what a tool returned. Trust comes from the execution's
+   * own subject, so tool output cannot be recorded without the verdict the tool
+   * declared — and on a routed call that subject is the routed tool's, not `tool_call`'s.
    */
   #toolOutputResponse(
     call: ToolCallMessage,
@@ -1760,12 +1768,10 @@ class Runner {
   }
 
   /**
-   * The result queues like anything else, and wakes the runner if it is idle.
-   *
-   * It carries the authority of the run that started the operation, so a result
-   * landing long after that run ended is not an unattributed one — and if it
-   * makes the model ask for another tool, that call is authorized and gated
-   * afresh under the same principal.
+   * The result queues like anything else, and wakes the runner if it is idle. It
+   * keeps the authority of the run that started the operation, so a result
+   * landing long after that run ended is not unattributed — and any further tool
+   * call it provokes is authorized and gated afresh under the same principal.
    */
   #trackDeferred(
     call: ToolCallMessage,

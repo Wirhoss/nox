@@ -13,12 +13,12 @@ import { BM25 } from '../utils/bm25';
 import { stableStringify } from '../utils/json';
 import { renderTool } from './render';
 
-const ROUTER_TOOL_NAMES = Object.freeze(['call_tool', 'search_tool'] as const);
+const ROUTER_TOOL_NAMES = Object.freeze(['tool_call', 'tool_search'] as const);
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
 const SEARCH_RESULT_LIMIT = 10;
 
 const callToolSchema = z.object({
-  name: z.string().min(1).describe('Exact tool name returned by search_tool.'),
+  name: z.string().min(1).describe('Exact tool name returned by tool_search.'),
   params: z
     .string()
     .describe(
@@ -43,7 +43,7 @@ function asTextToolResponse(value: unknown): MessageContent[] {
 
 /**
  * Presents a fixed catalog through two direct tools instead of placing every
- * catalog schema in the request head. The JSON string boundary on call_tool is
+ * catalog schema in the request head. The JSON string boundary on tool_call is
  * intentional: small models follow it more consistently than a dynamic object
  * schema. The selected tool's real schema is still applied before execution.
  */
@@ -53,7 +53,7 @@ class ToolRouter extends ToolSet {
   readonly #toolsByName = new Map<string, Tool>();
 
   constructor(tools: readonly Tool[]) {
-    super('tool_router', 'Searches and invokes tools from the routed tool catalog.');
+    super('Tool router', 'Searches and invokes tools from the routed tool catalog.');
 
     for (const source of [...tools].sort((a, b) => a.name.localeCompare(b.name))) {
       if (ROUTER_TOOL_NAME_SET.has(source.name)) {
@@ -104,9 +104,9 @@ class ToolRouter extends ToolSet {
       // unbound router would ask for, and nothing grants it.
       authority: TOOL_CALL_AUTHORITY,
       description:
-        'Call a tool returned by search_tool. Pass params as a JSON string encoding one object ' +
+        'Call a tool returned by tool_search. Pass params as a JSON string encoding one object ' +
         'whose values directly match that tool schema. Do not add wrapper objects.',
-      name: 'call_tool',
+      name: 'tool_call',
       parameters: callToolSchema,
       prepare: ({ name, params }) => this.prepareRouted(name, params),
     };
@@ -115,9 +115,9 @@ class ToolRouter extends ToolSet {
       authority: TOOL_SEARCH_AUTHORITY,
       description:
         'Search the routed tool catalog by capability. Returns matching tools with their exact ' +
-        'names, descriptions, and parameter schemas. Use the returned schema before call_tool; ' +
+        'names, descriptions, and parameter schemas. Use the returned schema before tool_call; ' +
         'never guess a routed tool name or its parameters.',
-      name: 'search_tool',
+      name: 'tool_search',
       parameters: searchToolSchema,
       prepare: ({ query }) => ({
         run: () => {
@@ -144,7 +144,7 @@ class ToolRouter extends ToolSet {
 
   static #buildDocument(tool: Tool): string {
     // renderTool includes nested parameter names and descriptions, so discovery
-    // indexes the same contract that search_tool returns to the model.
+    // indexes the same contract that tool_search returns to the model.
     return [tool.name, tool.name, renderTool(tool)].join('\n');
   }
 }

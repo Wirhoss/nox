@@ -44,11 +44,8 @@ const TYPING_INTERVAL_MS = 8_000;
 
 /**
  * How long after posting before the indicator goes back up.
- *
- * Discord clears it whenever the bot speaks, which is right for the message that
- * ends a run and wrong for every other one. Waiting a beat is what tells the two
- * apart without guessing: `runCompleted` lands within milliseconds of the last
- * message, so by the time this fires the run has already said whether it is over.
+ * Discord clears it whenever the bot speaks; waiting a beat lets `runCompleted` —
+ * which lands within milliseconds — decide whether the run is actually over.
  */
 const TYPING_RESUME_MS = 1_000;
 
@@ -76,10 +73,8 @@ function asString(value: unknown): string | undefined {
 
 /**
  * Every command scope that must be empty once one selected scope is published.
- *
- * Discord stores global and per-guild commands as independent catalogs. Replacing
- * one leaves every other one untouched, so failing to empty a previous scope is
- * what makes one command appear twice after changing `guildId`.
+ * Discord keeps global and per-guild commands as independent catalogs; replacing
+ * one leaves the rest untouched, so an uncleared scope makes a command appear twice.
  */
 function staleCommandScopes(
   selectedGuildId: string | undefined,
@@ -91,12 +86,9 @@ function staleCommandScopes(
 }
 
 /**
- * What to call this person, most specific first: their nickname in this guild,
- * then the display name they chose, then the account name.
- *
- * Presentation only. It never decides anything and never travels as identity —
- * a display name is not unique and changes at its owner's whim, which is exactly
- * why the ID stays the subject.
+ * What to call this person, most specific first: guild nickname, display name,
+ * account name. Presentation only — a display name is not unique and changes at
+ * its owner's whim, which is exactly why the ID stays the subject.
  */
 function displayNameOf(
   author: Record<string, unknown>,
@@ -161,9 +153,8 @@ function permissionButtons(requestId: string, disabled = false): readonly Discor
 
 /**
  * What a person needs in order to answer, and nothing that only means something
- * inside Nox. The owner is mentioned rather than named: the one person who may
- * answer should be told, and everyone else in the channel should be able to see
- * that it is not them.
+ * inside Nox. The owner is mentioned rather than named, so everyone else in the
+ * channel can see that it is not them.
  */
 function permissionText(request: PermissionRequest, ownerId: string): string {
   const lines = [
@@ -182,23 +173,13 @@ function permissionText(request: PermissionRequest, ownerId: string): string {
 }
 
 /**
- * Nox on Discord.
- *
- * It delivers what arrived and renders what it is handed, and it knows nothing
- * about agents, sessions or the transcript. Two things about this transport are
- * different from the browser surface and shape everything here.
- *
- * The first is that a channel is a room. One bot connection reaches every
- * channel it can see under one issuer, so admitting a channel and granting
- * authority in it are separate decisions — the ingress rule lives in this
- * package, and every question of authority is settled past `receive`.
- *
- * The second is that a room has more than one person in it. As soon as a second
- * principal speaks, the session is shared for good: effectful calls need their
- * originator's explicit approval and session-scoped approvals stop applying.
- * That is why `permissions` is declared unconditionally — a Discord broker that
- * could not put a prompt in front of the person who raised it would be a bot
- * that can talk and never act.
+ * Nox on Discord: delivers what arrived and renders what it is handed, and knows
+ * nothing about agents, sessions or the transcript. Two things about this
+ * transport shape everything here: a channel is a room (admission and authority
+ * in it are separate decisions), and a room has more than one person in it (as
+ * soon as a second principal speaks the session is shared for good, effectful
+ * calls need their originator's explicit approval, and session-scoped approvals
+ * stop applying). That is why `permissions` is declared unconditionally.
  */
 class DiscordBroker implements Broker {
   public readonly capabilities: BrokerCapabilities;
@@ -210,17 +191,11 @@ class DiscordBroker implements Broker {
   readonly #posted = new Map<string, PostedPermission>();
   readonly #pipeline?: ArtifactPipeline;
   /**
-   * The roles each member holds, as the gateway last reported them.
-   *
-   * A cache rather than a lookup because Discord already sends this: role IDs
-   * ride on every message and interaction, and `GUILD_MEMBER_UPDATE` corrects
-   * it when someone's roles change without them speaking. Putting a REST call
-   * in front of each authorization instead would make a rate limit into a
-   * denial, since a provider that cannot answer has not answered yes.
-   *
-   * Absent means "nothing reported yet", which grants nothing. Authority is
-   * always the union of what is known, so a stale or empty entry can only ever
-   * withhold — never widen.
+   * The roles each member holds, as the gateway last reported them. A cache
+   * rather than a lookup: Discord sends role IDs with every message and
+   * `GUILD_MEMBER_UPDATE` corrects them, while a REST call per authorization
+   * would make a rate limit into a denial. Absent grants nothing; a stale entry
+   * can only ever withhold, never widen.
    */
   readonly #roles = new Map<string, readonly string[]>();
   /** Conversations with a run in flight, so speech can join it instead of queueing. */
@@ -244,11 +219,9 @@ class DiscordBroker implements Broker {
       commands: true,
       permissions: true,
       reasoning: config.verbose.reasoning,
-      // Always asked for, and separately from whether any of it is posted. A
-      // capability is what this transport can use, not what it will show: run
-      // boundaries are how it knows whether the agent is mid-thought, which is
-      // what decides between speaking to it and speaking over it. `verbose.runs`
-      // decides what the channel sees.
+      // Always asked for: run boundaries decide whether the agent is mid-thought,
+      // which is what chooses between speaking to it and speaking over it.
+      // `verbose.runs` decides what the channel sees.
       runs: true,
       toolActivity: config.verbose.toolActivity,
       usage: config.verbose.usage,
@@ -313,6 +286,24 @@ class DiscordBroker implements Broker {
     return Promise.resolve();
   }
 
+  /**
+   * Whether Discord will take a message addressed to this channel.
+   *
+   * Answered against Discord rather than against `channels`, because that list
+   * is the guild channels this broker *reads*: a direct message is reachable,
+   * belongs in no guild, and is exactly the address a schedule is most often
+   * pointed at, so checking against configuration would refuse the common case
+   * and accept a stale guild ID. A broker that is not connected declines to
+   * answer instead of guessing, which leaves the address unchecked rather than
+   * condemned.
+   */
+  public async canDeliverTo(channelId: string, signal: AbortSignal): Promise<boolean> {
+    const rest = this.#rest;
+    if (rest === undefined) throw new Error('Discord is not connected.');
+    signal.throwIfAborted();
+    return rest.canReach(channelId);
+  }
+
   /** Renders one event into the channel it belongs to. */
   public async deliver(event: OutboundEvent): Promise<void> {
     const rest = this.#rest;
@@ -320,16 +311,25 @@ class DiscordBroker implements Broker {
 
     switch (event.type) {
       case 'commandResult':
-        await this.#post(
+        this.#assertPosted(
           event.conversationId,
-          `${event.status === 'failed' ? '⚠️' : '✓'} /${event.name}: ${event.text}`,
+          await this.#post(
+            event.conversationId,
+            `${event.status === 'failed' ? '⚠️' : '✓'} /${event.name}: ${event.text}`,
+          ),
         );
         break;
       case 'error':
-        await this.#post(event.conversationId, `⚠️ ${event.text}`);
+        this.#assertPosted(
+          event.conversationId,
+          await this.#post(event.conversationId, `⚠️ ${event.text}`),
+        );
         break;
       case 'message':
-        await this.#post(event.conversationId, event.text, event.content);
+        this.#assertPosted(
+          event.conversationId,
+          await this.#post(event.conversationId, event.text, event.content),
+        );
         break;
       case 'permission':
         await this.#postPermission(event.conversationId, event.request);
@@ -365,13 +365,8 @@ class DiscordBroker implements Broker {
           `-# ${String(event.usage.inputTokens)} in · ${String(event.usage.outputTokens)} out`,
         );
         break;
-      // Named rather than defaulted, so adding an event to the vocabulary is a
-      // decision this transport has to make instead of one it silently drops.
-      // Each of these is either something a chat has nowhere to put, or
-      // something already said another way: a fragment belongs to a surface that
-      // can show a reply being written, a context rewriting itself has no place
-      // in a room, a retry has not failed yet, and the channel is already the
-      // name of the conversation.
+      // Named rather than defaulted: each of these is either something a chat has
+      // nowhere to put, or something already said another way.
       case 'contextChange':
       case 'contextUsage':
       case 'fragment':
@@ -403,19 +398,14 @@ class DiscordBroker implements Broker {
 
   /**
    * Publishes the command catalog as slash commands, derived from what the host
-   * declares rather than from any list kept here. A command Discord cannot
-   * express is left unpublished and logged: the catalog grows, and this has to
-   * keep working when it does.
+   * declares rather than from any list kept here; a command Discord cannot
+   * express is left unpublished and logged.
    *
-   * Configuring no server publishes globally. That is not merely a wider version
-   * of the same thing: a guild command list exists in one server and nowhere
-   * else, so a bot in several servers, or one that is talked to in a direct
-   * message, has commands only if they are published globally.
-   *
-   * Discord does not replace across those scopes: a global bulk overwrite leaves
-   * every guild list intact and vice versa. Once the selected catalog is safely
-   * present, every other reachable scope is therefore emptied. Publishing first
-   * avoids turning a cleanup failure into an application with no commands at all.
+   * Configuring no server publishes globally — the only way a bot in several
+   * servers, or one talked to in DMs, has commands anywhere but one server.
+   * Discord does not replace across scopes, so once the selected catalog is
+   * safely present every other reachable scope is emptied; publishing first
+   * avoids turning a cleanup failure into an application with no commands.
    */
   async #publishCommands(host: BrokerHost, connectedGuildIds: readonly string[]): Promise<void> {
     const rest = this.#rest;
@@ -505,9 +495,8 @@ class DiscordBroker implements Broker {
     const content = asString(data.content) ?? '';
     const authorId = asString(author.id) ?? '';
 
-    // Recorded before the ingress rule runs, and for every message including the
-    // ones it refuses: what somebody's roles are is not a question about whether
-    // this particular message was admitted.
+    // Recorded before the ingress rule runs, for every message including the
+    // ones it refuses: role facts do not depend on whether a message was admitted.
     this.#rememberRoles(authorId, member?.roles);
 
     const message: IngressMessage = {
@@ -563,11 +552,8 @@ class DiscordBroker implements Broker {
       return;
     }
 
-    // Speaking to an agent that is mid-thought is steering it: the run in
-    // flight takes the new direction at its next safe opening instead of
-    // finishing an answer that is already going the wrong way. Speaking to an
-    // idle one is an ordinary message. Both are the same words from the same
-    // person; only the moment differs, and that is exactly what a chat does.
+    // Speaking mid-thought steers the run at its next safe opening; speaking to
+    // an idle one is an ordinary message. Same words, only the moment differs.
     const type = this.#running.has(channelId) ? 'steer' : 'message';
     const rejection = host.receive({
       content: parts,
@@ -584,9 +570,8 @@ class DiscordBroker implements Broker {
       return;
     }
 
-    // The room is told something is happening straight away, before any run has
-    // started: what follows is a model call, and the gap before it produces
-    // anything is exactly the gap this covers. `runStarted` takes over from here.
+    // The room is told something is happening before any run has started: the gap
+    // a model call opens is exactly the gap this covers; `runStarted` takes over.
     this.#poke(channelId);
   }
 
@@ -734,18 +719,15 @@ class DiscordBroker implements Broker {
   }
 
   /**
-   * A slash command was invoked.
+   * A slash command was invoked. Where it was typed is checked here and nowhere
+   * else: a command published globally is offered in every server and DM the
+   * bot can reach, while this broker reads a configured list of channels —
+   * without this, publishing globally would make a command a way into Nox from
+   * a room nobody admitted. The refusal is ephemeral: the person who typed it
+   * learns it went nowhere, and the room is not told anything.
    *
-   * Where it was typed is checked here and nowhere else. A command published
-   * globally is offered in every server the bot was ever added to and in every
-   * direct message it can receive, while this broker reads a configured list of
-   * channels — so without this, publishing globally would turn a command into a
-   * way into Nox from a room nobody admitted. The answer is ephemeral: the person
-   * who typed it learns it went nowhere, and the room is not told anything.
-   *
-   * Past that, checking is synchronous and answers the only things a person can
-   * act on; what the command then does with the conversation is queued like a
-   * message, so the reply here says it was accepted and nothing about what it did.
+   * Checking is synchronous and answers the only things a person can act on;
+   * what the command then does with the conversation is queued like a message.
    */
   async #onSlashCommand(
     interactionId: string,
@@ -864,9 +846,9 @@ class DiscordBroker implements Broker {
     channelId: string,
     text: string,
     content: readonly MessageContent[] = [],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const rest = this.#rest;
-    if (rest === undefined) return;
+    if (rest === undefined) return false;
 
     let delivered = true;
     for (const chunk of chunkMessage(text)) {
@@ -878,6 +860,7 @@ class DiscordBroker implements Broker {
 
     if (delivered) await this.#postArtifacts(channelId, content);
     this.#resumeTyping(channelId);
+    return delivered;
   }
 
   /**
@@ -912,6 +895,20 @@ class DiscordBroker implements Broker {
 
     if (missed.length === 0) return;
     await this.#send(channelId, { content: `-# ⚠️ Could not post: ${missed.join(', ')}` });
+  }
+
+  /**
+   * Turns a refused post into a thrown failure, for the events that *are* the
+   * reply rather than commentary on it.
+   *
+   * The log line `#send` already wrote says what went wrong and is what an
+   * operator reads; this is what a caller with no eyes on the channel gets, so
+   * it names the address instead of repeating the cause. Discord's own reason
+   * is one line above it in the log.
+   */
+  #assertPosted(channelId: string, delivered: boolean): void {
+    if (delivered) return;
+    throw new Error(`Discord refused a message addressed to channel "${channelId}".`);
   }
 
   /** One message, and whether it arrived. */

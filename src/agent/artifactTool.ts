@@ -5,8 +5,8 @@ import { ARTIFACT_ATTACH_AUTHORITY, ARTIFACT_READ_AUTHORITY } from '../auth/core
 
 import type { Tool } from '@nox/extension-api';
 
-const ATTACH_ARTIFACT_TOOL_NAME = 'attach_artifact';
-const READ_ARTIFACT_TOOL_NAME = 'read_artifact';
+const ARTIFACT_ATTACH_TOOL_NAME = 'artifact_attach';
+const ARTIFACT_READ_TOOL_NAME = 'artifact_read';
 const DEFAULT_READ_CHARACTERS = 12_000;
 const MAX_READ_CHARACTERS = 32_000;
 
@@ -32,7 +32,7 @@ const readArtifactParameters = z.object({
     .int()
     .nonnegative()
     .default(0)
-    .describe('Unicode character offset returned by an earlier read_artifact page.'),
+    .describe('Unicode character offset returned by an earlier artifact_read page.'),
 });
 
 /**
@@ -46,7 +46,7 @@ function attachArtifactTool(): Tool<typeof attachArtifactParameters> {
     description:
       'Attach an artifact from an earlier provider or tool result to your next user-facing ' +
       'response. Call this once for each file only after deciding the user should receive it.',
-    name: ATTACH_ARTIFACT_TOOL_NAME,
+    name: ARTIFACT_ATTACH_TOOL_NAME,
     parameters: attachArtifactParameters,
     prepare: ({ artifactId }) => ({
       preview: `Attach artifact ${artifactId}`,
@@ -83,7 +83,7 @@ function readArtifactTool(): Tool<typeof readArtifactParameters> {
     description:
       'Inspect an artifact already known to this conversation. Textual files are returned in ' +
       'bounded pages; binary files return their canonical reference for compatible model input.',
-    name: READ_ARTIFACT_TOOL_NAME,
+    name: ARTIFACT_READ_TOOL_NAME,
     parameters: readArtifactParameters,
     prepare: ({ artifactId, maxCharacters, offset }) => ({
       preview: `Read artifact ${artifactId} from character ${String(offset)}`,
@@ -121,7 +121,7 @@ function readArtifactTool(): Tool<typeof readArtifactParameters> {
         const continuation =
           result.nextOffset === undefined
             ? 'End of artifact.'
-            : `More content is available. Call read_artifact again with offset ${String(result.nextOffset)}.`;
+            : `More content is available. Call artifact_read again with offset ${String(result.nextOffset)}.`;
         return [
           {
             text:
@@ -138,10 +138,10 @@ function readArtifactTool(): Tool<typeof readArtifactParameters> {
 }
 
 export {
-  ATTACH_ARTIFACT_TOOL_NAME,
+  ARTIFACT_ATTACH_TOOL_NAME,
+  ARTIFACT_READ_TOOL_NAME,
   attachArtifactTool,
   DEFAULT_READ_CHARACTERS,
   MAX_READ_CHARACTERS,
-  READ_ARTIFACT_TOOL_NAME,
   readArtifactTool,
 };

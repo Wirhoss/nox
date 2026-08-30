@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AccessRoute from '@/routes/AccessRoute.vue'
 import ChatRoute from '@/routes/ChatRoute.vue'
+import MemoryRoute from '@/routes/MemoryRoute.vue'
 import SessionsRoute from '@/routes/SessionsRoute.vue'
 import SettingsRoute from '@/routes/SettingsRoute.vue'
 
@@ -18,6 +19,7 @@ const router = createRouter({
         { path: '', redirect: { name: 'chat' } },
         { component: ChatRoute, name: 'chat', path: 'chat' },
         { component: SessionsRoute, name: 'sessions', path: 'sessions/:sessionId?' },
+        { component: MemoryRoute, name: 'memory', path: 'memory' },
         { path: 'settings', redirect: { name: 'settings', params: { section: 'general' } } },
         { component: SettingsRoute, name: 'settings', path: 'settings/:section/:entryId?' },
       ],

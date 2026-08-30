@@ -107,6 +107,26 @@ function registry(): ContributionRegistry {
     }),
   );
   scoped.register(
+    memories,
+    'fake_agentic_memory',
+    memoryContribution({
+      capabilities: { tools: true },
+      instances: 'many',
+      configSchema: z.object({ type: z.literal('fake_agentic_memory') }),
+      create: () =>
+        ({
+          editor: {
+            forget: () => false,
+            search: () => [],
+            update: () => undefined,
+            write: () => ({ id: 'fact', text: 'fact' }),
+          },
+          recall: () => ({ memories: [] }),
+          retain: () => undefined,
+        }) satisfies Memory,
+    }),
+  );
+  scoped.register(
     providers,
     'fake_provider',
     providerContribution({
@@ -162,7 +182,10 @@ async function blueprintNox(options: NoxOptions = {}): Promise<BlueprintNox> {
   }
   await writeFile(
     join(directory, 'memories.json'),
-    JSON.stringify({ memory: { type: 'fake_memory' } }),
+    JSON.stringify({
+      agentic: { type: 'fake_agentic_memory' },
+      memory: { type: 'fake_memory' },
+    }),
   );
   await writeFile(
     join(directory, 'providers.json'),
@@ -371,6 +394,46 @@ describe('writing blueprints', () => {
     expect(await onDisk(nox.directory, 'remembering')).toMatchObject({
       memory: { id: 'memory', maxTokens: 2048 },
     });
+  });
+
+  test('persists an explicit closed grant of the selected memory tools', async () => {
+    const nox = await blueprintNox();
+    const tools = ['memory_search', 'memory_write'] as const;
+
+    const response = await fetch(`${nox.url}/config/blueprints/remembering-tools`, {
+      body: JSON.stringify({ ...NOX, memory: { id: 'agentic', tools } }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+    const body = (await response.json()) as { value: Record<string, unknown> };
+
+    expect(response.status).toBe(201);
+    expect(body.value).toMatchObject({
+      memory: { id: 'agentic', maxTokens: 2048, tools: [...tools] },
+    });
+    expect(await onDisk(nox.directory, 'remembering-tools')).toMatchObject({
+      memory: { id: 'agentic', tools: [...tools] },
+    });
+  });
+
+  test('refuses memory tools when the selected contribution did not declare the capability', async () => {
+    const nox = await blueprintNox();
+
+    const response = await fetch(`${nox.url}/config/blueprints/unsupported-memory-tools`, {
+      body: JSON.stringify({
+        ...NOX,
+        memory: { id: 'memory', tools: ['memory_search'] },
+      }),
+      headers: nox.headers,
+      method: 'POST',
+    });
+    const body = (await response.json()) as { error: string; problems: string[] };
+
+    expect(response.status).toBe(422);
+    expect(body.error).toBe('unknown_reference');
+    expect(body.problems).toEqual([
+      'memory "memory" does not declare support for agentic memory tools',
+    ]);
   });
 
   test('refuses a blueprint naming a memory nothing configures', async () => {

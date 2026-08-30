@@ -190,20 +190,17 @@ async function loadFileSection<T>(section: FileSection<T>, context: LoaderContex
 
 /**
  * The entries a section should already have, because nothing had to be decided
- * to have them.
+ * to have them. A single-instance contribution owns exactly one name, and when
+ * its schema also accepts the bare type — every other field defaulted — there
+ * is no question of what it would contain either: leaving it out only makes an
+ * operator write by hand the one document the schema already fully determines.
+ * Nox's own browser transport is that case: a surface a person is looking at
+ * should not have to be declared before it exists.
  *
- * A single-instance contribution owns exactly one name, so there is no question
- * of *which* entry it would be. When its schema also accepts the bare type —
- * every other field defaulted, nothing required — there is no question of *what*
- * it would contain either, and leaving it out only means an operator has to
- * write by hand the one document the schema already fully determines. Nox's own
- * browser transport is that case: a surface a person is looking at should not
- * have to be declared before it exists.
- *
- * Anything with a required field is deliberately not seeded. A broker written
- * without its credential is not a configured broker, it is one that will come
- * back as `failed`, and inventing it would trade a clear "not configured yet"
- * for a confusing failure.
+ * Anything with a required field is deliberately not seeded: a broker without
+ * its credential is not a configured broker but one that will come back as
+ * `failed`, and inventing it would trade a clear "not configured yet" for a
+ * confusing failure.
  */
 function seededEntries(configurable: readonly UnknownConfigurable[]): Record<string, unknown> {
   const seeded: Record<string, unknown> = {};

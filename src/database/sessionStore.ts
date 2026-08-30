@@ -316,17 +316,15 @@ const HISTORY_INDEX_BACKFILL = 'history_fts';
 const ARTIFACT_REFERENCE_BACKFILL = 'message_artifacts';
 
 /**
- * Builds what earlier transcripts never got the chance to write.
+ * Builds what earlier transcripts never got the chance to write. Both indexes
+ * are derived from `messages` by code, not SQL, so no migration could have
+ * filled them and the journal does not record them. They are rebuilt once from
+ * scratch and the fact is recorded — deciding by looking at the index would
+ * either loop forever on a database with legitimately no artifacts, or skip
+ * one filled by an earlier release.
  *
- * Both indexes are derived from `messages` by functions that live in this
- * codebase, not in SQL, so a migration could not have filled them and the
- * migration journal does not record them. They are rebuilt once, from scratch,
- * and the fact is recorded — a rebuild that decided by looking at the index
- * would either loop forever on a database that legitimately has no artifacts,
- * or skip a database that was filled by an earlier release.
- *
- * The chunk rebuild clears before it writes, so running against a partly built
- * index produces one copy of everything rather than two.
+ * The chunk rebuild clears before it writes, so a partly built index produces
+ * one copy of everything rather than two.
  */
 async function backfillDerivedIndexes(
   database: Database,
@@ -418,7 +416,7 @@ class SessionStore {
       database.transaction((tx) => {
         tx.insert(messages).values(row).run();
         // Same transaction as the row it indexes. A message that reached
-        // storage without reaching the index is one `search_history` can never
+        // storage without reaching the index is one `history_search` can never
         // find, and nothing downstream would ever report the gap.
         indexMessage(tx, sessionId, message, seq);
         // Written beside the row, for the same reason: a permission check that
@@ -585,7 +583,7 @@ class SessionStore {
   /**
    * Whether any transcript this agent holds was ever handed this artifact.
    *
-   * The permission question behind `read_artifact` once the agent can see its
+   * The permission question behind `artifact_read` once the agent can see its
    * own earlier sessions: the same rule the current transcript already applied,
    * asked of every session the agent owns rather than only the open one. It
    * answers about *receipt*, never about the artifact's own ownership — a

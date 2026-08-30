@@ -22,11 +22,15 @@ const HISTORY_READ_AUTHORITY = 'nox.history.read';
 const HISTORY_SESSIONS_AUTHORITY = 'nox.history.sessions';
 const HISTORY_SESSIONS_SEARCH_AUTHORITY = 'nox.history.sessions.search';
 
+/** Principal-scoped access to the editable memory selected by an agent. */
+const MEMORY_READ_AUTHORITY = 'nox.memory.read';
+const MEMORY_WRITE_AUTHORITY = 'nox.memory.write';
+
 /** The router's own two tools. */
 const TOOL_SEARCH_AUTHORITY = 'nox.tools.search';
 
 /**
- * `call_tool` is a doorway, not a capability: what it actually needs is the
+ * `tool_call` is a doorway, not a capability: what it actually needs is the
  * authority of the tool it was asked to invoke, which is resolved from the
  * prepared execution. This exists so the doorway itself is never the unnamed
  * thing, and so an unbound router still asks for something nobody grants.
@@ -69,6 +73,16 @@ const CORE_AUTHORITIES: readonly AuthorityDefinition[] = Object.freeze([
     ownerExtensionId: CORE_OWNER_ID,
   }),
   Object.freeze({
+    description: 'Search current long-term facts owned by the active principal.',
+    id: MEMORY_READ_AUTHORITY,
+    ownerExtensionId: CORE_OWNER_ID,
+  }),
+  Object.freeze({
+    description: 'Write, correct, or retire long-term facts owned by the active principal.',
+    id: MEMORY_WRITE_AUTHORITY,
+    ownerExtensionId: CORE_OWNER_ID,
+  }),
+  Object.freeze({
     description: 'Invoke a tool from the routed catalog, under that tool own authority.',
     id: TOOL_CALL_AUTHORITY,
     ownerExtensionId: CORE_OWNER_ID,
@@ -88,6 +102,8 @@ export {
   HISTORY_SEARCH_AUTHORITY,
   HISTORY_SESSIONS_AUTHORITY,
   HISTORY_SESSIONS_SEARCH_AUTHORITY,
+  MEMORY_READ_AUTHORITY,
+  MEMORY_WRITE_AUTHORITY,
   TOOL_CALL_AUTHORITY,
   TOOL_SEARCH_AUTHORITY,
 };

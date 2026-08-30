@@ -243,18 +243,17 @@ interface InboundSteer extends InboundSpeech {
   readonly type: 'steer';
 }
 /**
- * Something said in the conversation that was not said to Nox.
+ * Something said in the conversation that was not said to Nox. It is
+ * attributed, deduplicated and appended to the transcript exactly like speech,
+ * and it wakes nothing: no run starts, and the run in flight does not change
+ * hands. A transport that carries a room uses this for the traffic its ingress
+ * rule did not admit as a turn, so the agent reads a conversation instead of its
+ * own replies separated by silence.
  *
- * It is attributed, deduplicated and appended to the transcript exactly like
- * speech, and it wakes nothing: no run starts, and the run in flight does not
- * change hands. A transport that carries a room — a channel with people talking
- * in it — uses this for the traffic its ingress rule did not admit as a turn, so
- * the agent reads a conversation instead of its own replies separated by silence.
- *
- * The cost is deliberate and belongs to whoever turns it on. A second principal's
- * words in the transcript make the session shared for good, which is what raises
- * the approval floor on every effectful tool call; and unaddressed traffic is
- * folded and compacted like anything else.
+ * The cost is deliberate and belongs to whoever turns it on: a second
+ * principal's words make the session shared for good, which raises the approval
+ * floor on every effectful tool call, and unaddressed traffic is folded and
+ * compacted like anything else.
  */
 interface InboundObservation extends InboundSpeech {
   readonly type: 'observation';
@@ -313,7 +312,36 @@ interface BrokerHost {
 }
 
 interface Broker {
+  /**
+   * Whether this transport would accept a message addressed to this channel.
+   *
+   * Asked because an address is the one part of a delivery nothing else can
+   * check: an agent writing a channel ID into a schedule is guessing, and the
+   * only party that knows whether the guess is right is the transport. A
+   * transport with no cheap way to ask leaves this out, and the host treats an
+   * unanswered address as acceptable — the same position it was in before.
+   *
+   * False means the address is wrong and will stay wrong, so a caller may
+   * refuse the whole request on it. Anything it cannot decide — a network that
+   * is down, a rate limit — is thrown rather than returned false, because a
+   * momentary failure to ask is not evidence that the answer is no.
+   */
+  canDeliverTo?(channelId: string, signal: AbortSignal): Promise<boolean>;
   readonly capabilities: BrokerCapabilities;
+  /**
+   * Sends one event to its conversation.
+   *
+   * Throws if an event that carries the reply itself — a message, an error, a
+   * command's result — did not reach the transport. This is the only signal a
+   * caller that is not a person gets: an interactive surface has someone
+   * watching the channel who can see that nothing arrived, while a scheduled
+   * delivery has no one, so a swallowed failure there is recorded as a success
+   * and the run is remembered as having done what it did not do.
+   *
+   * Events that decorate a run rather than carry it — typing, reasoning, tool
+   * activity, usage — do not throw: they are already best-effort, and losing
+   * one costs the channel nothing it was promised.
+   */
   deliver(event: OutboundEvent): Promise<void>;
   /**
    * The groups this sender belongs to, as extra subjects its grants may be

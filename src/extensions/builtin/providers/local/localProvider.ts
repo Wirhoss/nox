@@ -185,21 +185,18 @@ function transcript(messages: readonly Message[]): GenerateCall['messages'] {
 }
 
 /**
- * Models Nox runs itself, on the CPU of the machine it is installed on.
+ * Models Nox runs itself, on the CPU of the machine it is installed on. One
+ * configured instance serving both kinds, because it is one engine: the same
+ * weight cache, the same thread budget, the same decision to run locally at
+ * all — split in two it could contradict itself about every one of those.
  *
- * One configured instance serving both kinds, because it is one engine: the
- * same weight cache, the same thread budget, the same decision to run models
- * locally at all. Split into two instances it could contradict itself about
- * every one of those, which is what a second entry would really be buying.
+ * Two worker threads inside it, though — an implementation detail, not a
+ * configuration one — keep an embedding pass from waiting behind a generation
+ * still writing.
  *
- * Two worker threads inside it, though. That is an implementation detail rather
- * than a configuration one, and it is what keeps an embedding pass from waiting
- * behind a generation that is still writing.
- *
- * Tool calling is refused rather than ignored. A model this size does not
+ * Tool calling is refused rather than ignored: a model this size does not
  * reliably emit callable tool syntax, and an adapter that accepted the tools
- * and quietly never called any of them would look like an agent that had
- * decided not to act, which is the one failure that reads as a decision.
+ * and never called them would look like an agent that had decided not to act.
  */
 class LocalProvider extends ChatProvider implements EmbeddingCapable {
   public static override readonly configSchema = localProviderConfigSchema;

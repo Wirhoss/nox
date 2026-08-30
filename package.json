@@ -12,6 +12,7 @@
     "playwright": "^1.62.1",
     "semver": "^7.8.5",
     "sharp": "^0.35.3",
+    "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -42,6 +43,10 @@
     "db:check": "drizzle-kit check",
     "db:studio": "drizzle-kit studio",
     "test": "bun test --pass-with-no-tests ./src/",
+    "eval:memory": "bun run scripts/eval-memory.ts",
+    "eval:quantile": "bun run scripts/sweep-quantile.ts",
+    "eval:retrieval": "bun run scripts/eval-retrieval.ts",
+    "migrate:memory": "bun run scripts/migrate-memory.ts",
     "test:ui": "bun --cwd=src/ui run test:unit",
     "typecheck": "tsc --noEmit",
     "typecheck:ui": "bun --cwd=src/ui run type-check",

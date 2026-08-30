@@ -11,6 +11,7 @@ export {
 export { extensionRoutes } from './extensions';
 export { health } from './health';
 export { languageRoutes } from './i18n';
+export { memoryRoutes } from './memories';
 export { secretRoutes } from './secrets';
 export { sessionRoutes } from './sessions';
 export { ApiServer } from './server';
@@ -30,6 +31,7 @@ export type {
 export type { ExtensionRoutesOptions } from './extensions';
 export type { HealthOptions, ReadinessCheck, ReadinessChecks, ReadinessReport } from './health';
 export type { LanguageCatalog, LanguageDescriptor, LanguageRoutesOptions } from './i18n';
+export type { MemoryRoutesOptions } from './memories';
 export type { SecretRoutesOptions } from './secrets';
 export type { SessionReader, SessionRoutesOptions } from './sessions';
 export type { ApiAuth, ApiServerOptions } from './server';

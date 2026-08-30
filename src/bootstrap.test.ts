@@ -10,6 +10,7 @@ import {
   providers,
   toolSets,
 } from '@nox/extension-api';
+import { Database as SqliteConnection } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { AuthStore } from './api/auth/store';
@@ -155,20 +156,36 @@ describe('bootstrap', () => {
     expect(application.getAgent('nox')?.systemPrompt).toBe('be exact');
   });
 
-  test('composes the selected local SQL memory as a builtin contribution', async () => {
+  test('composes the memory an agent selected as a builtin contribution', async () => {
     const application = await boot({
-      blueprints: { nox: { ...NOX, memory: { id: 'local', maxTokens: 512 } } },
-      memories: { local: { type: 'local' } },
+      blueprints: { nox: { ...NOX, memory: { id: 'semantic', maxTokens: 512 } } },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: {
+        semantic: {
+          embedding: { model: 'counting', provider: 'counting_test' },
+          extraction: { model: 'gpt-test', provider: 'main' },
+          type: 'semantic',
+        },
+      },
+      providers: {
+        ...PROVIDERS,
+        counting_test: {
+          modelConfigs: [{ dimensions: 4, kind: 'embedding', modelId: 'counting' }],
+          type: 'counting_test',
+        },
+      },
     });
 
-    expect(application.contributions.get(memories, 'local')?.extensionId).toBe('nox.memory.local');
-    expect(application.services.get(configService).get('memories')).toHaveProperty('local');
+    expect(application.contributions.get(memories, 'semantic')?.extensionId).toBe(
+      'nox.memory.semantic',
+    );
+    expect(application.services.get(configService).get('memories')).toHaveProperty('semantic');
     expect(
       application.services
         .get(configAdminService)
         .runtimeStatuses()
-        .find(({ id, kind }) => id === 'local' && kind === 'memory'),
-    ).toMatchObject({ id: 'local', kind: 'memory', state: 'active' });
+        .find(({ id, kind }) => id === 'semantic' && kind === 'memory'),
+    ).toMatchObject({ id: 'semantic', kind: 'memory', state: 'active' });
     expect(application.getAgent('nox')).toBeDefined();
   });
 
@@ -298,16 +315,15 @@ describe('bootstrap', () => {
     await application.closeSession(session.sessionId);
 
     // A name the instance does not expose fails where the set and the name are
-    // both in hand, rather than granting nothing in silence. It surfaces when
-    // the session snapshots its tools, which is where grants are resolved.
-    let error: unknown;
-    try {
-      await application.openSession('typo');
-    } catch (reason) {
-      error = reason;
-    }
-
-    expect(String(error)).toContain('does not expose tool web_crawl');
+    // both in hand, rather than granting nothing in silence. Candidate agents
+    // compose before registration, so no first session can discover the typo.
+    expect(application.getAgent('typo')).toBeUndefined();
+    expect(
+      application.services
+        .get(configAdminService)
+        .runtimeStatuses()
+        .find(({ id, kind }) => id === 'typo' && kind === 'agent')?.error,
+    ).toContain('does not expose tool web_crawl');
   });
 
   test('registers one agent per file in the blueprints directory', async () => {
@@ -945,6 +961,104 @@ describe('bootstrap', () => {
     }
   });
 
+  test('lets an extension use a model it did not contribute', async () => {
+    const application = await boot({
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: {
+        embedding_test: {
+          embedding: { model: 'counting', provider: 'counting_test' },
+          type: 'embedding_test',
+        },
+      },
+      providers: {
+        ...PROVIDERS,
+        counting_test: {
+          modelConfigs: [{ dimensions: 4, kind: 'embedding', modelId: 'counting' }],
+          type: 'counting_test',
+        },
+      },
+    });
+    const status = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'memory' && component.id === 'embedding_test');
+    expect(status?.state).toBe('active');
+
+    const memory = application.contributions.get(memories, 'embedding_test')?.value.create({
+      embedding: { model: 'counting', provider: 'counting_test' },
+      type: 'embedding_test',
+    } as never);
+    const recalled = await memory?.recall({
+      context: [],
+      maxTokens: 128,
+      query: 'what did I say',
+      scope: {
+        agentId: 'nox',
+        principal: { issuer: 'web', subject: 'esteban' },
+        sessionId: 'session',
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+
+    // The whole point of the service: a memory reached a configured embedding
+    // model through the provider an operator named, having contributed neither.
+    expect(recalled?.memories[0]?.metadata).toMatchObject({
+      dimensions: 4,
+      modelId: 'counting',
+      provider: 'counting_test',
+    });
+    expect(recalled?.memories[0]?.text.split(',')).toHaveLength(4);
+  });
+
+  test('reports a model a memory names but no provider serves, while it is being built', async () => {
+    const application = await boot({
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: {
+        embedding_test: {
+          embedding: { model: 'absent', provider: 'counting_test' },
+          type: 'embedding_test',
+        },
+      },
+      providers: {
+        ...PROVIDERS,
+        counting_test: {
+          modelConfigs: [{ dimensions: 4, kind: 'embedding', modelId: 'counting' }],
+          type: 'counting_test',
+        },
+      },
+    });
+    const status = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'memory' && component.id === 'embedding_test');
+
+    // Taken when the contribution is created rather than at the first recall,
+    // so the mistake is a component that says it is unavailable instead of one
+    // that looks healthy until a conversation needs it.
+    expect(status?.state).toBe('unavailable');
+    expect(status?.error).toContain('serves no embedding model "absent"');
+    expect(application.state).toBe('running');
+  });
+
+  test('refuses a provider that cannot embed where a memory needs vectors', async () => {
+    const application = await boot({
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: {
+        embedding_test: {
+          embedding: { model: 'gpt-test', provider: 'main' },
+          type: 'embedding_test',
+        },
+      },
+    });
+    const status = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'memory' && component.id === 'embedding_test');
+
+    expect(status?.state).toBe('unavailable');
+    expect(status?.error).toContain('serves no embedding model');
+  });
+
   test('refuses to compose an agent on a provider that serves no chat model', async () => {
     const application = await boot({
       blueprints: { nox: { ...NOX, provider: 'counting_test' } },
@@ -980,6 +1094,114 @@ describe('bootstrap', () => {
       .runtimeStatuses()
       .find((component) => component.kind === 'agent' && component.id === 'nox');
     expect(failure?.error).toContain('configured for embeddings, not conversation');
+  });
+
+  test('brings up the semantic memory against configured models and its own schema', async () => {
+    const dataDir = temporary('nox-data-');
+    const application = await boot({
+      blueprints: { nox: { ...NOX, memory: { id: 'semantic' } } },
+      dataDir,
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: {
+        semantic: {
+          embedding: { model: 'counting', provider: 'counting_test' },
+          extraction: { model: 'gpt-test', provider: 'main' },
+          type: 'semantic',
+        },
+      },
+      providers: {
+        ...PROVIDERS,
+        counting_test: {
+          modelConfigs: [{ dimensions: 4, kind: 'embedding', modelId: 'counting' }],
+          type: 'counting_test',
+        },
+      },
+    });
+    const status = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'memory' && component.id === 'semantic');
+
+    // The agent composed on it, which is the only proof that every reference in
+    // memories.json resolved: two models, a schema, and a vector table whose
+    // width came from the embedding model rather than from a migration.
+    expect(status?.state).toBe('active');
+    expect(application.getAgent('nox')).toBeDefined();
+
+    const database = new SqliteConnection(join(dataDir, 'extensions.db'));
+    try {
+      const tables = database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name",
+        )
+        .all()
+        .map((row) => row.name);
+
+      expect(tables).toContain('semantic_episodes');
+      expect(tables).toContain('semantic_facts');
+      expect(tables).toContain('semantic_fact_provenance');
+      // Created at startup and not by the migration, because its width is the
+      // configured model's and a migration is the same everywhere.
+      expect(tables).toContain('semantic_fact_vectors');
+    } finally {
+      database.close(false);
+    }
+  });
+
+  test('refuses a memory whose extraction provider cannot chat at all', async () => {
+    const application = await boot({
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      memories: {
+        semantic: {
+          embedding: { model: 'counting', provider: 'counting_test' },
+          extraction: { model: 'counting', provider: 'counting_test' },
+          type: 'semantic',
+        },
+      },
+      providers: {
+        ...PROVIDERS,
+        counting_test: {
+          modelConfigs: [{ dimensions: 4, kind: 'embedding', modelId: 'counting' }],
+          type: 'counting_test',
+        },
+      },
+    });
+    const status = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'memory' && component.id === 'semantic');
+
+    expect(status?.state).toBe('unavailable');
+    expect(status?.error).toContain('serves no chat model');
+  });
+
+  test('refuses an embedding model where a memory needs to extract', async () => {
+    const application = await boot({
+      memories: {
+        semantic: {
+          embedding: { model: 'test/embed', provider: 'local' },
+          extraction: { model: 'test/embed', provider: 'local' },
+          type: 'semantic',
+        },
+      },
+      providers: {
+        local: {
+          embedding: { dimensions: 384, enabled: true, model: 'test/embed' },
+          llm: { enabled: true, model: 'test/chat' },
+          type: 'local',
+        },
+      },
+    });
+    const status = application.services
+      .get(configAdminService)
+      .runtimeStatuses()
+      .find((component) => component.kind === 'memory' && component.id === 'semantic');
+
+    // A provider that can chat, asked for a model declared as an embedding one.
+    // Refused in the words an operator already sees when an agent does this,
+    // rather than in a second vocabulary invented for memories.
+    expect(status?.state).toBe('unavailable');
+    expect(status?.error).toContain('configured for embeddings, not conversation');
   });
 
   test('releases a tool set the configuration has replaced', async () => {
@@ -1022,6 +1244,10 @@ describe('bootstrap', () => {
     await booted?.stop();
     booted = undefined;
 
+    // `released` rather than `still-running`, and present at all: shutdown waits
+    // for a memory's disposal to finish. A memory owns its own consolidation, so
+    // this is what keeps a background pass from being cut off mid-write — and it
+    // is why consolidation needs no scheduler from the host.
     expect(readFileSync(ledger, 'utf8').trim()).toBe('released');
   });
 });

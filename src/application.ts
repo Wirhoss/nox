@@ -101,6 +101,19 @@ class NoxApplication {
     return Object.freeze([...this.#sessions.values()]);
   }
 
+  /**
+   * Whether any live session is inside a run.
+   *
+   * The same sweep `sessions` does, asked as a yes or no. It is a scan rather
+   * than a counter kept at run boundaries because the count would have to be
+   * decremented by every path a run can end on — including the ones that end it
+   * by abandoning the session — and a counter that drifts upward would tell a
+   * background extension the machine is busy forever.
+   */
+  public busy(): boolean {
+    return this.sessions.some((live) => live.session.state === 'running');
+  }
+
   public get signal(): AbortSignal {
     return this.#abortController.signal;
   }
@@ -262,6 +275,8 @@ class NoxApplication {
       }
       this.#activatedExtensions.clear();
       await this.#resources.dispose();
+      // Last: an extension released above may have written on its way out.
+      await this.#storage.close();
     } finally {
       this.#state = 'stopped';
     }
@@ -271,19 +286,24 @@ class NoxApplication {
     const { id } = extension.manifest;
     const resources = this.#resources.add(new DisposableStore());
 
-    const context: ExtensionContext = Object.freeze({
-      contributions: this.#contributions.scoped(id, resources),
-      logger: this.#logger.child(id),
-      extension: extension.manifest,
-      services: this.#services,
-      signal: this.#abortController.signal,
-      storage: this.#storage.forExtension(id),
-      subscriptions: Object.freeze({
-        add: <T extends Disposable>(resource: T): T => resources.add(resource),
-      }),
-    });
-
     try {
+      // Inside the guard because opening the extension's storage view applies
+      // the migrations it ships, and a schema that will not apply is a failure
+      // to activate rather than a different kind of problem.
+      const context: ExtensionContext = Object.freeze({
+        contributions: this.#contributions.scoped(id, resources),
+        logger: this.#logger.child(id),
+        extension: extension.manifest,
+        services: this.#services,
+        signal: this.#abortController.signal,
+        storage: await this.#storage.forExtension({
+          extensionId: id,
+          ...(extension.migrations === undefined ? {} : { migrations: extension.migrations }),
+        }),
+        subscriptions: Object.freeze({
+          add: <T extends Disposable>(resource: T): T => resources.add(resource),
+        }),
+      });
       await extension.activate(context);
       this.#activatedExtensions.add(id);
       extension.observer?.activated?.();

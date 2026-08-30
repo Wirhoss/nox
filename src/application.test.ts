@@ -306,6 +306,30 @@ describe('NoxApplication agents and sessions', () => {
     expect(() => app.addAgent(stubAgent('writer', order))).toThrow('already registered');
   });
 
+  test('reports itself busy only while a session is inside a run', async () => {
+    const order: string[] = [];
+    const app = new NoxApplication().addAgent(stubAgent('writer', order));
+    await app.start();
+
+    const idle = (await app.openSession('writer', { sessionId: 'a' })) as unknown as FakeSession;
+    // An open conversation nobody is talking in is exactly when background work
+    // should run, so holding a session is not on its own being busy.
+    expect(app.busy()).toBe(false);
+
+    idle.state = 'running';
+    expect(app.busy()).toBe(true);
+
+    idle.state = 'idle';
+    expect(app.busy()).toBe(false);
+
+    // A session that stopped without being closed drops out rather than
+    // leaving the runtime looking permanently occupied.
+    idle.state = 'running';
+    expect(app.busy()).toBe(true);
+    await idle.stop();
+    expect(app.busy()).toBe(false);
+  });
+
   test('holds the sessions it opened and drops them when they are closed', async () => {
     const order: string[] = [];
     const app = new NoxApplication().addAgent(stubAgent('writer', order));

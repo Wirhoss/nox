@@ -6,18 +6,16 @@ import type { NoxDrizzle, NoxTransaction } from './database';
 import type { Message } from '@nox/extension-api';
 
 /**
- * The searchable half of the transcript.
+ * The searchable half of the transcript. FTS5 rather than an in-process index,
+ * because the corpus is every message of every session an agent has ever held:
+ * rebuilding it in memory on each boot costs more the longer Nox is useful, and
+ * a top-K over the whole corpus cannot be filtered down to one session
+ * afterwards without silently losing hits. Here the filter is part of the
+ * query, so the same index answers "in this session" and "in any of mine"
+ * without ranking one against the other.
  *
- * FTS5 is the index rather than an in-process one because the corpus is every
- * message of every session an agent has ever held: rebuilding that in memory on
- * each boot costs more the longer Nox is useful, and a top-K over the whole
- * corpus cannot be filtered down to one session afterwards without silently
- * losing hits. Here the filter is part of the query, so the same index answers
- * "in this session" and "in any of mine" without ranking one against the other.
- *
- * `bm25()` is FTS5's default ranking function, so this is the same scoring the
- * transcript search has always used — `rank` is that score, negated, and lowest
- * ranks first.
+ * `bm25()` is FTS5's default ranking, the same scoring transcript search has
+ * always used — `rank` is that score, negated, and lowest ranks first.
  */
 const HISTORY_FTS_TABLE = 'history_fts';
 

@@ -85,18 +85,15 @@ function sorted(record: Record<string, unknown>): Record<string, unknown> {
 
 /**
  * Configuration as something a surface can administer: enumerate the sections,
- * read one, replace one, and — for the sections holding named entries — add,
- * replace and remove those one at a time.
+ * read one, replace one, and — for sections holding named entries — add,
+ * replace and remove those one at a time. A view over `Config` rather than a
+ * second home for anything: the files stay the only copy, every write goes
+ * through the loader's validation, and the same lock serializes it.
  *
- * It is a view over `Config` rather than a second home for anything: the files
- * stay the only copy, every write goes through the validation the loader
- * performs, and the same lock serializes it.
- *
- * Every section is administered the same way, blueprints included. What a
+ * Every section is administered the same way, blueprints included; what a
  * section additionally insists on is a row in the policy table, applied here
- * without this class knowing which section it belongs to — so there is one door
- * onto the configuration files and no chance of a second one's checks drifting
- * from these.
+ * without this class knowing which section it belongs to — one door onto the
+ * configuration files, and no second set of checks to drift.
  */
 class ConfigStore implements ConfigurationAdmin {
   readonly #activeApp: unknown;
@@ -143,17 +140,13 @@ class ConfigStore implements ConfigurationAdmin {
   }
 
   /**
-   * Every contribution this section can hold, and whether it is configured.
-   *
-   * A surface that only listed entries would show nothing at all after an
-   * extension is installed, which is a wrong answer rather than an empty one:
-   * the contribution is there, it has a schema and a name, and for a
-   * single-instance one there is exactly one entry it could ever be. Saying so
-   * is what turns "nothing here" into "this needs a token".
-   *
-   * `configured` is read from the current document rather than remembered, so a
-   * section that has not been resolved yet simply reports everything as
-   * unconfigured instead of failing.
+   * Every contribution this section can hold, and whether it is configured. A
+   * surface that only listed entries would show nothing after an extension is
+   * installed, which is a wrong answer rather than an empty one: the
+   * contribution is there, it has a schema and a name, and a single-instance
+   * one has exactly one entry it could ever be. `configured` is read from the
+   * current document rather than remembered, so an unresolved section reports
+   * everything as unconfigured instead of failing.
    */
   #contributionSummaries(
     key: ConfigKey,

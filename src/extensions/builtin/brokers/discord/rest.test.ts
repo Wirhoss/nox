@@ -60,6 +60,43 @@ function client(url: string): DiscordRest {
 }
 
 describe('DiscordRest', () => {
+  test('reads a channel it can reach as reachable', async () => {
+    const fake = server([() => Response.json({ id: CHANNEL })]);
+
+    try {
+      expect(await client(fake.url).canReach(CHANNEL)).toBe(true);
+      expect(fake.calls[0]).toMatchObject({ method: 'GET', path: `/channels/${CHANNEL}` });
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test.each([
+    ['gone', 404, '{"message": "Unknown Channel", "code": 10003}'],
+    ['invisible', 403, '{"message": "Missing Access", "code": 50001}'],
+  ])('reports a %s channel as unreachable instead of raising', async (_name, status, body) => {
+    const fake = server([() => new Response(body, { status })]);
+
+    try {
+      expect(await client(fake.url).canReach(CHANNEL)).toBe(false);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test('raises rather than condemning an address when Discord could not be asked', async () => {
+    // Four 500s exhaust the retries. Not being able to ask has to stay
+    // distinguishable from having asked and been told no, or an outage would
+    // read as every scheduled address suddenly being wrong.
+    const fake = server([() => new Response('upstream is down', { status: 500 })]);
+
+    try {
+      expect(client(fake.url).canReach(CHANNEL)).rejects.toBeInstanceOf(DiscordRestError);
+    } finally {
+      await fake.close();
+    }
+  });
+
   test('posts a message as the bot and answers with the ID Discord gave it', async () => {
     const fake = server([() => Response.json({ id: '999' })]);
 

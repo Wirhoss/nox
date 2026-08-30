@@ -2,6 +2,7 @@ import { raceWithAbort } from '../utils/abort';
 
 import type {
   Disposable,
+  ScheduledRunDelivery,
   ScheduledRunHost,
   ScheduledRunRequest,
   ScheduledRunResult,
@@ -41,9 +42,25 @@ class ScheduledRunRelay implements ScheduledRunHost, Disposable {
     return raceWithAbort(signal, () => host.agentIds(signal));
   }
 
+  public async canDeliverTo(
+    delivery: ScheduledRunDelivery,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const host = await this.#hostFor(signal);
+    return raceWithAbort(signal, () => host.canDeliverTo(delivery, signal));
+  }
+
   public async deliveryBrokerIds(signal: AbortSignal): Promise<readonly string[]> {
     const host = await this.#hostFor(signal);
     return raceWithAbort(signal, () => host.deliveryBrokerIds(signal));
+  }
+
+  public async deliveryOrigin(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<ScheduledRunDelivery | undefined> {
+    const host = await this.#hostFor(signal);
+    return raceWithAbort(signal, () => host.deliveryOrigin(sessionId, signal));
   }
 
   public async runScheduledAgent(request: ScheduledRunRequest): Promise<ScheduledRunResult> {

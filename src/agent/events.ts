@@ -13,20 +13,16 @@ type RunStatus = 'aborted' | 'completed' | 'failed' | 'maxIterations';
 type RunTrigger = 'cron' | 'deferredResult' | 'retry' | 'steer' | 'user';
 
 /**
- * Everything an observer of a session can see.
+ * Everything an observer of a session can see. `message` covers every append,
+ * including the `folded` and `compacted` events the context writes on its own;
+ * fragments are the live view of a reply still being written, and the `message`
+ * that follows is the settled one.
  *
- * `message` covers every append, including the `folded` and `compacted` events
- * the context writes on its own — they are messages, not a separate concern.
- * Fragments are the live view of a reply that is still being written; the
- * `message` that follows is the settled one.
- *
- * Foreground fragments remain bracketed by `runStarted`/`runCompleted`. Events
- * from a detached permission can arrive during a later run, so those carry the
- * originating run ID explicitly instead of borrowing the current bracket.
- *
- * `titled` is the session naming itself once it has something to be named
- * after. It says nothing about the conversation, which is why it is an event
- * and not a message: nothing in the transcript changed.
+ * Foreground fragments stay bracketed by `runStarted`/`runCompleted`; events
+ * from a detached permission can arrive during a later run, so they carry the
+ * originating run ID instead of borrowing the current bracket. `titled` is the
+ * session naming itself: nothing in the transcript changed, which is why it is
+ * an event and not a message.
  */
 type AgentEvent =
   | { type: 'assistantReasoningFragment'; text: string }

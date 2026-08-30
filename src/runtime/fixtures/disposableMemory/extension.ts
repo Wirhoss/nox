@@ -10,13 +10,18 @@ import {
 } from '@nox/extension-api';
 
 /**
- * A memory that records its own release.
+ * A memory that runs work of its own between conversations, and records both
+ * that it was released and that its release was waited for.
  *
- * Disposal is invisible from outside the process, so the only way to assert the
- * runtime performs it is to have the instance say so where a test can read it.
+ * Consolidation is the implementation's, not the host's — a memory that folds
+ * duplicates or ages facts out does it on its own clock, using the disposal
+ * every contribution already has. So the thing worth asserting is not that
+ * `dispose` is called but that it is *awaited*: a background pass cut off
+ * midway is a half-written store, and nothing outside this process can see the
+ * difference unless the instance says so.
  */
 const configSchema = z.object({
-  /** File this instance appends its id to when the runtime releases it. */
+  /** File this instance appends to when the runtime has finished releasing it. */
   ledger: z.string().min(1),
   type: z.literal('disposable_test'),
 });
@@ -28,13 +33,26 @@ const disposableMemoryExtension = defineExtension({
       'disposable_test',
       memoryContribution({
         configSchema,
-        create: (config): Disposable & Memory => ({
-          dispose(): void {
-            appendFileSync(config.ledger, 'released\n');
-          },
-          recall: () => ({ memories: [] }),
-          retain: () => undefined,
-        }),
+        create: (config): Disposable & Memory => {
+          let passes = 0;
+          const background = setInterval(() => {
+            passes += 1;
+          }, 5);
+
+          return {
+            async dispose(): Promise<void> {
+              clearInterval(background);
+              const stopped = passes;
+              await new Promise((resolve) => setTimeout(resolve, 15));
+              // One line, written last, carrying the verdict: the file existing
+              // at all proves the wait happened, and its content proves the work
+              // had actually stopped rather than merely been asked to.
+              appendFileSync(config.ledger, passes === stopped ? 'released\n' : 'still-running\n');
+            },
+            recall: () => ({ memories: [] }),
+            retain: () => undefined,
+          };
+        },
       }),
     );
   },

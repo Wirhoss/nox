@@ -131,7 +131,7 @@ describe('SessionStore', () => {
       createdAt: CREATED_AT,
       execution: 'immediate',
       messageId: 'catalog',
-      name: 'search_tool',
+      name: 'tool_search',
       response: [{ text: 'the tool catalog', type: 'text' }],
       role: 'toolResponse',
       trackId: 'track-1',

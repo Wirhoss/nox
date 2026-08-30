@@ -91,7 +91,7 @@ describe('the history tool set', () => {
     // A search tool with nothing to search would answer every question with
     // silence, and silence reads to a model as "it never happened" — worse than
     // never having offered the tool.
-    expect(Object.keys(tools.tools)).toEqual(['read_tool_result']);
+    expect(Object.keys(tools.tools)).toEqual(['history_read_result']);
   });
 
   test('offers exactly the set of names it reserves, once an archive is present', () => {
@@ -104,7 +104,7 @@ describe('the history tool set', () => {
   });
 });
 
-describe('search_history', () => {
+describe('history_search', () => {
   test('finds content the active context no longer holds', async () => {
     const tools = toolSet(
       fakeArchive([
@@ -112,7 +112,7 @@ describe('search_history', () => {
       ]),
     );
 
-    const found = await call(tools, 'search_history', { query: 'deploy_ed25519' });
+    const found = await call(tools, 'history_search', { query: 'deploy_ed25519' });
 
     // The whole point of the tool: recovering an exact anchor from the
     // permanent transcript rather than guessing or asking the user again.
@@ -126,7 +126,7 @@ describe('search_history', () => {
     ]);
     const tools = toolSet(archive);
 
-    const found = await call(tools, 'search_history', { query: 'marker' });
+    const found = await call(tools, 'history_search', { query: 'marker' });
 
     expect(archive.calls[0]?.sessionId).toBe(THIS_SESSION);
     expect(found).toContain('marker here');
@@ -144,7 +144,7 @@ describe('search_history', () => {
       sessionId: THIS_SESSION,
     });
 
-    const found = await call(tools, 'search_history', { limit: 10, query: 'marker' });
+    const found = await call(tools, 'history_search', { limit: 10, query: 'marker' });
 
     // Retrieval that quietly reclaimed the space folding and compaction freed
     // would defeat both of them, so the budget is enforced and reported.
@@ -155,11 +155,11 @@ describe('search_history', () => {
   test('an empty archive answers with nothing rather than failing', async () => {
     const tools = toolSet(fakeArchive());
 
-    expect(await call(tools, 'search_history', { query: 'anything' })).toBe('');
+    expect(await call(tools, 'history_search', { query: 'anything' })).toBe('');
   });
 });
 
-describe('search_sessions', () => {
+describe('history_sessions_search', () => {
   test('says which session each excerpt came from', async () => {
     const tools = toolSet(
       fakeArchive([
@@ -167,7 +167,7 @@ describe('search_sessions', () => {
       ]),
     );
 
-    const found = await call(tools, 'search_sessions', { query: 'port' });
+    const found = await call(tools, 'history_sessions_search', { query: 'port' });
 
     // An excerpt with no session on it is unusable: the model cannot tell its
     // own past decision from a different conversation's, and cannot go read
@@ -184,19 +184,19 @@ describe('search_sessions', () => {
     ]);
     const tools = toolSet(archive);
 
-    const all = await call(tools, 'search_sessions', { query: 'marker' });
+    const all = await call(tools, 'history_sessions_search', { query: 'marker' });
     expect(archive.calls[0]?.sessionId).toBeUndefined();
     expect(all).toContain('marker now');
     expect(all).toContain('marker then');
 
-    const one = await call(tools, 'search_sessions', { query: 'marker', sessionId: 'session-old' });
+    const one = await call(tools, 'history_sessions_search', { query: 'marker', sessionId: 'session-old' });
     expect(archive.calls[1]?.sessionId).toBe('session-old');
     expect(one).not.toContain('marker now');
     expect(one).toContain('marker then');
   });
 });
 
-describe('list_sessions', () => {
+describe('history_sessions', () => {
   test('marks the session the agent is currently in', async () => {
     const tools = toolSet(
       fakeArchive(
@@ -208,9 +208,9 @@ describe('list_sessions', () => {
       ),
     );
 
-    const found = await call(tools, 'list_sessions', {});
+    const found = await call(tools, 'history_sessions', {});
 
-    // Without the marker the agent can spend a search_sessions call rediscovering
+    // Without the marker the agent can spend a history_sessions_search call rediscovering
     // the conversation it is already having.
     expect(found).toContain(`${THIS_SESSION} (this session)`);
     expect(found).toContain('session-old — last week');
@@ -225,7 +225,7 @@ describe('list_sessions', () => {
     }));
     const tools = toolSet(fakeArchive([], sessions));
 
-    const found = await call(tools, 'list_sessions', { limit: 2 });
+    const found = await call(tools, 'history_sessions', { limit: 2 });
 
     expect(found).toContain('Showing 2 of 5 sessions');
     expect(found).toContain('(untitled)');
@@ -234,16 +234,16 @@ describe('list_sessions', () => {
   test('says so plainly when there is nothing stored', async () => {
     const tools = toolSet(fakeArchive());
 
-    expect(await call(tools, 'list_sessions', {})).toBe('No sessions are stored for this agent.');
+    expect(await call(tools, 'history_sessions', {})).toBe('No sessions are stored for this agent.');
   });
 });
 
-describe('read_tool_result', () => {
+describe('history_read_result', () => {
   test('returns a result by track ID', async () => {
     const transcript = new Transcript([toolResponse('r1', 'track-1', 'exit code 0, 12 files')]);
     const tools = toolSet(fakeArchive(), transcript);
 
-    const found = await call(tools, 'read_tool_result', { trackId: 'track-1' });
+    const found = await call(tools, 'history_read_result', { trackId: 'track-1' });
 
     expect(found).toContain('exit code 0, 12 files');
     expect(found).toContain('track-1');
@@ -253,13 +253,13 @@ describe('read_tool_result', () => {
     const transcript = new Transcript([toolResponse('r1', 'track-1', 'A'.repeat(3_000))]);
     const tools = toolSet(fakeArchive(), transcript);
 
-    const first = await call(tools, 'read_tool_result', { maxCharacters: 500, trackId: 'track-1' });
+    const first = await call(tools, 'history_read_result', { maxCharacters: 500, trackId: 'track-1' });
     expect(first).toContain('Result truncated');
 
     const offset = Number(/Continue with offset (\d+)/.exec(first)?.[1]);
     expect(offset).toBe(500);
 
-    const second = await call(tools, 'read_tool_result', {
+    const second = await call(tools, 'history_read_result', {
       maxCharacters: 4_000,
       offset,
       trackId: 'track-1',
@@ -273,15 +273,15 @@ describe('read_tool_result', () => {
   test('names what it could not find instead of returning nothing', () => {
     const tools = toolSet(fakeArchive());
 
-    expect(() => tools.prepare('read_tool_result', { trackId: 'missing' })).not.toThrow();
-    expect(call(tools, 'read_tool_result', { trackId: 'missing' })).rejects.toThrow('missing');
+    expect(() => tools.prepare('history_read_result', { trackId: 'missing' })).not.toThrow();
+    expect(call(tools, 'history_read_result', { trackId: 'missing' })).rejects.toThrow('missing');
   });
 
   test('refuses an offset past the end of the result', () => {
     const transcript = new Transcript([toolResponse('r1', 'track-1', 'short')]);
     const tools = toolSet(fakeArchive(), transcript);
 
-    expect(call(tools, 'read_tool_result', { offset: 9_999, trackId: 'track-1' })).rejects.toThrow(
+    expect(call(tools, 'history_read_result', { offset: 9_999, trackId: 'track-1' })).rejects.toThrow(
       RangeError,
     );
   });

@@ -6,7 +6,7 @@ import type { Tool } from '@nox/extension-api';
 const MAX_DEPTH = 3;
 const ARTIFACT_OUTPUT_NOTICE =
   'Output: Works with durable artifact references. Tool artifacts are not attached automatically; ' +
-  'call attach_artifact with an artifact ID only when you decide the user should receive it. ' +
+  'call artifact_attach with an artifact ID only when you decide the user should receive it. ' +
   'Do not encode file bytes as base64 or inline them in text.';
 
 function unique(values: string[]): string[] {

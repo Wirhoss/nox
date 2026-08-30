@@ -8,7 +8,7 @@ import { sessions } from './sessions';
  *
  * The answer already exists inside `messages.content`, as `artifact` parts
  * buried in JSON, and it is the answer a permission check needs on every
- * `read_artifact` call — including for sessions that are not loaded. Scanning
+ * `artifact_read` call — including for sessions that are not loaded. Scanning
  * every message to find out would make the cost of the check grow with the
  * history it is protecting, so the references are written out beside the
  * message that carried them.
