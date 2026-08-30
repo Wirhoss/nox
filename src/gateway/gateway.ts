@@ -561,7 +561,18 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   }
 
   async #executeScheduledAgent(request: ScheduledRunRequest): Promise<ScheduledRunResult> {
+    const delivery = request.delivery;
+    const addressed = delivery === undefined ? undefined : this.#grants.get(delivery.brokerId);
+    // Asked before the session opens rather than when the reply is ready,
+    // because a transport that answers here is saying the run belongs to a
+    // conversation of its own — which is a thing the session has to be opened
+    // into, artifacts and all, not somewhere to forward its last message.
+    const ownConversation = addressed?.broker.openScheduledConversation?.();
+
     const session = await this.#application.openSession(request.agentId, {
+      ...(addressed === undefined || ownConversation === undefined
+        ? {}
+        : { artifactScope: artifactConversationScope(addressed.brokerId, ownConversation) }),
       metadata: { cronRunId: request.causeId, trigger: 'cron' },
       sessionId: request.sessionId,
       title: request.name,
@@ -588,23 +599,39 @@ class Gateway implements MessageGateway, ScheduledRunHost {
 
       let deliveredAt: Date | undefined;
       let deliveryError: string | undefined;
-      if (request.delivery !== undefined) {
-        const candidate = this.#grants.get(request.delivery.brokerId);
+      if (delivery !== undefined) {
+        // Re-checked here rather than trusted from before the run: a broker
+        // stopped or replaced while an unattended run was going is exactly the
+        // case where a stale grant would report a delivery nothing made.
         const grant =
-          candidate !== undefined && this.#activeBrokers.has(candidate.brokerId)
-            ? candidate
+          addressed !== undefined &&
+          this.#activeBrokers.has(addressed.brokerId) &&
+          this.#grants.get(addressed.brokerId) === addressed
+            ? addressed
             : undefined;
         if (!hasUsableContent(content)) {
           deliveryError = 'The scheduled agent produced no response to deliver.';
         } else if (grant === undefined) {
-          deliveryError = `Scheduled delivery names unknown broker "${request.delivery.brokerId}".`;
+          deliveryError = `Scheduled delivery names unknown broker "${delivery.brokerId}".`;
         } else if (this.#state !== 'running' || this.#application.signal.aborted) {
           deliveryError = 'The runtime stopped before the scheduled response could be delivered.';
         } else {
           try {
+            // Bound before the message is sent, and only once there is a reply
+            // worth binding for: on a transport whose channels are
+            // conversations, the binding is what makes the reply readable at
+            // all afterwards — and the transport refuses an address it does
+            // not carry, so an unbound one would be reported as undelivered.
+            if (ownConversation !== undefined) {
+              await this.#store.bind(
+                { brokerId: grant.brokerId, conversationId: ownConversation },
+                request.agentId,
+                session.sessionId,
+              );
+            }
             await grant.broker.deliver({
               content,
-              conversationId: request.delivery.channelId,
+              conversationId: ownConversation ?? delivery.channelId,
               text: textOf(content),
               turnId: completed.runId,
               type: 'message',

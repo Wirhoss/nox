@@ -78,6 +78,18 @@ function pendingPermission(): PermissionRequest {
   };
 }
 
+/** The one conversation the tests speak in, as the gateway would report it. */
+function carriedConversation(): BrokerSession {
+  return {
+    agentId: 'nox',
+    conversationId: CONVERSATION,
+    sessionId: 'session-1',
+    startedAt: new Date('2026-01-01T00:00:00.000Z'),
+    state: 'idle',
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+}
+
 /** A started broker, everything it emitted, and everything the gateway was told. */
 async function startedBroker(): Promise<{
   broker: WebBroker;
@@ -92,7 +104,7 @@ async function startedBroker(): Promise<{
   const received: InboundEvent[] = [];
   const rendered: ChatEvent[] = [];
 
-  await broker.start(testHost(received, { invoked }));
+  await broker.start(testHost(received, { invoked, sessions: [carriedConversation()] }));
   broker.subscribe((event) => rendered.push(event));
 
   return { broker, hub, invoked, received, rendered };
@@ -259,7 +271,7 @@ describe('the web broker', () => {
     const hub = new ChatHub();
     const broker = new WebBroker(hub);
     const rendered: ChatEvent[] = [];
-    await broker.start(testHost([]));
+    await broker.start(testHost([], { sessions: [carriedConversation()] }));
 
     await broker.deliver({
       content: [{ text: 'already durable', type: 'text' }],
@@ -288,7 +300,7 @@ describe('the web broker', () => {
     const hub = new ChatHub();
     const broker = new WebBroker(hub);
     const rendered: ChatEvent[] = [];
-    await broker.start(testHost([]));
+    await broker.start(testHost([], { sessions: [carriedConversation()] }));
 
     await broker.deliver({
       conversationId: CONVERSATION,
@@ -315,7 +327,7 @@ describe('the web broker', () => {
     const hub = new ChatHub();
     const broker = new WebBroker(hub);
     const received: { event: ChatEvent; eventId: number }[] = [];
-    await broker.start(testHost([]));
+    await broker.start(testHost([], { sessions: [carriedConversation()] }));
     const unsubscribe = broker.subscribe((event, eventId) => received.push({ event, eventId }));
 
     await broker.deliver({
@@ -772,6 +784,67 @@ describe('the web broker', () => {
         updatedAt: '2026-01-02T00:00:00.000Z',
       },
     ]);
+  });
+
+  test('accepts a delivery only to a conversation it carries', async () => {
+    const { broker } = await startedBroker();
+
+    expect(await broker.canDeliverTo(CONVERSATION)).toBe(true);
+    // A browser names its own conversation, so an address nothing bound is not
+    // a channel someone can be pointed at — it names nothing, and will keep
+    // naming nothing however long a schedule waits to use it.
+    expect(await broker.canDeliverTo('web_invented')).toBe(false);
+  });
+
+  test('cannot answer whether an address is real before it is started', () => {
+    const broker = new WebBroker(new ChatHub());
+
+    // Not false: an unclaimed surface cannot tell a live conversation from an
+    // invented one, and false is the answer that lets a caller refuse outright.
+    expect(broker.canDeliverTo(CONVERSATION)).rejects.toThrow(/not available/u);
+  });
+
+  test('reports failure when a reply is addressed to no conversation of its own', async () => {
+    const { broker } = await startedBroker();
+
+    // The only caller that needs this is the one with nobody watching: a
+    // scheduled run reports what its broker told it, so a swallowed failure
+    // here is a run remembered as having delivered what it did not.
+    expect(
+      broker.deliver({
+        content: [{ text: 'listo', type: 'text' }],
+        conversationId: 'web_invented',
+        text: 'listo',
+        turnId: 'run-1',
+        type: 'message',
+      }),
+    ).rejects.toThrow(/no conversation "web_invented"/u);
+  });
+
+  test('lets decoration go to an address it does not carry', async () => {
+    const { broker } = await startedBroker();
+
+    // A fragment or a token count is best-effort by contract: losing one costs
+    // the conversation nothing it was promised, and failing the delivery over
+    // it would turn a rendering detail into a run's outcome.
+    await broker.deliver({
+      conversationId: 'web_invented',
+      text: 'lis',
+      turnId: 'run-1',
+      type: 'fragment',
+    });
+  });
+
+  test('opens a conversation of its own for an unattended reply', async () => {
+    const { broker } = await startedBroker();
+
+    const first = broker.openScheduledConversation();
+    // Shaped like the IDs the client mints, and never the conversation that
+    // scheduled the run: a cron answer belongs beside that transcript, not
+    // inside one a person is still using.
+    expect(first).toMatch(/^web_[\w-]{24}$/u);
+    expect(first).not.toBe(CONVERSATION);
+    expect(broker.openScheduledConversation()).not.toBe(first);
   });
 
   test('has nothing to answer once it no longer has a gateway', async () => {

@@ -1,31 +1,33 @@
-import type {
-  Broker,
-  BrokerCapabilities,
-  BrokerHistory,
-  BrokerHistoryEntry,
-  BrokerHost,
-  BrokerSession,
-  ChatCommand,
-  ChatCommandInput,
-  ChatCommandRejection,
-  ChatConversation,
-  ChatDecisionInput,
-  ChatEvent,
-  ChatHistory,
-  ChatHistoryEntry,
-  ChatHistoryInput,
-  ChatListener,
-  ChatMessageInput,
-  ChatMessageRejection,
-  ChatPermissionOutcome,
-  ChatPermissionRequest,
-  ChatSubscriptionOptions,
-  ChatSurfaceHub,
-  ChatTransport,
-  OutboundEvent,
-  PermissionRequest,
-  PermissionResolution,
+import {
+  type Broker,
+  type BrokerCapabilities,
+  type BrokerHistory,
+  type BrokerHistoryEntry,
+  type BrokerHost,
+  type BrokerSession,
+  type ChatCommand,
+  type ChatCommandInput,
+  type ChatCommandRejection,
+  type ChatConversation,
+  type ChatDecisionInput,
+  type ChatEvent,
+  type ChatHistory,
+  type ChatHistoryEntry,
+  type ChatHistoryInput,
+  type ChatListener,
+  type ChatMessageInput,
+  type ChatMessageRejection,
+  type ChatPermissionOutcome,
+  type ChatPermissionRequest,
+  type ChatSubscriptionOptions,
+  type ChatSurfaceHub,
+  type ChatTransport,
+  type OutboundEvent,
+  type PermissionRequest,
+  type PermissionResolution,
+  WEB_BROKER_ID,
 } from '@nox/extension-api';
+import { nanoid } from 'nanoid';
 
 /** Enough completed traffic to repair an ordinary dropped browser connection. */
 const RECENT_EVENT_LIMIT = 10_000;
@@ -81,6 +83,48 @@ class WebBroker implements Broker, ChatTransport {
     this.#hub = hub;
   }
 
+  /**
+   * Whether this surface carries the conversation named.
+   *
+   * Answered because on this transport an address is not a room someone can be
+   * pointed at: a browser mints a conversation ID per chat, so a scheduled
+   * delivery aimed at one that was never bound — a typo, or a chat abandoned
+   * before anyone spoke in it — names nothing and will keep naming nothing.
+   * Without this the host's fallback treats every string as an acceptable
+   * address, and the wrong one is only discovered by a run that reports
+   * delivering to it.
+   *
+   * Unclaimed is thrown rather than returned false: a surface that has not been
+   * started yet cannot tell a live conversation from an invented one, and false
+   * is reserved for an answer that will not change.
+   */
+  public async canDeliverTo(channelId: string): Promise<boolean> {
+    const host = this.#host;
+    if (host === undefined) throw new Error('The web surface is not available.');
+
+    const sessions = await host.sessions();
+    return sessions.some((session) => session.conversationId === channelId);
+  }
+
+  /**
+   * A new conversation for an unattended run's reply.
+   *
+   * A channel here is a conversation and nothing more, so there is no room to
+   * post into: appending a cron run's answer to the chat that scheduled it
+   * would drop it into a transcript a person is still using, attributed to a
+   * prompt that was never typed there. It arrives as its own conversation
+   * instead, which is also what makes it survive — a bound conversation has a
+   * transcript, while a loose event only exists for whoever happened to be
+   * watching.
+   *
+   * Shaped like the IDs the client mints for the same reason it uses that shape
+   * itself: this is one more web conversation, and nothing downstream should be
+   * able to tell which side named it.
+   */
+  public openScheduledConversation(): string {
+    return `${WEB_BROKER_ID}_${nanoid(24)}`;
+  }
+
   /** Claims the surface. Until this runs the chat routes answer that they are unavailable. */
   public start(host: BrokerHost): Promise<void> {
     this.#host = host;
@@ -107,8 +151,21 @@ class WebBroker implements Broker, ChatTransport {
    * Renders one event to everyone watching and keeps a bounded reconnect log.
    * The current run is retained separately until it completes, so a newly loaded
    * page can reconstruct text that has not reached the durable transcript yet.
+   *
+   * An event that carries the reply itself is then checked against the
+   * conversations this surface actually carries, and reports failure when it
+   * names none. Not the same question as whether a browser was watching: a
+   * connected stream is not what makes a reply survive here — the conversation
+   * behind it is, and a reply addressed to a conversation that was never bound
+   * has nowhere to be read back from, now or later. Left unreported it would be
+   * recorded as delivered by the one caller with nobody there to notice.
+   *
+   * The check runs after the render rather than before it so that nothing in
+   * this method awaits ahead of the listeners: callers hand events over without
+   * waiting, and a delivery that paused mid-run would let the fragments behind
+   * it overtake the message they belong to.
    */
-  public deliver(event: OutboundEvent): Promise<void> {
+  public async deliver(event: OutboundEvent): Promise<void> {
     const rendered = toChatEvent(event);
     const sequenced = { event: rendered, eventId: ++this.#nextEventId };
     this.#retainRecent(sequenced);
@@ -132,7 +189,13 @@ class WebBroker implements Broker, ChatTransport {
     }
 
     if (event.type === 'runCompleted') this.#activeEvents.delete(turnKey(rendered));
-    return Promise.resolve();
+
+    if (!carriesReply(event)) return;
+    if (!(await this.canDeliverTo(event.conversationId))) {
+      throw new Error(
+        `The web surface carries no conversation "${event.conversationId}" to deliver to.`,
+      );
+    }
   }
 
   /**
@@ -277,6 +340,15 @@ class WebBroker implements Broker, ChatTransport {
     const overflow = this.#recentEvents.length - RECENT_EVENT_LIMIT;
     if (overflow > 0) this.#recentEvents.splice(0, overflow);
   }
+}
+
+/**
+ * Whether losing this event loses the reply. The three that say something on
+ * their own; everything else decorates a run that carries its own answer, and
+ * is best-effort by contract.
+ */
+function carriesReply(event: OutboundEvent): boolean {
+  return event.type === 'commandResult' || event.type === 'error' || event.type === 'message';
 }
 
 function turnKey(event: ChatEvent): string {

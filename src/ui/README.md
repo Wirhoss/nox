@@ -2,14 +2,15 @@
 
 The Nox Web UI is an isolated Vue workspace inside the main source tree. It communicates with the runtime through typed HTTP DTOs and SSE events; it must not import kernel classes directly.
 
+This file covers working *in* the workspace. The architecture — state ownership, the HTTP contract, theming — is in [docs/ui.md](../../docs/ui.md).
+
 ## Structure
 
 ```text
-app/       Application bootstrap, root component, and router
+app/       Application bootstrap, root component, router, and app-wide stores
 routes/    Route-level components
 features/  Domain-owned components, stores, and composables
-shared/    API client, reusable UI, libraries, and global styles
-assets/    Source assets
+shared/    API client, reusable UI, i18n, and global styles
 public/    Static assets copied as-is
 ```
 

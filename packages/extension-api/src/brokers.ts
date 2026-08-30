@@ -344,6 +344,25 @@ interface Broker {
    */
   deliver(event: OutboundEvent): Promise<void>;
   /**
+   * A fresh conversation for a scheduled reply, when a reply does not belong
+   * inside the conversation that asked for it.
+   *
+   * The difference this settles is what a channel is on a given transport. A
+   * chat service's channel is a place that outlives every conversation held in
+   * it, so a scheduled reply posted there is one more message in a room that
+   * was already going. A surface whose channels *are* Nox conversations has no
+   * such room: the address names one transcript, and appending to it would put
+   * an unattended run's output in the middle of a conversation a person is
+   * still having — hours later, under a prompt nobody typed there.
+   *
+   * So a transport of the second kind answers here with a new address, and the
+   * scheduled run is bound to it: the reply arrives as its own conversation,
+   * beside the one that scheduled it rather than inside it. Left out by a
+   * transport whose channels are real places, which is the position every
+   * broker was in before.
+   */
+  openScheduledConversation?(): string;
+  /**
    * The groups this sender belongs to, as extra subjects its grants may be
    * written against — Discord roles, and whatever the equivalent is elsewhere.
    *

@@ -439,6 +439,21 @@ class TestBroker implements Broker {
   }
 }
 
+/**
+ * A transport whose channels are conversations rather than places, the way the
+ * web surface's are: there is no room to post an unattended reply into, so it
+ * asks for one of its own.
+ */
+class ConversationBroker extends TestBroker {
+  public readonly opened: string[] = [];
+
+  public openScheduledConversation(): string {
+    const conversationId = `own_${String(this.opened.length + 1)}`;
+    this.opened.push(conversationId);
+    return conversationId;
+  }
+}
+
 class FailingBroker extends TestBroker {
   public override start(_host: BrokerHost): Promise<void> {
     return Promise.reject(new Error('candidate cannot connect'));
@@ -604,6 +619,57 @@ describe('Gateway', () => {
     ).toMatchObject([{ content: [{ text: 'selected agent result', type: 'text' }] }]);
     const starts = broker.delivered.filter((event) => event.type === 'runStarted');
     expect(starts.map((event) => event.trigger)).toEqual(['user']);
+  });
+
+  test('gives an unattended reply its own conversation when the transport asks for one', async () => {
+    // The original failure: "deliver it back here" on the web surface addressed
+    // the conversation that scheduled the job. A channel there is a browser's
+    // own conversation ID, so the answer was pushed at a transcript a person was
+    // still using — and only as a live event, which nothing replayed. The run
+    // recorded a delivery; nothing ever showed one.
+    const broker = new ConversationBroker();
+    const harnessed = await harness(await openDatabase(), broker);
+    broker.say('chat-1', 'initial');
+    await settle(harnessed);
+    const spokenToChat = (): number =>
+      broker.delivered.filter(
+        (event) => event.type === 'message' && event.conversationId === 'chat-1',
+      ).length;
+    const beforeRun = spokenToChat();
+
+    const result = await harnessed.gateway.runScheduledAgent({
+      agentId: 'assistant',
+      causeId: 'cron-run-own',
+      delivery: { brokerId: 'test', channelId: 'chat-1' },
+      name: 'Morning automation',
+      prompt: 'scheduled prompt',
+      sessionId: 'cron-session-own',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.deliveredAt).toBeInstanceOf(Date);
+    expect(broker.opened).toEqual(['own_1']);
+    // Beside the conversation that asked, never inside it.
+    expect(
+      broker.delivered.filter((event) => event.type === 'message').map((e) => e.conversationId),
+    ).toContain('own_1');
+    expect(spokenToChat()).toBe(beforeRun);
+
+    // Bound, which is what makes it readable at all afterwards: the surface
+    // lists it, and its transcript is the run's own session.
+    const carried = await broker.sessions();
+    expect(carried.find((session) => session.conversationId === 'own_1')).toMatchObject({
+      agentId: 'assistant',
+      sessionId: 'cron-session-own',
+      title: 'Morning automation',
+    });
+    const history = await broker.history('own_1');
+    expect(history?.sessionId).toBe('cron-session-own');
+    expect(
+      history?.entries.some(
+        (entry) => entry.type === 'userMessage' && entry.text === 'scheduled prompt',
+      ),
+    ).toBe(true);
   });
 
   test('records a refused scheduled delivery as an error instead of a delivery', async () => {
