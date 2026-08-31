@@ -1,13 +1,7 @@
-import {
-  type ChatModel,
-  contentToString,
-  MEMORY_FACT_KINDS,
-  type Message,
-  type UserMessage,
-  z,
-} from '@nox/extension-api';
+import { contentToString, MEMORY_FACT_KINDS, z } from '@nox/extension-api';
 
 import type { DraftFact, StoredFact } from './store';
+import type { ChatModel, Message, UserMessage } from '@nox/extension-api';
 
 /**
  * The kinds worth telling apart, taken from the contract rather than declared here.
@@ -179,9 +173,7 @@ async function extract(request: ExtractionRequest): Promise<readonly DraftFact[]
         // Only ids the model was actually shown. A hallucinated id must retire
         // nothing, and the store refuses out-of-scope ones a second time.
         invalidates: Object.freeze(
-          fact.reinforces === undefined
-            ? fact.invalidates.filter((id) => believed.has(id))
-            : [],
+          fact.reinforces === undefined ? fact.invalidates.filter((id) => believed.has(id)) : [],
         ),
         kind: fact.kind,
         ...(fact.reinforces === undefined ? {} : { reinforces: fact.reinforces }),

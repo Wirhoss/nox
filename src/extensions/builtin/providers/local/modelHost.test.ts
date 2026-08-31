@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ModelHost, type WorkerLike } from './modelHost';
+import { ModelHost } from './modelHost';
 
+import type { WorkerLike } from './modelHost';
 import type { HostMessage, WorkerMessage } from './protocol';
 
 type Listener = (payload: never) => void;

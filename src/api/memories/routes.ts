@@ -1,4 +1,4 @@
-import { MEMORY_FACT_KINDS, type MemoryOwnerScope, type MemoryScope } from '@nox/extension-api';
+import { MEMORY_FACT_KINDS } from '@nox/extension-api';
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
@@ -6,6 +6,7 @@ import { authGuard } from '../auth/guard';
 
 import type { MemoryRuntime } from '../../runtime/configurationRuntime';
 import type { AuthStore } from '../auth/store';
+import type { MemoryOwnerScope, MemoryScope } from '@nox/extension-api';
 
 const memoryIdSchema = z.string().trim().min(1).max(128);
 const factIdSchema = z.string().trim().min(1).max(256);
@@ -68,11 +69,9 @@ function operationScope(
 function createMemoryRoutes(options: MemoryRoutesOptions) {
   return new Elysia({ name: 'nox.api.memories.routes' })
     .use(authGuard(options.store))
-    .get(
-      '/memories',
-      () => ({ memories: options.memories.memoryInventory() }),
-      { authenticated: true },
-    )
+    .get('/memories', () => ({ memories: options.memories.memoryInventory() }), {
+      authenticated: true,
+    })
     .get(
       '/memories/:memoryId/scopes',
       async ({ params, request, status }) => {
@@ -150,9 +149,7 @@ function createMemoryRoutes(options: MemoryRoutesOptions) {
           text: body.text,
           ...(body.validFrom === undefined ? {} : { validFrom: body.validFrom }),
         });
-        return fact === undefined
-          ? status(404, { error: 'fact_not_found' })
-          : { fact };
+        return fact === undefined ? status(404, { error: 'fact_not_found' }) : { fact };
       },
       { authenticated: true, body: updateFactSchema, params: factParamsSchema },
     )

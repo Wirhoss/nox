@@ -4,10 +4,6 @@ A Vue 3 single-page application served from the runtime. It is a *surface over
 Nox*, not a chat client: the runtime remains the source of truth, and the UI
 holds a projection of it.
 
-The design direction behind it — the product vision, the visual language, the
-open questions — is working material rather than documentation, and lives in
-[NOTES-ui.md](../NOTES-ui.md).
-
 ---
 
 ## Stack

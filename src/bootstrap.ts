@@ -8,14 +8,14 @@ import { RegistrationWindow } from './api/auth/registration';
 import { AuthStore } from './api/auth/store';
 import { ChatHub } from './api/chat/transport';
 import { ConfigStore } from './api/config/store';
-import { type ApiAuth, ApiServer } from './api/server';
+import { ApiServer } from './api/server';
 import { NoxApplication } from './application';
 import { ArtifactPipeline } from './artifact/pipeline';
-import { AuthorityCatalog, type AuthorityDefinition } from './auth/authority';
+import { AuthorityCatalog } from './auth/authority';
 import { GrantAuthorizationProvider, OwnerAuthorizationProvider } from './auth/authorization';
 import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { Config } from './config/config';
-import { type EnvSource, readEnvConfig } from './config/env';
+import { readEnvConfig } from './config/env';
 import { composeWithSecrets, SecretStore } from './config/secrets';
 import { Database } from './database/database';
 import { backfillDerivedIndexes, SessionStore } from './database/sessionStore';
@@ -23,12 +23,11 @@ import { toDisposable } from './extensions/disposable';
 import { discoverExtensions } from './extensions/loader';
 import { DatabaseExtensionStorageProvider } from './extensions/storage';
 import { ToolSetCatalog } from './extensions/toolSetCatalog';
-import { type BrokerGrant, Gateway } from './gateway/gateway';
-import { createLogger, type Logger } from './logger/logger';
+import { Gateway } from './gateway/gateway';
+import { createLogger } from './logger/logger';
 import {
   ConfigurationRuntimeController,
   ConfigurationRuntimeRelay,
-  type MemoryRuntime,
 } from './runtime/configurationRuntime';
 import { ModelAccessRelay } from './runtime/modelAccess';
 import { ScheduledRunRelay } from './scheduler/scheduledRun';
@@ -47,8 +46,14 @@ import {
 import { NOX_VERSION } from './version';
 
 import type { AuthConfig } from './api/auth/config';
+import type { ApiAuth } from './api/server';
 import type { ApiConfig } from './api/serverConfig';
+import type { AuthorityDefinition } from './auth/authority';
+import type { EnvSource } from './config/env';
 import type { ExtensionCatalog } from './extensions/catalog';
+import type { BrokerGrant } from './gateway/gateway';
+import type { Logger } from './logger/logger';
+import type { MemoryRuntime } from './runtime/configurationRuntime';
 
 const BUILTIN_EXTENSIONS_DIRECTORY = join(import.meta.dir, 'extensions', 'builtin');
 

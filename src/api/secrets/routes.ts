@@ -1,4 +1,4 @@
-import { type SecretConsumer, secretIdSchema, type SecretSummary } from '@nox/extension-api';
+import { secretIdSchema } from '@nox/extension-api';
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
@@ -6,6 +6,7 @@ import { authGuard } from '../auth/guard';
 
 import type { SecretStore } from '../../config/secrets';
 import type { AuthStore } from '../auth/store';
+import type { SecretConsumer, SecretSummary } from '@nox/extension-api';
 
 /** No secret is filed under that ID. */
 const NO_SECRET = { error: 'secret_not_found' } as const;

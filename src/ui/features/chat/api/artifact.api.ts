@@ -1,6 +1,8 @@
 import { requestJson, requestStream } from '@/shared/api/http'
 
-import { type ArtifactRef, artifactRefSchema } from './chat.schemas'
+import { artifactRefSchema } from './chat.schemas'
+
+import type { ArtifactRef } from './chat.schemas'
 
 function authorization(accessToken: string): Record<string, string> {
   return { authorization: `Bearer ${accessToken}` }

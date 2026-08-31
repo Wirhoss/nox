@@ -1,8 +1,9 @@
-import { type SecretHandle, silentLogger } from '@nox/extension-api';
+import { silentLogger } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { DiscordSocket } from './socket';
 
+import type { SecretHandle } from '@nox/extension-api';
 import type { ServerWebSocket } from 'bun';
 
 const token: SecretHandle = {

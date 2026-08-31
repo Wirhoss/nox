@@ -1,16 +1,11 @@
-import {
-  type ChatModelConfig,
-  type ChatProvider,
-  contentToString,
-  type Message,
-  type UserMessage,
-} from '@nox/extension-api';
+import { contentToString } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import { SYSTEM_INTERNAL } from '../auth/principal';
 import { freezeMessage } from './context/immutable';
 
 import type { Logger } from '../logger/logger';
+import type { ChatModelConfig, ChatProvider, Message, UserMessage } from '@nox/extension-api';
 
 const TITLE_REQUEST_PREFIX = 'title-request';
 

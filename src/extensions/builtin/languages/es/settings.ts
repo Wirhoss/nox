@@ -9,6 +9,26 @@ const settingsMessages = Object.freeze({
   'settings.runtime.retry': 'Reintentar activación',
   'settings.runtime.revert': 'Revertir cambio fallido',
   'settings.runtime.unavailable': 'No hay una generación activa disponible.',
+  'settings.catalog.chat': 'chat',
+  'settings.catalog.chooseProviderFirst': 'Elige un proveedor para listar sus modelos.',
+  'settings.catalog.custom': 'Otro — escribir un ID…',
+  'settings.catalog.customHint':
+    'Se guarda tal cual se escribe. Nada lo verifica contra el proveedor hasta la primera ejecución.',
+  'settings.catalog.customValue': 'ID personalizado',
+  'settings.catalog.embedding': 'embedding',
+  'settings.catalog.modelsUnlistable': 'Este proveedor no pudo listar sus modelos: {problem}',
+  'settings.catalog.noModelList': 'no expone una lista de modelos',
+  'settings.catalog.noModelsReported': 'Este proveedor no reporta ningún modelo.',
+  'settings.catalog.noProviders': 'Todavía no hay proveedores configurados.',
+  'settings.catalog.notActivated':
+    'Guarda este proveedor para ver los modelos que sirve. Solo una instancia activada puede reportarlos.',
+  'settings.catalog.providerProblem': 'Este proveedor no está disponible: {problem}',
+  'settings.catalog.providerUnavailable': 'no disponible',
+  'settings.catalog.refresh': 'Volver a preguntar al proveedor',
+  'settings.catalog.reported': 'reportado',
+  'settings.catalog.reportedCount.one': '{count} modelo disponible',
+  'settings.catalog.reportedCount.other': '{count} modelos disponibles',
+  'settings.catalog.unknownProvider': 'El proveedor «{provider}» no está configurado.',
   'settings.confirm.discardAgent': '¿Descartar los cambios del agente sin guardar?',
   'settings.confirm.discardBroker': '¿Descartar los cambios del bróker sin guardar?',
   'settings.confirm.discardConfiguration': '¿Descartar los cambios de configuración sin guardar?',
@@ -20,6 +40,8 @@ const settingsMessages = Object.freeze({
   'settings.editor.configurationJson': 'JSON de configuración',
   'settings.editor.configurationJsonHelp':
     'Nox valida este objeto con el mismo esquema que usa para los archivos en disco. Al guardar se reemplaza todo el documento; las claves omitidas no se vuelven a combinar.',
+  'settings.editor.curatedFormUnavailable':
+    'Este tipo contribuido no tiene formulario guiado. Continúa en modo JSON.',
   'settings.editor.entryId': 'ID de la entrada',
   'settings.editor.entryIdHint':
     'ID estable usado por las referencias de configuración y, para los agentes, por la identidad de la transcripción.',
@@ -86,46 +108,6 @@ const settingsMessages = Object.freeze({
   'settings.navigation.controlSurface': 'Superficie de control de la máquina',
   'settings.navigation.newEntry': 'Nuevo {entry}',
   'settings.navigation.sections': 'Secciones de ajustes',
-  'settings.memory.changeRefused': 'Cambio de memoria rechazado',
-  'settings.memory.confirmDiscard': '¿Descartar los cambios de la memoria sin guardar?',
-  'settings.memory.header': 'MEMORIA A LARGO PLAZO',
-  'settings.memory.id': 'ID de la memoria',
-  'settings.memory.idHint': 'ID estable que puede seleccionar un plano de agente.',
-  'settings.memory.providerJson': 'JSON de la memoria',
-  'settings.memory.providerJsonHelp':
-    'Acceso completo a este adaptador de memoria contribuido. Las credenciales no deben escribirse en línea; usa una referencia a un secreto administrado.',
-  'settings.memory.remove': 'Eliminar memoria',
-  'settings.memory.removeQuestion': '¿Eliminar la memoria?',
-  'settings.memory.removeWarning':
-    'Nox rechazará esta operación mientras un plano de agente siga nombrando esta memoria.',
-  'settings.memory.save': 'Guardar memoria',
-  'settings.memory.saved': 'Configuración de memoria guardada',
-  'settings.memory.titleFallback': 'Memoria',
-  'settings.memory.titleNew': 'Nueva memoria',
-  'settings.memory.validation.configurationObject':
-    'La configuración de memoria debe ser un objeto JSON.',
-  'settings.memory.validation.curatedFormUnavailable':
-    'Este tipo de memoria contribuido no tiene formulario guiado. Continúa en modo JSON.',
-  'settings.provider.changeRefused': 'Cambio de proveedor rechazado',
-  'settings.provider.confirmDiscard': '¿Descartar los cambios del proveedor sin guardar?',
-  'settings.provider.header': 'PROVEEDOR DE MODELOS',
-  'settings.provider.id': 'ID del proveedor',
-  'settings.provider.idHint': 'ID estable referenciado por los planos de agentes.',
-  'settings.provider.providerJson': 'JSON del proveedor',
-  'settings.provider.providerJsonHelp':
-    'Acceso completo a adaptadores aportados y capacidades intrínsecas del modelo. El muestreo conversacional pertenece al agente. Las credenciales no pertenecen a este documento; cada adaptador declara lo que Nox debe proporcionarle por separado.',
-  'settings.provider.remove': 'Eliminar proveedor',
-  'settings.provider.removeQuestion': '¿Eliminar el proveedor?',
-  'settings.provider.removeWarning':
-    'Nox rechazará esta operación mientras un plano de agente siga mencionando este proveedor.',
-  'settings.provider.save': 'Guardar proveedor',
-  'settings.provider.saved': 'Configuración del proveedor guardada',
-  'settings.provider.titleFallback': 'Proveedor',
-  'settings.provider.titleNew': 'Nuevo proveedor',
-  'settings.provider.validation.configurationObject':
-    'La configuración del proveedor debe ser un único objeto JSON.',
-  'settings.provider.validation.curatedFormUnavailable':
-    'Este tipo de proveedor aportado no tiene un formulario específico. Continúa en modo JSON.',
   'settings.schemaMap.empty': 'Todavía no hay entradas. Agrega una para configurarla.',
   'settings.schemaMap.key': 'ID de la entrada',
   'settings.schemaMap.keyInvalid': 'Este ID no es uno que acepte este ajuste.',

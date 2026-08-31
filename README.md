@@ -232,8 +232,6 @@ than evicting old ones. Each is described where it belongs in the docs.
 | [· files.md](docs/extensions/files.md) | Artifacts: uploads, blobs, renditions, delivery |
 | [· models.md](docs/extensions/models.md) | Models for internal tasks |
 
-Working notes that are not documentation live in [NOTES-ui.md](NOTES-ui.md).
-
 ---
 
 ## Repository layout

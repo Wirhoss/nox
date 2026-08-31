@@ -1,18 +1,18 @@
-import {
-  type ContributionReader,
-  type Disposable,
-  isDisposable,
-  type ToolSet,
-  type ToolSetConfig,
-  type ToolSetGrant,
-  type ToolSetInventory,
-  toolSets,
-} from '@nox/extension-api';
+import { isDisposable, toolSets } from '@nox/extension-api';
 
-import { composeWithSecrets, type SecretStore } from '../config/secrets';
+import { composeWithSecrets } from '../config/secrets';
 import { stableStringify } from '../utils/json';
 
 import type { ToolSetGrantConfig } from '../config/blueprint';
+import type { SecretStore } from '../config/secrets';
+import type {
+  ContributionReader,
+  Disposable,
+  ToolSet,
+  ToolSetConfig,
+  ToolSetGrant,
+  ToolSetInventory,
+} from '@nox/extension-api';
 
 /** One instance the catalog has replaced or dropped, for its owner to release. */
 interface SupersededToolSet {

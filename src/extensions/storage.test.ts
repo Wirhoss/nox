@@ -252,9 +252,9 @@ describe('extension storage', () => {
       writeFileSync(join(migrations, '0001_broken.sql'), 'CREATE TABLE (');
       const provider = new DatabaseExtensionStorageProvider({ path: extensionPath(directory) });
 
-      expect(
-        provider.forExtension({ extensionId: 'example.broken', migrations }),
-      ).rejects.toThrow('0001_broken.sql');
+      expect(provider.forExtension({ extensionId: 'example.broken', migrations })).rejects.toThrow(
+        '0001_broken.sql',
+      );
       await provider.close();
     } finally {
       discard(migrations);
@@ -286,9 +286,9 @@ describe('extension storage', () => {
 
       // Whatever an operator had scheduled survives the move; losing it would
       // be a silent data loss on an upgrade nobody asked for.
-      expect(await storage.transact((transaction) => transaction.entries('jobs', parseJson))).toEqual(
-        [{ key: 'nightly', value: { cron: '0 3 * * *' } }],
-      );
+      expect(
+        await storage.transact((transaction) => transaction.entries('jobs', parseJson)),
+      ).toEqual([{ key: 'nightly', value: { cron: '0 3 * * *' } }]);
 
       await storage.transact((transaction) => {
         transaction.delete('jobs', 'nightly');

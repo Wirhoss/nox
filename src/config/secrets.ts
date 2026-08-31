@@ -2,21 +2,22 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  type SecretConsumer,
-  type SecretHandle as SecretHandleContract,
-  secretIdSchema,
-  type SecretRef,
-  type SecretReference,
-  secretRefSchema,
-  type SecretSummary,
-} from '@nox/extension-api';
+import { secretIdSchema, secretRefSchema } from '@nox/extension-api';
 import { asc, eq } from 'drizzle-orm';
 
-import { type SecretRow, secrets } from '../database/schema';
-import { type Logger, silentLogger } from '../logger/logger';
+import { secrets } from '../database/schema';
+import { silentLogger } from '../logger/logger';
 
 import type { Database } from '../database/database';
+import type { SecretRow } from '../database/schema';
+import type { Logger } from '../logger/logger';
+import type {
+  SecretConsumer,
+  SecretHandle as SecretHandleContract,
+  SecretRef,
+  SecretReference,
+  SecretSummary,
+} from '@nox/extension-api';
 
 const MASTER_KEY_BYTES = 32;
 const MASTER_KEY_FILE = '.secret-key';

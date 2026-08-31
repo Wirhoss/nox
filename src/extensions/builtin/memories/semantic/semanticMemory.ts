@@ -2,20 +2,19 @@ import { calibrateFloor, NEAREST_QUANTILE, PROBES } from './calibration';
 import { NO_FLOOR } from './config';
 import { judgeContradiction } from './contradiction';
 import { extract } from './extraction';
-import {
-  type DraftFact,
-  type FactAccess,
-  type FactOperation,
-  partitionKey,
-  type RankedFact,
-  type Reinforcement,
-  type Scope,
-  scopeOf,
-  type SemanticStore,
-  type StoredFact,
-  type VectorIdentity,
-} from './store';
+import { partitionKey, scopeOf } from './store';
 
+import type {
+  DraftFact,
+  FactAccess,
+  FactOperation,
+  RankedFact,
+  Reinforcement,
+  Scope,
+  SemanticStore,
+  StoredFact,
+  VectorIdentity,
+} from './store';
 import type {
   ChatModel,
   Disposable,
@@ -254,9 +253,7 @@ class SemanticMemory implements Disposable, Memory, MemoryEditor, MemoryInspecto
     const byLabel = new Map(stored.map((block) => [block.label, block]));
     return request.labels.flatMap((label): MemoryBlock[] => {
       const block = byLabel.get(label);
-      return block === undefined
-        ? []
-        : [{ label, updatedAt: block.updatedAt, value: block.value }];
+      return block === undefined ? [] : [{ label, updatedAt: block.updatedAt, value: block.value }];
     });
   }
 
@@ -271,12 +268,7 @@ class SemanticMemory implements Disposable, Memory, MemoryEditor, MemoryInspecto
         `A memory block may hold at most ${String(MAX_BLOCK_CHARACTERS)} characters.`,
       );
     }
-    const written = await this.#store.writeBlock(
-      scopeOf(request.scope),
-      label,
-      value,
-      new Date(),
-    );
+    const written = await this.#store.writeBlock(scopeOf(request.scope), label, value, new Date());
     return { label: written.label, updatedAt: written.updatedAt, value: written.value };
   }
 

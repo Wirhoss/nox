@@ -97,7 +97,7 @@ ARG NOX_VERSION=0.1.0
 LABEL org.opencontainers.image.title="nox" \
       org.opencontainers.image.description="Nox agent runtime" \
       org.opencontainers.image.version="${NOX_VERSION}" \
-      org.opencontainers.image.licenses="UNLICENSED" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="${BUN_IMAGE}"
 
 # Playwright is a lazy client, but a configured local instance needs a browser

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { type DeepReadonly, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 
@@ -7,6 +7,7 @@ import ReasoningActivityCard from './ReasoningActivityCard.vue'
 import ToolActivityCard from './ToolActivityCard.vue'
 
 import type { ReasoningActivity, ToolActivity } from '../stores/activeSession.store'
+import type { DeepReadonly } from 'vue'
 
 type ProcessItem = ReasoningActivity | ToolActivity
 interface Props {

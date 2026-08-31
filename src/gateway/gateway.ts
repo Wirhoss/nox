@@ -1,48 +1,53 @@
 import {
-  type ArtifactScope,
-  type Broker,
-  type BrokerCapabilities,
-  type BrokerCommandSpec,
-  type BrokerHistory,
-  type BrokerHistoryEntry,
-  type BrokerHistoryOptions,
-  type BrokerSession,
-  type CommandContext,
   commands as commandContributions,
-  type CommandInvocation,
-  type CommandRejection,
   hasUsableContent,
-  type InboundEvent,
-  type InboundMessage,
-  type InboundObservation,
-  type InboundPermission,
-  type InboundRejection,
-  type InboundSteer,
-  type Message,
-  type MessageBody,
-  type MessageContent,
-  type MessageOrigin,
-  type OutboundBody,
-  type OutboundEvent,
-  type ScheduledRunDelivery,
-  type ScheduledRunHost,
-  type ScheduledRunRequest,
-  type ScheduledRunResult,
   textFromContent,
 } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import { artifactConversationScope } from '../artifact/output';
-import { type ConversationKey, ConversationStore } from '../database/conversationStore';
+import { ConversationStore } from '../database/conversationStore';
 import { SessionStore } from '../database/sessionStore';
-import { type Logger, silentLogger } from '../logger/logger';
-import { type BrokerCommand, BUILTIN_COMMANDS, CommandCatalog } from './command';
+import { silentLogger } from '../logger/logger';
+import { BUILTIN_COMMANDS, CommandCatalog } from './command';
 
 import type { AgentEvent, RunStatus } from '../agent/events';
 import type { Session } from '../agent/session';
 import type { NoxApplication } from '../application';
 import type { AuthorizationProvider } from '../auth/authorization';
+import type { ConversationKey } from '../database/conversationStore';
 import type { Database } from '../database/database';
+import type { Logger } from '../logger/logger';
+import type { BrokerCommand } from './command';
+import type {
+  ArtifactScope,
+  Broker,
+  BrokerCapabilities,
+  BrokerCommandSpec,
+  BrokerHistory,
+  BrokerHistoryEntry,
+  BrokerHistoryOptions,
+  BrokerSession,
+  CommandContext,
+  CommandInvocation,
+  CommandRejection,
+  InboundEvent,
+  InboundMessage,
+  InboundObservation,
+  InboundPermission,
+  InboundRejection,
+  InboundSteer,
+  Message,
+  MessageBody,
+  MessageContent,
+  MessageOrigin,
+  OutboundBody,
+  OutboundEvent,
+  ScheduledRunDelivery,
+  ScheduledRunHost,
+  ScheduledRunRequest,
+  ScheduledRunResult,
+} from '@nox/extension-api';
 
 /** How many transport message ids one conversation remembers for deduplication. */
 const SEEN_LIMIT = 256;
@@ -500,10 +505,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
   }
 
   /** Asks the transport itself whether it would take a delivery addressed here. */
-  public async canDeliverTo(
-    delivery: ScheduledRunDelivery,
-    signal: AbortSignal,
-  ): Promise<boolean> {
+  public async canDeliverTo(delivery: ScheduledRunDelivery, signal: AbortSignal): Promise<boolean> {
     signal.throwIfAborted();
     if (this.#state !== 'running') {
       throw new Error('The runtime is not available for scheduled work.');

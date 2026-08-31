@@ -5,15 +5,9 @@ import { useAuthStore } from '@/app/stores/auth.store'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
 import { useI18n } from '@/shared/i18n'
 
-import {
-  type ConfigCatalog,
-  type ConfigSection,
-  type ConfigValue,
-  type ContributionType,
-  type Secret,
-  settingsApi,
-  type ToolSetInventory,
-} from '../api/settings.api'
+import { settingsApi } from '../api/settings.api'
+
+import type { ConfigCatalog, ConfigSection, ConfigValue, ContributionType, ProviderInventory, Secret, ToolSetInventory } from '../api/settings.api'
 
 type SettingsResourceState =
   | { readonly message: string; readonly type: 'failed' }
@@ -41,6 +35,8 @@ const useSettingsStore = defineStore('settings', () => {
   const section = ref<ConfigSection>()
   const secrets = ref<readonly Secret[]>([])
   const toolSetInventory = ref<readonly ToolSetInventory[]>([])
+  /** What each configured provider actually serves, as the live instances report it. */
+  const providerInventory = ref<readonly ProviderInventory[]>([])
   /** The kinds the section in view may hold, with each kind's own schema. */
   const contributionTypes = ref<readonly ContributionType[]>([])
   const resource = ref<SettingsResourceState>({ type: 'idle' })
@@ -83,23 +79,29 @@ const useSettingsStore = defineStore('settings', () => {
       const summary = nextCatalog.sections.find((candidate) => candidate.key === sectionKey)
       const referenceKeys = summary?.references ?? []
       const contributionSection = nextSection.kind === 'contribution'
-      const [nextReferences, nextSecrets, nextToolSetInventory, nextContributionTypes] =
-        await Promise.all([
-          Promise.all(
-            referenceKeys.map(
-              async (key) => [key, await settingsApi.readSection(accessToken, key)] as const,
-            ),
+      const inventories = summary?.inventory ?? []
+      const [
+        nextReferences,
+        nextSecrets,
+        nextToolSetInventory,
+        nextProviderInventory,
+        nextContributionTypes,
+      ] = await Promise.all([
+        Promise.all(
+          referenceKeys.map(
+            async (key) => [key, await settingsApi.readSection(accessToken, key)] as const,
           ),
-          contributionSection ? settingsApi.listSecrets(accessToken) : undefined,
-          summary?.inventory === 'toolSets'
-            ? settingsApi.listToolSetInventory(accessToken)
-            : [],
-          contributionSection ? settingsApi.listSectionTypes(accessToken, sectionKey) : [],
-        ])
+        ),
+        contributionSection ? settingsApi.listSecrets(accessToken) : undefined,
+        inventories.includes('toolSets') ? settingsApi.listToolSetInventory(accessToken) : [],
+        inventories.includes('providers') ? settingsApi.listProviderInventory(accessToken) : [],
+        contributionSection ? settingsApi.listSectionTypes(accessToken, sectionKey) : [],
+      ])
       if (version !== loadVersion) return
       references.value = Object.fromEntries(nextReferences)
       if (nextSecrets !== undefined) secrets.value = nextSecrets
       toolSetInventory.value = nextToolSetInventory
+      providerInventory.value = nextProviderInventory
       contributionTypes.value = nextContributionTypes
       section.value = nextSection
       resource.value = { type: 'ready' }
@@ -323,6 +325,26 @@ const useSettingsStore = defineStore('settings', () => {
     })
   }
 
+  /**
+   * Re-asks every configured provider what it serves.
+   *
+   * Explicit rather than automatic: the answer is a round trip to each endpoint,
+   * and the reason to ask again is something that happened on the other side —
+   * a key that now works, a model that was just deployed — which only the
+   * operator knows about.
+   */
+  async function refreshProviderInventory(): Promise<void> {
+    try {
+      providerInventory.value = await settingsApi.listProviderInventory(
+        requireAccessToken(),
+        true,
+      )
+    } catch (error) {
+      if (isUnauthorized(error)) auth.requireLogin()
+      mutation.value = { message: settingsErrorMessage(error, t), type: 'failed' }
+    }
+  }
+
   function clearMutation(): void {
     mutation.value = { type: 'idle' }
   }
@@ -385,7 +407,9 @@ const useSettingsStore = defineStore('settings', () => {
     loadSection,
     loadSecrets,
     mutation: readonly(mutation),
+    providerInventory: readonly(providerInventory),
     references: readonly(references),
+    refreshProviderInventory,
     resource: readonly(resource),
     reloadConfiguration,
     retryRuntime,

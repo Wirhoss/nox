@@ -5,13 +5,9 @@ import { useAuthStore } from '@/app/stores/auth.store'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
 import { useI18n } from '@/shared/i18n'
 
-import {
-  memoryApi,
-  type MemoryEpisodePage,
-  type MemoryFactPage,
-  type MemoryScopeSummary,
-  type MemorySummary,
-} from '../api/memory.api'
+import { memoryApi } from '../api/memory.api'
+
+import type { MemoryEpisodePage, MemoryFactPage, MemoryScopeSummary, MemorySummary } from '../api/memory.api'
 
 type MemoryResourceState =
   | { readonly message: string; readonly type: 'failed' }

@@ -63,8 +63,16 @@ export default defineConfig([
     rules: {
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': 'error',
-      'no-duplicate-imports': ['error', { allowSeparateTypeImports: false }],
+      'no-duplicate-imports': ['error', { allowSeparateTypeImports: true }],
       'no-implicit-coercion': 'error',
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'ImportDeclaration:has(ImportSpecifier[importKind=type]):has(:matches(ImportSpecifier[importKind=value], ImportDefaultSpecifier, ImportNamespaceSpecifier))',
+          message: 'Do not mix type and value imports in the same import declaration.',
+        },
+      ],
       'no-template-curly-in-string': 'error',
       'no-unneeded-ternary': 'error',
       'object-shorthand': ['error', 'always'],
@@ -76,7 +84,11 @@ export default defineConfig([
       ],
       '@typescript-eslint/consistent-type-imports': [
         'error',
-        { disallowTypeAnnotations: false, fixStyle: 'inline-type-imports', prefer: 'type-imports' },
+        {
+          disallowTypeAnnotations: false,
+          fixStyle: 'separate-type-imports',
+          prefer: 'type-imports',
+        },
       ],
       '@typescript-eslint/explicit-module-boundary-types': 'error',
       '@typescript-eslint/no-explicit-any': [

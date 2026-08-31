@@ -4,14 +4,11 @@ import { join } from 'node:path';
 
 import {
   authorities,
-  type ChatProvider,
   httpProviderConfigSchema,
   memories,
-  type Memory,
   memoryContribution,
   providerContribution,
   providers,
-  type Tool,
   ToolSet,
   toolSetBaseConfigSchema,
   toolSetContribution,
@@ -34,6 +31,8 @@ import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
 import { ConfigStore } from './store';
+
+import type { ChatProvider, Memory, Tool } from '@nox/extension-api';
 
 const databases: Database[] = [];
 const directories: string[] = [];

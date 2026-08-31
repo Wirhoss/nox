@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { type SecretReference, secretRefSchema } from '@nox/extension-api';
+import { secretRefSchema } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { SecretStore } from '../../config/secrets';
@@ -11,6 +11,8 @@ import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
+
+import type { SecretReference } from '@nox/extension-api';
 
 const databases: Database[] = [];
 const directories: string[] = [];

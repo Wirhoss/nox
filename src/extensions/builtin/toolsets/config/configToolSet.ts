@@ -1,12 +1,10 @@
-import { type ConfigurationAdmin, type SecretMetadataReader, ToolSet } from '@nox/extension-api';
+import { ToolSet } from '@nox/extension-api';
 
-import {
-  type ConfigToolSetConfig,
-  type ConfigToolSetConfigInput,
-  configToolSetConfigSchema,
-  type ConfigToolSetPolicy,
-} from './model';
+import { configToolSetConfigSchema } from './model';
 import { configTools } from './tools';
+
+import type { ConfigToolSetConfig, ConfigToolSetConfigInput, ConfigToolSetPolicy } from './model';
+import type { ConfigurationAdmin, SecretMetadataReader } from '@nox/extension-api';
 
 /**
  * Administrative access to Nox's desired configuration through the same host

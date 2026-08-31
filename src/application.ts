@@ -7,17 +7,16 @@ import {
 } from './extensions/error';
 import { assertVersion, isCompatible } from './extensions/manifest';
 import { ServiceCollection } from './extensions/service';
-import {
-  type ExtensionStorageProvider,
-  MemoryExtensionStorageProvider,
-} from './extensions/storage';
-import { type Logger, silentLogger } from './logger/logger';
+import { MemoryExtensionStorageProvider } from './extensions/storage';
+import { silentLogger } from './logger/logger';
 import { NOX_VERSION } from './version';
 
 import type { Agent, OpenSessionOptions } from './agent/agent';
 import type { Session } from './agent/session';
 import type { NoxExtension } from './extensions/extension';
+import type { ExtensionStorageProvider } from './extensions/storage';
 import type { MessageGateway } from './gateway/gateway';
+import type { Logger } from './logger/logger';
 import type {
   ContributionReader,
   Disposable,

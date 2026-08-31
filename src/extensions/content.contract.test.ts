@@ -1,5 +1,4 @@
 import {
-  type ContentPart,
   contentPartSchema,
   contentToString,
   modalitiesIn,
@@ -7,6 +6,8 @@ import {
   textFromContent,
 } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
+
+import type { ContentPart } from '@nox/extension-api';
 
 const artifact = {
   artifactId: 'art_abcdefgh',

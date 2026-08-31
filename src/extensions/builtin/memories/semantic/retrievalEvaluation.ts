@@ -137,7 +137,10 @@ const RETRIEVAL_FACTS: readonly SeedFact[] = Object.freeze([
   // It could, at rank one, and the text arm was removed. They stay because they
   // are the cases most likely to break under a different embedding model, which
   // makes them the ones worth rerunning when one is swapped in.
-  { kind: 'decision', text: 'Ana traced the Friday outage to error ORA-01555 on the reporting replica.' },
+  {
+    kind: 'decision',
+    text: 'Ana traced the Friday outage to error ORA-01555 on the reporting replica.',
+  },
   { kind: 'state', text: 'Ana keeps the production deploy key at infra/prod/deploy_key_v3.' },
   { kind: 'decision', text: 'Ana codenamed the storage migration Perihelion.' },
 ]);
@@ -328,8 +331,7 @@ const DECAY_FACTS: readonly SeedFact[] = Object.freeze(
   RETRIEVAL_FACTS.map((fact, index) =>
     Object.freeze({
       ...fact,
-      createdAt:
-        index === 29 ? '2023-01-01T00:00:00.000Z' : '2026-08-20T00:00:00.000Z',
+      createdAt: index === 29 ? '2023-01-01T00:00:00.000Z' : '2026-08-20T00:00:00.000Z',
     }),
   ),
 );
@@ -399,7 +401,8 @@ async function seed(
   const ids: number[] = [];
   for (const [index, fact] of facts.entries()) {
     const at = fact.createdAt === undefined ? DEFAULT_EVALUATION_AT : new Date(fact.createdAt);
-    if (!Number.isFinite(at.getTime())) throw new TypeError('A retrieval seed has an invalid date.');
+    if (!Number.isFinite(at.getTime()))
+      throw new TypeError('A retrieval seed has an invalid date.');
     const episodeId = await store.recordEpisode(scope, {
       completedAt: at.toISOString(),
       runId: `retrieval-eval-${String(index)}`,

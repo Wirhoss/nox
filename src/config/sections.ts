@@ -11,7 +11,9 @@ import {
 
 import { appConfigSchema } from './app';
 import { blueprintSchema } from './blueprint';
-import { contributionSection, directorySection, fileSection, type SectionValue } from './section';
+import { contributionSection, directorySection, fileSection } from './section';
+
+import type { SectionValue } from './section';
 
 /**
  * Every section Nox has, named once. The set is closed and typed on purpose:
@@ -44,7 +46,7 @@ const sections = {
       editor: 'blueprint',
       entrySummary: { description: ['description'], detail: ['provider', 'model'] },
       group: 'intelligence',
-      inventory: 'toolSets',
+      inventory: ['providers', 'toolSets'],
       label: 'settings.sections.agents.label',
       plural: 'settings.sections.agents.plural',
       references: ['memories', 'providers', 'toolSets'],
@@ -77,6 +79,7 @@ const sections = {
       editor: 'contribution',
       entrySummary: { description: [], detail: ['type'] },
       group: 'intelligence',
+      inventory: ['providers'],
       label: 'settings.sections.memories.label',
       plural: 'settings.sections.memories.plural',
       references: ['blueprints'],
@@ -93,6 +96,7 @@ const sections = {
       editor: 'contribution',
       entrySummary: { description: ['baseUrl'], detail: ['type', 'defaultModel'] },
       group: 'intelligence',
+      inventory: ['providers'],
       label: 'settings.sections.providers.label',
       plural: 'settings.sections.providers.plural',
       slug: 'providers',
@@ -108,7 +112,7 @@ const sections = {
       editor: 'toolSet',
       entrySummary: { description: [], detail: ['type'] },
       group: 'capabilities',
-      inventory: 'toolSets',
+      inventory: ['toolSets'],
       label: 'settings.sections.toolSets.label',
       plural: 'settings.sections.toolSets.plural',
       slug: 'tool-sets',

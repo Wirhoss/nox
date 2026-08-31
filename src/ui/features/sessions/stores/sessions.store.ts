@@ -5,14 +5,9 @@ import { useAuthStore } from '@/app/stores/auth.store'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
 import { useI18n } from '@/shared/i18n'
 
-import {
-  type SessionAgent,
-  type SessionAuditPage,
-  type SessionPage,
-  sessionsApi,
-  type SessionSummary,
-  type SessionTranscript,
-} from '../api/sessions.api'
+import { sessionsApi } from '../api/sessions.api'
+
+import type { SessionAgent, SessionAuditPage, SessionPage, SessionSummary, SessionTranscript } from '../api/sessions.api'
 
 type SessionsResourceState =
   | { readonly message: string; readonly type: 'failed' }

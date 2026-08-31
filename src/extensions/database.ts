@@ -4,9 +4,10 @@ import { join } from 'node:path';
 import { Database as SqliteConnection } from 'bun:sqlite';
 import { load as loadVectorSupport } from 'sqlite-vec';
 
-import { type Logger, silentLogger } from '../logger/logger';
+import { silentLogger } from '../logger/logger';
 import { Mutex } from '../utils/mutex';
 
+import type { Logger } from '../logger/logger';
 import type {
   ExtensionStateEntry,
   ExtensionStateTransaction,
@@ -119,10 +120,9 @@ class ExtensionTransaction implements ExtensionStateTransaction {
   ): readonly ExtensionStateEntry<T>[] {
     assertStateName(collection, 'Extension state collection');
     return this.#connection
-      .query<
-        { key: string; value: string },
-        [string, string]
-      >(`SELECT key, value FROM ${STATE_TABLE} WHERE extension_id = ? AND collection = ? ORDER BY key`)
+      .query<{ key: string; value: string }, [string, string]>(
+        `SELECT key, value FROM ${STATE_TABLE} WHERE extension_id = ? AND collection = ? ORDER BY key`,
+      )
       .all(this.#extensionId, collection)
       .map((row) => Object.freeze({ key: row.key, value: parse(decode(row.value)) }));
   }
@@ -130,10 +130,9 @@ class ExtensionTransaction implements ExtensionStateTransaction {
   public get<T>(collection: string, key: string, parse: (value: unknown) => T): T | undefined {
     this.#assertKey(collection, key);
     const row = this.#connection
-      .query<
-        { value: string },
-        [string, string, string]
-      >(`SELECT value FROM ${STATE_TABLE} WHERE extension_id = ? AND collection = ? AND key = ?`)
+      .query<{ value: string }, [string, string, string]>(
+        `SELECT value FROM ${STATE_TABLE} WHERE extension_id = ? AND collection = ? AND key = ?`,
+      )
       .get(this.#extensionId, collection, key);
     return row === null ? undefined : parse(decode(row.value));
   }
@@ -143,9 +142,7 @@ class ExtensionTransaction implements ExtensionStateTransaction {
     parameters: readonly SqlValue[],
     parse: (row: unknown) => T,
   ): T | undefined {
-    const row = this.#connection
-      .query<Record<string, unknown>, SqlValue[]>(sql)
-      .get(...parameters);
+    const row = this.#connection.query<Record<string, unknown>, SqlValue[]>(sql).get(...parameters);
     return row === null ? undefined : parse(row);
   }
 

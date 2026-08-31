@@ -1,8 +1,9 @@
-import { type ChatModel, contentToString, type Message, type UserMessage, z } from '@nox/extension-api';
+import { contentToString, z } from '@nox/extension-api';
 
 import { jsonFrom } from './extraction';
 
 import type { FactPair } from './store';
+import type { ChatModel, Message, UserMessage } from '@nox/extension-api';
 
 /**
  * The judgement asked of the model, and nothing wider.
@@ -64,7 +65,9 @@ interface ContradictionVerdict {
 function contradictionMessage(text: string): UserMessage {
   const messageId = `memory-contradiction-${Date.now().toString(36)}`;
   return Object.freeze({
-    content: Object.freeze([{ text: `${text}\n\n${CONTRADICTION_REQUEST}`, type: 'text' } as const]),
+    content: Object.freeze([
+      { text: `${text}\n\n${CONTRADICTION_REQUEST}`, type: 'text' } as const,
+    ]),
     createdAt: new Date(),
     messageId,
     origin: Object.freeze({
@@ -83,9 +86,7 @@ function contradictionMessage(text: string): UserMessage {
  * contradiction leaves a stale fact that a later pass can still catch, while a
  * wrongly parsed one retires something true and nothing downstream would know.
  */
-async function judgeContradiction(
-  request: ContradictionRequest,
-): Promise<ContradictionVerdict> {
+async function judgeContradiction(request: ContradictionRequest): Promise<ContradictionVerdict> {
   const { earlier, later } = request.pair;
   const prompt = [
     `Earlier statement, first true on ${earlier.validFrom}:`,

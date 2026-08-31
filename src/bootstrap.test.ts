@@ -1076,6 +1076,55 @@ describe('bootstrap', () => {
     expect(failure?.error).toContain('serves no chat model');
   });
 
+  test('reports what each provider serves, declared and merely offered', async () => {
+    const application = await boot({
+      blueprints: { nox: { ...NOX, provider: 'counting_test' } },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      providers: {
+        counting_test: { type: 'counting_test' },
+        local: {
+          embedding: { dimensions: 384, enabled: true, model: 'test/embed' },
+          llm: { enabled: true, model: 'test/chat' },
+          type: 'local',
+        },
+      },
+    });
+
+    const inventory = await application.services.get(configAdminService).providerInventory();
+
+    // What an entry declares, with the metadata the declaration exists for.
+    const local = inventory.find(({ id }) => id === 'local');
+    expect(local?.available).toBe(true);
+    expect(local?.kinds).toEqual(['chat', 'embedding']);
+    expect(local?.models).toEqual([
+      { configured: true, kind: 'chat', modelId: 'test/chat' },
+      { configured: true, dimensions: 384, kind: 'embedding', modelId: 'test/embed' },
+    ]);
+
+    // And what only the instance knows: a model nothing has declared, which is
+    // the whole point — it can now be chosen instead of typed from memory.
+    const counting = inventory.find(({ id }) => id === 'counting_test');
+    expect(counting?.reported).toBe(true);
+    expect(counting?.kinds).toEqual(['embedding']);
+    expect(counting?.models).toEqual([{ configured: false, modelId: 'counting' }]);
+  });
+
+  test('reports why a provider could not list its models instead of an empty list', async () => {
+    const application = await boot({
+      blueprints: { nox: { ...NOX, provider: 'unlistable_test' } },
+      extensionsDir: join(import.meta.dir, 'runtime', 'fixtures'),
+      providers: { unlistable_test: { type: 'unlistable_test' } },
+    });
+
+    const inventory = await application.services.get(configAdminService).providerInventory();
+    const provider = inventory.find(({ id }) => id === 'unlistable_test');
+
+    expect(provider?.available).toBe(true);
+    expect(provider?.reported).toBe(false);
+    expect(provider?.reportProblem).toContain('no model list');
+    expect(provider?.models).toEqual([]);
+  });
+
   test('refuses an embedding model where an agent needs a conversational one', async () => {
     const application = await boot({
       blueprints: { nox: { ...NOX, model: 'test/embed', provider: 'local' } },

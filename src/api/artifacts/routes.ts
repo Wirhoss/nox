@@ -4,7 +4,6 @@ import { z } from 'zod';
 import {
   artifactConversationScope,
   artifactIdSchema,
-  type ArtifactPipeline,
   artifactRef,
   ArtifactStorageQuotaError,
   ArtifactTooLargeError,
@@ -12,6 +11,7 @@ import {
 import { authGuard } from '../auth/guard';
 import { WEB_BROKER_ID } from '../chat/id';
 
+import type { ArtifactPipeline } from '../../artifact';
 import type { AuthStore } from '../auth/store';
 
 const artifactParamsSchema = z.object({ artifactId: artifactIdSchema });

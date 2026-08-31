@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
 
-import { ApiServer, type ApiServerOptions } from './server';
+import { ApiServer } from './server';
+
+import type { ApiServerOptions } from './server';
 
 /** Binds an ephemeral port, so tests never collide with a running Nox. */
 async function withServer(

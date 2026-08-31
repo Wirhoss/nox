@@ -3,9 +3,10 @@ import { z } from 'zod';
 
 import { API_PREFIX } from '../prefix';
 import { authGuard } from './guard';
-import { type Account, AccountExistsError, type AuthStore, type TokenPair } from './store';
+import { AccountExistsError } from './store';
 
 import type { RegistrationWindow } from './registration';
+import type { Account, AuthStore, TokenPair } from './store';
 
 /**
  * Scoped to `/api/auth`, so the browser attaches it only to the routes that trade it

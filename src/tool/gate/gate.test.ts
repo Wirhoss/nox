@@ -1,14 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  messageAuthority,
-  type RunAuthority,
-  SYSTEM_CRON,
-  systemAuthority,
-} from '../../auth/principal';
+import { messageAuthority, SYSTEM_CRON, systemAuthority } from '../../auth/principal';
 import { TEST_AUTHORITY, testOrigin, testPrincipal } from '../../testFixtures';
 import { SessionGate } from './gate';
 
+import type { RunAuthority } from '../../auth/principal';
 import type { GatePolicyInput } from './config';
 import type { GateAuditRecord, GateRequest, PendingPermission } from './types';
 

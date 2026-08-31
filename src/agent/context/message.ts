@@ -1,10 +1,10 @@
-import {
-  type ContentMessage,
-  contentToString,
-  type Message,
-  originToString,
-  type ToolCallMessage,
-  type ToolResponseMessage,
+import { contentToString, originToString } from '@nox/extension-api';
+
+import type {
+  ContentMessage,
+  Message,
+  ToolCallMessage,
+  ToolResponseMessage,
 } from '@nox/extension-api';
 
 const MESSAGE_ROLES = [

@@ -1,21 +1,13 @@
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
-import { type ArtifactOutputPublisher, type ArtifactRef, artifactRefSchema } from './artifacts.js';
-import {
-  CONTENT_MODALITIES,
-  type ContentModality,
-  type Message,
-  type MessageContent,
-  type ToolCallMessage,
-} from './content.js';
-import {
-  httpUrlSchema,
-  runtimeSecretSchema,
-  type SecretHandle,
-  secretRefSchema,
-} from './schemas.js';
+import { artifactRefSchema } from './artifacts.js';
+import { CONTENT_MODALITIES } from './content.js';
+import { httpUrlSchema, runtimeSecretSchema, secretRefSchema } from './schemas.js';
 
+import type { ArtifactOutputPublisher, ArtifactRef } from './artifacts.js';
+import type { ContentModality, Message, MessageContent, ToolCallMessage } from './content.js';
+import type { SecretHandle } from './schemas.js';
 import type { Tool } from './tools.js';
 
 /** Per-request generation policy, owned by an agent rather than by a provider model. */
@@ -38,12 +30,27 @@ const requiredChatModalities = (direction: 'input' | 'output') =>
     .refine((modalities) => modalities.includes('text'), {
       message: `Text ${direction} is required by the chat model interface.`,
     });
+/**
+ * What a surface may offer instead of a free-text box. A model ID and a
+ * provider name are both drawn from something that exists — the configured
+ * instances, and the models one of them reports — and typing either from memory
+ * is how a configuration ends up naming a model no endpoint serves. The marker
+ * travels on the schema so every editor built from a schema gets the choice,
+ * rather than each one carrying its own list of which fields are names of what.
+ *
+ * A model catalog is resolved against the provider in scope: a sibling
+ * `provider` field where the schema has one, and otherwise the provider whose
+ * own entry is being edited.
+ */
+const PROVIDER_CATALOG = Object.freeze({ nox: Object.freeze({ catalog: 'provider' }) });
+const MODEL_CATALOG = Object.freeze({ nox: Object.freeze({ catalog: 'model' }) });
+
 const modelInputModalitiesSchema = requiredChatModalities('input');
 const modelOutputModalitiesSchema = requiredChatModalities('output');
 /** Facts intrinsic to a chat model, independent of which agent is using it. */
 const modelBaseConfigSchema = z.object({
   inputModalities: modelInputModalitiesSchema.default((): ContentModality[] => ['text']),
-  modelId: z.string(),
+  modelId: z.string().meta(MODEL_CATALOG),
   outputModalities: modelOutputModalitiesSchema.default((): ContentModality[] => ['text']),
 });
 /**
@@ -77,7 +84,7 @@ const embeddingModelConfigSchema = z
     kind: z.literal('embedding'),
     /** Longer input is the caller's to split; the provider says where the line is. */
     maxInputTokens: z.number().int().positive().optional(),
-    modelId: z.string().min(1),
+    modelId: z.string().min(1).meta(MODEL_CATALOG),
   })
   .strict();
 
@@ -117,13 +124,24 @@ function modelProducesOutput(model: ChatModelConfig, modality: ContentModality):
  * force a local model to invent a URL it never calls. The retry settings stay,
  * because retrying is the streaming contract's, not HTTP's.
  */
-const providerConfigShape = {
+const providerFloorShape = {
   maxRetries: z.number().int().nonnegative().default(2),
   maxRetryDelayMs: z.number().nonnegative().default(30_000),
-  /** Every model this instance serves, of whatever kind. */
-  modelConfigs: z.array(modelConfigSchema).optional(),
   retryDelayMs: z.number().nonnegative().default(500),
   timeoutMs: z.number().positive().optional(),
+};
+/**
+ * The declared catalog, kept out of the floor above. A service reached over the
+ * network serves models this installation has not named, so an operator says
+ * which of them it means; a provider that holds its models — the local engine
+ * loads exactly what its slots name — has no such gap to fill, and a list there
+ * could only restate or contradict what it already loaded. Every provider
+ * retries; not every provider has a catalog to declare.
+ */
+const providerConfigShape = {
+  ...providerFloorShape,
+  /** Every model this instance serves, of whatever kind. */
+  modelConfigs: z.array(modelConfigSchema).optional(),
 };
 const providerBaseConfigSchema = z.object(providerConfigShape);
 const providerRuntimeConfigSchema = z.object(providerConfigShape);
@@ -508,7 +526,12 @@ function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
  * perform is answered by what it implements, not by which list it was declared in.
  */
 abstract class BaseProvider {
-  static readonly configSchema = providerBaseConfigSchema;
+  /**
+   * Typed to the floor rather than to the base schema, so a provider whose
+   * models are not declared but held — the local engine — can override with a
+   * schema that has no `modelConfigs` to offer.
+   */
+  static readonly configSchema: z.ZodObject<typeof providerFloorShape> = providerBaseConfigSchema;
   protected timeoutMs?: number;
   protected modelConfigs: Record<string, ModelConfig> = {};
   protected readonly maxRetries: number;
@@ -720,8 +743,8 @@ function isChatCapable(value: unknown): value is ChatProvider {
  * stored identity wrong.
  */
 const modelReferenceSchema = z.object({
-  model: z.string().min(1),
-  provider: z.string().min(1),
+  model: z.string().min(1).meta(MODEL_CATALOG),
+  provider: z.string().min(1).meta(PROVIDER_CATALOG),
 });
 type ModelReference = z.infer<typeof modelReferenceSchema>;
 
@@ -783,6 +806,7 @@ export {
   isEmbeddingCapable,
   isEmbeddingModel,
   isProviderError,
+  MODEL_CATALOG,
   MODEL_KINDS,
   modelAcceptsInput,
   modelBaseConfigSchema,
@@ -792,8 +816,10 @@ export {
   modelOutputModalitiesSchema,
   modelProducesOutput,
   modelReferenceSchema,
+  PROVIDER_CATALOG,
   providerBaseConfigSchema,
   ProviderError,
+  providerFloorShape,
   providerRuntimeConfigSchema,
   ProviderStream,
   samplingParametersConfigSchema,

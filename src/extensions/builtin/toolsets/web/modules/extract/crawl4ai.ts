@@ -1,23 +1,20 @@
 import { z } from 'zod';
 
-import {
-  type ExtractCapability,
-  type ExtractedPage,
-  type ExtractRequest,
-  PAGE_CAPTURES,
-  type PageBytes,
-  type PageCapture,
-  type PageImage,
-  type PageLink,
-  type WebRequestContext,
-} from '../../capabilities';
+import { PAGE_CAPTURES } from '../../capabilities';
 import { decodeBase64, publicUrl, WebService } from '../../http';
-import {
-  endpointFields,
-  runtimeCredentialSchema,
-  type WebModule,
-  type WebModuleConfig,
-} from '../../module';
+import { endpointFields, runtimeCredentialSchema } from '../../module';
+
+import type {
+  ExtractCapability,
+  ExtractedPage,
+  ExtractRequest,
+  PageBytes,
+  PageCapture,
+  PageImage,
+  PageLink,
+  WebRequestContext,
+} from '../../capabilities';
+import type { WebModule, WebModuleConfig } from '../../module';
 
 /**
  * Crawl4AI: a browser-backed crawler that returns a rendered page rather than a

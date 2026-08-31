@@ -2,14 +2,10 @@ import { describe, expect, test } from 'bun:test';
 
 import { testCatalog, testPrincipal } from '../testFixtures';
 import { AuthorityCatalog } from './authority';
-import {
-  type AuthorizationProvider,
-  type AuthorizationRequest,
-  authorize,
-  GrantAuthorizationProvider,
-  OwnerAuthorizationProvider,
-} from './authorization';
+import { authorize, GrantAuthorizationProvider, OwnerAuthorizationProvider } from './authorization';
 import { CORE_AUTHORITIES } from './coreAuthorities';
+
+import type { AuthorizationProvider, AuthorizationRequest } from './authorization';
 
 const CATALOG = testCatalog('nox.files.read', 'nox.files.write');
 

@@ -1,14 +1,18 @@
 import { join } from 'node:path';
 
 import { Database as SqliteConnection } from 'bun:sqlite';
-import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite';
+import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 
-import { type Logger, silentLogger } from '../logger/logger';
+import { silentLogger } from '../logger/logger';
 import { Mutex } from '../utils/mutex';
 import { parseOrThrow } from '../utils/validate';
-import { type DatabaseConfig, type DatabaseConfigInput, databaseConfigSchema } from './config';
+import { databaseConfigSchema } from './config';
 import { schema } from './schema';
+
+import type { Logger } from '../logger/logger';
+import type { DatabaseConfig, DatabaseConfigInput } from './config';
+import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 
 // Resolved against this module, not the CWD, so migrations are found wherever
 // the process is started from.

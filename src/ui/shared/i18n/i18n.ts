@@ -1,11 +1,9 @@
-import { type App, type Plugin, readonly, type Ref, ref, shallowRef } from 'vue'
+import { readonly, ref, shallowRef } from 'vue'
 
-import {
-  i18nApi,
-  type LanguageCatalog,
-  type LanguageDescriptor,
-  type LanguagePack,
-} from './i18n.api'
+import { i18nApi } from './i18n.api'
+
+import type { LanguageCatalog, LanguageDescriptor, LanguagePack } from './i18n.api'
+import type { App, Plugin, Ref } from 'vue'
 
 type MessageParameters = Readonly<Record<string, boolean | number | string>>
 

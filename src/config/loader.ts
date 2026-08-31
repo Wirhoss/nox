@@ -4,11 +4,9 @@ import { dirname, join } from 'node:path';
 
 import {
   contributionInstances,
-  type ContributionReader,
   entryIdSchema,
   instanceIdSchema,
   isConfigurable,
-  type UnknownConfigurable,
 } from '@nox/extension-api';
 import { z } from 'zod';
 
@@ -17,6 +15,7 @@ import { ConfigError } from './error';
 
 import type { Logger } from '../logger/logger';
 import type { ConfigSection, ContributionSection, DirectorySection, FileSection } from './section';
+import type { ContributionReader, UnknownConfigurable } from '@nox/extension-api';
 
 interface ParsedDocument<T> {
   added: string[];

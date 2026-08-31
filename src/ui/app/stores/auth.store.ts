@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, readonly, ref } from 'vue'
 
-import { type Account, authApi, type Credentials, type Registration, type Session } from '@/features/auth/api/auth.api'
+import { authApi } from '@/features/auth/api/auth.api'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
+
+import type { Account, Credentials, Registration, Session } from '@/features/auth/api/auth.api'
 
 type AuthActionErrorCode =
   | 'already-registered'

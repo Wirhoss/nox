@@ -1,9 +1,4 @@
-import {
-  type ChatEvent,
-  type ChatTransport,
-  type ContentPart,
-  speechContentSchema,
-} from '@nox/extension-api';
+import { speechContentSchema } from '@nox/extension-api';
 import { Elysia } from 'elysia';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
@@ -13,6 +8,7 @@ import { authGuard } from '../auth/guard';
 import type { ArtifactPipeline } from '../../artifact/pipeline';
 import type { AuthStore } from '../auth/store';
 import type { ChatHub } from './transport';
+import type { ChatEvent, ChatTransport, ContentPart } from '@nox/extension-api';
 
 /**
  * How often the stream says something when the conversation does not. Nothing

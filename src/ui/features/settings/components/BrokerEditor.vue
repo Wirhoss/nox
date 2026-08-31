@@ -7,23 +7,14 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
-import { type CredentialState, NEW_SECRET } from '../model/managedSecrets'
-import {
-  activeFields,
-  type ConfigLike,
-  defaultsFor,
-  type FieldNode,
-  formNodes,
-  isObject,
-  seedNode,
-  valueAt,
-  variantAt,
-  withValueAt,
-} from '../model/schemaForm'
+import { NEW_SECRET } from '../model/managedSecrets'
+import { activeFields, defaultsFor, formNodes, isObject, seedNode, valueAt, variantAt, withValueAt } from '../model/schemaForm'
 import { useSettingsStore } from '../stores/settings.store'
 import SchemaFieldGroup from './SchemaFieldGroup.vue'
 
 import type { ConfigSection, ConfigValue } from '../api/settings.api'
+import type { CredentialState } from '../model/managedSecrets'
+import type { ConfigLike, FieldNode } from '../model/schemaForm'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'
@@ -101,9 +92,7 @@ const descriptor = computed(() =>
   types.value.find((candidate) => candidate.type === common.value.type),
 )
 const transportNodes = computed(() =>
-  descriptor.value === undefined
-    ? []
-    : formNodes(descriptor.value.schema, [...COMMON_PROPERTIES]),
+  descriptor.value === undefined ? [] : formNodes(descriptor.value.schema, [...COMMON_PROPERTIES]),
 )
 const ownerAuthorized = computed(() => descriptor.value?.host?.authorization === 'owner')
 const selectableAgent = computed(() => descriptor.value?.host?.selectableAgent === true)
@@ -401,7 +390,7 @@ function switchMode(nextMode: EditorMode): void {
   if (parsed === undefined) return
   const nextDescriptor = types.value.find((candidate) => candidate.type === parsed.type)
   if (nextDescriptor === undefined) {
-    jsonError.value = t('settings.provider.validation.curatedFormUnavailable')
+    jsonError.value = t('settings.editor.curatedFormUnavailable')
     return
   }
   hydrate(parsed)
@@ -462,7 +451,9 @@ function collectSecretWrites(
   value: ConfigValue,
 ): readonly { readonly secretId: string; readonly value: string }[] | undefined {
   const references = findSecretReferences(value)
-  const activeReferences = new Map(references.map((reference) => [reference.path, reference.secretId]))
+  const activeReferences = new Map(
+    references.map((reference) => [reference.path, reference.secretId]),
+  )
   const writes = new Map<string, string>()
   for (const [path, state] of Object.entries(credentials)) {
     if (state.value.length === 0) continue
@@ -668,7 +659,9 @@ function parseJson(report: boolean): ConfigValue | undefined {
 }
 
 function credentialInputsDirty(): boolean {
-  return Object.values(credentials).some((state) => state.value.length > 0 || state.newId.length > 0)
+  return Object.values(credentials).some(
+    (state) => state.value.length > 0 || state.newId.length > 0,
+  )
 }
 
 /** Kept as a function rather than an inline pair of statements: a multi-statement

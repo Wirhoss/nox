@@ -1,4 +1,4 @@
-import { bindTool, type MessageContentText, type Tool, ToolSet } from '@nox/extension-api';
+import { bindTool, ToolSet } from '@nox/extension-api';
 import { z } from 'zod';
 
 import {
@@ -9,6 +9,7 @@ import {
 } from '../../auth/coreAuthorities';
 
 import type { Transcript } from './transcript';
+import type { MessageContentText, Tool } from '@nox/extension-api';
 
 const DEFAULT_MAX_SEARCH_CHARACTERS = 6000;
 const SEARCH_BUDGET_NOTE =

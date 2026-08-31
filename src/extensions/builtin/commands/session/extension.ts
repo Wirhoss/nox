@@ -1,13 +1,10 @@
-import {
-  authorities,
-  type CommandContext,
-  type CommandResult,
-  commands,
-  type CommandSessionInfo,
-  defineCommand,
-  defineExtension,
-  type ToolRisk,
-  z,
+import { authorities, commands, defineCommand, defineExtension, z } from '@nox/extension-api';
+
+import type {
+  CommandContext,
+  CommandResult,
+  CommandSessionInfo,
+  ToolRisk,
 } from '@nox/extension-api';
 
 const AUTHORITY = 'nox.commands.session.use';

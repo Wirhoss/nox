@@ -1,10 +1,11 @@
-import { type ContributionReader, EXTENSION_API_VERSION } from '@nox/extension-api';
+import { EXTENSION_API_VERSION } from '@nox/extension-api';
 import { Elysia } from 'elysia';
 
 import { authGuard } from '../auth/guard';
 
 import type { ExtensionCatalog } from '../../extensions/catalog';
 import type { AuthStore } from '../auth/store';
+import type { ContributionReader } from '@nox/extension-api';
 
 interface ExtensionRoutesOptions {
   readonly catalog: ExtensionCatalog;

@@ -15,8 +15,10 @@ const memoryMessages = Object.freeze({
   'memory.error.connection': 'The Nox node could not be reached.',
   'memory.error.contract': 'Nox returned memory data this client cannot read.',
   'memory.error.correctFailed': 'The correction was refused and nothing changed.',
-  'memory.error.kindRequired': 'Choose a kind before saving. This fact was stored under one Nox no longer offers.',
-  'memory.error.notInspectable': 'This memory has no audit projection, so there is nothing to inspect.',
+  'memory.error.kindRequired':
+    'Choose a kind before saving. This fact was stored under one Nox no longer offers.',
+  'memory.error.notInspectable':
+    'This memory has no audit projection, so there is nothing to inspect.',
   'memory.error.notFound': 'This memory no longer exists.',
   'memory.error.refused': 'Nox refused the memory request ({detail}).',
   'memory.error.request': 'Nox refused the memory request.',

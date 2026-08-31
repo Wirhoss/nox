@@ -1,17 +1,18 @@
-import {
-  type MemoryEditor,
-  type MemoryForgetRequest,
-  type MemorySearchRequest,
-  type MemoryUpdateRequest,
-  type MemoryWriteRequest,
-  prepareToolCall,
-} from '@nox/extension-api';
+import { prepareToolCall } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { AuthorityCatalog } from '../auth/authority';
 import { CORE_AUTHORITIES } from '../auth/coreAuthorities';
 import { MemoryToolSet, memoryToolSetGrant } from './memoryToolSet';
 import { snapshotToolSets } from './tools';
+
+import type {
+  MemoryEditor,
+  MemoryForgetRequest,
+  MemorySearchRequest,
+  MemoryUpdateRequest,
+  MemoryWriteRequest,
+} from '@nox/extension-api';
 
 const PRINCIPAL = Object.freeze({ issuer: 'web', subject: 'alice' });
 
@@ -104,9 +105,7 @@ describe('MemoryToolSet', () => {
     const write = tools.tools.memory_write;
     if (write === undefined) throw new Error('memory_write is not registered.');
 
-    expect(() =>
-      prepareToolCall(write, { kind: 'plan', text: 'Alice will do the QA.' }),
-    ).toThrow();
+    expect(() => prepareToolCall(write, { kind: 'plan', text: 'Alice will do the QA.' })).toThrow();
     expect(() =>
       prepareToolCall(write, { kind: 'preference', text: 'Alice prefers jasmine tea.' }),
     ).not.toThrow();

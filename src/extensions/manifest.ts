@@ -1,14 +1,12 @@
 import { isAbsolute } from 'node:path';
 
-import {
-  EXTENSION_API_VERSION,
-  type ExtensionManifest,
-  identifierSchema,
-} from '@nox/extension-api';
+import { EXTENSION_API_VERSION, identifierSchema } from '@nox/extension-api';
 import { satisfies, valid, validRange } from 'semver';
 import { z } from 'zod';
 
 import { parseOrThrow } from '../utils/validate';
+
+import type { ExtensionManifest } from '@nox/extension-api';
 
 const EXTENSION_MANIFEST_FILENAME = 'nox-extension.json';
 

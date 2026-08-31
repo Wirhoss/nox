@@ -1,13 +1,15 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { ChatProvider, type MessageContent, providers, toolSets } from '@nox/extension-api';
+import { ChatProvider, providers, toolSets } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../application';
 import { SecretHandle } from '../config/secrets';
 import { silentLogger } from '../logger/logger';
 import { discoverExtensions } from './loader';
+
+import type { MessageContent } from '@nox/extension-api';
 
 const temporaryDirectories: string[] = [];
 

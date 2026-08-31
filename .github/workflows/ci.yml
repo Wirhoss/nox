@@ -1,0 +1,131 @@
+# The merge gate: nothing reaches main that this workflow has not run green.
+# Release also calls it, so a tag can never publish something CI did not verify.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+# A superseded run says nothing about the commit that replaced it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep in step with the BUN_VERSION arg in the Dockerfile: CI must fail on the
+  # same runtime the image ships.
+  BUN_VERSION: '1.3.14'
+
+jobs:
+  kernel:
+    name: Kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # One root install: the workspaces are packages/extension-api and src/ui.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Format
+        run: bun run format:check
+
+      # A migration that no longer matches its schema is found here, not by the
+      # first container that opens the database.
+      - name: Migrations
+        run: bun run db:check
+
+      - name: Test
+        run: bun run test
+
+  ui:
+    name: Web UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun --cwd=src/ui run type-check
+
+      - name: Lint
+        run: bun --cwd=src/ui run lint
+
+      - name: Format
+        run: bun --cwd=src/ui run format:check
+
+      - name: Test
+        run: bun --cwd=src/ui run test:unit
+
+      - name: Build
+        run: bun --cwd=src/ui run build-only
+
+  packages:
+    name: Extensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Builds @nox/extension-api and every builtin extension the same way the
+      # image does, so a broken manifest or a missing worker fails on the PR.
+      - name: Build extensions
+        run: bun run build:extensions
+
+      - name: Assert every builtin extension built
+        run: |
+          set -euo pipefail
+          declared=$(find src/extensions/builtin -name nox-extension.json | wc -l)
+          built=$(find dist/extensions/builtin -name nox-extension.json | wc -l)
+          echo "Declared: ${declared} — built: ${built}"
+          test "${declared}" -eq "${built}"
+
+  image:
+    name: Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, never pushed: this job exists so a Dockerfile that no longer
+      # assembles is a red pull request instead of a red release.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

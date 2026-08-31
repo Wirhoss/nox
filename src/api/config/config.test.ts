@@ -3,18 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type Broker,
   brokerBaseConfigSchema,
   brokerContribution,
   brokers,
-  type ChatProvider,
   httpProviderConfigSchema,
   memories,
-  type Memory,
   memoryContribution,
   providerContribution,
   providers,
-  type RuntimeComponentStatus,
   ToolSet,
   toolSetBaseConfigSchema,
   toolSetContribution,
@@ -39,6 +35,13 @@ import { ApiServer } from '../server';
 import { ConfigStore } from './store';
 
 import type { ConfigurationRuntime } from '../../runtime/configurationRuntime';
+import type {
+  Broker,
+  ChatProvider,
+  Memory,
+  ProviderInventory,
+  RuntimeComponentStatus,
+} from '@nox/extension-api';
 
 const databases: Database[] = [];
 const directories: string[] = [];
@@ -183,6 +186,10 @@ class ProviderRuntime implements ConfigurationRuntime {
     this.#config = config;
   }
 
+  public providerInventory(): Promise<readonly []> {
+    return Promise.resolve([]);
+  }
+
   public reconcile(): Promise<void> {
     const generation = ++this.#generation;
     const entry = this.#config.get('providers').main;
@@ -204,6 +211,36 @@ class ProviderRuntime implements ConfigurationRuntime {
 
   public statuses(): readonly RuntimeComponentStatus[] {
     return this.#statuses;
+  }
+}
+
+/** A runtime that answers the model question, and remembers how it was asked. */
+class ReportingRuntime implements ConfigurationRuntime {
+  public refreshes = 0;
+
+  public providerInventory(refresh = false): Promise<readonly ProviderInventory[]> {
+    if (refresh) this.refreshes += 1;
+    return Promise.resolve([
+      {
+        available: true,
+        id: 'main',
+        kinds: ['chat'],
+        models: [
+          { configured: true, kind: 'chat', modelId: 'gpt-test' },
+          { configured: false, modelId: 'gpt-unconfigured' },
+        ],
+        reported: true,
+        type: 'openai_completions',
+      },
+    ]);
+  }
+
+  public reconcile(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public statuses(): readonly RuntimeComponentStatus[] {
+    return [];
   }
 }
 
@@ -378,6 +415,37 @@ describe('reading configuration', () => {
         },
       ],
     });
+  });
+
+  test('describes the models each configured provider serves', async () => {
+    const runtime = new ReportingRuntime();
+    const nox = await configNox({ runtime: () => runtime });
+
+    const response = await fetch(`${nox.url}/capabilities/providers`, { headers: nox.headers });
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      providers: [
+        {
+          available: true,
+          id: 'main',
+          kinds: ['chat'],
+          models: [
+            { configured: true, kind: 'chat', modelId: 'gpt-test' },
+            { configured: false, modelId: 'gpt-unconfigured' },
+          ],
+          reported: true,
+          type: 'openai_completions',
+        },
+      ],
+    });
+
+    // Reading is cheap and asking again is a round trip to every endpoint, so
+    // the second is only done when it is asked for.
+    expect(runtime.refreshes).toBe(0);
+    await fetch(`${nox.url}/capabilities/providers?refresh=1`, { headers: nox.headers });
+    expect(runtime.refreshes).toBe(1);
   });
 
   test('describes each configurable tool-set kind with the contribution’s own schema', async () => {

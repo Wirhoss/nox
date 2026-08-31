@@ -1,6 +1,8 @@
-import { contentToString, type Message } from '@nox/extension-api';
+import { contentToString } from '@nox/extension-api';
 
 import { messageIdentityToString, trackedHeaderToString } from './message';
+
+import type { Message } from '@nox/extension-api';
 
 const DEFAULT_CHUNK_SIZE = 1000;
 

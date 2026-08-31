@@ -1,23 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  activeFields,
-  type FieldNode,
-  formNodes,
-  type JsonSchema,
-  listEntryDefaults,
-  listEntryNodes,
-  type ListNode,
-  mapEntryDefaults,
-  mapEntryNodes,
-  type MapNode,
-  seedNode,
-  valueAt,
-  variantAt,
-  withoutKey,
-  withRenamedKey,
-  withValueAt,
-} from './schemaForm'
+import { activeFields, formNodes, listEntryDefaults, listEntryNodes, mapEntryDefaults, mapEntryNodes, seedNode, valueAt, variantAt, withoutKey, withRenamedKey, withValueAt } from './schemaForm'
+
+import type { FieldNode, JsonSchema, ListNode, MapNode } from './schemaForm'
 
 /** A record whose keys an operator writes, shaped like Discord's admitted channels. */
 const schema: JsonSchema = {
@@ -351,5 +336,30 @@ describe('withRenamedKey', () => {
 describe('withoutKey', () => {
   it('drops one entry and keeps the rest', () => {
     expect(withoutKey({ a: 1, b: 2 }, 'a')).toEqual({ b: 2 })
+  })
+})
+
+describe('catalog fields', () => {
+  const referenceSchema: JsonSchema = {
+    properties: {
+      model: { nox: { catalog: 'model' }, type: 'string' },
+      provider: { nox: { catalog: 'provider' }, type: 'string' },
+      systemPrompt: { type: 'string' },
+      // A catalog nobody defined must not become a control nobody can render.
+      unknown: { nox: { catalog: 'planet' }, type: 'string' },
+    },
+    required: ['model', 'provider'],
+    type: 'object',
+  }
+
+  it('reads which catalog a field draws its value from', () => {
+    expect(namedField(referenceSchema, 'model').catalog).toBe('model')
+    expect(namedField(referenceSchema, 'provider').catalog).toBe('provider')
+  })
+
+  it('leaves an ordinary string, and an unrecognized catalog, as plain text', () => {
+    expect(namedField(referenceSchema, 'systemPrompt').catalog).toBeUndefined()
+    expect(namedField(referenceSchema, 'unknown').catalog).toBeUndefined()
+    expect(namedField(referenceSchema, 'unknown').control).toBe('text')
   })
 })

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, type DeepReadonly } from 'vue'
+import { computed } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 
 import ArtifactMedia from './ArtifactMedia.vue'
 
 import type { ToolActivity } from '../stores/activeSession.store'
+import type { DeepReadonly } from 'vue'
 
 interface Props {
   item: DeepReadonly<ToolActivity>

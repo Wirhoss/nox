@@ -172,9 +172,7 @@ describe('the retrieval corpus', () => {
 
   test('changes only time in the real-model decay ablation', () => {
     expect(DECAY_FACTS).toHaveLength(RETRIEVAL_FACTS.length);
-    expect(DECAY_FACTS.map((fact) => fact.text)).toEqual(
-      RETRIEVAL_FACTS.map((fact) => fact.text),
-    );
+    expect(DECAY_FACTS.map((fact) => fact.text)).toEqual(RETRIEVAL_FACTS.map((fact) => fact.text));
     for (const entry of DECAY_CASES) {
       for (const index of entry.expected) expect(DECAY_FACTS[index]).toBeDefined();
     }

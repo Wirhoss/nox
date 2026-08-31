@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type DeepReadonly, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 
@@ -9,6 +9,7 @@ import RunActivityCard from './RunActivityCard.vue'
 
 import type { ChatContentPart } from '../api/chat.schemas'
 import type { AssistantItem, RunActivityItem, UserItem } from '../stores/activeSession.store'
+import type { DeepReadonly } from 'vue'
 
 interface Props {
   activity?: DeepReadonly<RunActivityItem>

@@ -1,4 +1,6 @@
-import { type AuthorityDefinition, CORE_OWNER_ID } from './authority';
+import { CORE_OWNER_ID } from './authority';
+
+import type { AuthorityDefinition } from './authority';
 
 /** Attaching a conversation-owned artifact to the user-facing response. */
 const ARTIFACT_ATTACH_AUTHORITY = 'nox.artifacts.attach';

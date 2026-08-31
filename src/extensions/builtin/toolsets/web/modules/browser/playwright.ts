@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
 import { publicUrl } from '../../http';
-import { runtimeCredentialSchema, type WebModule, type WebModuleConfig } from '../../module';
+import { runtimeCredentialSchema } from '../../module';
 import { evaluationResult } from './evaluate';
 import { inspectionExpression, inspectionResult } from './inspect';
 
@@ -15,6 +15,7 @@ import type {
   PageLink,
   WebRequestContext,
 } from '../../capabilities';
+import type { WebModule, WebModuleConfig } from '../../module';
 import type { Browser, BrowserContext, BrowserType, Locator, Page } from 'playwright';
 
 const PLAYWRIGHT_BROWSERS = ['chromium', 'firefox', 'webkit'] as const;

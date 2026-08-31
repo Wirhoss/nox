@@ -1,0 +1,236 @@
+# Publishes a tag: the multi-architecture image to GHCR, and the extension
+# artifacts to the GitHub Release. Nothing here runs until CI is green.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: '1.3.14'
+
+jobs:
+  verify:
+    name: Verify
+    uses: ./.github/workflows/ci.yml
+
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      # A tag that disagrees with package.json ships an image whose label lies
+      # about what is inside it.
+      - name: Tag matches package.json
+        run: |
+          set -euo pipefail
+          declared=$(jq -r .version package.json)
+          tagged="${GITHUB_REF_NAME#v}"
+          echo "package.json: ${declared} — tag: ${tagged}"
+          test "${declared}" = "${tagged}"
+
+  image:
+    name: Image (${{ matrix.platform }})
+    needs: [verify, version]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            # Native ARM runner: emulating this build through QEMU means
+            # compiling native modules and installing Chromium under emulation.
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      # GHCR rejects an uppercase path, and the repository owner has one.
+      - name: Resolve names
+        id: names
+        run: |
+          set -euo pipefail
+          {
+            echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
+            echo "version=${GITHUB_REF_NAME#v}"
+            echo "slug=${MATRIX_PLATFORM//\//-}"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Each architecture is pushed by digest and carries no tag of its own; the
+      # manifest job below is what gives the pair a single name.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: NOX_VERSION=${{ steps.names.outputs.version }}
+          cache-from: type=gha,scope=${{ steps.names.outputs.slug }}
+          cache-to: type=gha,mode=max,scope=${{ steps.names.outputs.slug }}
+          outputs: type=image,name=${{ steps.names.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ steps.names.outputs.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    name: Manifest
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Resolve image name
+        id: names
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.names.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref_name, 'v0.') }}
+
+      # One name over both digests: `docker pull` resolves the architecture.
+      - name: Create the manifest
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          arguments=()
+          while IFS= read -r tag; do arguments+=(-t "${tag}"); done \
+            < <(jq -r '.tags[]' <<< "${DOCKER_METADATA_OUTPUT_JSON}")
+          for digest in *; do arguments+=("${IMAGE}@sha256:${digest}"); done
+          docker buildx imagetools create "${arguments[@]}"
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+
+      - name: Inspect
+        run: docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME#v}"
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+
+  artifacts:
+    name: Artifacts
+    needs: [verify, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build extensions
+        run: bun run build:extensions
+
+      # The contract an extension author compiles against, as a tarball anyone
+      # can install from the release without a registry account.
+      - name: Pack @nox/extension-api
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          bun --cwd=packages/extension-api run build
+          (cd packages/extension-api && bun pm pack --destination "${GITHUB_WORKSPACE}/artifacts")
+
+      # The builtin extensions exactly as the image carries them: built entry
+      # points, workers, migrations and rewritten manifests.
+      - name: Archive the builtin extensions
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          (cd dist/extensions && zip -qr "${GITHUB_WORKSPACE}/artifacts/nox-builtin-extensions-${version}.zip" builtin)
+
+      - name: Checksums
+        working-directory: artifacts
+        run: sha256sum -- * > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [manifest, artifacts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: Resolve image name
+        id: names
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ```bash
+            docker pull ${{ steps.names.outputs.image }}:${{ github.ref_name }}
+            ```
+
+            `linux/amd64` and `linux/arm64`. The attached tarball is the
+            `@nox/extension-api` package to compile an extension against, and
+            the archive is the builtin extension set the image ships.

@@ -1,26 +1,14 @@
 import {
-  type ArtifactPipeline,
-  type ArtifactRef,
-  type ChatModelConfig,
   HttpChatProvider,
   httpProviderConfigSchema,
   httpProviderRuntimeConfigSchema,
   isArtifactProcessorOutputError,
   isArtifactRepresentationUnavailableError,
-  type Logger,
-  type Message,
-  type MessageContent,
   modalitiesIn,
+  MODEL_CATALOG,
   modelAcceptsInput,
   ProviderError,
-  type ProviderErrorCode,
-  type ProviderSourceEvent,
-  type RepresentationProfile,
   silentLogger,
-  type TextGenerateOptions,
-  type Tool,
-  type ToolCallDraft,
-  type ToolCallMessage,
   toolDescription,
   toolParametersSchema,
   toolResponseContentForModel,
@@ -29,8 +17,24 @@ import {
 } from '@nox/extension-api';
 import { z } from 'zod';
 
+import type {
+  ArtifactPipeline,
+  ArtifactRef,
+  ChatModelConfig,
+  Logger,
+  Message,
+  MessageContent,
+  ProviderErrorCode,
+  ProviderSourceEvent,
+  RepresentationProfile,
+  TextGenerateOptions,
+  Tool,
+  ToolCallDraft,
+  ToolCallMessage,
+} from '@nox/extension-api';
+
 const openAICompletionsConfigSchema = httpProviderConfigSchema.extend({
-  defaultModel: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional().meta(MODEL_CATALOG),
   type: z.literal('openai_completions'),
 });
 

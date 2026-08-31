@@ -3,27 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type Broker,
-  type BrokerCapabilities,
-  type BrokerCommandSpec,
-  type BrokerHistory,
-  type BrokerHost,
-  type BrokerSession,
-  type ChatModelConfig,
   ChatProvider,
-  type CommandRejection,
   commands,
   defineCommand,
   defineExtension,
-  type Message,
-  type MessageContent,
-  type OutboundEvent,
-  type OutboundRunCompleted,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
   ToolSet,
-  type ToolSetGrant,
 } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
@@ -37,9 +21,28 @@ import { SessionStore } from '../database/sessionStore';
 import { bindExtensionManifest } from '../extensions/extension';
 import { TEST_AUTHORITY, testCatalog } from '../testFixtures';
 import { brokerCommand, CommandCatalog } from './command';
-import { type BrokerConversationGrant, Gateway } from './gateway';
+import { Gateway } from './gateway';
 
 import type { GatePolicyInput } from '../tool/gate';
+import type { BrokerConversationGrant } from './gateway';
+import type {
+  Broker,
+  BrokerCapabilities,
+  BrokerCommandSpec,
+  BrokerHistory,
+  BrokerHost,
+  BrokerSession,
+  ChatModelConfig,
+  CommandRejection,
+  Message,
+  MessageContent,
+  OutboundEvent,
+  OutboundRunCompleted,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+  ToolSetGrant,
+} from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
   kind: 'chat',

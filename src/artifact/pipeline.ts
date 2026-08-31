@@ -6,7 +6,7 @@ import { and, eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 
 import { artifactBlobs, artifactRenditions, artifacts } from '../database/schema';
-import { type Logger, silentLogger } from '../logger/logger';
+import { silentLogger } from '../logger/logger';
 import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
 import { DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_ARTIFACT_STORAGE_BYTES } from './config';
@@ -20,35 +20,36 @@ import {
   isArtifactProcessorOutputError,
 } from './error';
 import { PROBE_BYTES, probeArtifact } from './probe';
+import { ArtifactProcessorRegistry } from './processor';
 import {
-  type ArtifactProcessor,
-  type ArtifactProcessorOutput,
-  ArtifactProcessorRegistry,
-  type ArtifactProcessorSource,
-} from './processor';
-import {
-  type ArtifactOriginalRepresentation,
-  type ArtifactRenditionRepresentation,
-  type ArtifactResolvedPayload,
   normalizeRepresentationProfile,
   profileAcceptsMediaType,
   profileAcceptsOriginal,
-  type RepresentationProfile,
   representationProfileDigest,
 } from './representation';
-import {
-  type ArtifactByteSource,
-  type ArtifactIngestInput,
-  type ArtifactPayload,
-  artifactProvenanceSchema,
-  type ArtifactRecord,
-  type ArtifactRef,
-  type ArtifactScope,
-  artifactScopeSchema,
-  mediaTypeSchema,
-} from './types';
+import { artifactProvenanceSchema, artifactScopeSchema, mediaTypeSchema } from './types';
 
 import type { Database, NoxDrizzle, NoxTransaction } from '../database/database';
+import type { Logger } from '../logger/logger';
+import type {
+  ArtifactProcessor,
+  ArtifactProcessorOutput,
+  ArtifactProcessorSource,
+} from './processor';
+import type {
+  ArtifactOriginalRepresentation,
+  ArtifactRenditionRepresentation,
+  ArtifactResolvedPayload,
+  RepresentationProfile,
+} from './representation';
+import type {
+  ArtifactByteSource,
+  ArtifactIngestInput,
+  ArtifactPayload,
+  ArtifactRecord,
+  ArtifactRef,
+  ArtifactScope,
+} from './types';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;

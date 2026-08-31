@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import { type AuthState, useAuthStore } from '@/app/stores/auth.store'
+import { useAuthStore } from '@/app/stores/auth.store'
 import AccessFrame from '@/features/auth/components/AccessFrame.vue'
 import LoginForm from '@/features/auth/components/LoginForm.vue'
 import RegistrationForm from '@/features/auth/components/RegistrationForm.vue'
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
+
+import type { AuthState } from '@/app/stores/auth.store'
 
 interface FrameCopy {
   readonly description: string

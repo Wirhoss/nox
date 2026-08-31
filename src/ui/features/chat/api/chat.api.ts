@@ -1,23 +1,9 @@
 import { ApiContractError, requestJson, requestStream } from '@/shared/api/http'
 
-import {
-  type AcceptedCommand,
-  acceptedCommandSchema,
-  acceptedDecisionSchema,
-  type AcceptedMessage,
-  acceptedMessageSchema,
-  type AgentCatalog,
-  agentCatalogSchema,
-  type ChatCommand,
-  type ChatContentPart,
-  type ChatConversation,
-  type ChatEvent,
-  type ChatHistory,
-  chatHistorySchema,
-  commandsSchema,
-  conversationsSchema,
-} from './chat.schemas'
+import { acceptedCommandSchema, acceptedDecisionSchema, acceptedMessageSchema, agentCatalogSchema, chatHistorySchema, commandsSchema, conversationsSchema } from './chat.schemas'
 import { parseChatEventStream } from './sse'
+
+import type { AcceptedCommand, AcceptedMessage, AgentCatalog, ChatCommand, ChatContentPart, ChatConversation, ChatEvent, ChatHistory } from './chat.schemas'
 
 type PermissionDecision =
   | { readonly decision: 'approve'; readonly scope: 'once' | 'session' }

@@ -4,12 +4,10 @@ import { RouterLink, useRoute } from 'vue-router'
 
 import { useI18n } from '@/shared/i18n'
 
-import {
-  SETTINGS_GROUPS,
-  type SettingsSectionDefinition,
-  settingsSections,
-} from '../model/sections'
+import { SETTINGS_GROUPS, settingsSections } from '../model/sections'
 import { useSettingsStore } from '../stores/settings.store'
+
+import type { SettingsSectionDefinition } from '../model/sections'
 
 interface Props {
   reloadAvailable?: boolean

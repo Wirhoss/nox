@@ -6,9 +6,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import { Database } from '../../database/database';
 import { accounts } from '../../database/schema';
-import { type Logger, silentLogger } from '../../logger/logger';
+import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from './registration';
 import { AccountExistsError, AuthStore } from './store';
+
+import type { Logger } from '../../logger/logger';
 
 const databases: Database[] = [];
 const directories: string[] = [];

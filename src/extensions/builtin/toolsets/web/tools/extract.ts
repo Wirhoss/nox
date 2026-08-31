@@ -1,21 +1,10 @@
-import {
-  type ArtifactOutputPublisher,
-  httpUrlSchema,
-  type MessageContent,
-  stableStringify,
-  type Tool,
-  z,
-} from '@nox/extension-api';
+import { httpUrlSchema, stableStringify, z } from '@nox/extension-api';
 
-import {
-  harvestImages,
-  pageFilename,
-  publishBytes,
-  type PublishedImage,
-  publishText,
-} from '../artifacts';
+import { harvestImages, pageFilename, publishBytes, publishText } from '../artifacts';
 
+import type { PublishedImage } from '../artifacts';
 import type { ExtractCapability, ExtractedPage, PageCapture } from '../capabilities';
+import type { ArtifactOutputPublisher, MessageContent, Tool } from '@nox/extension-api';
 
 const WEB_EXTRACT_AUTHORITY = 'nox.toolset.web.extract';
 

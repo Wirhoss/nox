@@ -1,30 +1,35 @@
-import { type AnyElysia, Elysia } from 'elysia';
+import { Elysia } from 'elysia';
 
-import { type Logger, silentLogger } from '../logger/logger';
+import { silentLogger } from '../logger/logger';
 import { parseOrThrow } from '../utils/validate';
 import { artifactRoutes } from './artifacts/routes';
 import { authRoutes } from './auth/routes';
 import { chatRoutes } from './chat/routes';
 import { configRoutes } from './config/routes';
 import { extensionRoutes } from './extensions/routes';
-import { health, type ReadinessChecks } from './health';
+import { health } from './health';
 import { languageRoutes } from './i18n/routes';
 import { memoryRoutes } from './memories/routes';
 import { API_PREFIX } from './prefix';
 import { secretRoutes } from './secrets/routes';
-import { type ApiConfig, type ApiConfigInput, apiConfigSchema } from './serverConfig';
-import { type SessionReader, sessionRoutes } from './sessions/routes';
+import { apiConfigSchema } from './serverConfig';
+import { sessionRoutes } from './sessions/routes';
 import { ui } from './ui';
 
 import type { ArtifactPipeline } from '../artifact/pipeline';
 import type { SecretStore } from '../config/secrets';
 import type { ExtensionCatalog } from '../extensions/catalog';
+import type { Logger } from '../logger/logger';
 import type { MemoryRuntime } from '../runtime/configurationRuntime';
 import type { RegistrationWindow } from './auth/registration';
 import type { AuthStore } from './auth/store';
 import type { ChatHub } from './chat/transport';
 import type { ConfigStore } from './config/store';
+import type { ReadinessChecks } from './health';
+import type { ApiConfig, ApiConfigInput } from './serverConfig';
+import type { SessionReader } from './sessions/routes';
 import type { ContributionReader, Disposable } from '@nox/extension-api';
+import type { AnyElysia } from 'elysia';
 
 /** The two halves of authentication a composed Nox hands in: who exists, and who may still claim it. */
 interface ApiAuth {

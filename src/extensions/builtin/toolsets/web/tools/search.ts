@@ -1,6 +1,7 @@
-import { type MessageContent, stableStringify, type Tool, z } from '@nox/extension-api';
+import { stableStringify, z } from '@nox/extension-api';
 
 import type { SearchCapability } from '../capabilities';
+import type { MessageContent, Tool } from '@nox/extension-api';
 
 const WEB_SEARCH_AUTHORITY = 'nox.toolset.web.search';
 

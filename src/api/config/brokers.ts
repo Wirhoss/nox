@@ -1,6 +1,7 @@
-import { type BrokerConfig, brokers } from '@nox/extension-api';
+import { brokers } from '@nox/extension-api';
 
 import type { BlueprintContext } from './blueprints';
+import type { BrokerConfig } from '@nox/extension-api';
 
 /** A broker entry that would make the next gateway composition fail. */
 class BrokerReferenceError extends Error {

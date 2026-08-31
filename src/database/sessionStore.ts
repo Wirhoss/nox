@@ -1,24 +1,22 @@
 import { and, asc, count, countDistinct, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 
 import { artifactIdsIn } from '../agent/context/message';
-import { type Logger, silentLogger } from '../logger/logger';
-import { type HistoryHit, type HistorySearchQuery, indexMessage, search } from './historyIndex';
-import {
-  backfills,
-  type DecisionRow,
-  type DecisionRowInsert,
-  decisions,
-  messageArtifacts,
-  type MessageRow,
-  type MessageRowInsert,
-  messages,
-  type SessionRow,
-  sessions,
-} from './schema';
+import { silentLogger } from '../logger/logger';
+import { indexMessage, search } from './historyIndex';
+import { backfills, decisions, messageArtifacts, messages, sessions } from './schema';
 
 import type { AuthorizationAuditRecord, StoredDecision } from '../auth/audit';
+import type { Logger } from '../logger/logger';
 import type { GateAuditRecord, PermissionResolution } from '../tool/gate';
 import type { Database, NoxDrizzle } from './database';
+import type { HistoryHit, HistorySearchQuery } from './historyIndex';
+import type {
+  DecisionRow,
+  DecisionRowInsert,
+  MessageRow,
+  MessageRowInsert,
+  SessionRow,
+} from './schema';
 import type {
   Message,
   MessageContent,

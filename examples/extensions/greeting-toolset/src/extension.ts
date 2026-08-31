@@ -1,14 +1,14 @@
 import {
   authorities,
   defineExtension,
-  type MessageContent,
-  type Tool,
   ToolSet,
   toolSetBaseConfigSchema,
   toolSetContribution,
   toolSets,
   z,
 } from '@nox/extension-api';
+
+import type { MessageContent, Tool } from '@nox/extension-api';
 
 const greetingConfigSchema = toolSetBaseConfigSchema.extend({
   salutation: z.string().trim().min(1).default('Hello'),

@@ -1,12 +1,10 @@
-import {
-  type MessageContent,
-  TOOL_OUTPUT_TRUST,
-  TOOL_RESPONSE_EXECUTIONS,
-} from '@nox/extension-api';
+import { TOOL_OUTPUT_TRUST, TOOL_RESPONSE_EXECUTIONS } from '@nox/extension-api';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import { MESSAGE_ROLES } from '../../agent/context/message';
 import { sessions } from './sessions';
+
+import type { MessageContent } from '@nox/extension-api';
 
 const messages = sqliteTable(
   'messages',

@@ -1,5 +1,6 @@
-import { extract, type FACT_KINDS } from './extraction';
+import { extract } from './extraction';
 
+import type { FACT_KINDS } from './extraction';
 import type { DraftFact, StoredFact } from './store';
 import type { ChatModel } from '@nox/extension-api';
 
@@ -117,10 +118,7 @@ function scoreCase(evalCase: EvalCase, drafts: readonly DraftFact[]): CaseResult
     invalidationCorrect,
     missed: Object.freeze(missed),
     passed:
-      missed.length === 0 &&
-      spurious.length === 0 &&
-      invalidationCorrect &&
-      reinforcementCorrect,
+      missed.length === 0 && spurious.length === 0 && invalidationCorrect && reinforcementCorrect,
     reinforcementCorrect,
     spurious: Object.freeze(spurious),
   };
@@ -130,8 +128,7 @@ function summarize(results: readonly CaseResult[]): EvalReport {
   const expectedTotal = results.reduce((sum, result) => sum + result.case.expected.length, 0);
   const missedTotal = results.reduce((sum, result) => sum + result.missed.length, 0);
   const draftTotal = results.reduce(
-    (sum, result) =>
-      sum + result.drafts.filter((draft) => draft.reinforces === undefined).length,
+    (sum, result) => sum + result.drafts.filter((draft) => draft.reinforces === undefined).length,
     0,
   );
   const spuriousTotal = results.reduce((sum, result) => sum + result.spurious.length, 0);
@@ -289,10 +286,7 @@ const EVAL_CORPUS: readonly EvalCase[] = Object.freeze([
   },
   {
     existing: [],
-    expected: [
-      { kind: 'identity', mentions: ['Ana'] },
-      { mentions: ['Berlin'] },
-    ],
+    expected: [{ kind: 'identity', mentions: ['Ana'] }, { mentions: ['Berlin'] }],
     invalidates: [],
     name: 'two statements in one turn',
     occurredAt: TURN_DATE,

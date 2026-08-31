@@ -1,4 +1,6 @@
-import { type ConfigKey, toolSetBaseConfigSchema, z } from '@nox/extension-api';
+import { toolSetBaseConfigSchema, z } from '@nox/extension-api';
+
+import type { ConfigKey } from '@nox/extension-api';
 
 const CONFIG_SECTION_KEYS = Object.freeze([
   'app',

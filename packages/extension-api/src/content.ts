@@ -1,7 +1,9 @@
 import { z } from 'zod';
 
-import { type ArtifactRef, artifactRefSchema } from './artifacts.js';
+import { artifactRefSchema } from './artifacts.js';
 import { httpUrlSchema } from './schemas.js';
+
+import type { ArtifactRef } from './artifacts.js';
 
 const CONTENT_MODALITIES = ['text', 'image', 'audio', 'video', 'document'] as const;
 const MEDIA_MODALITIES = ['image', 'audio', 'video', 'document'] as const;

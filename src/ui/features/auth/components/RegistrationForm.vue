@@ -10,7 +10,9 @@ import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
 import { authErrorMessage } from '../model/errorMessage'
-import { type RegistrationForm, registrationFormSchema } from '../model/forms'
+import { registrationFormSchema } from '../model/forms'
+
+import type { RegistrationForm } from '../model/forms'
 
 const auth = useAuthStore()
 const { locale, t } = useI18n()

@@ -1,13 +1,14 @@
-import {
-  type ExtensionStateTransaction,
-  type ExtensionStorage,
-  type MemoryEpisodeInspection,
-  type MemoryFactInspection,
-  type MemoryInspectionPage,
-  type MemoryInspectionQuery,
-  type MemoryScope,
-  type MemoryScopeInspection,
-  z,
+import { z } from '@nox/extension-api';
+
+import type {
+  ExtensionStateTransaction,
+  ExtensionStorage,
+  MemoryEpisodeInspection,
+  MemoryFactInspection,
+  MemoryInspectionPage,
+  MemoryInspectionQuery,
+  MemoryScope,
+  MemoryScopeInspection,
 } from '@nox/extension-api';
 
 /** The security boundary, flattened into the columns every query filters on. */
@@ -323,7 +324,7 @@ const episodeScopeRow = z.object({
   last_activity_at: z.string().nullable(),
   subject: z.string(),
 });
-const unvectoredRow = z.object({ 
+const unvectoredRow = z.object({
   agent_id: z.string(),
   fact_id: z.number(),
   issuer: z.string(),
@@ -871,10 +872,10 @@ class SemanticStore {
           [candidate.fact_id],
           (row) => embeddingRow.parse(row),
         );
-      // Left unconsolidated rather than skipped: a fact whose vector a model
-      // change discarded has not been compared to anything yet; marking it now
-      // would exempt it from consolidation forever.
-      if (embedding === undefined) continue;
+        // Left unconsolidated rather than skipped: a fact whose vector a model
+        // change discarded has not been compared to anything yet; marking it now
+        // would exempt it from consolidation forever.
+        if (embedding === undefined) continue;
         examined += 1;
 
         const nearest = transaction
@@ -1371,9 +1372,7 @@ class SemanticStore {
   ): Promise<MemoryInspectionPage<MemoryFactInspection>> {
     const selected = request.scope;
     const where =
-      selected === undefined
-        ? ''
-        : 'WHERE f.agent_id = ? AND f.issuer = ? AND f.subject = ? ';
+      selected === undefined ? '' : 'WHERE f.agent_id = ? AND f.issuer = ? AND f.subject = ? ';
     const parameters =
       selected === undefined
         ? []
@@ -1412,33 +1411,31 @@ class SemanticStore {
         byFact.set(entry.fact_id, [...(byFact.get(entry.fact_id) ?? []), entry]);
       }
 
-      const entries = rows.map(
-        (row): MemoryFactInspection => ({
-          accessCount: row.access_count,
-          confidence: row.confidence,
-          createdAt: row.created_at,
-          id: String(row.fact_id),
-          ...(row.invalidated_at === null ? {} : { invalidatedAt: row.invalidated_at }),
-          ...(row.invalidated_by === null ? {} : { invalidatedBy: String(row.invalidated_by) }),
-          ...(row.invalidated_episode_id === null
-            ? {}
-            : { invalidatedEpisodeId: String(row.invalidated_episode_id) }),
-          kind: row.kind,
-          ...(row.last_accessed_at === null ? {} : { lastAccessedAt: row.last_accessed_at }),
-          provenance: Object.freeze(
-            (byFact.get(row.fact_id) ?? []).map((entry) => ({
-              completedAt: entry.completed_at,
-              episodeId: String(entry.episode_id),
-              sessionId: entry.session_id,
-              trigger: entry.trigger,
-            })),
-          ),
-          supportCount: row.support_count,
-          text: row.text,
-          validFrom: row.valid_from,
-          ...(row.valid_to === null ? {} : { validTo: row.valid_to }),
-        }),
-      );
+      const entries = rows.map((row): MemoryFactInspection => ({
+        accessCount: row.access_count,
+        confidence: row.confidence,
+        createdAt: row.created_at,
+        id: String(row.fact_id),
+        ...(row.invalidated_at === null ? {} : { invalidatedAt: row.invalidated_at }),
+        ...(row.invalidated_by === null ? {} : { invalidatedBy: String(row.invalidated_by) }),
+        ...(row.invalidated_episode_id === null
+          ? {}
+          : { invalidatedEpisodeId: String(row.invalidated_episode_id) }),
+        kind: row.kind,
+        ...(row.last_accessed_at === null ? {} : { lastAccessedAt: row.last_accessed_at }),
+        provenance: Object.freeze(
+          (byFact.get(row.fact_id) ?? []).map((entry) => ({
+            completedAt: entry.completed_at,
+            episodeId: String(entry.episode_id),
+            sessionId: entry.session_id,
+            trigger: entry.trigger,
+          })),
+        ),
+        supportCount: row.support_count,
+        text: row.text,
+        validFrom: row.valid_from,
+        ...(row.valid_to === null ? {} : { validTo: row.valid_to }),
+      }));
       return {
         entries: Object.freeze(entries),
         limit: request.limit,
@@ -1453,9 +1450,7 @@ class SemanticStore {
   ): Promise<MemoryInspectionPage<MemoryEpisodeInspection>> {
     const selected = request.scope;
     const where =
-      selected === undefined
-        ? ''
-        : 'WHERE e.agent_id = ? AND e.issuer = ? AND e.subject = ? ';
+      selected === undefined ? '' : 'WHERE e.agent_id = ? AND e.issuer = ? AND e.subject = ? ';
     const parameters =
       selected === undefined
         ? []
@@ -1496,24 +1491,22 @@ class SemanticStore {
 
       return {
         entries: Object.freeze(
-          rows.map(
-            (row): MemoryEpisodeInspection => ({
-              completedAt: row.completed_at,
-              episodeId: String(row.episode_id),
-              ...(row.extracted_at === null ? {} : { extractedAt: row.extracted_at }),
-              factIds: Object.freeze(byEpisode.get(row.episode_id) ?? []),
-              runId: row.run_id,
-              scope: {
-                agentId: row.agent_id,
-                principal: { issuer: row.issuer, subject: row.subject },
-              },
-              sessionId: row.session_id,
-              startedAt: row.started_at,
-              status: row.status,
-              transcript: row.transcript,
-              trigger: row.trigger,
-            }),
-          ),
+          rows.map((row): MemoryEpisodeInspection => ({
+            completedAt: row.completed_at,
+            episodeId: String(row.episode_id),
+            ...(row.extracted_at === null ? {} : { extractedAt: row.extracted_at }),
+            factIds: Object.freeze(byEpisode.get(row.episode_id) ?? []),
+            runId: row.run_id,
+            scope: {
+              agentId: row.agent_id,
+              principal: { issuer: row.issuer, subject: row.subject },
+            },
+            sessionId: row.session_id,
+            startedAt: row.started_at,
+            status: row.status,
+            transcript: row.transcript,
+            trigger: row.trigger,
+          })),
         ),
         limit: request.limit,
         offset: request.offset,

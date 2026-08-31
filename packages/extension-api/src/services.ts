@@ -1,10 +1,11 @@
-import { createServiceToken, type Logger } from './core.js';
+import { createServiceToken } from './core.js';
 
 import type { ArtifactPipeline } from './artifacts.js';
 import type { ChatSurfaceHub } from './chat.js';
 import type { MessageContent } from './content.js';
 import type { BrokerHostPolicy } from './contributions.js';
-import type { ModelAccess } from './providers.js';
+import type { Logger } from './core.js';
+import type { ModelAccess, ModelKind } from './providers.js';
 
 const CONFIG_KEYS = ['app', 'blueprints', 'brokers', 'memories', 'providers', 'toolSets'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
@@ -55,6 +56,57 @@ interface ToolSetInventory {
   readonly type: string;
 }
 
+/**
+ * Runtime answers an editor needs beside the configured document. A section
+ * names them rather than the surface guessing: what a tool set exposes and what
+ * models a provider actually serves are both facts only the live instance has,
+ * and an editor that had to know which sections have which would be a second
+ * copy of this table.
+ */
+type ConfigInventory = 'providers' | 'toolSets';
+
+/**
+ * One model an operator may choose, and where the choice comes from.
+ *
+ * `configured` separates the two answers rather than merging them: a model
+ * declared in `modelConfigs` carries metadata this installation depends on —
+ * its context window, its dimensions — while one the endpoint merely listed is
+ * a name that exists and nothing more. An editor offering both has to say which
+ * it is offering.
+ */
+interface ProviderModelInventory {
+  readonly configured: boolean;
+  readonly dimensions?: number;
+  /** Known only for a declared model; a reported ID says nothing about its kind. */
+  readonly kind?: ModelKind;
+  readonly modelId: string;
+}
+
+/**
+ * What one configured provider instance actually serves.
+ *
+ * `reported` is whether the instance itself answered with a list — an
+ * OpenAI-compatible endpoint has `/models`, an engine holding one set of
+ * weights knows exactly what it loaded, and an endpoint that refused the
+ * question has neither. It is the difference between offering a choice and
+ * asking somebody to type an ID from memory, so it is answered here rather than
+ * inferred from an empty list.
+ */
+interface ProviderInventory {
+  readonly available: boolean;
+  readonly extensionId?: string;
+  readonly id: string;
+  /** Which model contracts this instance can actually perform. */
+  readonly kinds: readonly ModelKind[];
+  readonly models: readonly ProviderModelInventory[];
+  /** Why the instance is unavailable, when it is. */
+  readonly problem?: string;
+  readonly reported: boolean;
+  /** Why the instance could not list its models, when it could not. */
+  readonly reportProblem?: string;
+  readonly type: string;
+}
+
 interface ConfigSectionSummary {
   readonly applies: ConfigApply;
   /** Whether an operator may choose a new entry name without a contribution offering one. */
@@ -67,8 +119,8 @@ interface ConfigSectionSummary {
   readonly entrySummary?: ConfigEntrySummaryDescriptor;
   readonly error?: string;
   readonly group: ConfigSectionGroup;
-  /** Optional runtime inventory the editor needs in addition to desired configuration. */
-  readonly inventory?: 'toolSets';
+  /** Runtime inventories the editor needs in addition to desired configuration. */
+  readonly inventory?: readonly ConfigInventory[];
   readonly key: ConfigKey;
   readonly kind: ConfigSectionKind;
   readonly label: string;
@@ -122,6 +174,7 @@ interface ConfigRevertTarget {
 interface ConfigurationAdmin {
   readonly revertAvailable: boolean;
   readonly revertTarget?: ConfigRevertTarget;
+  providerInventory(refresh?: boolean): Promise<readonly ProviderInventory[]>;
   read(key: ConfigKey): unknown;
   readEntry(key: ConfigEntryKey, entryId: string): unknown;
   reloadConfiguration(keys?: readonly ConfigKey[]): Promise<void>;
@@ -287,6 +340,7 @@ export type {
   ConfigContributionSummary,
   ConfigEntryKey,
   ConfigEntrySummaryDescriptor,
+  ConfigInventory,
   ConfigKey,
   ConfigRevertTarget,
   ConfigSectionEditor,
@@ -298,6 +352,8 @@ export type {
   ConfigUpdate,
   ConfigurationAdmin,
   ExtensionConfiguration,
+  ProviderInventory,
+  ProviderModelInventory,
   RuntimeActivity,
   RuntimeComponentKind,
   RuntimeComponentState,

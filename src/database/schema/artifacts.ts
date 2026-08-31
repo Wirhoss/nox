@@ -1,7 +1,9 @@
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
-import { ARTIFACT_SCOPE_TYPES, type ArtifactProvenance } from '../../artifact/types';
+import { ARTIFACT_SCOPE_TYPES } from '../../artifact/types';
 import { artifactBlobs } from './artifactBlobs';
+
+import type { ArtifactProvenance } from '../../artifact/types';
 
 /** Logical identity, ownership and provenance over one immutable blob. */
 const artifacts = sqliteTable(

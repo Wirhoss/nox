@@ -1,15 +1,18 @@
 import { join } from 'node:path';
 
-import { type Logger, silentLogger } from '../logger/logger';
+import { silentLogger } from '../logger/logger';
 import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
 import { ConfigError } from './error';
-import { type LoaderContext, loadSection, removeEntry, updateEntry, updateSection } from './loader';
+import { loadSection, removeEntry, updateEntry, updateSection } from './loader';
 import { findSecretReferences } from './secrets';
-import { type ConfigKey, type ConfigMap, sections, type Sections } from './sections';
+import { sections } from './sections';
 
+import type { Logger } from '../logger/logger';
 import type { EnvConfig } from './env';
+import type { LoaderContext } from './loader';
 import type { ConfigSection, ContributionSection, DirectorySection } from './section';
+import type { ConfigKey, ConfigMap, Sections } from './sections';
 import type { ContributionReader, SecretReference } from '@nox/extension-api';
 
 interface ConfigOptions {

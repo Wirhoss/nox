@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type DeepReadonly } from 'vue'
+import { computed } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
@@ -7,6 +7,7 @@ import { NoxNotice } from '@/shared/ui/NoxNotice'
 
 import type { PermissionDecision } from '../api/chat.api'
 import type { PermissionItem } from '../stores/activeSession.store'
+import type { DeepReadonly } from 'vue'
 
 interface Props {
   item: DeepReadonly<PermissionItem>

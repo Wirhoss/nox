@@ -42,10 +42,7 @@ class ScheduledRunRelay implements ScheduledRunHost, Disposable {
     return raceWithAbort(signal, () => host.agentIds(signal));
   }
 
-  public async canDeliverTo(
-    delivery: ScheduledRunDelivery,
-    signal: AbortSignal,
-  ): Promise<boolean> {
+  public async canDeliverTo(delivery: ScheduledRunDelivery, signal: AbortSignal): Promise<boolean> {
     const host = await this.#hostFor(signal);
     return raceWithAbort(signal, () => host.canDeliverTo(delivery, signal));
   }

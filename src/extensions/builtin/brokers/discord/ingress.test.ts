@@ -1,13 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
 import { discordChannelSchema } from './config';
-import {
-  admitsCommand,
-  decideIngress,
-  type IngressCommand,
-  type IngressMessage,
-  type IngressPolicy,
-} from './ingress';
+import { admitsCommand, decideIngress } from './ingress';
+
+import type { IngressCommand, IngressMessage, IngressPolicy } from './ingress';
 
 const SELF = '100000000000000001';
 const ALICE = '200000000000000002';

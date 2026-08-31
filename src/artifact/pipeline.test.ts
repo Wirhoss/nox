@@ -15,8 +15,9 @@ import {
   ArtifactTooLargeError,
 } from './error';
 import { ArtifactPipeline } from './pipeline';
-import { type ArtifactProcessor, ArtifactProcessorRegistry } from './processor';
+import { ArtifactProcessorRegistry } from './processor';
 
+import type { ArtifactProcessor } from './processor';
 import type { RepresentationProfile } from './representation';
 
 const directories: string[] = [];

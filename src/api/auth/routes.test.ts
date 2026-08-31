@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { Database } from '../../database/database';
-import { type Logger, silentLogger } from '../../logger/logger';
+import { silentLogger } from '../../logger/logger';
 import { ApiServer } from '../server';
 import { RegistrationWindow } from './registration';
 import { AuthStore } from './store';
+
+import type { Logger } from '../../logger/logger';
 
 const databases: Database[] = [];
 const directories: string[] = [];

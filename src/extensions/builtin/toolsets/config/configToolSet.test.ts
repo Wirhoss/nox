@@ -9,6 +9,7 @@ import type {
   ConfigSectionSchemaDescriptor,
   ConfigSectionSummary,
   ConfigurationAdmin,
+  ProviderInventory,
   RuntimeComponentStatus,
   SecretMetadataReader,
   ToolExecution,
@@ -26,12 +27,30 @@ class RecordingAdmin implements ConfigurationAdmin {
   };
   public app: unknown = { logLevel: 'info', timezone: 'UTC' };
   public reloaded?: readonly ConfigKey[];
+  public providerInventoryRefreshes = 0;
   public retries = 0;
   public reverted = 0;
   public revertTarget?: ConfigRevertTarget;
 
   public get revertAvailable(): boolean {
     return this.revertTarget !== undefined;
+  }
+
+  public providerInventory(refresh = false): Promise<readonly ProviderInventory[]> {
+    this.providerInventoryRefreshes += refresh ? 1 : 0;
+    return Promise.resolve([
+      {
+        available: true,
+        id: 'main',
+        kinds: ['chat'],
+        models: [
+          { configured: true, kind: 'chat', modelId: 'declared-model' },
+          { configured: false, modelId: 'reported-model' },
+        ],
+        reported: true,
+        type: 'openai_completions',
+      },
+    ]);
   }
 
   public read(key: ConfigKey): unknown {
@@ -163,6 +182,7 @@ describe('ConfigToolSet', () => {
       'config_delete',
       'config_get',
       'config_list',
+      'config_providers',
       'config_reload',
       'config_replace',
       'config_retry',
@@ -238,6 +258,31 @@ describe('ConfigToolSet', () => {
       ],
     });
     expect(JSON.stringify(secrets)).not.toContain('secret-value');
+  });
+
+  test('names the models a provider serves so an agent does not have to guess one', async () => {
+    const admin = new RecordingAdmin();
+    const toolSet = new ConfigToolSet({ type: 'config' }, admin, secretMetadata);
+
+    expect(await result(toolSet.prepare('config_providers', {}))).toEqual({
+      providers: [
+        {
+          available: true,
+          id: 'main',
+          kinds: ['chat'],
+          models: [
+            { configured: true, kind: 'chat', modelId: 'declared-model' },
+            { configured: false, modelId: 'reported-model' },
+          ],
+          reported: true,
+          type: 'openai_completions',
+        },
+      ],
+    });
+    expect(admin.providerInventoryRefreshes).toBe(0);
+
+    await result(toolSet.prepare('config_providers', { refresh: true }));
+    expect(admin.providerInventoryRefreshes).toBe(1);
   });
 
   test('creates, replaces, and deletes entries with privilege-aware risk', async () => {

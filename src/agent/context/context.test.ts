@@ -1,12 +1,4 @@
-import {
-  type ChatModelConfig,
-  ChatProvider,
-  type Message,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
-  type UserMessage,
-} from '@nox/extension-api';
+import { ChatProvider } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -14,6 +6,15 @@ import { TEST_AUTHORITY, testOrigin } from '../../testFixtures';
 import { Context } from './context';
 import { messageToString } from './message';
 import { TokenEstimator } from './tokens';
+
+import type {
+  ChatModelConfig,
+  Message,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+  UserMessage,
+} from '@nox/extension-api';
 
 const BASE_TIME = new Date('2025-01-01T00:00:00.000Z');
 

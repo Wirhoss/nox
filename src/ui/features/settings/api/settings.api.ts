@@ -31,7 +31,7 @@ const sectionSummarySchema = z.object({
   entrySummary: entrySummaryDescriptorSchema.readonly().optional(),
   error: z.string().optional(),
   group: z.enum(['capabilities', 'intelligence', 'machine']),
-  inventory: z.literal('toolSets').optional(),
+  inventory: z.array(z.enum(['providers', 'toolSets'])).readonly().optional(),
   key: z.string().min(1),
   kind: z.enum(['contribution', 'directory', 'file']),
   label: z.string().min(1),
@@ -103,6 +103,31 @@ const toolSetInventorySchema = z.object({
   type: z.string(),
 })
 const toolSetInventoriesSchema = z.object({ toolSets: z.array(toolSetInventorySchema) })
+
+/**
+ * One model an operator may choose, and where the choice came from. A declared
+ * model carries the metadata the installation depends on; a reported one is a
+ * name the endpoint confirmed exists. The editor offers both and says which.
+ */
+const providerModelInventorySchema = z.object({
+  configured: z.boolean(),
+  dimensions: z.number().int().positive().optional(),
+  kind: z.enum(['chat', 'embedding']).optional(),
+  modelId: z.string().min(1),
+})
+const providerInventorySchema = z.object({
+  available: z.boolean(),
+  extensionId: z.string().min(1).optional(),
+  id: z.string().min(1),
+  kinds: z.array(z.enum(['chat', 'embedding'])).readonly(),
+  models: z.array(providerModelInventorySchema.readonly()).readonly(),
+  problem: z.string().optional(),
+  /** Whether the instance itself answered with a list, rather than an empty one. */
+  reported: z.boolean(),
+  reportProblem: z.string().optional(),
+  type: z.string(),
+})
+const providerInventoriesSchema = z.object({ providers: z.array(providerInventorySchema) })
 
 /**
  * One configurable kind and the schema its entries must satisfy. The schema is
@@ -193,6 +218,8 @@ type SavedSection = z.infer<typeof savedSectionSchema>
 type Secret = z.infer<typeof secretSchema>
 type SecretReference = z.infer<typeof secretReferenceSchema>
 type SectionSummary = z.infer<typeof sectionSummarySchema>
+type ProviderInventory = z.infer<typeof providerInventorySchema>
+type ProviderModelInventory = z.infer<typeof providerModelInventorySchema>
 type ToolInventory = z.infer<typeof toolInventorySchema>
 type ToolSetInventory = z.infer<typeof toolSetInventorySchema>
 type ToolSetType = ContributionType
@@ -227,6 +254,10 @@ interface SettingsApi {
   deleteEntry(input: EntryInput): Promise<RemovedEntry>
   deleteSecret(input: SecretInput): Promise<RemovedSecret>
   listConfig(accessToken: string): Promise<ConfigCatalog>
+  listProviderInventory(
+    accessToken: string,
+    refresh?: boolean,
+  ): Promise<readonly ProviderInventory[]>
   listSecrets(accessToken: string): Promise<readonly Secret[]>
   listSectionTypes(accessToken: string, section: string): Promise<readonly ToolSetType[]>
   listToolSetInventory(accessToken: string): Promise<readonly ToolSetInventory[]>
@@ -286,6 +317,20 @@ const settingsApi: SettingsApi = {
 
   listConfig(accessToken) {
     return requestJson('/config', configCatalogSchema, { headers: authorization(accessToken) })
+  },
+
+  /**
+   * What each configured provider serves. `refresh` re-asks the endpoints
+   * rather than reusing what they last said, for an operator who has just
+   * changed the other side.
+   */
+  async listProviderInventory(accessToken, refresh = false) {
+    const response = await requestJson(
+      refresh ? '/capabilities/providers?refresh=1' : '/capabilities/providers',
+      providerInventoriesSchema,
+      { headers: authorization(accessToken) },
+    )
+    return response.providers
   },
 
   async listSecrets(accessToken) {
@@ -394,6 +439,8 @@ export type {
   ConfigValue,
   ContributionSummary,
   ContributionType,
+  ProviderInventory,
+  ProviderModelInventory,
   RemovedEntry,
   RemovedSecret,
   RuntimeComponent,

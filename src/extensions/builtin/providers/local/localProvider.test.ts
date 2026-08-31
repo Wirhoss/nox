@@ -72,10 +72,19 @@ describe('the local provider configuration', () => {
     expect(LocalProvider.configSchema.safeParse({ type: 'local' }).success).toBeFalse();
   });
 
-  test('refuses metadata for models the local engine did not enable', () => {
-    const parsed = LocalProvider.configSchema.safeParse({
+  test('has no model list to declare beyond the two slots it loads', () => {
+    const parsed = LocalProvider.configSchema.parse({
       llm: { enabled: true, model: 'test/chat' },
       modelConfigs: [{ modelId: 'test/not-loaded' }],
+      type: 'local',
+    });
+
+    expect(parsed).not.toContainKey('modelConfigs');
+  });
+
+  test('will not enable an embedding model without saying how wide its vectors are', () => {
+    const parsed = LocalProvider.configSchema.safeParse({
+      embedding: { enabled: true, model: 'test/embedding' },
       type: 'local',
     });
 

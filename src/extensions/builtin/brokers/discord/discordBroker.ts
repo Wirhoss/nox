@@ -1,20 +1,19 @@
 import { toMessageContent, toUploads } from './attachments';
 import { commandArguments, toDiscordCommand } from './commands';
-import { type DiscordBrokerRuntimeConfig, type DiscordChannelPolicy, ROLE_PREFIX } from './config';
-import { admitsCommand, decideIngress, type IngressMessage, type IngressPolicy } from './ingress';
+import { ROLE_PREFIX } from './config';
+import { admitsCommand, decideIngress } from './ingress';
 import { chunkMessage } from './render';
-import {
-  type DiscordActionRow,
-  type DiscordCommand,
-  type DiscordMessagePayload,
-  DiscordRest,
-  type DiscordUpload,
-  EPHEMERAL,
-  INTERACTION_REPLY,
-  INTERACTION_UPDATE_MESSAGE,
-} from './rest';
+import { DiscordRest, EPHEMERAL, INTERACTION_REPLY, INTERACTION_UPDATE_MESSAGE } from './rest';
 import { DiscordSocket } from './socket';
 
+import type { DiscordBrokerRuntimeConfig, DiscordChannelPolicy } from './config';
+import type { IngressMessage, IngressPolicy } from './ingress';
+import type {
+  DiscordActionRow,
+  DiscordCommand,
+  DiscordMessagePayload,
+  DiscordUpload,
+} from './rest';
 import type {
   ArtifactPipeline,
   Broker,

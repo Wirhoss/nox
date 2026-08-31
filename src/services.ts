@@ -1,5 +1,4 @@
 import {
-  type ConfigurationAdmin,
   artifactPipelineService as extensionArtifactPipelineService,
   chatHubService as extensionChatHubService,
   configAdminService as extensionConfigAdminService,
@@ -10,9 +9,6 @@ import {
   runtimeActivityService as extensionRuntimeActivityService,
   scheduledRunHostService as extensionScheduledRunHostService,
   secretStoreService as extensionSecretStoreService,
-  type RuntimeActivity,
-  type ScheduledRunHost,
-  type ServiceToken,
 } from '@nox/extension-api';
 
 import type { ChatHub } from './api/chat';
@@ -21,6 +17,12 @@ import type { Config } from './config/config';
 import type { SecretStore } from './config/secrets';
 import type { Logger } from './logger/logger';
 import type { ModelAccessRelay } from './runtime/modelAccess';
+import type {
+  ConfigurationAdmin,
+  RuntimeActivity,
+  ScheduledRunHost,
+  ServiceToken,
+} from '@nox/extension-api';
 
 /** Host-side views retain concrete implementation types without widening the public API. */
 function hostView<T>(token: { readonly id: string }): ServiceToken<T> {

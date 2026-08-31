@@ -1,4 +1,6 @@
-import { type DiscordChannelPolicy, isRoleRef, ROLE_PREFIX } from './config';
+import { isRoleRef, ROLE_PREFIX } from './config';
+
+import type { DiscordChannelPolicy } from './config';
 
 /**
  * One Discord message, reduced to the facts the rule is about. The broker

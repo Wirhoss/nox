@@ -1,16 +1,17 @@
-import {
-  type AssistantMessage,
-  ChatProvider,
-  type Message,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
-  type UserMessage,
-} from '@nox/extension-api';
+import { ChatProvider } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { testOrigin } from '../testFixtures';
 import { generateTitle, MAX_TITLE_CHARS, TITLE_PROMPT } from './title';
+
+import type {
+  AssistantMessage,
+  Message,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+  UserMessage,
+} from '@nox/extension-api';
 
 /** Answers every request with one fixed line, and remembers what it was asked. */
 class AnsweringProvider extends ChatProvider {

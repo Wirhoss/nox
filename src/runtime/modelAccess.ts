@@ -1,20 +1,20 @@
-import {
-  type BaseProvider,
-  type ChatModel,
-  type ChatModelConfig,
-  type ChatProvider,
-  type EmbeddingCapable,
-  type EmbeddingModel,
-  type EmbeddingModelConfig,
-  type EmbedResult,
-  isChatCapable,
-  isEmbeddingCapable,
-  type Message,
-  type ModelAccess,
-  type ModelReference,
-  type ProviderStream,
-  type TextGenerateOptions,
-  type Tool,
+import { isChatCapable, isEmbeddingCapable } from '@nox/extension-api';
+
+import type {
+  BaseProvider,
+  ChatModel,
+  ChatModelConfig,
+  ChatProvider,
+  EmbeddingCapable,
+  EmbeddingModel,
+  EmbeddingModelConfig,
+  EmbedResult,
+  Message,
+  ModelAccess,
+  ModelReference,
+  ProviderStream,
+  TextGenerateOptions,
+  Tool,
 } from '@nox/extension-api';
 
 /**

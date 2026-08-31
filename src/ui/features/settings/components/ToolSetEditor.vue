@@ -8,23 +8,12 @@ import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
 import { NEW_SECRET } from '../model/managedSecrets'
-import {
-  activeFields,
-  type ConfigLike,
-  defaultsFor,
-  type FieldNode,
-  type FormNode,
-  formNodes,
-  isObject,
-  seedNode,
-  valueAt,
-  variantAt,
-  withValueAt,
-} from '../model/schemaForm'
+import { activeFields, defaultsFor, formNodes, isObject, seedNode, valueAt, variantAt, withValueAt } from '../model/schemaForm'
 import { useSettingsStore } from '../stores/settings.store'
 import SchemaFieldGroup from './SchemaFieldGroup.vue'
 
 import type { ConfigSection } from '../api/settings.api'
+import type { ConfigLike, FieldNode, FormNode } from '../model/schemaForm'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'

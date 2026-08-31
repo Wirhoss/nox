@@ -1,5 +1,6 @@
 import type {
   ConfigEntrySummaryDescriptor,
+  ConfigInventory,
   ConfigKey,
   ConfigSectionEditor,
   ConfigSectionGroup,
@@ -14,7 +15,7 @@ interface SectionPresentation {
   readonly editor: ConfigSectionEditor;
   readonly entrySummary?: ConfigEntrySummaryDescriptor;
   readonly group: ConfigSectionGroup;
-  readonly inventory?: 'toolSets';
+  readonly inventory?: readonly ConfigInventory[];
   readonly label: string;
   readonly plural: string;
   readonly references?: readonly ConfigKey[];

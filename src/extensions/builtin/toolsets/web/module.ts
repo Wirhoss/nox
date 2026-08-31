@@ -1,6 +1,7 @@
-import { httpUrlSchema, type SecretHandle, secretRefSchema, z } from '@nox/extension-api';
+import { httpUrlSchema, secretRefSchema, z } from '@nox/extension-api';
 
 import type { BrowserCapability, ExtractCapability, SearchCapability } from './capabilities';
+import type { SecretHandle } from '@nox/extension-api';
 
 /**
  * The three things this tool set can be given, and what filling one produces.

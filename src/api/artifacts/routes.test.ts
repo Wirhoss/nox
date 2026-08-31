@@ -8,10 +8,12 @@ import { artifactConversationScope } from '../../artifact/output';
 import { ArtifactPipeline } from '../../artifact/pipeline';
 import { Database } from '../../database/database';
 import { artifactBlobs, artifacts } from '../../database/schema';
-import { type LogFields, type Logger, silentLogger } from '../../logger/logger';
+import { silentLogger } from '../../logger/logger';
 import { RegistrationWindow } from '../auth/registration';
 import { AuthStore } from '../auth/store';
 import { ApiServer } from '../server';
+
+import type { LogFields, Logger } from '../../logger/logger';
 
 const directories: string[] = [];
 const databases: Database[] = [];

@@ -3,12 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type ChatProvider,
   httpProviderConfigSchema,
   providerBaseConfigSchema,
   providerContribution,
   providers,
-  type ToolSet,
   toolSetBaseConfigSchema,
   toolSetContribution,
   toolSets,
@@ -24,15 +22,11 @@ import { blueprintSchema } from './blueprint';
 import { Config } from './config';
 import { readEnvConfig } from './env';
 import { isConfigError } from './error';
-import {
-  type LoaderContext,
-  loadSection,
-  removeEntry,
-  updateEntry,
-  updateSection,
-  writeJson,
-} from './loader';
+import { loadSection, removeEntry, updateEntry, updateSection, writeJson } from './loader';
 import { directorySection, fileSection } from './section';
+
+import type { LoaderContext } from './loader';
+import type { ChatProvider, ToolSet } from '@nox/extension-api';
 
 const created: string[] = [];
 

@@ -1,13 +1,8 @@
 import { appendFileSync } from 'node:fs';
 
-import {
-  defineExtension,
-  type Disposable,
-  memories,
-  type Memory,
-  memoryContribution,
-  z,
-} from '@nox/extension-api';
+import { defineExtension, memories, memoryContribution, z } from '@nox/extension-api';
+
+import type { Disposable, Memory } from '@nox/extension-api';
 
 /**
  * A memory that runs work of its own between conversations, and records both

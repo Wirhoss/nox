@@ -1,18 +1,17 @@
-import {
-  assertDiscriminator,
-  assertIdentifier,
-  type Contribution,
-  type ContributionDescriptor,
-  type ContributionPoint,
-  type ContributionReader,
-  type Disposable,
-  type DisposableRegistry,
-  type ExtensionContributions,
-  isConfigurable,
-} from '@nox/extension-api';
+import { assertDiscriminator, assertIdentifier, isConfigurable } from '@nox/extension-api';
 
 import { toDisposable } from './disposable';
 import { DuplicateContributionError } from './error';
+
+import type {
+  Contribution,
+  ContributionDescriptor,
+  ContributionPoint,
+  ContributionReader,
+  Disposable,
+  DisposableRegistry,
+  ExtensionContributions,
+} from '@nox/extension-api';
 
 type UnknownContribution = Contribution<unknown>;
 

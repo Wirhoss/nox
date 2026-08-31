@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { type DeepReadonly, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 
 import type { ReasoningActivity } from '../stores/activeSession.store'
+import type { DeepReadonly } from 'vue'
 
 interface Props {
   item: DeepReadonly<ReasoningActivity>

@@ -29,7 +29,7 @@ describe('settings API', () => {
               entries: true,
               entrySummary: { description: ['description'], detail: ['provider', 'model'] },
               group: 'intelligence',
-              inventory: 'toolSets',
+              inventory: ['toolSets'],
               key: 'blueprints',
               kind: 'directory',
               label: 'settings.sections.agents.label',

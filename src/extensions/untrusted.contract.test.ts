@@ -1,11 +1,11 @@
 import {
-  type MessageContent,
   sanitizeUntrustedText,
   toolResponseContentForModel,
-  type ToolResponseMessage,
   untrustedFence,
 } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
+
+import type { MessageContent, ToolResponseMessage } from '@nox/extension-api';
 
 function response(
   content: readonly MessageContent[],

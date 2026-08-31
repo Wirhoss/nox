@@ -1,7 +1,9 @@
-import { type SecretHandle, silentLogger } from '@nox/extension-api';
+import { silentLogger } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { DiscordRest, DiscordRestError } from './rest';
+
+import type { SecretHandle } from '@nox/extension-api';
 
 const CHANNEL = '300000000000000003';
 

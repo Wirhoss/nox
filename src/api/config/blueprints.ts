@@ -1,4 +1,4 @@
-import { type ContributionReader, memories, type MemoryEditor } from '@nox/extension-api';
+import { memories } from '@nox/extension-api';
 
 import { memoryToolSetGrant } from '../../agent/memoryToolSet';
 import { composeSessionTools } from '../../agent/tools';
@@ -7,6 +7,7 @@ import type { AuthorityCatalog } from '../../auth/authority';
 import type { Blueprint, ToolSetGrantConfig } from '../../config/blueprint';
 import type { Config } from '../../config/config';
 import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
+import type { ContributionReader, MemoryEditor } from '@nox/extension-api';
 
 /**
  * A blueprint that could not activate as a replacement generation. Saving one is how

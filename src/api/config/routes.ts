@@ -6,10 +6,11 @@ import { entryIdSchema } from '../../config/loader';
 import { authGuard } from '../auth/guard';
 import { BlueprintReferenceError } from './blueprints';
 import { BrokerReferenceError } from './brokers';
-import { type ConfigStore, ContributionTypeChangeError, EntryInUseError } from './store';
+import { ContributionTypeChangeError, EntryInUseError } from './store';
 
 import type { ConfigKey } from '../../config/sections';
 import type { AuthStore } from '../auth/store';
+import type { ConfigStore } from './store';
 
 /** No section is called that. */
 const NO_SECTION = { error: 'section_not_found' } as const;
@@ -21,6 +22,17 @@ const NO_ENTRY = { error: 'entry_not_found' } as const;
 const EXISTS = { error: 'entry_exists' } as const;
 
 const sectionParamsSchema = z.object({ section: z.string() });
+
+/**
+ * Asking again rather than reading what was cached. A query flag and not a
+ * separate route: it is the same question, and the only difference is whether a
+ * remote endpoint is interrogated to answer it.
+ */
+const refreshQuerySchema = z.object({ refresh: z.string().optional() });
+
+function refreshing(query: { readonly refresh?: string }): boolean {
+  return query.refresh !== undefined && !['', '0', 'false'].includes(query.refresh);
+}
 
 /**
  * An entry's ID is a name, and for a directory section it is also the name of
@@ -206,6 +218,22 @@ function createConfigRoutes(options: ConfigRoutesOptions) {
       .get('/capabilities/tool-sets', async () => ({ toolSets: await config.toolSetInventory() }), {
         authenticated: true,
       })
+
+      /**
+       * What every configured provider actually serves: the models its entry
+       * declares, and the models the live instance reports for itself. An
+       * editor offers a choice from this instead of asking an operator to type
+       * a model ID from memory — which is how `providers.json` ends up naming a
+       * model no endpoint serves, a mistake nothing catches until the first run.
+       *
+       * `?refresh=1` re-asks the endpoints rather than reusing what they last
+       * said, for an operator who has just changed the other side.
+       */
+      .get(
+        '/capabilities/providers',
+        async ({ query }) => ({ providers: await config.providerInventory(refreshing(query)) }),
+        { authenticated: true, query: refreshQuerySchema },
+      )
 
       /**
        * The kinds a tool set may be, with each kind's own schema. An editor

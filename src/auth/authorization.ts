@@ -1,9 +1,11 @@
-import { type PrincipalRef, principalToString } from '@nox/extension-api';
+import { principalToString } from '@nox/extension-api';
 
 import { raceWithAbort } from '../utils/abort';
-import { type AuthorityCatalog, type GrantPattern, matchesPattern } from './authority';
+import { matchesPattern } from './authority';
 
 import type { Logger } from '../logger/logger';
+import type { AuthorityCatalog, GrantPattern } from './authority';
+import type { PrincipalRef } from '@nox/extension-api';
 
 /**
  * One question, asked once per tool call: may this principal use this authority?

@@ -1,40 +1,16 @@
 import {
-  type ChatModelConfig,
-  type ChatProvider,
   contentToString,
   fenceUntrustedText,
   isProviderError,
-  type Memory,
-  type MemoryBlockDeclaration,
-  type MemoryMessage,
-  type Message,
-  type MessageContent,
   prepareToolCall,
-  type ProviderError,
-  type RecalledMemory,
-  type SamplingParametersConfig,
-  type ToolCallMessage,
-  type ToolContext,
-  type ToolExecution,
-  type ToolExecutionSubject,
-  type ToolOutputTrust,
-  type ToolResponseExecution,
-  type ToolResponseMessage,
-  type Usage,
-  type UserMessage,
 } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
-import {
-  type AuthorizationDecision,
-  type AuthorizationProvider,
-  authorize,
-} from '../auth/authorization';
+import { authorize } from '../auth/authorization';
 import { ConversationParticipants } from '../auth/conversation';
 import { ARTIFACT_ATTACH_AUTHORITY, ARTIFACT_READ_AUTHORITY } from '../auth/coreAuthorities';
 import {
   messageAuthority,
-  type RunAuthority,
   samePrincipal,
   SYSTEM_CRON,
   SYSTEM_INTERNAL,
@@ -49,6 +25,8 @@ import type { ArtifactContentReader, ArtifactOutputHost } from '../artifact/outp
 import type { ArtifactRef } from '../artifact/types';
 import type { DecisionAuditSink } from '../auth/audit';
 import type { AuthorityCatalog, GrantPattern } from '../auth/authority';
+import type { AuthorizationDecision, AuthorizationProvider } from '../auth/authorization';
+import type { RunAuthority } from '../auth/principal';
 import type { Logger } from '../logger/logger';
 import type {
   GateRequest,
@@ -59,6 +37,27 @@ import type {
 import type { EventLog } from '../utils/eventLog';
 import type { Context } from './context/context';
 import type { AgentEvent, RunStatus, RunTrigger } from './events';
+import type {
+  ChatModelConfig,
+  ChatProvider,
+  Memory,
+  MemoryBlockDeclaration,
+  MemoryMessage,
+  Message,
+  MessageContent,
+  ProviderError,
+  RecalledMemory,
+  SamplingParametersConfig,
+  ToolCallMessage,
+  ToolContext,
+  ToolExecution,
+  ToolExecutionSubject,
+  ToolOutputTrust,
+  ToolResponseExecution,
+  ToolResponseMessage,
+  Usage,
+  UserMessage,
+} from '@nox/extension-api';
 
 const DEFAULT_MAX_ITERATIONS = 90;
 const DEFAULT_MEMORY_MAX_TOKENS = 2048;

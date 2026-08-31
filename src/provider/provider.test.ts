@@ -1,13 +1,13 @@
-import {
-  ChatProvider,
-  type Message,
-  ProviderError,
-  type ProviderSourceEvent,
-  type ProviderStreamEvent,
-  type TextGenerateOptions,
-  type Tool,
-} from '@nox/extension-api';
+import { ChatProvider, ProviderError } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
+
+import type {
+  Message,
+  ProviderSourceEvent,
+  ProviderStreamEvent,
+  TextGenerateOptions,
+  Tool,
+} from '@nox/extension-api';
 
 type Attempt = () => AsyncIterable<ProviderSourceEvent>;
 

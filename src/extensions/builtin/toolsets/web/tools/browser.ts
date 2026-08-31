@@ -1,12 +1,4 @@
-import {
-  type ArtifactOutputPublisher,
-  httpUrlSchema,
-  type MessageContent,
-  stableStringify,
-  type Tool,
-  type ToolEffect,
-  z,
-} from '@nox/extension-api';
+import { httpUrlSchema, stableStringify, z } from '@nox/extension-api';
 
 import { publishBytes, publishText } from '../artifacts';
 
@@ -16,6 +8,7 @@ import type {
   BrowserOutcome,
   BrowserRequest,
 } from '../capabilities';
+import type { ArtifactOutputPublisher, MessageContent, Tool, ToolEffect } from '@nox/extension-api';
 
 /**
  * Looking at a page and acting on one are two different permissions.

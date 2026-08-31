@@ -4,10 +4,11 @@ import { principalKey, samePrincipal, SYSTEM_ISSUER } from '../../auth/principal
 import { raceWithAbort } from '../../utils/abort';
 import { stableStringify } from '../../utils/json';
 import { parseOrThrow } from '../../utils/validate';
-import { type GatePolicy, type GatePolicyInput, gatePolicySchema } from './config';
+import { gatePolicySchema } from './config';
 import { RiskHeuristicEvaluator } from './heuristics';
 import { RuleEvaluator } from './rules';
 
+import type { GatePolicy, GatePolicyInput } from './config';
 import type {
   GateAuditSink,
   GateDecision,

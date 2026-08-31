@@ -1,7 +1,9 @@
-import { type BrokerCommandSpec, type JsonSchema, z } from '@nox/extension-api';
+import { z } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { commandArguments, toDiscordCommand } from './commands';
+
+import type { BrokerCommandSpec, JsonSchema } from '@nox/extension-api';
 
 /** The same conversion the catalog performs, so these specs are not inventions. */
 function spec(name: string, description: string, parameters: z.ZodObject): BrokerCommandSpec {

@@ -1,25 +1,28 @@
 import {
   ChatProvider,
   contentToString,
-  type EmbeddingCapable,
-  type EmbedRequest,
-  type EmbedResult,
-  type Logger,
-  type Message,
-  type ModelKind,
   providerBaseConfigSchema,
   ProviderError,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
   toProviderError,
   z,
 } from '@nox/extension-api';
 
-import { ModelHost, type WorkerLike } from './modelHost';
+import { ModelHost } from './modelHost';
 
 import type { EmbeddedBatch, GenerationStats } from './engine';
+import type { WorkerLike } from './modelHost';
 import type { GenerateCall } from './protocol';
+import type {
+  EmbeddingCapable,
+  EmbedRequest,
+  EmbedResult,
+  Logger,
+  Message,
+  ModelKind,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+} from '@nox/extension-api';
 
 /**
  * One model the local engine loads, and whether it is loaded at all.
@@ -66,8 +69,15 @@ const localModelShape = {
  * commit an installation that never wanted a local model to carrying one.
  * Nothing is loaded here until a model is named, so an entry naming none is not
  * a configuration of this engine; it is the absence of one.
+ *
+ * `modelConfigs` is dropped rather than inherited. A provider reached over the
+ * network serves a catalog an operator declares from, but this engine holds
+ * exactly what it has loaded: the two slots below *are* its models, and a
+ * second list of them could only repeat or contradict what they already say.
+ * Removing the list is what removes every rule that had to keep the two agreeing.
  */
 const localProviderConfigSchema = providerBaseConfigSchema
+  .omit({ modelConfigs: true })
   .extend({
     /** Where downloaded weights live. Omitted, they land under the data directory. */
     cacheDirectory: z
@@ -102,6 +112,17 @@ const localProviderConfigSchema = providerBaseConfigSchema
         path: [slot, 'model'],
       });
     }
+    // Asked for here rather than discovered from the first vector: whatever
+    // stores these has to allocate before it has seen one, and a store that
+    // guessed would only find out it was wrong once the vectors were already
+    // written. An embedding model that is off is not storing anything yet.
+    if (config.embedding?.enabled === true && config.embedding.dimensions === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Say how many numbers this model puts in a vector.',
+        path: ['embedding', 'dimensions'],
+      });
+    }
     const chatModelId = config.llm?.enabled === true ? config.llm.model : undefined;
     const embeddingModelId =
       config.embedding?.enabled === true ? config.embedding.model : undefined;
@@ -115,42 +136,6 @@ const localProviderConfigSchema = providerBaseConfigSchema
         message: 'The chat and embedding slots must name different models.',
         path: ['embedding', 'model'],
       });
-    }
-
-    for (const [index, model] of (config.modelConfigs ?? []).entries()) {
-      const expectedKind =
-        model.modelId === chatModelId
-          ? 'chat'
-          : model.modelId === embeddingModelId
-            ? 'embedding'
-            : undefined;
-      if (expectedKind === undefined) {
-        context.addIssue({
-          code: 'custom',
-          message: 'Model metadata must describe an enabled local model.',
-          path: ['modelConfigs', index, 'modelId'],
-        });
-        continue;
-      }
-      if (model.kind !== expectedKind) {
-        context.addIssue({
-          code: 'custom',
-          message: `This enabled local model is used for ${expectedKind}.`,
-          path: ['modelConfigs', index, 'kind'],
-        });
-      }
-      if (
-        expectedKind === 'embedding' &&
-        config.embedding?.dimensions !== undefined &&
-        model.kind === 'embedding' &&
-        model.dimensions !== config.embedding.dimensions
-      ) {
-        context.addIssue({
-          code: 'custom',
-          message: 'Use one dimension count for this embedding model.',
-          path: ['modelConfigs', index, 'dimensions'],
-        });
-      }
     }
 
     if (chatModelId !== undefined || embeddingModelId !== undefined) return;
@@ -230,28 +215,28 @@ class LocalProvider extends ChatProvider implements EmbeddingCapable {
     if (llm?.enabled === true && llm.model !== undefined) {
       this.#chatModelId = llm.model;
       this.#hosts.chat = host(llm.model, llm.precision, llm.threads);
-      if (this.chatModelConfig(llm.model) === undefined) {
-        this.addModelConfig({
-          inputModalities: ['text'],
-          kind: 'chat',
-          modelId: llm.model,
-          outputModalities: ['text'],
-        });
-      }
+      // The slot is the only declaration there is, so it registers unconditionally.
+      this.addModelConfig({
+        inputModalities: ['text'],
+        kind: 'chat',
+        modelId: llm.model,
+        outputModalities: ['text'],
+      });
     }
-    if (embedding?.enabled === true && embedding.model !== undefined) {
+    // Fully named or not loaded: the schema requires the dimensions of an
+    // enabled embedding model, so there is no half-configured slot to serve.
+    if (
+      embedding?.enabled === true &&
+      embedding.model !== undefined &&
+      embedding.dimensions !== undefined
+    ) {
       this.#embeddingModelId = embedding.model;
       this.#hosts.embedding = host(embedding.model, embedding.precision, embedding.threads);
-      if (
-        embedding.dimensions !== undefined &&
-        this.embeddingModelConfig(embedding.model) === undefined
-      ) {
-        this.addModelConfig({
-          dimensions: embedding.dimensions,
-          kind: 'embedding',
-          modelId: embedding.model,
-        });
-      }
+      this.addModelConfig({
+        dimensions: embedding.dimensions,
+        kind: 'embedding',
+        modelId: embedding.model,
+      });
     }
   }
 

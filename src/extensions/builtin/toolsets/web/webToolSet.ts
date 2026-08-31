@@ -1,17 +1,12 @@
 import { ToolSet, toolSetBaseConfigSchema, z } from '@nox/extension-api';
 
-import {
-  type CredentialSchema,
-  runtimeCredentialSchema,
-  slotSchema,
-  storedCredentialSchema,
-  WEB_SLOTS,
-  type WebSlot,
-} from './module';
+import { runtimeCredentialSchema, slotSchema, storedCredentialSchema, WEB_SLOTS } from './module';
 import { moduleFor, modulesFor } from './modules';
 import { browserTools } from './tools/browser';
 import { extractTool } from './tools/extract';
 import { searchTool } from './tools/search';
+
+import type { CredentialSchema, WebSlot } from './module';
 
 /**
  * One shape, built twice over what fills a credential position: a reference in

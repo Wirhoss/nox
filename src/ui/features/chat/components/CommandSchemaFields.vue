@@ -1,18 +1,9 @@
 <script setup lang="ts">
 import { useI18n } from '@/shared/i18n'
 
-import {
-  type CommandField,
-  defaultFor,
-  fieldsOf,
-  isObject,
-  itemSchema,
-  type JsonObject,
-  type JsonSchema,
-  optionsOf,
-  parseInput,
-  typeOf,
-} from '../model/commandForm'
+import { defaultFor, fieldsOf, isObject, itemSchema, optionsOf, parseInput, typeOf } from '../model/commandForm'
+
+import type { CommandField, JsonObject, JsonSchema } from '../model/commandForm'
 
 interface Props {
   idPrefix: string

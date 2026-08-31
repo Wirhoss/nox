@@ -6,25 +6,10 @@ import { useAuthStore } from '@/app/stores/auth.store'
 import { ApiConnectionError, ApiContractError, ApiError } from '@/shared/api/http'
 import { useI18n } from '@/shared/i18n'
 
-import { chatApi, type PermissionDecision } from '../api/chat.api'
-import {
-  type AssistantItem,
-  type ContextChangeActivity,
-  createId,
-  createTimeline,
-  type ErrorItem,
-  mediaFrom,
-  type PermissionItem,
-  type PermissionState,
-  type ReasoningActivity,
-  type RetryActivity,
-  type RunActivityItem,
-  type TimelineItem,
-  type ToolActivity,
-  type ToolResponseActivity,
-  type UserItem,
-} from '../model/timeline'
+import { chatApi } from '../api/chat.api'
+import { createId, createTimeline, mediaFrom } from '../model/timeline'
 
+import type { PermissionDecision } from '../api/chat.api'
 import type {
   ChatCommand,
   ChatContentPart,
@@ -34,6 +19,7 @@ import type {
   ChatHistory,
   ChatHistoryEntry,
 } from '../api/chat.schemas'
+import type { AssistantItem, ContextChangeActivity, ErrorItem, PermissionItem, PermissionState, ReasoningActivity, RetryActivity, RunActivityItem, TimelineItem, ToolActivity, ToolResponseActivity, UserItem } from '../model/timeline'
 
 type ChatConnection =
   | { readonly attempt: number; readonly type: 'reconnecting' }

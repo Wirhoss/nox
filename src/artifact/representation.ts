@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { stableStringify } from '../utils/json';
-import { type ArtifactRecord, mediaTypeSchema } from './types';
+import { mediaTypeSchema } from './types';
+
+import type { ArtifactRecord } from './types';
 
 const representationProfileIdSchema = z
   .string()

@@ -732,7 +732,8 @@ async function pacedHarness(
 
 const NEVER_DREAM = { episodes: 1_000, idleSeconds: 86_400, maxDelaySeconds: 604_800 };
 
-const TEA = '{"facts": [{"kind": "preference", "text": "Alice prefers jasmine tea.", "confidence": 0.9, "invalidates": []}]}';
+const TEA =
+  '{"facts": [{"kind": "preference", "text": "Alice prefers jasmine tea.", "confidence": 0.9, "invalidates": []}]}';
 
 /** Waits for the background pass without disposing, so more turns can follow. */
 async function quiesce(): Promise<void> {

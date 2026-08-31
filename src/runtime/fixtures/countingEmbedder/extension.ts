@@ -1,15 +1,13 @@
 import {
   BaseProvider,
   defineExtension,
-  type EmbeddingCapable,
-  type EmbedRequest,
-  type EmbedResult,
-  type ModelKind,
   providerBaseConfigSchema,
   providerContribution,
   providers,
   z,
 } from '@nox/extension-api';
+
+import type { EmbeddingCapable, EmbedRequest, EmbedResult, ModelKind } from '@nox/extension-api';
 
 const configSchema = providerBaseConfigSchema.extend({
   type: z.literal('counting_test'),

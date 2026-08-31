@@ -1,7 +1,9 @@
-import { type Message, type Tool, UNTRUSTED_FENCE_TEXT } from '@nox/extension-api';
+import { UNTRUSTED_FENCE_TEXT } from '@nox/extension-api';
 
 import { toolParametersSchema } from '../../tool/render';
 import { messageToString } from './message';
+
+import type { Message, Tool } from '@nox/extension-api';
 
 const DEFAULT_CHARACTERS_PER_TOKEN = 3;
 const MESSAGE_TOKEN_OVERHEAD = 6;

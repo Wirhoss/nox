@@ -4,10 +4,11 @@ import { ref, watch } from 'vue'
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 
-import { fieldsOf, type JsonObject, seedArguments } from '../model/commandForm'
+import { fieldsOf, seedArguments } from '../model/commandForm'
 import CommandSchemaFields from './CommandSchemaFields.vue'
 
 import type { ChatCommand } from '../api/chat.schemas'
+import type { JsonObject } from '../model/commandForm'
 
 interface Props {
   busy?: boolean

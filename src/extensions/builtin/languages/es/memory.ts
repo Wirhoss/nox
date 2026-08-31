@@ -15,8 +15,10 @@ const memoryMessages = Object.freeze({
   'memory.error.connection': 'No se pudo contactar con el nodo Nox.',
   'memory.error.contract': 'Nox devolvió datos de memoria que este cliente no puede leer.',
   'memory.error.correctFailed': 'La corrección fue rechazada y nada cambió.',
-  'memory.error.kindRequired': 'Elige un tipo antes de guardar. Este hecho se guardó con uno que Nox ya no ofrece.',
-  'memory.error.notInspectable': 'Esta memoria no tiene proyección de auditoría, así que no hay nada que inspeccionar.',
+  'memory.error.kindRequired':
+    'Elige un tipo antes de guardar. Este hecho se guardó con uno que Nox ya no ofrece.',
+  'memory.error.notInspectable':
+    'Esta memoria no tiene proyección de auditoría, así que no hay nada que inspeccionar.',
   'memory.error.notFound': 'Esta memoria ya no existe.',
   'memory.error.refused': 'Nox rechazó la petición de memoria ({detail}).',
   'memory.error.request': 'Nox rechazó la petición de memoria.',

@@ -14,7 +14,11 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { floorFromGroups, PROBE_GROUPS, PROBES } from '../src/extensions/builtin/memories/semantic/calibration';
+import {
+  floorFromGroups,
+  PROBE_GROUPS,
+  PROBES,
+} from '../src/extensions/builtin/memories/semantic/calibration';
 import { LocalProvider } from '../src/extensions/builtin/providers/local/localProvider';
 
 function required(name: string): string {

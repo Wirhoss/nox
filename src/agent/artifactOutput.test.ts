@@ -2,14 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  type ChatModelConfig,
-  ChatProvider,
-  type Message,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
-} from '@nox/extension-api';
+import { ChatProvider } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { artifactConversationScope } from '../artifact/output';
@@ -18,6 +11,14 @@ import { Database } from '../database/database';
 import { messages } from '../database/schema';
 import { permissiveAuthorization, testCatalog, testOrigin } from '../testFixtures';
 import { Agent } from './agent';
+
+import type {
+  ChatModelConfig,
+  Message,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+} from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
   kind: 'chat',

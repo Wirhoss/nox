@@ -7,24 +7,14 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
-import { type CredentialState, NEW_SECRET } from '../model/managedSecrets'
-import {
-  activeFields,
-  type ConfigLike,
-  defaultsFor,
-  type FieldNode,
-  type FormNode,
-  formNodes,
-  isObject,
-  seedNode,
-  valueAt,
-  variantAt,
-  withValueAt,
-} from '../model/schemaForm'
+import { NEW_SECRET } from '../model/managedSecrets'
+import { activeFields, defaultsFor, formNodes, isObject, seedNode, valueAt, variantAt, withValueAt } from '../model/schemaForm'
 import { useSettingsStore } from '../stores/settings.store'
 import SchemaFieldGroup from './SchemaFieldGroup.vue'
 
 import type { ConfigSection } from '../api/settings.api'
+import type { CredentialState } from '../model/managedSecrets'
+import type { ConfigLike, FieldNode, FormNode } from '../model/schemaForm'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'
@@ -45,7 +35,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ created: [entryId: string]; deleted: [] }>()
 const settings = useSettingsStore()
-const { t } = useI18n()
+const { plural, t } = useI18n()
 
 const mode = ref<EditorMode>('form')
 const draft = ref<ConfigLike>({})
@@ -75,11 +65,12 @@ const selectedValue = computed<ConfigLike>(() => {
   const value = props.section.value[props.entryId]
   return isObject(value) ? value : newTemplate()
 })
-const copyNamespace = computed(() =>
-  props.section.key === 'memories' ? 'settings.memory' : 'settings.provider',
-)
+/** The section names itself: this editor serves every contributed section. */
+const entryName = computed(() => t(props.definition.label))
 const title = computed(() =>
-  props.creating ? copy('titleNew') : (props.entryId ?? copy('titleFallback')),
+  props.creating
+    ? t('settings.navigation.newEntry', { entry: entryName.value })
+    : (props.entryId ?? entryName.value),
 )
 const dirty = computed(() => {
   if (mode.value === 'json') {
@@ -88,6 +79,35 @@ const dirty = computed(() => {
     return JSON.stringify(parsed) !== originalJsonSignature.value || credentialInputsDirty()
   }
   return formSignature() !== originalSignature.value
+})
+
+/**
+ * The provider this form is about, where it is about one. Only a saved entry
+ * has an activated instance behind it, and only an instance can report what it
+ * serves — so a provider being created has nothing to offer yet, and says so
+ * rather than pretending the endpoint returned an empty list.
+ */
+const editedProviderId = computed(() =>
+  props.section.key === 'providers' && !props.creating ? props.entryId : undefined,
+)
+
+/** What the model fields in this form can currently offer, and why. */
+const modelCatalogSummary = computed(() => {
+  const provider = settings.providerInventory.find(
+    (candidate) => candidate.id === editedProviderId.value,
+  )
+  if (provider === undefined) return t('settings.catalog.notActivated')
+  if (!provider.available) {
+    return t('settings.catalog.providerProblem', {
+      problem: provider.problem ?? t('settings.catalog.providerUnavailable'),
+    })
+  }
+  if (!provider.reported) {
+    return t('settings.catalog.modelsUnlistable', {
+      problem: provider.reportProblem ?? t('settings.catalog.noModelList'),
+    })
+  }
+  return plural('settings.catalog.reportedCount', provider.models.length)
 })
 
 watch(
@@ -179,7 +199,7 @@ function switchMode(nextMode: EditorMode): void {
   if (parsed === undefined) return
   const nextDescriptor = types.value.find((candidate) => candidate.type === parsed.type)
   if (nextDescriptor === undefined) {
-    jsonError.value = copy('validation.curatedFormUnavailable')
+    jsonError.value = t('settings.editor.curatedFormUnavailable')
     return
   }
   draft.value = parsed
@@ -224,8 +244,7 @@ async function save(): Promise<void> {
 }
 
 function collectSecretWrites():
-  | readonly { readonly secretId: string; readonly value: string }[]
-  | undefined {
+  readonly { readonly secretId: string; readonly value: string }[] | undefined {
   const writes = new Map<string, string>()
   for (const [key, state] of Object.entries(credentials)) {
     if (state.value.length === 0) continue
@@ -267,12 +286,14 @@ function validateField(node: FieldNode, errors: Record<string, string>): void {
   if (node.control === 'secret') {
     const state = credentials[key]
     if (state?.selection === NEW_SECRET) {
-      if (!validSecretId(state.newId.trim())) errors[`${key}.secretId`] = t('settings.validation.secretId')
+      if (!validSecretId(state.newId.trim()))
+        errors[`${key}.secretId`] = t('settings.validation.secretId')
       if (state.value.length === 0) {
         errors[`${key}.secretValue`] = t('settings.toolSet.validation.secretValueRequired')
       }
     }
-    if (node.required && value === undefined) errors[key] = t('settings.toolSet.validation.required')
+    if (node.required && value === undefined)
+      errors[key] = t('settings.toolSet.validation.required')
     return
   }
   if (value === undefined || (typeof value === 'string' && value.trim().length === 0)) {
@@ -302,7 +323,7 @@ function parseJson(report: boolean): ConfigLike | undefined {
   try {
     const parsed: unknown = JSON.parse(jsonSource.value)
     if (!isObject(parsed)) {
-      if (report) jsonError.value = copy('validation.configurationObject')
+      if (report) jsonError.value = t('settings.validation.configurationObject')
       return undefined
     }
     if (report) jsonError.value = undefined
@@ -333,15 +354,13 @@ function clearFeedback(field?: string): void {
 }
 
 function credentialInputsDirty(): boolean {
-  return Object.values(credentials).some((state) => state.value.length > 0 || state.newId.length > 0)
+  return Object.values(credentials).some(
+    (state) => state.value.length > 0 || state.newId.length > 0,
+  )
 }
 
 function canLeave(): boolean {
-  return !dirty.value || window.confirm(copy('confirmDiscard'))
-}
-
-function copy(key: string): string {
-  return t(`${copyNamespace.value}.${key}`)
+  return !dirty.value || window.confirm(t('settings.confirm.discardConfiguration'))
 }
 
 onBeforeRouteLeave(canLeave)
@@ -377,7 +396,7 @@ function validHttpUrl(value: string): boolean {
     <header class="contribution-editor__header">
       <div>
         <p>
-          {{ copy('header') }} //
+          {{ t(props.definition.plural).toUpperCase() }} //
           {{ props.entryId?.toUpperCase() ?? t('common.new').toUpperCase() }}
         </p>
         <h2>{{ title }}</h2>
@@ -403,14 +422,22 @@ function validHttpUrl(value: string): boolean {
     <div class="contribution-editor__content">
       <NoxNotice
         v-if="settings.mutation.type === 'saved'"
-        :title="copy('saved')"
+        :title="t('settings.editor.saved')"
         :tone="settings.mutation.restartRequired ? 'warning' : 'info'"
       >
-        <p>{{ t(settings.mutation.restartRequired ? 'settings.editor.savedRestart' : 'settings.editor.savedImmediate') }}</p>
+        <p>
+          {{
+            t(
+              settings.mutation.restartRequired
+                ? 'settings.editor.savedRestart'
+                : 'settings.editor.savedImmediate',
+            )
+          }}
+        </p>
       </NoxNotice>
       <NoxNotice
         v-else-if="settings.mutation.type === 'failed'"
-        :title="copy('changeRefused')"
+        :title="t('settings.editor.changeRefused')"
         tone="danger"
       >
         <p>{{ settings.mutation.message }}</p>
@@ -421,8 +448,8 @@ function validHttpUrl(value: string): boolean {
         id="provider-entry-id"
         :model-value="entryIdInput"
         :error="fieldErrors.entryId"
-        :hint="copy('idHint')"
-        :label="copy('id')"
+        :hint="t('settings.editor.entryIdHint')"
+        :label="t('settings.editor.entryId')"
         placeholder="main"
         required
         @update:model-value="setEntryId($event)"
@@ -435,12 +462,22 @@ function validHttpUrl(value: string): boolean {
         >
           <div class="contribution-editor__section-copy">
             <p>01 // {{ t('common.contributed') }}</p>
-            <h3>{{ copy('header') }}</h3>
+            <h3>{{ entryName }}</h3>
             <span>{{ t(props.definition.description) }}</span>
           </div>
-          <div class="contribution-editor__field" :class="{ 'contribution-editor__field--invalid': fieldErrors.type }">
-            <label for="provider-type">{{ t('settings.toolSet.surface') }} <small>{{ t('common.requiredShort') }}</small></label>
-            <select id="provider-type" :value="String(draft.type ?? '')" @change="setType(($event.target as HTMLSelectElement).value)">
+          <div
+            class="contribution-editor__field"
+            :class="{ 'contribution-editor__field--invalid': fieldErrors.type }"
+          >
+            <label for="provider-type"
+              >{{ t('settings.toolSet.surface') }}
+              <small>{{ t('common.requiredShort') }}</small></label
+            >
+            <select
+              id="provider-type"
+              :value="String(draft.type ?? '')"
+              @change="setType(($event.target as HTMLSelectElement).value)"
+            >
               <option v-for="candidate in types" :key="candidate.type" :value="candidate.type">
                 {{ candidate.type }}
               </option>
@@ -453,7 +490,7 @@ function validHttpUrl(value: string): boolean {
           <div class="contribution-editor__section-copy">
             <p>{{ t('settings.toolSet.configured') }}</p>
             <h3>{{ t('settings.editor.metadata') }}</h3>
-            <span>{{ copy('providerJsonHelp') }}</span>
+            <span>{{ t('settings.editor.configurationJsonHelp') }}</span>
           </div>
           <SchemaFieldGroup
             v-if="descriptor"
@@ -461,51 +498,87 @@ function validHttpUrl(value: string): boolean {
             :errors="fieldErrors"
             :extension-id="descriptor.extensionId"
             :nodes="nodes"
+            :provider-inventory="settings.providerInventory"
+            :provider-id="editedProviderId"
             :secrets="settings.secrets"
             :value="draft"
             @credential="applyCredential"
             @update="applyUpdate"
           />
+          <div v-if="editedProviderId !== undefined" class="contribution-editor__catalog">
+            <p>{{ modelCatalogSummary }}</p>
+            <button type="button" @click="settings.refreshProviderInventory()">
+              {{ t('settings.catalog.refresh') }}
+            </button>
+          </div>
         </section>
       </template>
 
       <section v-else class="contribution-editor__section">
         <div class="contribution-editor__section-copy">
           <p>{{ t('settings.editor.advancedSurface') }}</p>
-          <h3>{{ copy('providerJson') }}</h3>
-          <span>{{ copy('providerJsonHelp') }}</span>
+          <h3>{{ t('settings.editor.configurationJson') }}</h3>
+          <span>{{ t('settings.editor.configurationJsonHelp') }}</span>
         </div>
         <div class="contribution-editor__json-field">
           <div>
             <label for="provider-json">{{ t('settings.editor.jsonObject') }}</label>
-            <button type="button" @click="formatJson()">{{ t('settings.editor.formatDocument') }}</button>
+            <button type="button" @click="formatJson()">
+              {{ t('settings.editor.formatDocument') }}
+            </button>
           </div>
-          <textarea id="provider-json" v-model="jsonSource" :aria-invalid="jsonError !== undefined" spellcheck="false" @input="clearFeedback()"></textarea>
+          <textarea
+            id="provider-json"
+            v-model="jsonSource"
+            :aria-invalid="jsonError !== undefined"
+            spellcheck="false"
+            @input="clearFeedback()"
+          ></textarea>
           <p v-if="jsonError" class="contribution-editor__error">{{ jsonError }}</p>
         </div>
       </section>
 
-      <NoxNotice v-if="confirmingDelete" :title="copy('removeQuestion')" tone="danger">
+      <NoxNotice
+        v-if="confirmingDelete"
+        :title="t('settings.editor.removeEntryQuestion')"
+        tone="danger"
+      >
         <div class="contribution-editor__delete-confirmation">
-          <p>{{ copy('removeWarning') }}</p>
+          <p>{{ t('settings.editor.removeEntryReference', { entry: props.entryId ?? '' }) }}</p>
           <div>
-            <NoxButton variant="ghost" @click="confirmingDelete = false">{{ t('common.cancel') }}</NoxButton>
-            <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">{{ copy('remove') }}</NoxButton>
+            <NoxButton variant="ghost" @click="confirmingDelete = false">{{
+              t('common.cancel')
+            }}</NoxButton>
+            <NoxButton :busy="settings.mutation.type === 'saving'" @click="remove()">{{
+              t('settings.editor.removeEntry')
+            }}</NoxButton>
           </div>
         </div>
       </NoxNotice>
     </div>
 
     <footer class="contribution-editor__actions">
-      <NoxButton v-if="props.entryId !== undefined && !props.creating" variant="ghost" @click="confirmingDelete = true">
-        {{ copy('remove') }}
+      <NoxButton
+        v-if="props.entryId !== undefined && !props.creating"
+        variant="ghost"
+        @click="confirmingDelete = true"
+      >
+        {{ t('settings.editor.removeNamed', { entry: entryName }) }}
       </NoxButton>
       <span v-else></span>
       <div>
-        <span v-if="dirty" class="contribution-editor__dirty">{{ t('settings.editor.unsavedChanges') }}</span>
-        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{ t('common.discard') }}</NoxButton>
-        <NoxButton :busy="settings.mutation.type === 'saving'" :disabled="!dirty && !props.creating" @click="save()">
-          {{ copy('save') }}
+        <span v-if="dirty" class="contribution-editor__dirty">{{
+          t('settings.editor.unsavedChanges')
+        }}</span>
+        <NoxButton :disabled="!dirty" variant="secondary" @click="resetEditor()">{{
+          t('common.discard')
+        }}</NoxButton>
+        <NoxButton
+          :busy="settings.mutation.type === 'saving'"
+          :disabled="!dirty && !props.creating"
+          @click="save()"
+        >
+          {{ t('settings.editor.saveChanges') }}
         </NoxButton>
       </div>
     </footer>
@@ -663,6 +736,29 @@ function validHttpUrl(value: string): boolean {
   font-family: var(--nox-font-mono);
   line-height: 1.65;
   resize: vertical;
+}
+
+.contribution-editor__catalog {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nox-space-4);
+  margin-top: var(--nox-space-4);
+}
+
+.contribution-editor__catalog p {
+  margin: 0;
+  color: var(--nox-text-muted);
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+}
+
+.contribution-editor__catalog button {
+  color: var(--nox-action-primary);
+  background: transparent;
+  font-family: var(--nox-font-mono);
+  font-size: var(--nox-text-xs);
+  cursor: pointer;
 }
 
 .contribution-editor__error {

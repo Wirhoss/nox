@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { type Component, computed, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AgentEditor from '@/features/settings/components/AgentEditor.vue'
@@ -16,6 +16,8 @@ import { useSettingsStore } from '@/features/settings/stores/settings.store'
 import { useI18n } from '@/shared/i18n'
 import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
+
+import type { Component } from 'vue'
 
 const route = useRoute()
 const { t } = useI18n()

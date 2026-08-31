@@ -37,8 +37,16 @@ export default defineConfigWithVueTs(
     rules: {
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': 'error',
-      'no-duplicate-imports': ['error', { allowSeparateTypeImports: false }],
+      'no-duplicate-imports': ['error', { allowSeparateTypeImports: true }],
       'no-implicit-coercion': 'error',
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'ImportDeclaration:has(ImportSpecifier[importKind=type]):has(:matches(ImportSpecifier[importKind=value], ImportDefaultSpecifier, ImportNamespaceSpecifier))',
+          message: 'Do not mix type and value imports in the same import declaration.',
+        },
+      ],
       'no-template-curly-in-string': 'error',
       'no-unneeded-ternary': 'error',
       'object-shorthand': ['error', 'always'],
@@ -52,7 +60,7 @@ export default defineConfigWithVueTs(
         'error',
         {
           disallowTypeAnnotations: false,
-          fixStyle: 'inline-type-imports',
+          fixStyle: 'separate-type-imports',
           prefer: 'type-imports',
         },
       ],

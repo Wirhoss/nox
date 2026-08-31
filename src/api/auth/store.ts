@@ -2,11 +2,10 @@ import { eq, isNotNull, lt, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 
 import { accounts, authSessions } from '../../database/schema';
-import { type Logger, silentLogger } from '../../logger/logger';
+import { silentLogger } from '../../logger/logger';
 import { parseOrThrow } from '../../utils/validate';
-import { type AuthConfig, type AuthConfigInput, authConfigSchema } from './config';
+import { authConfigSchema } from './config';
 import {
-  type AccessClaims,
   hashRefreshToken,
   loadOrCreateSigningKey,
   mintRefreshToken,
@@ -15,6 +14,9 @@ import {
 } from './tokens';
 
 import type { Database } from '../../database/database';
+import type { Logger } from '../../logger/logger';
+import type { AuthConfig, AuthConfigInput } from './config';
+import type { AccessClaims } from './tokens';
 
 /**
  * What a password costs to check, stated here rather than inherited from Bun's

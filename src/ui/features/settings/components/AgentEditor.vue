@@ -7,9 +7,12 @@ import { NoxButton } from '@/shared/ui/NoxButton'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
+import { modelCatalogProblem, modelOptions } from '../model/catalogs'
 import { useSettingsStore } from '../stores/settings.store'
+import CatalogField from './CatalogField.vue'
 
 import type { ConfigSection, ConfigValue, ToolInventory } from '../api/settings.api'
+import type { CatalogOption } from '../model/catalogs'
 import type { SettingsSectionDefinition } from '../model/sections'
 
 type EditorMode = 'form' | 'json'
@@ -138,12 +141,32 @@ const memories = computed(() =>
     }))
     .sort((left, right) => left.memoryId.localeCompare(right.memoryId)),
 )
-const selectedProviderModels = computed(() => {
-  const provider = providers.value.find(
-    (candidate) => candidate.providerId === draft.value.provider,
-  )
-  return provider?.models ?? []
-})
+/**
+ * The models the chosen provider serves, as its live instance reports them.
+ *
+ * Read from the runtime inventory rather than from `modelConfigs` in the
+ * configured document: what an operator has declared so far is a subset of what
+ * the endpoint actually offers, and the whole point of the list is to name a
+ * model without having declared it first.
+ */
+const modelCatalog = computed(() => modelOptions(settings.providerInventory, draft.value.provider, t))
+const modelCatalogProblemText = computed(() =>
+  modelCatalogProblem(settings.providerInventory, draft.value.provider, t),
+)
+
+function taskModelCatalog(task: TaskName): readonly CatalogOption[] {
+  return modelOptions(settings.providerInventory, taskProvider(task), t)
+}
+
+function taskModelProblem(task: TaskName): string | undefined {
+  return modelCatalogProblem(settings.providerInventory, taskProvider(task), t)
+}
+
+/** A task without its own provider runs on the agent's, so its models are those. */
+function taskProvider(task: TaskName): string {
+  const own = taskValue(task, 'provider')
+  return own.length > 0 ? own : draft.value.provider
+}
 const toolSets = computed<ToolSetOption[]>(() =>
   Object.entries(props.toolSetSection?.value ?? {})
     .map(([toolSetId, value]) => {
@@ -977,24 +1000,17 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                   {{ fieldErrors.provider }}
                 </p>
               </div>
-              <NoxTextField
+              <CatalogField
                 id="agent-model"
                 :model-value="draft.model"
                 :error="fieldErrors.model"
                 :hint="t('settings.agent.modelHint')"
                 :label="t('settings.agent.model')"
-                list="agent-model-options"
-                placeholder="model-id"
+                :options="modelCatalog"
+                :problem="modelCatalogProblemText"
                 required
                 @update:model-value="setString('model', $event)"
               />
-              <datalist id="agent-model-options">
-                <option
-                  v-for="modelId in selectedProviderModels"
-                  :key="modelId"
-                  :value="modelId"
-                ></option>
-              </datalist>
             </div>
             <NoxTextField
               id="agent-max-iterations"
@@ -1317,12 +1333,14 @@ function withoutProperty(value: ConfigValue, property: string): ConfigValue {
                     </option>
                   </select>
                 </div>
-                <NoxTextField
+                <CatalogField
                   :id="`agent-${task}-model`"
                   :model-value="taskValue(task, 'model')"
                   :error="fieldErrors[`${task}.model`]"
+                  :hint="t('settings.agent.useAgentModel')"
                   :label="t('settings.agent.modelOverride')"
-                  :placeholder="t('settings.agent.useAgentModel')"
+                  :options="taskModelCatalog(task)"
+                  :problem="taskModelProblem(task)"
                   @update:model-value="setTaskValue(task, 'model', $event)"
                 />
               </div>

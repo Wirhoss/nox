@@ -1,4 +1,6 @@
-import { type Logger, Mutex, type SecretHandle } from '@nox/extension-api';
+import { Mutex } from '@nox/extension-api';
+
+import type { Logger, SecretHandle } from '@nox/extension-api';
 
 const API_BASE = 'https://discord.com/api/v10';
 

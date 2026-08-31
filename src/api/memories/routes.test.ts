@@ -119,9 +119,7 @@ async function memoryNox(calls: Calls) {
   };
   const memories: MemoryRuntime = {
     memory: (memoryId) => (memoryId === 'semantic' ? memory : undefined),
-    memoryInventory: () => [
-      { editable: true, id: 'semantic', inspectable: true },
-    ],
+    memoryInventory: () => [{ editable: true, id: 'semantic', inspectable: true }],
   };
   const server = ApiServer.create({
     auth: { registration: RegistrationWindow.closed(), store: auth },
@@ -142,7 +140,11 @@ async function memoryNox(calls: Calls) {
 }
 
 function scopeQuery(): string {
-  return new URLSearchParams({ agentId: 'nox', issuer: ALICE.issuer, subject: ALICE.subject }).toString();
+  return new URLSearchParams({
+    agentId: 'nox',
+    issuer: ALICE.issuer,
+    subject: ALICE.subject,
+  }).toString();
 }
 
 afterEach(async () => {
@@ -154,9 +156,7 @@ afterEach(async () => {
     // directory the OS has not let go of yet is not a failing test.
     directories
       .splice(0)
-      .map((directory) =>
-        rm(directory, { force: true, recursive: true }).catch(() => undefined),
-      ),
+      .map((directory) => rm(directory, { force: true, recursive: true }).catch(() => undefined)),
   );
 });
 

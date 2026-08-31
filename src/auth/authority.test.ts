@@ -1,13 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  AuthorityCatalog,
-  type AuthorityDefinition,
-  CORE_OWNER_ID,
-  matchesPattern,
-  ownerNamespace,
-} from './authority';
+import { AuthorityCatalog, CORE_OWNER_ID, matchesPattern, ownerNamespace } from './authority';
 import { CORE_AUTHORITIES } from './coreAuthorities';
+
+import type { AuthorityDefinition } from './authority';
 
 function definition(id: string, ownerExtensionId = CORE_OWNER_ID): AuthorityDefinition {
   return { description: `The ${id} authority.`, id, ownerExtensionId };

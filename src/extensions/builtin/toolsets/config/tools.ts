@@ -1,18 +1,18 @@
-import {
-  type ConfigEntryKey,
-  type ConfigKey,
-  type ConfigurationAdmin,
-  entryIdSchema,
-  type MessageContent,
-  type SecretMetadataReader,
-  stableStringify,
-  type Tool,
-  type ToolContext,
-  type ToolRisk,
-  z,
-} from '@nox/extension-api';
+import { entryIdSchema, stableStringify, z } from '@nox/extension-api';
 
-import { configSectionKeySchema, type ConfigToolSetPolicy } from './model';
+import { configSectionKeySchema } from './model';
+
+import type { ConfigToolSetPolicy } from './model';
+import type {
+  ConfigEntryKey,
+  ConfigKey,
+  ConfigurationAdmin,
+  MessageContent,
+  SecretMetadataReader,
+  Tool,
+  ToolContext,
+  ToolRisk,
+} from '@nox/extension-api';
 
 const CONFIG_READ_AUTHORITY = 'nox.toolset.config.read';
 const CONFIG_RUNTIME_AUTHORITY = 'nox.toolset.config.runtime';
@@ -260,6 +260,31 @@ function configTools(
         risk: { effects: ['read'], reversible: true },
       };
       tools.push(inventory);
+    }
+
+    if (policy.readSections.has('providers')) {
+      const modelParameters = z.object({
+        refresh: z
+          .boolean()
+          .optional()
+          .describe('Re-ask each endpoint instead of reusing its last answer.'),
+      });
+      const models: Tool<typeof modelParameters> = {
+        authority: CONFIG_READ_AUTHORITY,
+        description:
+          'List every configured provider with the models it declares and the models its live ' +
+          'instance reports, so a model can be named from what exists rather than from memory.',
+        name: 'config_providers',
+        parameters: modelParameters,
+        prepare: ({ refresh }) => ({
+          run: (ctx) =>
+            run(ctx, async () => ({ providers: await admin.providerInventory(refresh === true) })),
+          title: 'Inspect configured providers',
+          type: 'immediate',
+        }),
+        risk: { effects: ['read'], reversible: true },
+      };
+      tools.push(models);
     }
   }
 

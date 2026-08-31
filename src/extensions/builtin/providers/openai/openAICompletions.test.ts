@@ -2,14 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  type ChatModelConfig,
-  isProviderError,
-  type Message,
-  type ProviderErrorCode,
-  type ProviderStreamEvent,
-  type Tool,
-} from '@nox/extension-api';
+import { isProviderError } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -26,6 +19,14 @@ import {
 } from '../../../../testFixtures';
 import { ARTIFACT_OUTPUT_NOTICE } from '../../../../tool/render';
 import { OpenAICompletions } from './openAICompletions';
+
+import type {
+  ChatModelConfig,
+  Message,
+  ProviderErrorCode,
+  ProviderStreamEvent,
+  Tool,
+} from '@nox/extension-api';
 
 interface RecordedRequest {
   body: Record<string, unknown>;

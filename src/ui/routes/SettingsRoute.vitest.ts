@@ -7,6 +7,29 @@ import App from '@/app/App.vue'
 import router from '@/app/router'
 import { server } from '@/tests/server'
 
+/**
+ * What the runtime reports about the one configured provider: two models it has
+ * declared, and one the endpoint listed that nothing has declared yet. The
+ * third is the point of the inventory — a model that can be chosen without
+ * having been written into `modelConfigs` first.
+ */
+const PROVIDER_INVENTORY = {
+  providers: [
+    {
+      available: true,
+      id: 'main',
+      kinds: ['chat'],
+      models: [
+        { configured: true, kind: 'chat', modelId: 'qwen38-27b' },
+        { configured: true, dimensions: 384, kind: 'embedding', modelId: 'qwen38-embed' },
+        { configured: false, modelId: 'qwen38-preview' },
+      ],
+      reported: true,
+      type: 'openai_completions',
+    },
+  ],
+}
+
 describe('Settings route', () => {
   it('edits machine-level settings through the curated General workbench', async () => {
     let savedBody: unknown
@@ -23,6 +46,7 @@ describe('Settings route', () => {
     }
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -105,6 +129,7 @@ describe('Settings route', () => {
 
   it('refuses a time zone nothing can read a clock in', async () => {
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -161,6 +186,7 @@ describe('Settings route', () => {
     }
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -223,6 +249,7 @@ describe('Settings route', () => {
     })
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () => HttpResponse.json(catalog())),
       http.get('*/api/config/app', () =>
@@ -288,6 +315,7 @@ describe('Settings route', () => {
     }
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -395,12 +423,15 @@ describe('Settings route', () => {
     const memoryBudget = document.querySelector<HTMLInputElement>('#agent-memory-max-tokens')
     if (memoryBudget === null) throw new Error('Expected the selected memory token budget.')
     expect(memoryBudget.value).toBe('768')
-    expect(screen.getByPlaceholderText('model-id')).toHaveProperty('value', 'qwen38-27b')
-    expect(
-      [...document.querySelectorAll<HTMLOptionElement>('#agent-model-options option')].map(
-        ({ value }) => value,
-      ),
-    ).toEqual(['qwen38-27b'])
+    const model = document.querySelector<HTMLSelectElement>('#agent-model')
+    if (model === null) throw new Error('Expected the model catalog to render as a choice.')
+    expect(model.value).toBe('qwen38-27b')
+    expect([...model.options].map(({ value }) => value)).toEqual([
+      'qwen38-27b',
+      'qwen38-embed',
+      'qwen38-preview',
+      '__nox_custom__',
+    ])
     expect(screen.getByPlaceholderText('You are...')).toHaveProperty('value', 'You are Nox.')
     const seed = document.querySelector<HTMLInputElement>('#agent-seed')
     const stop = document.querySelector<HTMLInputElement>('#agent-stop')
@@ -472,6 +503,7 @@ describe('Settings route', () => {
     }
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -542,14 +574,14 @@ describe('Settings route', () => {
     const secretValue = screen.getByLabelText(/^Credential value/)
     expect(secretValue).toHaveProperty('type', 'password')
     await fireEvent.update(secretValue, 'replacement-key')
-    await fireEvent.click(screen.getByRole('button', { name: 'Save provider' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
     // Secrets first: configuration that named a value which does not exist yet
     // would be configuration nothing could compose.
     await waitFor(() => {
       expect(writes).toEqual(['secret', 'provider'])
     })
-    expect(await screen.findByText('Provider configuration saved')).toBeTruthy()
+    expect(await screen.findByText('Configuration saved')).toBeTruthy()
     expect(providerBody).toMatchObject({
       apiKey: { $secret: 'LLAMA_API_KEY' },
       baseUrl: 'https://new-models.example/v1',
@@ -570,6 +602,7 @@ describe('Settings route', () => {
     let providerBody: unknown
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -615,7 +648,7 @@ describe('Settings route', () => {
     // creation still asks for an ID and only offers many-instance types.
     await renderAt('/settings/providers?create=1&type=openai_completions')
 
-    expect(await screen.findByRole('heading', { name: 'New provider' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'New Provider' })).toBeTruthy()
     const providerType = document.querySelector<HTMLSelectElement>('#provider-type')
     expect(providerType).not.toBeNull()
     expect(Array.from(providerType?.options ?? []).map((option) => option.value)).toEqual([
@@ -626,7 +659,7 @@ describe('Settings route', () => {
     await fireEvent.update(screen.getByLabelText('API credential'), '__new_secret__')
     await fireEvent.update(screen.getByLabelText(/^New secret ID/), 'SECONDARY_API_KEY')
     await fireEvent.update(screen.getByLabelText(/^Credential value/), 'secondary-key')
-    await fireEvent.click(screen.getByRole('button', { name: 'Save provider' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 
     await waitFor(() => {
       expect(writes).toEqual(['secret', 'provider'])
@@ -643,6 +676,7 @@ describe('Settings route', () => {
 
   it('groups extension-owned capabilities without offering manual creation', async () => {
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -718,6 +752,7 @@ describe('Settings route', () => {
     }
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -857,6 +892,7 @@ describe('Settings route', () => {
 
   it('keeps an unavailable tool set editable without exposing its schema discriminator', async () => {
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -905,6 +941,7 @@ describe('Settings route', () => {
         ],
       }
       server.use(
+        http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
         ...authenticatedOperator(),
         http.get('*/api/config', () => HttpResponse.json({ sections: [summary] })),
         http.get(`*/api/config/${key}`, () => HttpResponse.json({ ...summary, value: {} })),
@@ -950,6 +987,7 @@ describe('Settings route', () => {
       ],
     }
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () => HttpResponse.json({ sections: [summary] })),
       http.get('*/api/config/providers', () => HttpResponse.json({ ...summary, value: {} })),
@@ -971,7 +1009,6 @@ describe('Settings route', () => {
     await renderAt('/settings/providers')
 
     const offered = await screen.findByRole('link', { name: /local.*Configure/i })
-    expect(screen.queryByRole('link', { name: /New Provider/i })).toBeNull()
     await fireEvent.click(offered)
     expect(await screen.findByRole('heading', { name: /New Provider/i })).toBeTruthy()
     expect(document.querySelector('#provider-entry-id')).toBeNull()
@@ -989,7 +1026,7 @@ describe('Settings route', () => {
     // Updating a field inside a list must preserve the array and its visible row.
     expect(screen.getByLabelText(/^Model Id/)).toHaveProperty('value', 'test/chat-model')
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Save provider' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
     await waitFor(() => {
       expect(providerBody).toMatchObject({
         llm: { enabled: true, model: 'test/chat-model' },
@@ -1026,6 +1063,7 @@ describe('Settings route', () => {
     }
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -1105,10 +1143,7 @@ describe('Settings route', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Form' }))
     expect(screen.getByLabelText(/^Base agent/)).toHaveProperty('value', 'nox')
     expect(screen.getByText('STORED')).toBeTruthy()
-    expect(screen.getByLabelText(/^Gateway Url/)).toHaveProperty(
-      'value',
-      'wss://gateway.example',
-    )
+    expect(screen.getByLabelText(/^Gateway Url/)).toHaveProperty('value', 'wss://gateway.example')
     expect(screen.getByLabelText(/^Token/)).toHaveProperty('value', 'DISCORD_TOKEN')
 
     await fireEvent.update(screen.getByLabelText(/^Base agent/), 'support')
@@ -1141,6 +1176,7 @@ describe('Settings route', () => {
     let brokerBody: unknown
 
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -1211,6 +1247,7 @@ describe('Settings route', () => {
 
   it('restores a deep-linked write-only secret without exposing its value', async () => {
     server.use(
+      http.get('*/api/capabilities/providers', () => HttpResponse.json(PROVIDER_INVENTORY)),
       ...authenticatedOperator(),
       http.get('*/api/config', () =>
         HttpResponse.json({
@@ -1285,7 +1322,7 @@ function sectionSummary(
       editor: 'blueprint',
       entrySummary: { description: ['description'], detail: ['provider', 'model'] },
       group: 'intelligence',
-      inventory: 'toolSets',
+      inventory: ['providers', 'toolSets'],
       label: 'settings.sections.agents.label',
       plural: 'settings.sections.agents.plural',
       references: ['memories', 'providers', 'toolSets'],
@@ -1306,6 +1343,7 @@ function sectionSummary(
       editor: 'contribution',
       entrySummary: { description: [], detail: ['type'] },
       group: 'intelligence',
+      inventory: ['providers'],
       label: 'settings.sections.memories.label',
       plural: 'settings.sections.memories.plural',
       references: ['blueprints'],
@@ -1316,6 +1354,7 @@ function sectionSummary(
       editor: 'contribution',
       entrySummary: { description: ['baseUrl'], detail: ['type', 'defaultModel'] },
       group: 'intelligence',
+      inventory: ['providers'],
       label: 'settings.sections.providers.label',
       plural: 'settings.sections.providers.plural',
       references: [],
@@ -1326,7 +1365,7 @@ function sectionSummary(
       editor: 'toolSet',
       entrySummary: { description: [], detail: ['type'] },
       group: 'capabilities',
-      inventory: 'toolSets',
+      inventory: ['toolSets'],
       label: 'settings.sections.toolSets.label',
       plural: 'settings.sections.toolSets.plural',
       references: [],

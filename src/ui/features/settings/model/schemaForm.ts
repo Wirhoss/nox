@@ -15,6 +15,18 @@ type JsonSchema = Readonly<Record<string, unknown>>
 
 type FieldControl = 'boolean' | 'checklist' | 'enum' | 'list' | 'number' | 'secret' | 'text'
 
+/**
+ * A name drawn from something that exists rather than typed from memory. The
+ * schema says which catalog a field belongs to, so an editor offers the choice
+ * without carrying its own list of which fields name providers and which name
+ * models. Unlike an enum, the options are not in the schema — they come from
+ * what is configured and what the endpoints report — so the field stays a text
+ * field when nothing is known and becomes a choice when something is.
+ */
+type FieldCatalog = 'model' | 'provider'
+
+const FIELD_CATALOGS: readonly FieldCatalog[] = ['model', 'provider']
+
 interface FieldOption {
   readonly label: string
   readonly messageKey?: string
@@ -22,6 +34,7 @@ interface FieldOption {
 }
 
 interface FieldNode {
+  readonly catalog?: FieldCatalog
   readonly control: FieldControl
   readonly default?: unknown
   readonly description?: string
@@ -125,6 +138,7 @@ function numberOf(value: unknown): number | undefined {
 
 /** The `nox` block an extension attached with `.meta()`, if it attached one. */
 function meta(schema: JsonSchema): {
+  catalog?: FieldCatalog
   help?: string
   label?: string
   options?: Readonly<Record<string, string>>
@@ -141,7 +155,9 @@ function meta(schema: JsonSchema): {
             (entry): entry is [string, string] => typeof entry[1] === 'string',
           ),
         )
+  const catalog = FIELD_CATALOGS.find((candidate) => candidate === nox.catalog)
   return {
+    ...(catalog === undefined ? {} : { catalog }),
     ...(stringOf(nox.help) === undefined ? {} : { help: stringOf(nox.help) }),
     ...(stringOf(nox.label) === undefined ? {} : { label: stringOf(nox.label) }),
     ...(optionLabels === undefined ? {} : { options: optionLabels }),
@@ -243,8 +259,9 @@ function fieldNode(
   control: FieldControl,
   options: readonly FieldOption[] = [],
 ): FieldNode {
-  const { help, label } = meta(schema)
+  const { catalog, help, label } = meta(schema)
   return {
+    ...(catalog === undefined ? {} : { catalog }),
     control,
     ...(schema.default === undefined ? {} : { default: schema.default }),
     ...(stringOf(schema.description) === undefined
@@ -666,6 +683,7 @@ export {
 
 export type {
   ConfigLike,
+  FieldCatalog,
   FieldControl,
   FieldNode,
   FieldOption,

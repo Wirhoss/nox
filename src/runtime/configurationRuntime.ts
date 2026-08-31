@@ -1,25 +1,9 @@
-import {
-  type BaseProvider,
-  type ChatModelConfig,
-  type ChatProvider,
-  type ContributionReader,
-  type Disposable,
-  isChatCapable,
-  isDisposable,
-  memories,
-  type Memory,
-  type MemoryConfig,
-  type ProviderConfig,
-  providers,
-  type RuntimeComponentKind,
-  type RuntimeComponentState,
-  type RuntimeComponentStatus,
-} from '@nox/extension-api';
+import { isChatCapable, isDisposable, memories, MODEL_KINDS, providers } from '@nox/extension-api';
 
 import { Agent } from '../agent/agent';
 import { memoryToolSetGrant } from '../agent/memoryToolSet';
 import { composeSessionTools } from '../agent/tools';
-import { composeWithSecrets, type SecretStore } from '../config/secrets';
+import { composeWithSecrets } from '../config/secrets';
 import { stableStringify } from '../utils/json';
 import { Mutex } from '../utils/mutex';
 
@@ -28,13 +12,36 @@ import type { ArtifactPipeline } from '../artifact/pipeline';
 import type { AuthorityCatalog } from '../auth/authority';
 import type { Blueprint, TaskModelConfig } from '../config/blueprint';
 import type { Config } from '../config/config';
+import type { SecretStore } from '../config/secrets';
 import type { Database } from '../database/database';
 import type { ToolSetCatalog } from '../extensions/toolSetCatalog';
 import type { BrokerGrant, Gateway } from '../gateway/gateway';
 import type { Logger } from '../logger/logger';
 import type { ProviderRegistry } from './modelAccess';
+import type {
+  BaseProvider,
+  ChatModelConfig,
+  ChatProvider,
+  ContributionReader,
+  Disposable,
+  Memory,
+  MemoryConfig,
+  ModelKind,
+  ProviderConfig,
+  ProviderInventory,
+  ProviderModelInventory,
+  RuntimeComponentKind,
+  RuntimeComponentState,
+  RuntimeComponentStatus,
+} from '@nox/extension-api';
 
 interface ConfigurationRuntime {
+  /**
+   * What every configured provider serves, as the live instances answer it.
+   * `refresh` re-asks the endpoints instead of reusing what they last said, for
+   * an operator who has just changed the other side.
+   */
+  providerInventory(refresh?: boolean): Promise<readonly ProviderInventory[]>;
   reconcile(): Promise<void>;
   statuses(): readonly RuntimeComponentStatus[];
 }
@@ -72,6 +79,33 @@ interface ActiveMemory {
 interface ActiveProvider {
   readonly provider: BaseProvider;
   readonly signature: string;
+}
+
+/**
+ * What one provider last said when asked for its models, and which
+ * configuration of it was asked. Keeping the failure is as important as keeping
+ * the list: a surface that retried on every render would hammer an endpoint
+ * that is down, and one that forgot the reason would show an empty list as
+ * though the endpoint had answered with nothing.
+ */
+interface ReportedModels {
+  readonly ids?: readonly string[];
+  readonly problem?: string;
+  readonly signature: string;
+}
+
+/** Long enough for a slow endpoint, short enough that Settings still renders. */
+const MODEL_REPORT_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(work: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(reason));
+    }, timeoutMs);
+    work.then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+    });
+  });
 }
 
 interface TaskModel {
@@ -132,6 +166,10 @@ class ConfigurationRuntimeRelay implements ConfigurationRuntime, MemoryRuntime {
     return this.#host?.memoryInventory() ?? [];
   }
 
+  public providerInventory(refresh?: boolean): Promise<readonly ProviderInventory[]> {
+    return this.#host?.providerInventory(refresh) ?? Promise.resolve([]);
+  }
+
   public reconcile(): Promise<void> {
     return this.#host?.reconcile() ?? Promise.resolve();
   }
@@ -166,6 +204,7 @@ class ConfigurationRuntimeController
   readonly #memories = new Map<string, ActiveMemory>();
   readonly #mutex = new Mutex();
   readonly #providers = new Map<string, ActiveProvider>();
+  readonly #reportedModels = new Map<string, ReportedModels>();
   readonly #secretStore: SecretStore;
   readonly #statuses = new Map<string, RuntimeComponentStatus>();
   readonly #superseded: SupersededInstance[] = [];
@@ -268,6 +307,120 @@ class ConfigurationRuntimeController
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
     );
+  }
+
+  /**
+   * What every configured provider serves: the models its entry declares, and
+   * the models the instance itself reports.
+   *
+   * Both, and marked as which, because they answer different questions. A
+   * declared model carries the metadata this installation depends on — a
+   * context window, a vector width — while a reported one is proof that a name
+   * exists on the other side. An operator picking a model wants the second and
+   * an agent budgeting context needs the first, and collapsing them would lose
+   * whichever the reader was not asking about.
+   *
+   * The report is cached against the instance's own signature, so opening
+   * Settings does not re-interrogate every endpoint on every render, and a
+   * reconfigured provider is asked again without anyone having to say so. A
+   * provider that will not answer costs its own row a reason and nothing else:
+   * one unreachable endpoint must not empty the lists of the ones that work.
+   */
+  public async providerInventory(refresh = false): Promise<readonly ProviderInventory[]> {
+    const configured: Record<string, ProviderConfig> = this.#config.loaded.includes('providers')
+      ? this.#config.get('providers')
+      : {};
+    const ids = [...new Set([...Object.keys(configured), ...this.#providers.keys()])].sort((a, b) =>
+      a.localeCompare(b),
+    );
+
+    return Object.freeze(
+      await Promise.all(
+        ids.map(async (providerId): Promise<ProviderInventory> => {
+          const type = configured[providerId]?.type ?? '';
+          const extensionId = this.#contributions.get(providers, type)?.extensionId;
+          const identity = {
+            ...(extensionId === undefined ? {} : { extensionId }),
+            id: providerId,
+            type,
+          };
+          const active = this.#providers.get(providerId);
+          if (active === undefined) {
+            const problem =
+              this.#statuses.get(key('provider', providerId))?.error ??
+              `Provider "${providerId}" has not activated.`;
+            return Object.freeze({
+              ...identity,
+              available: false,
+              kinds: Object.freeze([]),
+              models: Object.freeze([]),
+              problem,
+              reported: false,
+            });
+          }
+
+          const report = await this.#reportModels(providerId, active, refresh);
+          const declared = active.provider.listModelConfigs();
+          const models: ProviderModelInventory[] = declared.map((model) =>
+            Object.freeze({
+              configured: true,
+              ...(model.kind === 'embedding' ? { dimensions: model.dimensions } : {}),
+              kind: model.kind,
+              modelId: model.modelId,
+            }),
+          );
+          const declaredIds = new Set(models.map((model) => model.modelId));
+          for (const modelId of report.ids ?? []) {
+            if (declaredIds.has(modelId)) continue;
+            declaredIds.add(modelId);
+            models.push(Object.freeze({ configured: false, modelId }));
+          }
+
+          return Object.freeze({
+            ...identity,
+            available: true,
+            kinds: Object.freeze(
+              MODEL_KINDS.filter((kind: ModelKind) => active.provider.supports(kind)),
+            ),
+            models: Object.freeze(
+              models.sort((left, right) => left.modelId.localeCompare(right.modelId)),
+            ),
+            reported: report.ids !== undefined,
+            ...(report.problem === undefined ? {} : { reportProblem: report.problem }),
+          });
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Asks one instance what it serves, once per configuration of it.
+   *
+   * Bounded rather than trusted to return: the call is a network round trip an
+   * adapter may leave without a timeout, and a settings page that never renders
+   * because one endpoint is unreachable is a worse answer than a row saying so.
+   */
+  async #reportModels(
+    providerId: string,
+    active: ActiveProvider,
+    refresh: boolean,
+  ): Promise<ReportedModels> {
+    const cached = this.#reportedModels.get(providerId);
+    if (!refresh && cached?.signature === active.signature) return cached;
+
+    let report: ReportedModels;
+    try {
+      const ids = await withTimeout(
+        active.provider.fetchModelIds(),
+        MODEL_REPORT_TIMEOUT_MS,
+        `Listing the models of provider "${providerId}" timed out.`,
+      );
+      report = { ids: Object.freeze([...new Set(ids)]), signature: active.signature };
+    } catch (error) {
+      report = { problem: message(error), signature: active.signature };
+    }
+    this.#reportedModels.set(providerId, report);
+    return report;
   }
 
   public provider(providerId: string): BaseProvider {
@@ -426,6 +579,7 @@ class ConfigurationRuntimeController
       }
       const dropped = this.#providers.get(providerId);
       this.#providers.delete(providerId);
+      this.#reportedModels.delete(providerId);
       if (dropped !== undefined) this.#supersede('provider', providerId, dropped.provider);
     }
     this.#dropAbsent('provider', visible);

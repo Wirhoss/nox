@@ -2,24 +2,14 @@
 import { useI18n } from '@/shared/i18n'
 import { NoxTextField } from '@/shared/ui/NoxTextField'
 
+import { modelCatalogProblem, modelOptions, providerOptions } from '../model/catalogs'
 import { NEW_SECRET } from '../model/managedSecrets'
-import {
-  type ConfigLike,
-  type FieldNode,
-  type FieldOption,
-  type FormNode,
-  isObject,
-  listEntryDefaults,
-  listEntryNodes,
-  type ListNode,
-  mapEntryDefaults,
-  mapEntryNodes,
-  type MapNode,
-  valueAt,
-  type VariantNode,
-  withoutKey,
-  withRenamedKey,
-} from '../model/schemaForm'
+import { isObject, listEntryDefaults, listEntryNodes, mapEntryDefaults, mapEntryNodes, valueAt, withoutKey, withRenamedKey } from '../model/schemaForm'
+import CatalogField from './CatalogField.vue'
+
+import type { ProviderInventory } from '../api/settings.api'
+import type { CatalogOption } from '../model/catalogs'
+import type { ConfigLike, FieldNode, FieldOption, FormNode, ListNode, MapNode, VariantNode } from '../model/schemaForm'
 
 /**
  * What this component needs of a secret, which is its name and whether anything
@@ -45,11 +35,23 @@ interface Props {
   /** Namespace of the extension whose schema this is; its labels live there. */
   extensionId: string
   nodes: readonly FormNode[]
+  /** What every configured provider serves, for the fields that name one. */
+  providerInventory?: readonly ProviderInventory[]
+  /**
+   * The provider this form is editing, where the form *is* one. A model field
+   * with no sibling `provider` — a provider's own `defaultModel`, an entry of
+   * its `modelConfigs` — belongs to the entry being edited, and nothing in the
+   * schema can say which entry that is.
+   */
+  providerId?: string
   secrets: readonly SecretRow[]
   value: ConfigLike
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  providerInventory: () => [],
+  providerId: undefined,
+})
 const emit = defineEmits<{
   credential: [path: readonly string[], state: Partial<CredentialState>]
   update: [path: readonly string[], value: unknown]
@@ -229,6 +231,33 @@ function setNewSecretId(node: FieldNode, next: string): void {
 
 function setSecretValue(node: FieldNode, next: string): void {
   emit('credential', node.path, { value: next })
+}
+
+/**
+ * Which provider a model field is about: the one named beside it where the
+ * schema puts the two together, and otherwise the entry being edited. Both
+ * cases are real — a memory names a provider and a model side by side, while a
+ * provider's own model list is implicitly about itself — and neither can be
+ * derived from the other.
+ */
+function providerFor(node: FieldNode): string | undefined {
+  const sibling = valueAt(props.value, [...node.path.slice(0, -1), 'provider'])
+  return typeof sibling === 'string' && sibling.length > 0 ? sibling : props.providerId
+}
+
+function catalogOptions(node: FieldNode): readonly CatalogOption[] {
+  if (node.catalog === 'provider') return providerOptions(props.providerInventory, t)
+  return modelOptions(props.providerInventory, providerFor(node), t)
+}
+
+/** Why a catalog has nothing to offer, so an empty list is never a silent one. */
+function catalogProblem(node: FieldNode): string | undefined {
+  if (node.catalog === 'provider') {
+    return props.providerInventory.length === 0
+      ? t('settings.catalog.noProviders')
+      : undefined
+  }
+  return modelCatalogProblem(props.providerInventory, providerFor(node), t)
 }
 
 function chosenVariant(node: VariantNode): string {
@@ -485,6 +514,19 @@ function removeListEntry(node: ListNode, index: number): void {
         @update:model-value="setList(node, $event)"
       />
 
+      <CatalogField
+        v-else-if="node.kind === 'field' && node.catalog !== undefined"
+        :id="fieldId(node.path)"
+        :model-value="text(node)"
+        :error="error(node.path)"
+        :hint="help(node)"
+        :label="label(node)"
+        :options="catalogOptions(node)"
+        :problem="catalogProblem(node)"
+        :required="node.required"
+        @update:model-value="setText(node, $event)"
+      />
+
       <NoxTextField
         v-else-if="node.kind === 'field'"
         :id="fieldId(node.path)"
@@ -518,6 +560,8 @@ function removeListEntry(node: ListNode, index: number): void {
           :credentials="props.credentials"
           :errors="props.errors"
           :extension-id="props.extensionId"
+          :provider-inventory="props.providerInventory"
+          :provider-id="props.providerId"
           :nodes="variantChildren(node)"
           :secrets="props.secrets"
           :value="props.value"
@@ -559,6 +603,8 @@ function removeListEntry(node: ListNode, index: number): void {
             :credentials="props.credentials"
             :errors="props.errors"
             :extension-id="props.extensionId"
+            :provider-inventory="props.providerInventory"
+            :provider-id="props.providerId"
             :nodes="listEntryNodes(node, index)"
             :secrets="props.secrets"
             :value="props.value"
@@ -610,6 +656,8 @@ function removeListEntry(node: ListNode, index: number): void {
             :credentials="props.credentials"
             :errors="props.errors"
             :extension-id="props.extensionId"
+            :provider-inventory="props.providerInventory"
+            :provider-id="props.providerId"
             :nodes="mapEntryNodes(node, entryKey)"
             :secrets="props.secrets"
             :value="props.value"
@@ -629,6 +677,8 @@ function removeListEntry(node: ListNode, index: number): void {
           :credentials="props.credentials"
           :errors="props.errors"
           :extension-id="props.extensionId"
+          :provider-inventory="props.providerInventory"
+          :provider-id="props.providerId"
           :nodes="node.children"
           :secrets="props.secrets"
           :value="props.value"

@@ -1,11 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  type ArtifactProcessor,
-  ArtifactProcessorRegistry,
-  type ArtifactProcessorSource,
-} from './processor';
+import { ArtifactProcessorRegistry } from './processor';
 
+import type { ArtifactProcessor, ArtifactProcessorSource } from './processor';
 import type { RepresentationProfile } from './representation';
 
 const SOURCE: ArtifactProcessorSource = Object.freeze({

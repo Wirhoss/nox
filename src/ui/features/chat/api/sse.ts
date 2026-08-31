@@ -1,6 +1,8 @@
 import { ApiConnectionError, ApiContractError } from '@/shared/api/http'
 
-import { type ChatEvent, chatEventSchema } from './chat.schemas'
+import { chatEventSchema } from './chat.schemas'
+
+import type { ChatEvent } from './chat.schemas'
 
 const STREAM_IDLE_TIMEOUT_MS = 75_000
 

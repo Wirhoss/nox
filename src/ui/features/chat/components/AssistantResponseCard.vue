@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type DeepReadonly, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useI18n } from '@/shared/i18n'
 import { NoxNotice } from '@/shared/ui/NoxNotice'
@@ -18,6 +18,7 @@ import type {
   RunActivityItem,
   ToolActivity,
 } from '../stores/activeSession.store'
+import type { DeepReadonly } from 'vue'
 
 type ProcessItem = ReasoningActivity | ToolActivity
 type ResponseItem = AssistantItem | ErrorItem | PermissionItem | ProcessItem

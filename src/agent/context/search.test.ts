@@ -1,13 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  HISTORY_TOOL_NAMES,
-  type HistoryArchive,
-  type HistoryExcerpt,
-  HistorySearchToolSet,
-} from './search';
+import { HISTORY_TOOL_NAMES, HistorySearchToolSet } from './search';
 import { Transcript } from './transcript';
 
+import type { HistoryArchive, HistoryExcerpt } from './search';
 import type { Message, MessageContent } from '@nox/extension-api';
 
 const AT = new Date('2025-01-01T00:00:00.000Z');
@@ -189,7 +185,10 @@ describe('history_sessions_search', () => {
     expect(all).toContain('marker now');
     expect(all).toContain('marker then');
 
-    const one = await call(tools, 'history_sessions_search', { query: 'marker', sessionId: 'session-old' });
+    const one = await call(tools, 'history_sessions_search', {
+      query: 'marker',
+      sessionId: 'session-old',
+    });
     expect(archive.calls[1]?.sessionId).toBe('session-old');
     expect(one).not.toContain('marker now');
     expect(one).toContain('marker then');
@@ -234,7 +233,9 @@ describe('history_sessions', () => {
   test('says so plainly when there is nothing stored', async () => {
     const tools = toolSet(fakeArchive());
 
-    expect(await call(tools, 'history_sessions', {})).toBe('No sessions are stored for this agent.');
+    expect(await call(tools, 'history_sessions', {})).toBe(
+      'No sessions are stored for this agent.',
+    );
   });
 });
 
@@ -253,7 +254,10 @@ describe('history_read_result', () => {
     const transcript = new Transcript([toolResponse('r1', 'track-1', 'A'.repeat(3_000))]);
     const tools = toolSet(fakeArchive(), transcript);
 
-    const first = await call(tools, 'history_read_result', { maxCharacters: 500, trackId: 'track-1' });
+    const first = await call(tools, 'history_read_result', {
+      maxCharacters: 500,
+      trackId: 'track-1',
+    });
     expect(first).toContain('Result truncated');
 
     const offset = Number(/Continue with offset (\d+)/.exec(first)?.[1]);
@@ -281,8 +285,8 @@ describe('history_read_result', () => {
     const transcript = new Transcript([toolResponse('r1', 'track-1', 'short')]);
     const tools = toolSet(fakeArchive(), transcript);
 
-    expect(call(tools, 'history_read_result', { offset: 9_999, trackId: 'track-1' })).rejects.toThrow(
-      RangeError,
-    );
+    expect(
+      call(tools, 'history_read_result', { offset: 9_999, trackId: 'track-1' }),
+    ).rejects.toThrow(RangeError);
   });
 });

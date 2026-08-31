@@ -1,29 +1,30 @@
-import {
-  type BrokerContribution,
-  brokers,
-  type ConfigContributionSummary,
-  type ConfigEntryKey,
-  type ConfigRevertTarget,
-  type ConfigSectionSchemaDescriptor,
-  type ConfigSectionSummary,
-  type ConfigTypeSchemaDescriptor,
-  type ConfigurationAdmin,
-  contributionInstances,
-  type ContributionReader,
-  isConfigurable,
-  type RuntimeComponentStatus,
-  type ToolSetInventory,
-} from '@nox/extension-api';
+import { brokers, contributionInstances, isConfigurable } from '@nox/extension-api';
 import { z } from 'zod';
 
-import { type ConfigKey, sections } from '../../config/sections';
-import { configPolicies, type SectionPolicies, type SectionPolicy } from './policies';
+import { sections } from '../../config/sections';
+import { configPolicies } from './policies';
 
 import type { Config, ConfigUpdate, ContributionKey, DirectoryKey } from '../../config/config';
 import type { ConfigSection } from '../../config/section';
+import type { ConfigKey } from '../../config/sections';
 import type { ToolSetCatalog } from '../../extensions/toolSetCatalog';
 import type { ConfigurationRuntime } from '../../runtime/configurationRuntime';
 import type { BlueprintContext } from './blueprints';
+import type { SectionPolicies, SectionPolicy } from './policies';
+import type {
+  BrokerContribution,
+  ConfigContributionSummary,
+  ConfigEntryKey,
+  ConfigRevertTarget,
+  ConfigSectionSchemaDescriptor,
+  ConfigSectionSummary,
+  ConfigTypeSchemaDescriptor,
+  ConfigurationAdmin,
+  ContributionReader,
+  ProviderInventory,
+  RuntimeComponentStatus,
+  ToolSetInventory,
+} from '@nox/extension-api';
 
 /**
  * The sections addressed one entry at a time. Whether those entries are separate
@@ -295,6 +296,16 @@ class ConfigStore implements ConfigurationAdmin {
   /** Tools exposed by each configured capability, using the runtime factories' own answer. */
   public toolSetInventory(): Promise<readonly ToolSetInventory[]> {
     return this.#toolSets.inventory();
+  }
+
+  /**
+   * Models served by each configured provider, using the live instances' own
+   * answer. The configured document cannot supply this: `modelConfigs` is what
+   * an operator has declared so far, and the question an editor is asking is
+   * what could be declared — which only the endpoint knows.
+   */
+  public providerInventory(refresh = false): Promise<readonly ProviderInventory[]> {
+    return this.#runtime?.providerInventory(refresh) ?? Promise.resolve([]);
   }
 
   /** Throws `ConfigError('unresolved')` for a section the extensions have not reached yet. */

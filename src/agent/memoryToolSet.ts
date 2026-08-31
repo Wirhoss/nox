@@ -1,19 +1,18 @@
-import {
-  MEMORY_FACT_KINDS,
-  type MemoryBlocks,
-  type MemoryEditor,
-  type MemoryScope,
-  type MessageContent,
-  stableStringify,
-  type Tool,
-  type ToolContext,
-  ToolSet,
-  type ToolSetGrant,
-  z,
-} from '@nox/extension-api';
+import { MEMORY_FACT_KINDS, stableStringify, ToolSet, z } from '@nox/extension-api';
 
 import { MEMORY_READ_AUTHORITY, MEMORY_WRITE_AUTHORITY } from '../auth/coreAuthorities';
-import { MEMORY_BLOCK_WRITE_TOOL_NAME, type MemoryToolName } from './memoryToolNames';
+import { MEMORY_BLOCK_WRITE_TOOL_NAME } from './memoryToolNames';
+
+import type { MemoryToolName } from './memoryToolNames';
+import type {
+  MemoryBlocks,
+  MemoryEditor,
+  MemoryScope,
+  MessageContent,
+  Tool,
+  ToolContext,
+  ToolSetGrant,
+} from '@nox/extension-api';
 
 const MEMORY_TOOL_SET_ID = 'nox.memory';
 

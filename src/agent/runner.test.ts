@@ -1,20 +1,4 @@
-import {
-  bindTool,
-  type ChatModelConfig,
-  ChatProvider,
-  contentToString,
-  type Memory,
-  type MemoryRecallRequest,
-  type MemoryRetainRequest,
-  type Message,
-  type MessageContent,
-  ProviderError,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
-  type ToolContext,
-  type UserMessage,
-} from '@nox/extension-api';
+import { bindTool, ChatProvider, contentToString, ProviderError } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -33,6 +17,19 @@ import type {
   ArtifactOutputProvenance,
 } from '../artifact/output';
 import type { AgentEvent } from './events';
+import type {
+  ChatModelConfig,
+  Memory,
+  MemoryRecallRequest,
+  MemoryRetainRequest,
+  Message,
+  MessageContent,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+  ToolContext,
+  UserMessage,
+} from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
   kind: 'chat',

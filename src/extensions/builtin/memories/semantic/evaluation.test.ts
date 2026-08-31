@@ -59,7 +59,9 @@ describe('scoreCase', () => {
       'Ana only ever drinks jasmine tea.',
       'Jasmine tea is the only thing Ana drinks; she avoids coffee.',
     ]) {
-      expect(scoreCase(caseNamed('plain preference'), [draft(text, 'preference')]).passed).toBeTrue();
+      expect(
+        scoreCase(caseNamed('plain preference'), [draft(text, 'preference')]).passed,
+      ).toBeTrue();
     }
   });
 

@@ -2,15 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  type ChatModelConfig,
-  ChatProvider,
-  type Message,
-  type MessageContent,
-  type ProviderSourceEvent,
-  type TextGenerateOptions,
-  type Tool,
-} from '@nox/extension-api';
+import { ChatProvider } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -26,6 +18,14 @@ import {
 import { Session } from './session';
 
 import type { AgentEvent } from './events';
+import type {
+  ChatModelConfig,
+  Message,
+  MessageContent,
+  ProviderSourceEvent,
+  TextGenerateOptions,
+  Tool,
+} from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
   kind: 'chat',

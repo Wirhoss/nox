@@ -1,21 +1,17 @@
-import {
-  type ArtifactIngestInput,
-  type ArtifactPipeline,
-  type ArtifactRecord,
-  type ArtifactResolveOptions,
-  type ArtifactScope,
-  type ContentArtifact,
-  silentLogger,
-} from '@nox/extension-api';
+import { silentLogger } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
-import {
-  attachmentsOf,
-  MAX_UPLOAD_BYTES,
-  toMessageContent,
-  toUploads,
-  type UploadOptions,
-} from './attachments';
+import { attachmentsOf, MAX_UPLOAD_BYTES, toMessageContent, toUploads } from './attachments';
+
+import type { UploadOptions } from './attachments';
+import type {
+  ArtifactIngestInput,
+  ArtifactPipeline,
+  ArtifactRecord,
+  ArtifactResolveOptions,
+  ArtifactScope,
+  ContentArtifact,
+} from '@nox/extension-api';
 
 const CHANNEL = '300000000000000003';
 

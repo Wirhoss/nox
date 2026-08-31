@@ -1,12 +1,13 @@
 import {
   defineExtension,
   memories,
-  type Memory,
   memoryContribution,
   modelAccessService,
   modelReferenceSchema,
   z,
 } from '@nox/extension-api';
+
+import type { Memory } from '@nox/extension-api';
 
 /**
  * A memory that reaches a configured embedding model.
@@ -31,9 +32,7 @@ const embeddingMemoryExtension = defineExtension({
         create: (config): Memory => {
           // Taken while the contribution is created, so a mistyped reference
           // fails the memory here rather than the first conversation using it.
-          const embedding = context.services
-            .get(modelAccessService)
-            .embedding(config.embedding);
+          const embedding = context.services.get(modelAccessService).embedding(config.embedding);
           return {
             async recall(request) {
               const result = await embedding.embed([request.query], request.signal);

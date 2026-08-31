@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
-import { type ConfigurableContribution, createContributionPoint } from './core.js';
-import { type BaseProvider, providerBaseConfigSchema } from './providers.js';
+import { createContributionPoint } from './core.js';
+import { providerBaseConfigSchema } from './providers.js';
 import { identifierSchema, localeSchema } from './schemas.js';
 
 import type { Broker } from './brokers.js';
+import type { ConfigurableContribution } from './core.js';
 import type { Memory } from './memory.js';
+import type { BaseProvider, providerFloorShape } from './providers.js';
 import type { ToolSet } from './tools.js';
 
 interface AuthorityContribution {
@@ -132,9 +134,13 @@ const brokers = createContributionPoint<BrokerContribution>('nox.brokers');
 // and the host validate from one schema object.
 const providerConfigSchema = providerBaseConfigSchema.extend({ type: z.string() });
 type ProviderConfig = z.infer<typeof providerConfigSchema>;
-type ProviderConfigSchema = z.ZodObject<
-  { type: z.ZodLiteral<string> } & typeof providerBaseConfigSchema.shape
->;
+/**
+ * The floor a provider's schema must meet: its discriminator and the retry
+ * settings the streaming contract reads. A declared model catalog is not part
+ * of it — a provider that holds its own models has nothing to declare — so
+ * `modelConfigs` is offered by the base schema rather than demanded here.
+ */
+type ProviderConfigSchema = z.ZodObject<{ type: z.ZodLiteral<string> } & typeof providerFloorShape>;
 /**
  * A provider is a configured service, not a contract. What it can do is
  * answered by what it implements — chat, embeddings, whatever comes next — so

@@ -1,8 +1,9 @@
 import { and, desc, eq } from 'drizzle-orm';
 
-import { type ConversationRow, conversations, sessions } from './schema';
+import { conversations, sessions } from './schema';
 
 import type { Database } from './database';
+import type { ConversationRow } from './schema';
 
 /**
  * A binding as a transport asks for it, with the name of the session behind it.

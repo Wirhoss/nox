@@ -2,14 +2,10 @@ import { readdir, readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-  EXTENSION_API_VERSION,
-  type ExtensionManifest,
-  isExtensionDefinition,
-} from '@nox/extension-api';
+import { EXTENSION_API_VERSION, isExtensionDefinition } from '@nox/extension-api';
 
-import { ExtensionCatalog, type ExtensionOrigin } from './catalog';
-import { bindExtensionManifest, type NoxExtension } from './extension';
+import { ExtensionCatalog } from './catalog';
+import { bindExtensionManifest } from './extension';
 import {
   EXTENSION_MANIFEST_FILENAME,
   isCompatible,
@@ -18,6 +14,9 @@ import {
 } from './manifest';
 
 import type { Logger } from '../logger/logger';
+import type { ExtensionOrigin } from './catalog';
+import type { NoxExtension } from './extension';
+import type { ExtensionManifest } from '@nox/extension-api';
 
 interface ExtensionDirectory {
   readonly directory: string;
@@ -128,19 +127,23 @@ async function discoverExtensions(
         throw new TypeError('The entry module must default-export an extension definition.');
       }
       extensions.push(
-        bindExtensionManifest(manifest, definition, {
-          activated: () => {
-            catalog.active(key);
+        bindExtensionManifest(
+          manifest,
+          definition,
+          {
+            activated: () => {
+              catalog.active(key);
+            },
+            activationFailed: (error) => {
+              catalog.fail(key, error);
+              options.logger.error(
+                { err: error, extensionId: manifest.id, origin },
+                'Extension activation failed.',
+              );
+            },
           },
-          activationFailed: (error) => {
-            catalog.fail(key, error);
-            options.logger.error(
-              { err: error, extensionId: manifest.id, origin },
-              'Extension activation failed.',
-            );
-          },
-        },
-        migrations),
+          migrations,
+        ),
       );
     } catch (error) {
       catalog.fail(key, error);
