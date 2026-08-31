@@ -104,30 +104,54 @@ Current implementation details include:
 ### 2. Prefer reversible reduction before lossy compaction
 
 Folding replaces settled tool traffic with a smaller, deterministic record while
-retaining the original events in the transcript. Compaction uses a model to
-summarize part of the working set and is therefore lossy. The intended order is
-to try folding first and compact only when a configured context budget still
-reports pressure.
+retaining the original events in the transcript. The runner attempts it whenever
+a tool loop settles, independently of any context budget. A candidate is applied
+only when it meets the configured reduction threshold.
+
+Compaction uses a model to summarize part of the working set and is therefore
+lossy. Its automatic path is separate: before a provider request, a configured
+budget can report pressure; the context rechecks folding and compacts only if
+pressure remains.
 
 ```mermaid
 flowchart TB
-  M["new message"] --> A["append to working history"]
-  A --> B{"context budget configured?"}
+  L["tool loop settles"] --> F["attempt deterministic fold"]
+  F --> R{"meets reduction threshold?"}
+  R -->|yes| A["apply fold event"]
+  R -->|no| K["keep working history"]
+
+  N["next provider request"] --> B{"context budget configured?"}
   B -->|no| S["request provider"]
   B -->|yes| P{"over budget?"}
   P -->|no| S
-  P -->|yes| F["fold settled tool traffic"]
-  F --> G{"measured reduction?"}
-  G -->|no| C
-  G -->|yes| ST{"still over budget?"}
+  P -->|yes| RF["recheck settled folding"]
+  RF --> ST{"still over budget?"}
   ST -->|no| S
   ST -->|yes| C["model-assisted compaction"]
   C --> S
+
+  S --> E{"provider returns context_limit?"}
+  E -->|no| O["continue run"]
+  E -->|yes| M{"ephemeral recall present?"}
+  M -->|yes| DR["retry without temporary recalled-memory message"]
+  DR --> E2{"context_limit remains?"}
+  E2 -->|no| O
+  E2 -->|yes| FR["forced fold / compaction<br/>no local budget required"]
+  M -->|no| FR
+  FR --> T["retry provider once"]
 ```
 
-The current implementation rejects folds that do not meet the configured
-reduction threshold. Without a context window there is no automatic pressure
-signal, so budget-triggered compaction does not run.
+**No configured budget does not rule out compaction in every case.** It disables
+the automatic pressure-triggered path. If the provider returns `context_limit`,
+the runner first omits the temporary message containing memories retrieved for
+that request, when present, and retries. This does not delete anything from the
+memory backend or transcript. If the provider still refuses the request, Nox
+calls `context.compact({ force: true })`. That forced pass rechecks folding and
+may run lossy compaction without a configured `contextWindow`; after a
+successful reduction, the provider request is retried once.
+
+A person can also request a forced compaction explicitly through the session
+command.
 
 ### 3. Use code for deterministic operations
 

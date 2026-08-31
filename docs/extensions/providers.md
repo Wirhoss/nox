@@ -160,7 +160,8 @@ explicitly.
 
 ## Context window
 
-`contextWindow` is what makes compaction possible at all. An agent takes its
-window from the model unless its own policy sets one, and without a window there
-is no pressure signal — so `compact()` becomes a no-op rather than guessing. See
-[../context-engine.md](../context-engine.md#no-budget-no-compaction).
+`contextWindow` enables the local pressure threshold used for automatic
+compaction. An agent takes its window from the model unless its own policy sets
+one. Without a window, the unforced automatic check is a no-op; an explicit
+compaction request or a provider `context_limit` can still invoke a forced pass.
+See [../context-engine.md](../context-engine.md#automatic-and-requested-compaction).

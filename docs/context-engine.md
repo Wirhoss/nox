@@ -86,9 +86,20 @@ in [`fold.test.ts`](../src/agent/context/fold.test.ts).
 
 ### When automatic folding runs
 
-During normal generation, the runner folds settled tool traffic before a later
-budget-triggered compaction pass. Tool traffic that the model has not yet
-consumed is excluded from that reduction pass.
+When a model turn returns no new tool calls, the current tool loop is settled and
+the runner calls `context.fold()`. This happens independently of the context
+window or pressure threshold. The call can still be a no-op when there is no
+eligible tool traffic or the candidate does not meet the reduction threshold.
+
+Before each later provider request, the runner also calls the unforced
+`context.compact()`. That method returns immediately when no budget reports
+pressure. Under pressure it rechecks settled folding before considering lossy
+compaction. Tool traffic the model has not yet consumed is excluded from both
+reduction paths.
+
+The no-budget regression is covered in
+[`longSession.test.ts`](../src/agent/longSession.test.ts): folding occurs while
+automatic compaction remains absent.
 
 ---
 
@@ -108,6 +119,24 @@ A person can explicitly request compaction through the session command. That pat
 uses a forced pass and is not blocked by the absence of an automatic pressure
 threshold. It still needs a selectable history range and rejects a generated
 summary that does not reduce the local token estimate.
+
+### A provider `context_limit` can force compaction without a budget
+
+The absence of a configured context window disables automatic compaction; it
+does not prevent recovery from a provider's `context_limit` response.
+
+On that response, the runner first retries without the temporary user-shaped
+message that contains long-term memories retrieved for this request, when one is
+present. That message exists only in the provider request: omitting it does not
+delete stored memories or a transcript event. If the provider still reports
+`context_limit`, the runner calls `context.compact({ force: true })`. The forced
+pass attempts settled folding and then may run model-assisted compaction without
+consulting a local pressure threshold. If either operation reduces the working
+history, Nox retries the provider request once; otherwise it surfaces the
+original refusal.
+
+The recovery flow has coverage in
+[`runner.test.ts`](../src/agent/runner.test.ts).
 
 ### Tool-call boundaries
 

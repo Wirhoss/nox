@@ -47,9 +47,8 @@ interface CompactResult {
 
 interface CompactOptions {
   /**
-   * Reduce without consulting the local budget. The only caller is a provider
-   * that already refused the request for length: its count is the measurement,
-   * and the estimate that said there was room is the thing being corrected.
+   * Reduce without consulting the local budget. Used for an explicit compaction
+   * request and after a provider has already refused the request for length.
    */
   readonly force?: boolean;
 }
