@@ -37,6 +37,7 @@
     "start": "NODE_PATH=./node_modules bun run index.ts",
     "build:extension-api": "bun --cwd=packages/extension-api run build",
     "build:extensions": "bun run scripts/build-extensions.ts",
+    "build:host": "bun run scripts/build-host.ts",
     "dev:ui": "bun --cwd=src/ui run dev",
     "build:ui": "bun --cwd=src/ui run build",
     "db:generate": "drizzle-kit generate",

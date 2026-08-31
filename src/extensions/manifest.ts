@@ -1,6 +1,10 @@
 import { isAbsolute } from 'node:path';
 
-import { EXTENSION_API_VERSION, identifierSchema } from '@nox/extension-api';
+import {
+  EXTENSION_API_VERSION,
+  HOST_PROVIDED_PACKAGES,
+  identifierSchema,
+} from '@nox/extension-api';
 import { satisfies, valid, validRange } from 'semver';
 import { z } from 'zod';
 
@@ -39,6 +43,29 @@ const extensionManifestSchema = z.strictObject({
     extensionApi: semanticVersionRangeSchema,
     nox: semanticVersionRangeSchema,
   }),
+  /**
+   * Packages taken from the host rather than bundled, name to semver range.
+   *
+   * The key set is closed on purpose. A name the host does not provide is not a
+   * dependency Nox can be asked for; it is one the package has to carry, and
+   * saying so in the manifest error is the only place an author will read it.
+   */
+  hostPackages: z
+    .record(z.string(), semanticVersionRangeSchema)
+    // Checked here rather than by a key schema, because a record reports an
+    // invalid key as "invalid key" and drops the reason — and the reason is the
+    // entire message: this is where an author learns the rule.
+    .superRefine((packages, ctx) => {
+      for (const name of Object.keys(packages)) {
+        if (HOST_PROVIDED_PACKAGES.includes(name)) continue;
+        ctx.addIssue({
+          code: 'custom',
+          message: `Nox provides only ${HOST_PROVIDED_PACKAGES.join(', ')}; bundle anything else into the package.`,
+          path: [name],
+        });
+      }
+    })
+    .optional(),
   id: identifierSchema,
   main: packagePathSchema,
   /**
@@ -52,6 +79,15 @@ const extensionManifestSchema = z.strictObject({
    */
   migrations: packagePathSchema.optional(),
   schemaVersion: z.literal(1),
+  /**
+   * Host services this package may resolve, by service ID.
+   *
+   * The whole of what an extension can reach into the host, written where an
+   * operator can read it before installing rather than discovered by watching
+   * the process. The loader hands over a container scoped to exactly this list;
+   * absent is an empty list, not an unrestricted one.
+   */
+  services: z.array(identifierSchema).optional(),
   version: semanticVersionSchema,
   /**
    * Entry points this package loads at runtime rather than imports.
@@ -69,6 +105,10 @@ function parseExtensionManifest(input: unknown): ExtensionManifest {
   return Object.freeze({
     ...manifest,
     engines: Object.freeze({ ...manifest.engines }),
+    ...(manifest.hostPackages === undefined
+      ? {}
+      : { hostPackages: Object.freeze({ ...manifest.hostPackages }) }),
+    ...(manifest.services === undefined ? {} : { services: Object.freeze([...manifest.services]) }),
     ...(manifest.workers === undefined ? {} : { workers: Object.freeze([...manifest.workers]) }),
   });
 }

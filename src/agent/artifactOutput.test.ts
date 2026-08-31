@@ -203,10 +203,10 @@ describe('agent artifact output', () => {
     );
     const readerTool = provider.requestedTools[0]?.find((tool) => tool.name === 'artifact_read');
     expect(attachmentTool).toMatchObject({
-      authority: 'nox.artifacts.attach',
+      authority: 'nox.core.artifacts.attach',
       trust: 'trusted',
     });
-    expect(readerTool).toMatchObject({ authority: 'nox.artifacts.read' });
+    expect(readerTool).toMatchObject({ authority: 'nox.core.artifacts.read' });
     expect(part.artifact).toMatchObject({
       filename: 'answer.txt',
       mediaType: 'text/plain',

@@ -1,6 +1,8 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
+import { EXTENSION_EXTERNAL_PACKAGES } from '@nox/extension-api';
+
 const root = resolve(import.meta.dir, '..');
 const sourceRoot = join(root, 'src', 'extensions', 'builtin');
 const outputRoot = join(root, 'dist', 'extensions', 'builtin');
@@ -29,16 +31,6 @@ async function manifests(directory: string): Promise<string[]> {
   }
   return found;
 }
-
-/** Resolved by the host at runtime, so never inlined into a package. */
-const external = [
-  '@huggingface/transformers',
-  '@nox/extension-api',
-  'onnxruntime-node',
-  'playwright',
-  'sharp',
-  'zod',
-];
 
 function assertBuild(result: Bun.BuildOutput, subject: string): void {
   if (result.success) return;
@@ -74,7 +66,7 @@ for (const manifestPath of await manifests(sourceRoot)) {
   const destination = join(outputRoot, manifest.id);
   const result = await Bun.build({
     entrypoints: [resolve(dirname(manifestPath), manifest.main)],
-    external,
+    external: [...EXTENSION_EXTERNAL_PACKAGES],
     minify: true,
     naming: 'extension.js',
     outdir: destination,
@@ -91,7 +83,7 @@ for (const manifestPath of await manifests(sourceRoot)) {
   if (workers.length > 0) {
     const built = await Bun.build({
       entrypoints: workers.map((worker) => resolve(dirname(manifestPath), worker)),
-      external,
+      external: [...EXTENSION_EXTERNAL_PACKAGES],
       minify: true,
       naming: '[dir]/[name].js',
       outdir: destination,

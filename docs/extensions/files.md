@@ -50,10 +50,10 @@ Deduplicated references consume no additional quota. A new blob is refused
 Through the authenticated `GET /api/artifacts/:artifactId/content` route.
 Conversation-owned output includes its conversation ID in that request.
 
-The web client fetches the response as a blob; **it never turns a file into
-base64 JSON.** Stored images are requested only when their placeholder enters the
-viewport, while audio, video and documents remain references until the operator
-explicitly opens or downloads them.
+The web client fetches the response as a blob rather than embedding file bytes in
+base64 JSON. Stored images are requested when their placeholder enters the
+viewport, while audio, video, and documents remain references until the operator
+opens or downloads them.
 
 ---
 
@@ -161,11 +161,12 @@ cache-versioned with **both** the Sharp and libvips versions.
 Storage quotas bound growth but do not delete committed artifacts automatically.
 
 Until a lifecycle pass exists, reaching `artifacts.maxStorageBytes` rejects new
-unique blobs with a `507` response. **It never silently breaks an old
-conversation to recover space.**
+unique blobs with a `507` response. The current store does not evict an existing
+blob automatically to make room.
 
-A future lifecycle must preserve transcript history and content-addressed
-deduplication rather than removing files by age alone. At minimum it needs to:
+A future lifecycle design will need to account for transcript references and
+content-addressed deduplication rather than removing files by age alone. Current
+design considerations include:
 
 - persist normalized references from messages and active operations, instead of
   discovering them by scanning JSON;

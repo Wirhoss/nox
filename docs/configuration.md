@@ -1,15 +1,19 @@
 # Configuration
 
-Configuration files are **durable desired state**, not startup arguments. Most
-of it reconciles without restarting the process, and what genuinely cannot says
-so instead of pretending.
+Configuration files represent durable desired state. Many contribution sections
+can reconcile while the process is running; process-level settings report when a
+restart is required. Representative behavior is covered in
+[`src/config/config.test.ts`](../src/config/config.test.ts) and
+[`src/bootstrap.test.ts`](../src/bootstrap.test.ts).
 
 ---
 
 ## Environment
 
-The environment decides only *where things live*. Everything else is
-configuration. Defined in [`src/config/env.ts`](../src/config/env.ts):
+Environment variables currently select storage locations, runtime mode, session
+resume, and optional file watching. Application behavior is otherwise described
+by the JSON configuration. Variables are defined in
+[`src/config/env.ts`](../src/config/env.ts):
 
 | Variable | Default | What it is |
 |---|---|---|
@@ -40,12 +44,12 @@ Configuration is split into files, each one a section with its own Zod schema.
 
 | File | Holds | Applies |
 |---|---|---|
-| `app.json` | Process and machine settings | **restart** |
-| `blueprints.json` | Agents: persona, model, grants | hot |
-| `brokers.json` | Transports | hot |
+| `app.json` | Process, UI, authentication, and storage settings | mixed: some hot, some restart-scoped |
+| `blueprints/*.json` | One agent blueprint per file | hot |
+| `brokers.json` | Transport instances | hot |
 | `memories.json` | Memory instances | hot |
 | `providers.json` | Provider instances | hot |
-| `toolsets.json` | Tool set instances | hot |
+| `toolsets.json` | Tool-set instances | hot |
 
 A failed candidate remains saved and visible while its **last valid generation
 keeps serving**. Settings offers retry, revert, and an explicit
@@ -88,35 +92,38 @@ construction report `restartRequired` rather than claiming to have changed live.
 | `timezone` | `UTC` | IANA zone — see below |
 | `ui.locale` | `en` | Interface language. Hot |
 
-### `timezone` is how an agent knows what day it is
+### Message timestamps and `timezone`
 
-Every message a model is shown carries the moment it was said, in the configured
+Messages rendered for a model include their recorded time in the configured
 zone:
 
 ```text
-[from esteban · 2026-08-23 14:14 GMT-6]
+[from wirhoss · 2026-08-23 14:14 GMT-6]
 ```
 
-Nothing injects a live clock into the system prompt. The newest message in the
-history **already is** the current time — so the cached prefix of a request never
-moves just so the model can read a clock, and a replayed request renders
-byte-for-byte as it did the first time. This is Law 1 paying for itself in a
-place you would not expect.
+The system prompt does not receive a continuously changing clock. Instead, the
+latest message timestamp gives the model temporal context as of that message.
+Because the stored timestamp is rendered again during replay, it does not change
+merely because the session was reopened. This is not a guarantee that the model
+knows the wall-clock time after a long idle period.
 
 ---
 
 ## Secrets
 
-Credentials never belong inline in ordinary configuration. Nox keeps them as
-encrypted records in its database. An authenticated administrative surface can
-create, replace and delete values — but **cannot read them back**. Configuration
-contains only a reference:
+Ordinary configuration schemas accept secret references rather than plaintext
+credentials. Nox stores supplied values as encrypted database records. The
+current administrative API can create, replace, and delete those values, but it
+does not provide an operation that reads a value back. Configuration contains a
+reference:
 
 ```json
 { "apiKey": { "$secret": "OPENAI_API_KEY" } }
 ```
 
-The store generates `.secret-key` in `DATA_DIR` with owner-only permissions.
+The store generates `.secret-key` in `DATA_DIR` and requests owner-only file
+permissions. Deployment filesystem and backup permissions still need to be
+managed by the operator.
 
 > **Back up that key together with the database.** Losing it makes the encrypted
 > values intentionally unrecoverable.
@@ -126,8 +133,9 @@ strings in a config object. Rotating a secret reconciles the replacement
 provider, memory, tool-set, agent and broker generations; work already in flight
 finishes against its immutable snapshot.
 
-Environment variables and mounted secret directories are **not** alternate
-sources. There is one way in, and it is write-only.
+The current implementation does not resolve credential values from environment
+variables or mounted secret directories. Values enter through the write-only
+secret administration surface.
 
 ```mermaid
 flowchart LR

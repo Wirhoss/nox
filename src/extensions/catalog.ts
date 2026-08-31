@@ -8,16 +8,39 @@ type ExtensionOrigin = (typeof EXTENSION_ORIGINS)[number];
 
 interface ExtensionCatalogEntry {
   readonly error?: string;
+  /**
+   * The libraries this package takes from the host, as it declared them.
+   *
+   * Reported for the same reason `services` is, and reported even when the
+   * package did not load: a version range this installation cannot satisfy is
+   * the most likely reason it did not, and hiding the range leaves the reader
+   * with an error and no way to act on it.
+   */
+  readonly hostPackages?: Readonly<Record<string, string>>;
   readonly id: string;
   readonly origin: ExtensionOrigin;
+  /**
+   * The host services this package declared, straight from its manifest.
+   *
+   * Carried into the inventory because a declaration nobody can read is not a
+   * disclosure. This is the whole of what the package can ask the host for, and
+   * the one place an operator can see it without opening the manifest by hand.
+   *
+   * It is what the package *asked* for, not what it was granted: a control-plane
+   * service named by an installed extension appears here and is still refused.
+   * Showing the request is the point — it is the part worth reviewing.
+   */
+  readonly services?: readonly string[];
   readonly state: ExtensionState;
   readonly version?: string;
 }
 
 interface MutableExtensionRecord {
   error?: string;
+  hostPackages?: Readonly<Record<string, string>>;
   id: string;
   origin: ExtensionOrigin;
+  services?: readonly string[];
   state: ExtensionState;
   version?: string;
 }
@@ -53,8 +76,14 @@ class ExtensionCatalog {
           Object.freeze({
             ...(entry.error === undefined ? {} : { error: entry.error }),
             contributions: contributions?.ownedBy(entry.id) ?? [],
+            ...(entry.hostPackages === undefined
+              ? {}
+              : { hostPackages: Object.freeze({ ...entry.hostPackages }) }),
             id: entry.id,
             origin: entry.origin,
+            ...(entry.services === undefined
+              ? {}
+              : { services: Object.freeze([...entry.services]) }),
             state: entry.state,
             ...(entry.version === undefined ? {} : { version: entry.version }),
           }),

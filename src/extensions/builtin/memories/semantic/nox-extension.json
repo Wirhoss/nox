@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "main": "extension.ts",
   "migrations": "migrations",
+  "services": ["nox.model-access", "nox.runtime-activity"],
   "engines": {
     "nox": "^0.1.0",
     "extensionApi": "^0.1.0"

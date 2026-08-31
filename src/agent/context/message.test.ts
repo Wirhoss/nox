@@ -25,8 +25,8 @@ describe('originToString', () => {
   test('puts the display name in front without dropping the principal', () => {
     // The name is what makes a shared transcript one the model can talk about;
     // the principal is what anything was actually decided from, so both stay.
-    expect(originToString({ ...testOrigin('409812000000000000'), displayName: 'Esteban' })).toBe(
-      'Esteban <test-broker:409812000000000000>',
+    expect(originToString({ ...testOrigin('409812000000000000'), displayName: 'Wirhoss' })).toBe(
+      'Wirhoss <test-broker:409812000000000000>',
     );
   });
 
@@ -40,8 +40,8 @@ describe('originToString', () => {
 
 describe('messageToString', () => {
   test('renders a named sender on the From line', () => {
-    expect(messageToString(userMessage('Esteban'))).toContain(
-      'From: Esteban <test-broker:409812000000000000>',
+    expect(messageToString(userMessage('Wirhoss'))).toContain(
+      'From: Wirhoss <test-broker:409812000000000000>',
     );
   });
 
@@ -50,7 +50,7 @@ describe('messageToString', () => {
   });
 
   test('still carries when it was said, not when Nox read it', () => {
-    expect(messageToString(userMessage('Esteban'))).toContain(
+    expect(messageToString(userMessage('Wirhoss'))).toContain(
       'Created At: 2026-08-28T14:03:11.000Z',
     );
   });

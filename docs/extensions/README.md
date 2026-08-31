@@ -1,8 +1,11 @@
 # Extensions
 
-Every concrete capability in Nox is an extension. Builtins are not special —
-they differ from third-party packages only in how they are discovered, never in
-what they are or what API they use.
+Current concrete capabilities such as providers, brokers, memories, tool sets,
+commands, and language packs are packaged as extensions. Builtins and installed
+packages use the same manifest parser, activation context, and contribution API.
+The source boundary is checked in
+[`src/boundaries.test.ts`](../../src/boundaries.test.ts); execution trust is
+discussed under [Current limits](#current-limits).
 
 | Page | What is in it |
 |---|---|
@@ -33,6 +36,8 @@ example.toolset/
   "id": "example.toolset",
   "version": "1.4.2",
   "main": "extension.js",
+  "services": ["nox.artifact-pipeline"],
+  "hostPackages": { "sharp": "^0.35.3" },
   "engines": {
     "nox": "^0.1.0",
     "extensionApi": ">=0.1.0 <0.2.0"
@@ -45,7 +50,54 @@ declarations are semver **ranges**: an extension can support a family of Nox and
 Extension API releases rather than naming one build.
 
 Optional keys: `migrations`, naming a directory of SQL migrations the extension
-owns (see [memory.md](memory.md) for a builtin that uses it).
+owns (see [memory.md](memory.md) for a builtin that uses it); `workers`, naming
+entry points loaded from a URL that a build has to emit separately;
+`hostPackages`, the libraries it takes from the host rather than bundling (see
+[Third-party libraries](#third-party-libraries)); and `services`.
+
+`services` lists the host service IDs the package may resolve through
+`context.services`. The container is scoped to this list: a token that is not
+named raises `UndeclaredServiceError` from `get`, `tryGet`, and `has`. If the key
+is absent, the scoped container declares no host services.
+
+This makes supported host-service use visible in the manifest and catches a
+missing declaration during activation. It does not restrict direct process APIs
+such as filesystem or network access.
+
+Declaring a service the host does not provide is not an error; it is a request
+that stays unfilled. `get` raises `MissingServiceError` and `tryGet` answers
+`undefined`, which is the existing way to write an optional dependency.
+
+Both declarations are reported by the authenticated `/api/extensions` inventory,
+per package and alongside its origin and state — including for a package that
+failed to load, which is when the reader most needs them. It reports what the
+package *asked* for, not what it was granted: a control-plane service named by
+an installed extension shows up there and is still refused. Showing the request
+is the point, because the request is the part worth reviewing.
+
+Some services are the **control plane** and are reserved to Nox's own builtins:
+writing configuration, enumerating which secrets exist and who consumes them,
+running an agent unattended, the conversation hub itself. They are marked
+`controlPlane` where the token is declared. An installed package that names one
+is refused with `RestrictedServiceError` — a different error from the undeclared
+case on purpose, because no manifest edit will grant it.
+
+The refusal happens twice, at two different moments, and both are wanted. A
+manifest that declares one is turned away at **discovery**, so a package that
+can never have what it asked for is never counted as loaded; the scoped
+container refuses again at the **call**, which is what catches a package
+reaching for a token it never declared at all. Neither stops Nox: discovery
+drops the one package, logs why, and rolls every other extension forward.
+
+The `nox.` package namespace is reserved. Discovery rejects an installed package
+that uses it, preventing an extension-owned authority prefix from overlapping
+existing Nox grants. External packages should use a namespace they control; for
+example, `acme.tools` owns `acme.tools.*` through the supported authority model.
+
+Within the reserved namespace, the core uses `nox.core.*` and each builtin uses
+its extension ID as its authority prefix, such as `nox.toolset.web.*` or
+`nox.broker.discord.*`. This lets a grant target core authorities without also
+targeting every builtin.
 
 The manifest owns identity. Extension code does not duplicate or override it.
 Entry points are confined to their package directory, duplicate IDs disable every
@@ -56,7 +108,7 @@ contributions.
 
 ## The public API
 
-Everything an extension needs comes from the versioned
+The supported extension contract comes from the versioned
 [`@nox/extension-api`](../../packages/extension-api/) package. It imports no
 kernel modules; its build emits ESM plus TypeScript declarations under `dist`.
 
@@ -142,15 +194,15 @@ export default defineExtension({
 });
 ```
 
-Three things worth noticing:
+Three details illustrated by the example:
 
-1. **The config schema is part of the contribution**, not documentation. Settings
-   renders a form from it, and an invalid entry never becomes a live instance.
-2. **Every tool declares an `authority` and a `risk`.** Those are what the Gate
-   evaluates. A tool with no declared risk is not a cheaper tool; it is an
-   unreviewable one.
-3. **Nothing reaches into the host.** The tool set never sees a database
-   connection, a session, or the config object.
+1. The config schema is part of the contribution. Settings can render it, and the
+   host validates an entry before creating an instance.
+2. The tool declares an `authority` and a `risk`; the Gate evaluates those fields
+   before execution.
+3. This tool set does not request host services and receives no database
+   connection, session object, or internal configuration object through its
+   activation context.
 
 ---
 
@@ -226,20 +278,56 @@ manifest and gets its own migrated schema instead.
 |---|---|
 | `bun run build:extension-api` | Builds the publishable public package |
 | `bun run build:extensions` | Builds the API, then packages every builtin separately under `dist/extensions/builtin` and emits the runtime under `dist/node_modules` |
+| `bun run build:host` | Builds the kernel bundle |
 
 The container copies those outputs rather than compiling a static builtin
 registry into the kernel.
 
+### Third-party libraries
+
+The current packaging path expects an extension to bundle ordinary JavaScript
+dependencies unless Nox explicitly supplies them at runtime.
+
+The host-provided list is exported as `HOST_PROVIDED_PACKAGES` from
+`@nox/extension-api`. It currently includes packages that need shared runtime
+identity or host-installed native binaries, including Zod, Sharp, Playwright,
+and Transformers.
+
+Extension builds can use `EXTENSION_EXTERNAL_PACKAGES`, which combines that list
+with `@nox/extension-api`. The
+[standalone example](../../examples/extensions/greeting-toolset/build.ts) shows
+the current build setup. Importing the exported list avoids maintaining a second
+copy in each extension build.
+
+An extension that imports a host-provided package declares it in `hostPackages`
+with a semver range:
+
+```json
+"hostPackages": { "zod": "^4.4.3", "sharp": "^0.35.3" }
+```
+
+Discovery checks the requested names and ranges beside the `engines` fields. An
+unsupported name is a manifest error; an unavailable version marks the package
+as incompatible. These cases have coverage in
+[`loader.test.ts`](../../src/extensions/loader.test.ts) and
+[`hostPackages.test.ts`](../../src/extensions/hostPackages.test.ts).
+
+Arbitrary native dependencies outside the host list are not supported by the
+current extension build and installation flow. This is a packaging limitation,
+not a general claim that native packages can never be distributed.
+
 ---
 
-## Limits, stated plainly
+## Current limits
 
-Extensions are **trusted native code, not a sandbox**. Installing one grants it
-everything the runtime has. Package changes currently require a Nox restart.
+Extensions are trusted in-process code, not a sandbox. The manifest `services`
+list limits resolution through `context.services`, but extension code can still
+use the filesystem, network, and other APIs available to the Nox process.
+Operators should review installed extensions with that access in mind. Package
+changes currently require a Nox restart.
 
-The full statement of that boundary, and what would have to exist before
-third-party installation is acceptable, is in
-[../architecture.md](../architecture.md#trust-boundary-stated-plainly).
+The complete trust-boundary description is in
+[../architecture.md](../architecture.md#trust-boundary).
 
 ---
 

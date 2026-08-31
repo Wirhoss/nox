@@ -1,6 +1,10 @@
 # `@nox/extension-api`
 
-Stable contracts and host-provided runtime primitives for Nox extensions.
+Public contracts and host-provided runtime primitives for Nox extensions.
+
+The package is currently pre-1.0. Its versioned surface is usable by the builtin
+and example extensions, but should still be expected to evolve before a stable
+release.
 
 Extensions should depend on this package for development and keep it external in
 their production bundle. Nox supplies the compatible runtime selected by the
@@ -28,7 +32,9 @@ await context.storage.transact((state) => {
 });
 ```
 
-Extensions never receive Nox's database connection or internal schemas.
+The activation context does not expose Nox's database connection or internal
+schemas. Extensions still run in process, so this API boundary is not a security
+sandbox.
 
 Commands are contributions. Their IDs become slash-command names, their Zod
 parameters are rendered and validated by the host, and each invocation passes
@@ -83,7 +89,7 @@ export default defineExtension({
         create: (config) => ({
           recall: async (request) => {
             // Use config.endpoint to query a namespace derived from both values.
-            // Never broaden either boundary.
+            // Keep both scope dimensions in the backend namespace.
             const namespace = `${request.scope.agentId}:${request.scope.principal.issuer}:${request.scope.principal.subject}`;
             return { memories: await backendRecall(config.endpoint, namespace, request) };
           },
@@ -97,9 +103,9 @@ export default defineExtension({
 });
 ```
 
-An agent selects at most one configured instance. `MemoryScope.agentId` is the
-mandatory storage boundary, not optional metadata; principal scope prevents
-participants in shared conversations from being combined. Returned text is
-untrusted data and may exceed the requested budget, so Nox fences and bounds it
-again before ephemeral provider injection. Ordinary adapter errors degrade to no
-memory.
+An agent currently selects at most one configured instance. Memory adapters are
+expected to include `MemoryScope.agentId` and principal scope in their storage
+boundary so data from different agents or participants is not combined through
+the supported API. Nox treats returned text as untrusted data and bounds it again
+before provider injection. Adapter failures handled by the runtime produce an
+empty recall rather than failing the conversational request.

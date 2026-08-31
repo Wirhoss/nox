@@ -41,7 +41,7 @@ async function artifactNox(
     ...limits,
   });
   const store = await AuthStore.open({ database, dataDirectory: directory });
-  const account = await store.register('esteban', 'correct-horse-battery');
+  const account = await store.register('wirhoss', 'correct-horse-battery');
   const tokens = await store.openSession(account.accountId);
   const server = ApiServer.create({
     artifacts: pipeline,

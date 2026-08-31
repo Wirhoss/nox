@@ -26,8 +26,9 @@ In a blueprint:
 Both entries are optional. Every absent one falls back to the agent's own
 provider and model.
 
-An entry that names only a `model` stays on the agent's provider — the usual
-case is a cheaper model on the endpoint that is already configured.
+An entry that names only a `model` stays on the agent's provider. This allows a
+different model on an already configured endpoint without requiring another
+provider instance.
 
 | Task | What it does |
 |---|---|
@@ -41,8 +42,8 @@ case is a cheaper model on the endpoint that is already configured.
 A session is named once, after its first completed run, and deliberately **off
 the critical path**: the reply is already delivered when the request goes out.
 
-A titling call that is slow, or that fails outright, leaves the session with the
-ID it already had. Nobody waits for a name.
+A titling call that is slow or fails leaves the session with its existing ID.
+The conversational reply does not wait for the title request.
 
 A session opened with a title given to it is never renamed.
 
@@ -50,10 +51,10 @@ A session opened with a title given to it is never renamed.
 
 ## Why this is a separate setting
 
-Compaction and titling are the two places where Nox spends a model on its own
-behalf. Making them configurable separately is what keeps Law 3 honest at the
-budget level: the work still has to happen, but it does not have to happen on a
-frontier model just because the conversation does.
+Compaction and titling are the current model-assisted internal tasks. Separate
+configuration lets an operator choose their providers and models independently
+from the conversational model. Nox does not claim that one choice is always less
+expensive or better; that depends on the available models and workload.
 
 See also [providers.md](providers.md) for how models are declared, and
 [../context-engine.md](../context-engine.md#compaction) for when compaction runs

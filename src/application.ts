@@ -5,6 +5,7 @@ import {
   ExtensionActivationError,
   ExtensionCompatibilityError,
 } from './extensions/error';
+import { extensionOrigin } from './extensions/extension';
 import { assertVersion, isCompatible } from './extensions/manifest';
 import { ServiceCollection } from './extensions/service';
 import { MemoryExtensionStorageProvider } from './extensions/storage';
@@ -293,7 +294,11 @@ class NoxApplication {
         contributions: this.#contributions.scoped(id, resources),
         logger: this.#logger.child(id),
         extension: extension.manifest,
-        services: this.#services,
+        services: this.#services.scoped(
+          id,
+          extension.manifest.services ?? [],
+          extensionOrigin(extension),
+        ),
         signal: this.#abortController.signal,
         storage: await this.#storage.forExtension({
           extensionId: id,

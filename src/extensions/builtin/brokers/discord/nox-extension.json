@@ -3,6 +3,7 @@
   "id": "nox.broker.discord",
   "version": "0.1.0",
   "main": "extension.ts",
+  "services": ["nox.artifact-pipeline"],
   "engines": {
     "nox": "^0.1.0",
     "extensionApi": "^0.1.0"

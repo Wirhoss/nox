@@ -1176,7 +1176,7 @@ describe('Gateway', () => {
 
     test('denies a principal without the grant before the gate ever asks', async () => {
       const broker = new TestBroker({ permissions: true, streaming: false });
-      const { executions, harnessed } = await guarded(broker, { alice: ['nox.history.*'] });
+      const { executions, harnessed } = await guarded(broker, { alice: ['nox.core.history.*'] });
 
       broker.say('chat-1', 'usa echo', undefined, 'alice');
       await settle(harnessed);

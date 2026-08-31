@@ -16,7 +16,7 @@ describe('settings API', () => {
           authorities: [
             {
               description: 'Search the routed tool catalog.',
-              id: 'nox.tools.search',
+              id: 'nox.core.tools.search',
               ownerExtensionId: 'nox',
             },
           ],
@@ -54,7 +54,7 @@ describe('settings API', () => {
       key: 'blueprints',
       slug: 'agents',
     })
-    expect(catalog.authorities[0]?.id).toBe('nox.tools.search')
+    expect(catalog.authorities[0]?.id).toBe('nox.core.tools.search')
   })
 
   it('reads the runtime tool inventory for Agent grants', async () => {

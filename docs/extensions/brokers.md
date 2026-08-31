@@ -188,12 +188,13 @@ channel a different security boundary from another. That matters more here than
 anywhere else: **one bot connection reaches every channel it can see, with a
 single issuer.**
 
-### `guildId` is a real trade-off
+### `guildId` and command scope
 
-A guild registers slash commands immediately. A guild list cannot be used in DMs
-at all — so a bot in several servers, or in DMs, needs them global. Global
-publication costs about an hour to propagate. That is the operator's call to
-make, not the schema's.
+When `guildId` is present, commands are published to that guild. Without it,
+commands are published globally so they can also be available outside one guild,
+including supported DM use. Registration scope and propagation timing are
+Discord behavior and should be verified against Discord's current documentation
+for the deployment.
 
 ### Verbosity vs. capability
 

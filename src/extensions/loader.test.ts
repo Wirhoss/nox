@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../application';
 import { silentLogger } from '../logger/logger';
+import { hostPackageVersions } from './hostPackages';
 import { discoverExtensions } from './loader';
 
 const directories: string[] = [];
@@ -31,6 +32,8 @@ function install(
   id: string,
   source = 'export default { activate() {} };',
   engines: { extensionApi: string; nox: string } = { extensionApi: '^0.1.0', nox: '^0.1.0' },
+  hostPackages?: Record<string, string>,
+  services?: readonly string[],
 ): void {
   const directory = join(root, id);
   mkdirSync(directory, { recursive: true });
@@ -39,9 +42,11 @@ function install(
     join(directory, 'nox-extension.json'),
     JSON.stringify({
       engines,
+      ...(hostPackages === undefined ? {} : { hostPackages }),
       id,
       main: 'extension.js',
       schemaVersion: 1,
+      ...(services === undefined ? {} : { services }),
       version: '1.2.3',
     }),
   );
@@ -107,6 +112,157 @@ describe('discoverExtensions', () => {
     ]);
     expect(discovered.catalog.list()[0]?.error).toContain('Extension API');
     expect(discovered.catalog.list()[1]?.error).toContain('Nox');
+  });
+
+  // A library the host cannot supply is settled with the engine checks, at the
+  // one moment the answer is cheap. The alternative is a package that activates,
+  // contributes, and throws a module resolution error at whoever is talking to
+  // Nox when its first tool call lands.
+  test('keeps a package out when the host cannot satisfy the library it needs', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(builtin, 'test.old-zod', undefined, { extensionApi: '*', nox: '*' }, { zod: '^2.0.0' });
+    install(
+      installed,
+      'test.current-zod',
+      undefined,
+      { extensionApi: '*', nox: '*' },
+      {
+        zod: `^${hostPackageVersions().get('zod') ?? '0.0.0'}`,
+      },
+    );
+
+    const discovered = await discover(builtin, installed);
+
+    expect(discovered.extensions.map(({ manifest }) => manifest.id)).toEqual(['test.current-zod']);
+    const rejected = discovered.catalog.list().find(({ id }) => id === 'test.old-zod');
+    expect(rejected?.state).toBe('incompatible');
+    expect(rejected?.error).toContain('zod ^2.0.0 is required');
+  });
+
+  // The escalation this closes is concrete: an installed package calling itself
+  // `nox.impostor` owns `nox.impostor.*`, and an operator's existing grant of
+  // `nox.*` — written to mean "the core's own" — already covers it. Nothing
+  // downstream can tell the two apart, because the ID is the only evidence.
+  test('refuses an installed package that claims the core namespace', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(builtin, 'nox.toolset.real');
+    install(installed, 'nox.impostor');
+
+    const discovered = await discover(builtin, installed);
+
+    expect(discovered.extensions.map(({ manifest }) => manifest.id)).toEqual(['nox.toolset.real']);
+    const refused = discovered.catalog.list().find(({ id }) => id === 'nox.impostor');
+    expect(refused?.state).toBe('failed');
+    expect(refused?.error).toContain('reserved');
+  });
+
+  // The reservation is a namespace, not a substring: `noxious.tools` is
+  // somebody's package and shares nothing with `nox.` but three letters.
+  test('leaves an installed package under its own namespace alone', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(installed, 'acme.tools');
+    install(installed, 'noxious.tools');
+
+    const discovered = await discover(builtin, installed);
+
+    expect(discovered.extensions.map(({ manifest }) => manifest.id).sort()).toEqual([
+      'acme.tools',
+      'noxious.tools',
+    ]);
+  });
+
+  test('binds the origin a package was found under, so nothing it ships can change it', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(builtin, 'nox.toolset.real');
+    install(installed, 'acme.tools');
+
+    const discovered = await discover(builtin, installed);
+
+    expect(Object.fromEntries(discovered.extensions.map((e) => [e.manifest.id, e.origin]))).toEqual(
+      { 'acme.tools': 'installed', 'nox.toolset.real': 'builtin' },
+    );
+  });
+
+  // A declaration nobody can read is not a disclosure. This is the one place an
+  // operator sees what an installed package reaches for without opening its
+  // manifest by hand.
+  test('reports what each package declared, alongside what it is', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(
+      installed,
+      'acme.tools',
+      undefined,
+      { extensionApi: '*', nox: '*' },
+      { zod: `^${hostPackageVersions().get('zod') ?? '0.0.0'}` },
+      ['nox.artifact-pipeline'],
+    );
+
+    const discovered = await discover(builtin, installed);
+
+    expect(discovered.catalog.list().find(({ id }) => id === 'acme.tools')).toMatchObject({
+      origin: 'installed',
+      services: ['nox.artifact-pipeline'],
+      state: 'loaded',
+    });
+  });
+
+  // Reported most of all when the package did not load: an unsatisfiable range
+  // is the likeliest reason it did not, and an error without the declaration
+  // leaves the reader with nothing to act on.
+  test('still reports the declarations of a package it turned away', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(
+      installed,
+      'acme.tools',
+      undefined,
+      { extensionApi: '*', nox: '*' },
+      {
+        zod: '^2.0.0',
+      },
+    );
+
+    const discovered = await discover(builtin, installed);
+
+    const entry = discovered.catalog.list().find(({ id }) => id === 'acme.tools');
+    expect(entry?.state).toBe('incompatible');
+    expect(entry?.hostPackages).toEqual({ zod: '^2.0.0' });
+  });
+
+  // The scoped container already refuses this, but only when asked — and the
+  // asking can be buried in a `create` that runs when somebody edits config
+  // hours later. Answered at discovery instead, from the manifest alone.
+  test('turns away an installed package that declares a control-plane service', async () => {
+    const builtin = temporary('nox-builtin-');
+    const installed = temporary('nox-installed-');
+    install(builtin, 'nox.toolset.config', undefined, { extensionApi: '*', nox: '*' }, undefined, [
+      'nox.config-admin',
+    ]);
+    install(installed, 'acme.tools', undefined, { extensionApi: '*', nox: '*' }, undefined, [
+      'nox.config-admin',
+    ]);
+    install(installed, 'acme.honest', undefined, { extensionApi: '*', nox: '*' }, undefined, [
+      'nox.artifact-pipeline',
+    ]);
+
+    const discovered = await discover(builtin, installed);
+
+    // The one package is refused; everything else, builtin and installed
+    // alike, rolls forward. Nox does not fall over for a bad neighbour.
+    expect(discovered.extensions.map(({ manifest }) => manifest.id).sort()).toEqual([
+      'acme.honest',
+      'nox.toolset.config',
+    ]);
+    const refused = discovered.catalog.list().find(({ id }) => id === 'acme.tools');
+    expect(refused?.state).toBe('failed');
+    expect(refused?.error).toContain('reserved to Nox builtins');
+    // Still disclosed: what it asked for is exactly what the reader needs.
+    expect(refused?.services).toEqual(['nox.config-admin']);
   });
 
   test('isolates activation failure and rolls forward healthy packages', async () => {

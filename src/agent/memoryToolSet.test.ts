@@ -156,7 +156,7 @@ describe('MemoryToolSet', () => {
       'memory_write',
     ]);
     expect(Object.keys(visible)).toEqual(['memory_search']);
-    expect(visible.memory_search?.authority).toBe('nox.memory.read');
+    expect(visible.memory_search?.authority).toBe('nox.core.memory.read');
   });
 
   test('refuses execution without a host session instead of inventing a memory owner', () => {

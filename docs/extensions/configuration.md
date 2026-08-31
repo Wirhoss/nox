@@ -74,13 +74,14 @@ effects.
 
 ---
 
-## There is no tool that accepts a secret value
+## Secret values stay outside the tool set
 
-`config_secrets` returns IDs, storage state, references and consumers only.
+`config_secrets` returns IDs, storage state, references, and consumers, but does
+not accept or return credential values.
 
-This is deliberate and it is not an oversight to be fixed. Passing a secret as a
-model-generated tool argument would put the credential in **provider input, the
-transcript, and audit data** — three places it can never be removed from.
+Passing a credential as a model-generated tool argument could expose it to
+provider input, transcript storage, and audit data. The current design therefore
+keeps value entry in the operator-facing, write-only Settings surface.
 
 An agent may configure a `{ "$secret": "ID" }` reference and report that its value
 is missing. The operator supplies or rotates that value through the write-only
@@ -89,7 +90,7 @@ Settings surface. See
 
 ---
 
-## An agent cannot pull the rug out from under itself
+## Configuration snapshots during a tool call
 
 The configuration snapshot held by a live session stays stable.
 

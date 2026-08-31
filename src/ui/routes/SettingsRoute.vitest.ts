@@ -1056,7 +1056,7 @@ describe('Settings route', () => {
       },
       enabled: true,
       gatewayUrl: 'wss://gateway.example',
-      grants: { alice: ['nox.history.read'] },
+      grants: { alice: ['nox.core.history.read'] },
       intents: ['messages'],
       token: { $secret: 'DISCORD_TOKEN' },
       type: 'discord',
@@ -1149,8 +1149,8 @@ describe('Settings route', () => {
     await fireEvent.update(screen.getByLabelText(/^Base agent/), 'support')
     const [basePattern] = screen.getAllByPlaceholderText('namespace.authority')
     if (basePattern === undefined) throw new Error('Expected the base grant pattern field.')
-    expect(basePattern).toHaveProperty('value', 'nox.history.read')
-    await fireEvent.update(basePattern, 'nox.history.search')
+    expect(basePattern).toHaveProperty('value', 'nox.core.history.read')
+    await fireEvent.update(basePattern, 'nox.core.history.search')
     await fireEvent.update(screen.getByLabelText(/^Credential value/), 'discord-token-v2')
     await fireEvent.click(screen.getByRole('button', { name: 'Save broker' }))
 
@@ -1164,7 +1164,7 @@ describe('Settings route', () => {
         team: { agent: 'support', grants: { bob: ['nox.toolset.web.*'] } },
       },
       gatewayUrl: 'wss://gateway.example',
-      grants: { alice: ['nox.history.search'] },
+      grants: { alice: ['nox.core.history.search'] },
       intents: ['messages'],
       token: { $secret: 'DISCORD_TOKEN' },
       type: 'discord',

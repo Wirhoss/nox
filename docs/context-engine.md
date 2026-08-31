@@ -1,102 +1,119 @@
 # The context engine
 
-This is the part of Nox that the [three laws](../README.md#the-three-laws) exist
-to protect. Everything here lives in
-[`src/agent/context/`](../src/agent/context/).
+The context engine implements Nox's current approach to request history, folding,
+compaction, and token-pressure estimates. It lives in
+[`src/agent/context/`](../src/agent/context/) and has focused tests in the same
+directory.
+
+The design goals in the [README](../README.md#design-goals) explain the intended
+direction. This page describes current behavior; it does not claim measured cost
+or quality improvements.
 
 ---
 
-## Two objects, not one
+## Transcript and working history
 
-The single most important distinction in Nox: **history is not context.**
+Nox keeps two related views of a session:
 
 ```mermaid
 flowchart LR
-  subgraph T["Transcript — permanent and complete"]
+  subgraph T["Transcript — append-only events"]
     direction TB
-    E1["msg"] --> E2["toolCall"] --> E3["toolResponse"] --> E4["msg"] --> E5["fold event"] --> E6["msg"]
+    E1["message"] --> E2["tool call"] --> E3["tool response"] --> E4["message"] --> E5["fold event"] --> E6["message"]
   end
-  subgraph W["Working set — bounded, provider-ready"]
+  subgraph W["Working history — sent to a provider"]
     direction TB
-    H["fixed head<br/>system prompt · tool schemas"] --> SH["settled history"] --> SF["suffix<br/>recall · tool results · new facts"]
+    H["system instructions · tool schemas"] --> SH["settled history"] --> SF["recent messages · recall · tool results"]
   end
-  T -->|"replay reconstructs the<br/>identical active history"| W
+  T -->|"replay fold and compaction events"| W
 ```
 
-The transcript is append-only and never loses anything. The working set is what
-actually goes to the provider, and it is bounded. `Context` exposes both, and the
-method names are the contract:
+The transcript records appended messages plus fold and compaction events. The
+working history is reconstructed from those events and is the history supplied
+to the provider. It can be reduced when folding or compaction applies; without a
+configured budget it is not guaranteed to stay below a particular size.
 
-| Method | Returns |
+`Context` exposes the distinction through these methods:
+
+| Method | Current result |
 |---|---|
-| `getFullHistory()` | The transcript — everything, including fold and compaction events |
-| `getHistory()` | The working set — what the next request will carry |
-| `getSystemPrompt()` | The fixed head's instructions |
-| `getTools()` | Tool schemas, in deterministic name-sorted order |
-| `getTokenEstimate()` | The current working-set estimate |
-| `getUsage()` | `ContextUsage` — what the last request actually cost |
-| `isUnderPressure()` | Whether the budget has been exceeded |
-| `addMessage(message)` | Appends. **Always appends.** |
+| `getFullHistory()` | Transcript events, including fold and compaction events |
+| `getHistory()` | Active provider-facing message history |
+| `getSystemPrompt()` | Session system instructions |
+| `getTools()` | Tool schemas in name-sorted order |
+| `getTokenEstimate()` | Current local estimate for the active history |
+| `getUsage()` | Context window, pressure threshold, and estimated usage |
+| `isUnderPressure()` | Whether estimated usage exceeds the configured threshold |
+| `addMessage(message)` | Appends an immutable message snapshot |
 
-Fold and compaction events are messages in the transcript like any other. They
-are not deletions, and "deleted to save space" is never the mechanism.
+The implementation and replay cases are covered by
+[`context.test.ts`](../src/agent/context/context.test.ts),
+[`transcript.test.ts`](../src/agent/context/transcript.test.ts), and the fold and
+compaction tests.
 
 ---
 
 ## Folding
 
-Folding collapses mechanical traffic — tool calls and their responses — by rule.
-It is deterministic, it is reversible by replay, and the original messages are
-still in the transcript.
+Folding targets settled tool calls and responses. It creates a smaller transcript
+event while leaving the original events available in the full transcript.
+Replaying the transcript applies the fold event again to reconstruct the active
+history.
 
-The placeholder a fold leaves behind carries only what the model cannot
-reconstruct on its own: **what was called, its Track ID, and whether it worked.**
-Arguments are truncated at 200 characters. Everything else is still in the
-transcript and retrievable by that Track ID.
+The folded representation records the tool name, Track ID, truncated arguments,
+and outcome. Arguments are limited to 200 characters. Full tool results remain
+available through the history tool set by Track ID.
 
-### A fold must earn its place
+### Reduction threshold
 
-A fold that merely breaks even makes the request no smaller. So the reduction is
-**measured in tokens before it is applied**, and rejected if it is not worth it:
+Before applying a fold, Nox estimates the messages it would replace and the fold
+event it would add. The current default minimum reduction is:
 
 ```ts
-const DEFAULT_MIN_REDUCTION_RATIO = 0.2;   // src/agent/context/fold.ts
+const DEFAULT_MIN_REDUCTION_RATIO = 0.2; // src/agent/context/fold.ts
 ```
 
-A fold must cut at least 20% of what it replaces, or it does not happen.
+With the default, a candidate needs an estimated reduction of at least 20%.
+Candidates below the configured threshold are left unchanged. This is based on
+the local estimator, not provider billing data.
 
-### Invariants
+### Validation
 
-`applyFold` throws rather than producing a subtly wrong history. A fold that
-folds nothing, a fold that names the same message twice, and a fold that
-contains itself are all errors, not edge cases.
+`applyFold` rejects malformed events, including an empty replacement list,
+duplicate message references, self-reference, and references that cannot be
+found in the active history. Those are implementation invariants with coverage
+in [`fold.test.ts`](../src/agent/context/fold.test.ts).
 
-### When it runs
+### When automatic folding runs
 
-A settled tool loop tries folding before a later request may compact. Folding
-never runs in the middle of a tool loop just because token pressure rose — the
-model has to consume the tool results first.
+During normal generation, the runner folds settled tool traffic before a later
+budget-triggered compaction pass. Tool traffic that the model has not yet
+consumed is excluded from that reduction pass.
 
 ---
 
 ## Compaction
 
-Compaction is model-assisted and **lossy**. It is the last resort, not a routine
-step, and never a background convenience.
+Compaction asks a chat model to summarize a selected range of active history. It
+is lossy because the summary may omit details, even though the original messages
+remain in the transcript.
 
-### No budget, no compaction
+### Automatic and requested compaction
 
-Without a configured context window there is no pressure signal, and `compact()`
-is a no-op. This is not a limitation to work around. Summarizing lossily on a
-guess is not a smaller version of compaction — it is precisely the thing
-compaction is the last resort *for*, performed for no reason. An agent takes its
-window from the model unless its own policy sets one.
+For automatic compaction, Nox needs a configured pressure threshold derived from
+a context window or explicit context policy. If there is no threshold, or the
+estimate is below it, the automatic pass returns without compacting.
 
-### It cannot cut a tool loop in half
+A person can explicitly request compaction through the session command. That path
+uses a forced pass and is not blocked by the absence of an automatic pressure
+threshold. It still needs a selectable history range and rejects a generated
+summary that does not reduce the local token estimate.
 
-A compaction boundary is never allowed to land between a `toolCall` and its
-`toolResponse`. `isSafeCut` rejects those positions and `seekSafeCut` walks the
-boundary outward until it finds a legal one:
+### Tool-call boundaries
+
+A selected compaction range cannot begin between a `toolCall` and its
+`toolResponse`. `isSafeCut` checks candidate boundaries, while `seekSafeCut`
+moves a boundary to a valid position:
 
 ```ts
 function isSafeCut(history, index) {
@@ -106,72 +123,75 @@ function isSafeCut(history, index) {
 }
 ```
 
-A model handed a call with no result, or a result with no call, will explain the
-inconsistency instead of answering the question.
+This preserves complete call/response pairs in the active history outside the
+summary range.
 
-### Invariants
+### Validation
 
-The same three as folding: a compaction must replace something, must not name a
-message twice, and must not contain itself. It must also find every message it
-claims to replace, and they must be contiguous once located.
+Compaction events reject empty ranges, duplicate references, self-reference,
+missing messages, and non-contiguous ranges. See
+[`compact.test.ts`](../src/agent/context/compact.test.ts).
 
 ---
 
 ## Pressure and token accounting
 
-Pressure is measured **before** the provider rejects the request, not after.
+The estimator in [`tokens.ts`](../src/agent/context/tokens.ts) is a local
+heuristic used for pressure decisions. It is not a tokenizer for every supported
+model and should not be read as a billing record.
 
-The estimator in [`tokens.ts`](../src/agent/context/tokens.ts) is deliberately
-cheap and deliberately conservative — it is a budget signal, not a billing
-record:
-
-| Constant | Value |
+| Heuristic constant | Current value |
 |---|---|
 | Characters per token | 3 |
 | Per-message overhead | 6 |
 | System prompt overhead | 4 |
 | Per-tool overhead | 8 |
 | Image | 1024 |
-| Audio / document | 2048 |
+| Audio or document | 2048 |
 | Video | 4096 |
 
-Serialization for estimation is stable — the same message estimates the same
-number every time, including cycle-safe object traversal — because an estimate
-that drifts would make folding's reduction check meaningless.
+Estimation uses stable serialization, including cycle-safe traversal, so the same
+local value produces a repeatable estimate. That repeatability is useful for
+comparing a candidate fold with the messages it would replace, but it does not
+prove accuracy for a particular provider.
 
-When a provider reports real usage, `recordInputUsage()` takes it. Estimates are
-what Nox uses when nobody has told it better, not what it prefers.
+When a provider reports actual input usage, `recordInputUsage()` stores the
+difference between that count and the estimate for the same request. Later local
+changes use estimated deltas until another provider report refreshes the anchor.
+The estimator may still over- or under-count model-specific input.
 
 ---
 
-## Bounded retrieval
+## Bounded transcript retrieval
 
-Retrieval must never quietly undo the space that folding and compaction
-reclaimed. The history tool set (`nox.history`) is the search surface over the
-transcript, and it is budgeted:
+The history tool set (`nox.history`) is the search surface over persisted
+transcripts:
 
-| Tool | What it does |
+| Tool | Current purpose |
 |---|---|
-| `history_search` | Full-text search across the transcript |
+| `history_search` | Full-text search in a transcript |
 | `history_sessions` | List sessions |
 | `history_sessions_search` | Search across sessions |
-| `history_read_result` | Read one folded tool result back by Track ID |
+| `history_read_result` | Read a folded tool result by Track ID |
 
-Results are capped at **6000 characters** by default, and a truncated result says
-so in the payload rather than silently returning less. Ranking uses SQLite FTS5's
-`bm25()` over an index built for this purpose, with diacritics folded to match
-the way the tokenizer normalizes.
+Results default to a 6,000-character cap. A truncated result includes continuation
+information in its payload. Transcript and tool search use SQLite FTS5 with
+`bm25()` ranking; semantic-memory retrieval is separate and vector based. See
+[extensions/memory.md](extensions/memory.md).
 
-> **A note on BM25.** Lexical ranking is used in exactly two places: transcript
-> search here, and tool search in [`src/tool/router.ts`](../src/tool/router.ts).
-> The semantic memory has **no** lexical arm — its retrieval is vector-only. See
-> [extensions/memory.md](extensions/memory.md).
+The cap bounds each retrieval result. It does not by itself guarantee that an
+entire provider request fits a model window; that still depends on the configured
+context policy and other request content.
 
 ---
 
-## Replay is the source of truth
+## Replay
 
-A persisted transcript must reconstruct the identical active history. That is
-what makes folding safe to call reversible, and it is what makes the whole
-scheme auditable: every reduction is an event you can find, with the original
-still sitting next to it.
+When a `Context` is created from persisted events, it iterates through the
+transcript and applies fold and compaction events to rebuild active history. The
+expected equivalence is tested in the context and transcript suites.
+
+This event-based approach makes reductions inspectable and reproducible by the
+current implementation. It should still be treated as a versioned behavior:
+changes to event schemas or replay semantics need migrations and regression
+coverage as the project evolves.

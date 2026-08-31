@@ -457,7 +457,7 @@ describe('authorization before the gate', () => {
   test('a principal without the grant is denied, and no permission is raised', async () => {
     const executions = { count: 0 };
     const session = await openSession({
-      authorization: grantsFor({ alice: ['nox.history.*'] }),
+      authorization: grantsFor({ alice: ['nox.core.history.*'] }),
       directToolSets: [grant('direct', echoTool(executions))],
       gate: { defaultVerdict: 'escalate' },
     });
@@ -629,7 +629,7 @@ describe('authorization before the gate', () => {
   test('every decision is audited, including one nobody else would record', async () => {
     const executions = { count: 0 };
     const session = await openSession({
-      authorization: grantsFor({ alice: ['nox.history.*'] }),
+      authorization: grantsFor({ alice: ['nox.core.history.*'] }),
       directToolSets: [grant('direct', echoTool(executions))],
     });
 
@@ -658,7 +658,7 @@ describe('what a tool asks for', () => {
     const session = await openSession({
       // `nox.tools.call` alone is not enough: the routed tool's own authority is
       // what has to be granted.
-      authorization: grantsFor({ alice: ['nox.tools.call', 'nox.tools.search'] }),
+      authorization: grantsFor({ alice: ['nox.core.tools.call', 'nox.core.tools.search'] }),
       provider: new RoutingProvider(),
       routedToolSets: [grant('versions', versionTool(executions))],
     });

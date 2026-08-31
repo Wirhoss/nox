@@ -36,21 +36,6 @@ const { t } = useI18n()
           <p class="access__overline">{{ t('access.frame.personalRuntime') }}</p>
           <p class="access__manifesto">{{ t('access.frame.manifesto') }}</p>
         </div>
-
-        <dl class="access__facts">
-          <div>
-            <dt>{{ t('access.frame.mode') }}</dt>
-            <dd>{{ t('access.frame.localFirst') }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('access.frame.surface') }}</dt>
-            <dd>{{ t('access.frame.webAccess') }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('access.frame.identity') }}</dt>
-            <dd>{{ t('access.frame.singleOperator') }}</dd>
-          </div>
-        </dl>
       </aside>
 
       <NoxPanel class="access__panel" labelled-by="access-title">
@@ -113,12 +98,9 @@ const { t } = useI18n()
   display: flex;
   min-height: 32rem;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  gap: clamp(var(--nox-space-8), 8vh, var(--nox-space-16));
   padding: var(--nox-space-4) 0;
-}
-
-.access__statement {
-  margin: auto 0;
 }
 
 .access__overline,
@@ -141,36 +123,6 @@ const { t } = useI18n()
   letter-spacing: -0.04em;
   line-height: 1.04;
   white-space: pre-line;
-}
-
-.access__facts {
-  display: grid;
-  margin: 0;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--nox-space-4);
-}
-
-.access__facts div {
-  padding-top: var(--nox-space-3);
-  border-top: 1px solid var(--nox-border-subtle);
-}
-
-.access__facts dt,
-.access__facts dd {
-  margin: 0;
-  font-family: var(--nox-font-mono);
-  font-size: var(--nox-text-xs);
-}
-
-.access__facts dt {
-  color: var(--nox-text-muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.access__facts dd {
-  margin-top: var(--nox-space-1);
-  color: var(--nox-text-secondary);
 }
 
 .access__panel {
@@ -233,8 +185,7 @@ const { t } = useI18n()
     gap: var(--nox-space-8);
   }
 
-  .access__statement,
-  .access__facts {
+  .access__statement {
     display: none;
   }
 

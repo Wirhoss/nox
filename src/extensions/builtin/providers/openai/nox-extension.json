@@ -3,6 +3,10 @@
   "id": "nox.provider.openai",
   "version": "0.1.0",
   "main": "extension.ts",
+  "services": ["nox.artifact-pipeline"],
+  "hostPackages": {
+    "zod": "^4.4.3"
+  },
   "engines": {
     "nox": "^0.1.0",
     "extensionApi": "^0.1.0"

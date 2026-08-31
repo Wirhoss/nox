@@ -73,13 +73,13 @@ describe('registration', () => {
     const { store } = await openStore();
 
     expect(await store.isRegistered()).toBe(false);
-    await store.register('esteban', PASSWORD);
+    await store.register('wirhoss', PASSWORD);
     expect(await store.isRegistered()).toBe(true);
   });
 
   test('refuses a second account, because Nox is single user', async () => {
     const { store } = await openStore();
-    await store.register('esteban', PASSWORD);
+    await store.register('wirhoss', PASSWORD);
 
     expect(store.register('otro', PASSWORD)).rejects.toBeInstanceOf(AccountExistsError);
   });
@@ -87,7 +87,7 @@ describe('registration', () => {
   test('never hands back the password, hashed or otherwise', async () => {
     const { store } = await openStore();
 
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
 
     expect(JSON.stringify(account)).not.toContain(PASSWORD);
     expect(Object.keys(account).sort()).toEqual(['accountId', 'createdAt', 'username']);
@@ -102,7 +102,7 @@ describe('registration', () => {
    */
   test('stores the password under the argon2id parameters this repo fixed', async () => {
     const { database, store } = await openStore();
-    await store.register('esteban', PASSWORD);
+    await store.register('wirhoss', PASSWORD);
 
     const row = await database.exclusive((db) =>
       db.select({ passwordHash: accounts.passwordHash }).from(accounts).get(),
@@ -142,18 +142,18 @@ describe('the registration window', () => {
 describe('authentication', () => {
   test('accepts the right password', async () => {
     const { store } = await openStore();
-    const registered = await store.register('esteban', PASSWORD);
+    const registered = await store.register('wirhoss', PASSWORD);
 
-    const account = await store.authenticate('esteban', PASSWORD);
+    const account = await store.authenticate('wirhoss', PASSWORD);
 
     expect(account?.accountId).toBe(registered.accountId);
   });
 
   test('rejects a wrong password and an unknown username the same way', async () => {
     const { store } = await openStore();
-    await store.register('esteban', PASSWORD);
+    await store.register('wirhoss', PASSWORD);
 
-    expect(await store.authenticate('esteban', 'wrong-password-entirely')).toBeUndefined();
+    expect(await store.authenticate('wirhoss', 'wrong-password-entirely')).toBeUndefined();
     expect(await store.authenticate('nadie', PASSWORD)).toBeUndefined();
   });
 });
@@ -161,7 +161,7 @@ describe('authentication', () => {
 describe('sessions', () => {
   test('a fresh access token resolves to the account that owns it', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
 
     const tokens = await store.openSession(account.accountId);
     const resolved = await store.resolve(tokens.accessToken);
@@ -172,7 +172,7 @@ describe('sessions', () => {
 
   test('a token that was not signed here resolves to nobody', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const tokens = await store.openSession(account.accountId);
 
     const [header, payload] = tokens.accessToken.split('.');
@@ -183,7 +183,7 @@ describe('sessions', () => {
 
   test('revoking kills the access token immediately, not at its expiry', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const tokens = await store.openSession(account.accountId);
 
     expect(await store.resolve(tokens.accessToken)).toBeDefined();
@@ -194,7 +194,7 @@ describe('sessions', () => {
 
   test('revoking twice is not a failure, it is just already done', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const tokens = await store.openSession(account.accountId);
 
     expect(await store.revoke(tokens.sessionId)).toBe(true);
@@ -203,7 +203,7 @@ describe('sessions', () => {
 
   test('one session ending leaves the others alone', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const phone = await store.openSession(account.accountId);
     const laptop = await store.openSession(account.accountId);
 
@@ -217,7 +217,7 @@ describe('sessions', () => {
 describe('refresh', () => {
   test('trades a refresh token for a working access token', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const opened = await store.openSession(account.accountId);
 
     const renewed = await store.refresh(opened.refreshToken);
@@ -228,7 +228,7 @@ describe('refresh', () => {
 
   test('rotates: the token just spent cannot be spent again', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const opened = await store.openSession(account.accountId);
 
     const renewed = await store.refresh(opened.refreshToken);
@@ -240,7 +240,7 @@ describe('refresh', () => {
 
   test('a revoked session cannot be refreshed back to life', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const opened = await store.openSession(account.accountId);
 
     await store.revoke(opened.sessionId);
@@ -250,7 +250,7 @@ describe('refresh', () => {
 
   test('logging out by refresh token ends the session it names', async () => {
     const { store } = await openStore();
-    const account = await store.register('esteban', PASSWORD);
+    const account = await store.register('wirhoss', PASSWORD);
     const opened = await store.openSession(account.accountId);
 
     expect(await store.revokeByRefreshToken(opened.refreshToken)).toBe(true);

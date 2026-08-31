@@ -3,6 +3,10 @@
   "id": "nox.toolset.web",
   "version": "0.1.0",
   "main": "extension.ts",
+  "hostPackages": {
+    "playwright": "^1.62.1",
+    "zod": "^4.4.3"
+  },
   "engines": {
     "nox": "^0.1.0",
     "extensionApi": "^0.1.0"

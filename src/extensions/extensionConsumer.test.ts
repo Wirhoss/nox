@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { ChatProvider, providers, toolSets } from '@nox/extension-api';
+import { ChatProvider, EXTENSION_EXTERNAL_PACKAGES, providers, toolSets } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { NoxApplication } from '../application';
@@ -34,6 +34,7 @@ afterEach(() => {
 async function compileExtension(
   entrypoint: string,
   id: string,
+  services: readonly string[] = [],
 ): Promise<Awaited<ReturnType<typeof discoverExtensions>>> {
   const root = temporaryRoot();
   const packageDirectory = join(root, id);
@@ -41,7 +42,9 @@ async function compileExtension(
 
   const output = await Bun.build({
     entrypoints: [entrypoint],
-    external: ['@nox/extension-api', 'playwright', 'sharp', 'zod'],
+    // The same declaration a real extension build uses, so this test cannot
+    // pass on a list that has quietly drifted from the one that ships.
+    external: [...EXTENSION_EXTERNAL_PACKAGES],
     minify: true,
     naming: 'extension.js',
     outdir: packageDirectory,
@@ -58,6 +61,7 @@ async function compileExtension(
       id,
       main: 'extension.js',
       schemaVersion: 1,
+      services,
       version: '1.0.0',
     }),
   );
@@ -108,7 +112,10 @@ describe('external Extension API consumers', () => {
   test('a compiled provider accepts host secret handles for multiple instances', async () => {
     const discovered = await compileExtension(
       resolve(import.meta.dir, 'builtin', 'providers', 'openai', 'extension.ts'),
-      'nox.provider.openai',
+      // Compiled and installed the way a third party would, so it takes a
+      // third-party ID: `nox.` is the core's, and discovery refuses it here.
+      'test.provider.openai',
+      ['nox.artifact-pipeline'],
     );
     const app = new NoxApplication({ extensions: discovered.extensions });
     await app.start();

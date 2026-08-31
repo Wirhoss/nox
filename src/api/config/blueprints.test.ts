@@ -212,7 +212,7 @@ async function blueprintNox(options: NoxOptions = {}): Promise<BlueprintNox> {
     logger: silentLogger,
   });
   const store = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
-  const account = await store.register('esteban', PASSWORD);
+  const account = await store.register('wirhoss', PASSWORD);
   const tokens = await store.openSession(account.accountId);
 
   const server = ApiServer.create({

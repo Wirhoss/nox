@@ -14,11 +14,11 @@ describe('broker configuration', () => {
   test('keeps grants per sender, since the issuer is this broker', () => {
     const parsed = brokerConfigSchema.parse({
       agent: 'nox',
-      grants: { '1234567890': ['nox.history.*'] },
+      grants: { '1234567890': ['nox.core.history.*'] },
       type: 'discord',
     });
 
-    expect(parsed.grants).toEqual({ '1234567890': ['nox.history.*'] });
+    expect(parsed.grants).toEqual({ '1234567890': ['nox.core.history.*'] });
   });
 
   test('materializes conversation overrides as replacement security boundaries', () => {
@@ -32,7 +32,7 @@ describe('broker configuration', () => {
         locked: { grants: {} },
         public: {},
       },
-      grants: { 'base-user': ['nox.history.*'] },
+      grants: { 'base-user': ['nox.core.history.*'] },
       type: 'discord',
     });
 

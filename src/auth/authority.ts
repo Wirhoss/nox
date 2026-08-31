@@ -26,7 +26,7 @@ const authorityIdSchema = z
   .max(214)
   .regex(
     AUTHORITY_PATTERN,
-    'Use dot-separated lowercase segments, for example "nox.history.read".',
+    'Use dot-separated lowercase segments, for example "nox.core.history.read".',
   );
 
 const authorityDefinitionSchema = z.object({
@@ -35,8 +35,24 @@ const authorityDefinitionSchema = z.object({
   ownerExtensionId: z.string().trim().min(1),
 });
 
-/** Everything the core owns. It is not an extension, so it names itself. */
-const CORE_OWNER_ID = 'nox';
+/**
+ * Everything the core owns. It is not an extension, so it names itself — and it
+ * names itself narrowly.
+ *
+ * `nox.core` rather than `nox`, so the core lives under the same rule as
+ * everybody else: it may register `nox.core.*` and nothing more. The wider
+ * `nox.` stays a namespace nobody owns, holding the core beside the builtins
+ * — `nox.toolset.web`, `nox.broker.discord` — instead of over them.
+ *
+ * That separation is what makes `nox.core.*` a grant worth writing. Before it,
+ * the only pattern covering the core's own authorities was `nox.*`, which also
+ * covered every builtin's, so "give this agent what the core offers, and
+ * nothing else" could not be said. It also removes a collision that was waiting:
+ * the core's topics and the builtins' categories shared one segment, and a
+ * builtin one day named `nox.memory` would have owned `nox.memory.*` — the
+ * core's own memory authorities included.
+ */
+const CORE_OWNER_ID = 'nox.core';
 
 /**
  * The namespace an owner may register under. Extension IDs are package-like and

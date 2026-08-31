@@ -28,7 +28,7 @@ async function sessionNox(): Promise<SessionNox> {
   databases.push(database);
 
   const auth = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
-  const account = await auth.register('esteban', PASSWORD);
+  const account = await auth.register('wirhoss', PASSWORD);
   const tokens = await auth.openSession(account.accountId);
   const sessions = new SessionStore(database, { logger: silentLogger });
   await sessions.create('session-1', { agentId: 'operator', title: 'Inspect the machine' });

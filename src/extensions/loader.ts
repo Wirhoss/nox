@@ -2,10 +2,15 @@ import { readdir, readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { EXTENSION_API_VERSION, isExtensionDefinition } from '@nox/extension-api';
+import {
+  CONTROL_PLANE_SERVICE_IDS,
+  EXTENSION_API_VERSION,
+  isExtensionDefinition,
+} from '@nox/extension-api';
 
 import { ExtensionCatalog } from './catalog';
 import { bindExtensionManifest } from './extension';
+import { unsatisfiedHostPackages } from './hostPackages';
 import {
   EXTENSION_MANIFEST_FILENAME,
   isCompatible,
@@ -68,8 +73,10 @@ async function discoverExtensions(
         JSON.parse(await readFile(candidate.manifestPath, 'utf8')) as unknown,
       );
       catalog.add(candidate.key, {
+        ...(manifest.hostPackages === undefined ? {} : { hostPackages: manifest.hostPackages }),
         id: manifest.id,
         origin: candidate.origin,
+        ...(manifest.services === undefined ? {} : { services: manifest.services }),
         version: manifest.version,
       });
       parsed.push({ ...candidate, manifest });
@@ -97,6 +104,37 @@ async function discoverExtensions(
       options.logger.error({ extensionId: manifest.id, origin }, error);
       continue;
     }
+    // The `nox.` namespace is the core's, and an ID is what claims it: an
+    // installed package calling itself `nox.anything` registers authorities
+    // under `nox.anything.*`, which an existing grant of `nox.*` already
+    // covers. Nothing downstream can tell that apart from the core's own — the
+    // name is the only evidence there is — so the name is refused here.
+    if (origin !== 'builtin' && isReservedId(manifest.id)) {
+      const error = `Extension ID "${manifest.id}" is reserved: only builtins may use the "nox." namespace.`;
+      catalog.fail(key, error);
+      options.logger.error({ extensionId: manifest.id, origin }, error);
+      continue;
+    }
+    // Settled here rather than at the first `get`. The scoped container refuses
+    // a control-plane service whenever it is asked, but "whenever" can be deep
+    // inside a `create` that runs when somebody edits configuration hours
+    // later. The manifest already says enough to answer now, and a package that
+    // can never have what it declared should not be counted as loaded.
+    //
+    // The package is turned away; Nox is not. Discovery drops it, logs why, and
+    // rolls the rest forward, which is what every other refusal here does.
+    const restricted =
+      origin === 'builtin'
+        ? []
+        : (manifest.services ?? []).filter((id) => CONTROL_PLANE_SERVICE_IDS.includes(id));
+    if (restricted.length > 0) {
+      const error =
+        `Extension "${manifest.id}" declares ${restricted.join(', ')}, ` +
+        'reserved to Nox builtins; an installed extension cannot be granted it.';
+      catalog.fail(key, error);
+      options.logger.error({ extensionId: manifest.id, origin }, error);
+      continue;
+    }
     if (!isCompatible(manifest, options.noxVersion)) {
       catalog.incompatible(
         key,
@@ -109,6 +147,15 @@ async function discoverExtensions(
         key,
         `Requires Extension API ${manifest.engines.extensionApi}; this runtime provides ${EXTENSION_API_VERSION}.`,
       );
+      continue;
+    }
+    // Beside the engine checks rather than after activation: a library the host
+    // cannot supply is the same kind of fact as a runtime version it does not
+    // match, and both are cheaper to state now than to discover from a module
+    // resolution error during somebody's conversation.
+    const missingPackages = unsatisfiedHostPackages(manifest.hostPackages);
+    if (missingPackages !== undefined) {
+      catalog.incompatible(key, `${missingPackages}.`);
       continue;
     }
 
@@ -143,6 +190,7 @@ async function discoverExtensions(
             },
           },
           migrations,
+          origin,
         ),
       );
     } catch (error) {
@@ -235,6 +283,11 @@ async function packagePath(
     throw new Error(`The extension ${kind} must be inside its package directory.`);
   }
   return resolved;
+}
+
+/** The core's own namespace, and the bare name of it. */
+function isReservedId(id: string): boolean {
+  return id === 'nox' || id.startsWith('nox.');
 }
 
 function duplicateIds(candidates: readonly ParsedCandidate[]): ReadonlySet<string> {

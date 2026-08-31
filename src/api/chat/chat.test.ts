@@ -124,7 +124,7 @@ async function chatNox(): Promise<ChatNox> {
     logger: silentLogger,
   });
   const store = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
-  const account = await store.register('esteban', PASSWORD);
+  const account = await store.register('wirhoss', PASSWORD);
   const tokens = await store.openSession(account.accountId);
 
   const hub = new ChatHub();
@@ -568,7 +568,7 @@ describe('the chat hub', () => {
             content: [{ text: 'hola', type: 'text' }],
             messageId: 'm-1',
             mode: 'message',
-            principal: { issuer: 'web', subject: 'esteban' },
+            principal: { issuer: 'web', subject: 'wirhoss' },
             text: 'hola',
             type: 'userMessage',
           },

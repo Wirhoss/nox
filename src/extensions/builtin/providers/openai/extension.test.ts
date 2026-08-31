@@ -15,6 +15,7 @@ async function started(): Promise<NoxApplication> {
           id: 'nox.provider.openai',
           main: 'extension.js',
           schemaVersion: 1,
+          services: ['nox.artifact-pipeline'],
           version: '0.1.0',
         },
         openAIExtension,

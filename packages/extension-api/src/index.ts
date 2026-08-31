@@ -13,6 +13,7 @@ export * from './commands.js';
 export * from './content.js';
 export * from './contributions.js';
 export * from './core.js';
+export * from './host.js';
 // Types plus the one runtime value: the kind vocabulary both the extractor and
 // the agent-facing tools have to pick from.
 export { MEMORY_FACT_KINDS } from './memory.js';

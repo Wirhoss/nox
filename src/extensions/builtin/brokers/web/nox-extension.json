@@ -3,6 +3,7 @@
   "id": "nox.broker.web",
   "version": "0.1.0",
   "main": "extension.ts",
+  "services": ["nox.chat-hub"],
   "engines": {
     "nox": "^0.1.0",
     "extensionApi": "^0.1.0"

@@ -47,6 +47,46 @@ describe('parseExtensionManifest', () => {
     expect(Object.isFrozen(parsed.workers)).toBeTrue();
   });
 
+  test('accepts and freezes the services a package declares', () => {
+    const parsed = parseExtensionManifest({ ...manifest(), services: ['nox.artifact-pipeline'] });
+
+    expect(parsed.services).toEqual(['nox.artifact-pipeline']);
+    expect(Object.isFrozen(parsed.services)).toBeTrue();
+  });
+
+  // Absent is an empty grant, not an unrestricted one, and the parser keeps the
+  // difference rather than filling in a default the loader would have to guess.
+  test('leaves an undeclared service list absent', () => {
+    expect(parseExtensionManifest(manifest()).services).toBeUndefined();
+  });
+
+  test('rejects a service ID that is not a service ID', () => {
+    expect(() => parseExtensionManifest({ ...manifest(), services: ['Nox Clock'] })).toThrow(
+      /services/u,
+    );
+  });
+
+  test('accepts host packages the host actually provides', () => {
+    const parsed = parseExtensionManifest({ ...manifest(), hostPackages: { zod: '^4.0.0' } });
+
+    expect(parsed.hostPackages).toEqual({ zod: '^4.0.0' });
+    expect(Object.isFrozen(parsed.hostPackages)).toBeTrue();
+  });
+
+  // The closed key set is the rule "if Nox does not provide it, bundle it"
+  // written where a build will hit it, rather than in prose nobody reads twice.
+  test('rejects a package the host does not provide, and says to bundle it', () => {
+    expect(() =>
+      parseExtensionManifest({ ...manifest(), hostPackages: { 'left-pad': '^1.0.0' } }),
+    ).toThrow(/bundle anything else into the package/u);
+  });
+
+  test('rejects an exact version where a range belongs', () => {
+    expect(() =>
+      parseExtensionManifest({ ...manifest(), hostPackages: { zod: 'latest' } }),
+    ).toThrow(/hostPackages/u);
+  });
+
   test('rejects fields it does not define and entry points outside the package', () => {
     expect(() => parseExtensionManifest({ ...manifest(), surprise: true })).toThrow(RangeError);
     expect(() => parseExtensionManifest({ ...manifest(), main: '../outside.js' })).toThrow(/main/u);

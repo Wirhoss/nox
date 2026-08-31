@@ -1,31 +1,31 @@
 # Architecture
 
-Nox is a **kernel** plus **contributions**. The kernel owns the laws and imports
-nothing concrete: when it needs a capability it declares a *contribution point*,
-and something fills it. Builtins are contributions too — they differ from
-third-party code only in how they are loaded, never in what they are.
+Nox is organized as a kernel plus extension contributions. The kernel defines
+contracts and composes registered capabilities; builtin providers, brokers,
+memories, tool sets, commands, and language packs are loaded as extension
+packages.
+
+This is an architectural boundary in the current source, not a claim of security
+isolation. [`src/boundaries.test.ts`](../src/boundaries.test.ts) checks that
+builtin packages are not imported by kernel files and that the public Extension
+API does not import kernel source.
 
 | Term | Meaning |
 |---|---|
-| **Contribution point** | A typed slot the kernel declares — `ContributionPoint<T>` |
-| **Contribution** | A concrete capability registered against a point |
-| **Extension** | A packaged unit of contributions with a lifecycle. One extension may fill several points |
-| **Service** | A host-owned dependency handed out by token, never a global |
-
-The practical consequence is a rule you can check by grep: `src/bootstrap.ts`
-imports no concrete builtin. Removing every package under
-`src/extensions/builtin/` leaves a runtime that starts, has no provider, no
-transport and no memory, and is still correct.
+| **Contribution point** | A typed registry slot such as `ContributionPoint<T>` |
+| **Contribution** | A capability registered against a contribution point |
+| **Extension** | A package with a manifest, activation lifecycle, and zero or more contributions |
+| **Service** | A host-owned dependency exposed to an extension through a typed token |
 
 ---
 
-## The contribution points
+## Contribution points
 
-Every point is declared in the public package, not in `src/`. That is
-deliberate: a point is a contract with code Nox did not write, so it lives where
-third-party code can import it.
+Contribution-point declarations live in the public
+[`@nox/extension-api`](../packages/extension-api/) package so extension code and
+the kernel consume the same contract.
 
-| Point | Contract | Builtins today |
+| Point | Contract | Builtins in the current tree |
 |---|---|---|
 | `nox.providers` | `ProviderContribution` | `openai`, `local` |
 | `nox.brokers` | `BrokerContribution` | `web`, `discord` |
@@ -33,186 +33,206 @@ third-party code can import it.
 | `nox.toolsets` | `ToolSetContribution` | `web`, `config`, `cronjobs` |
 | `nox.commands` | `Command` | `session` |
 | `nox.languages` | `LanguagePack` | `en`, `es` |
-| `nox.translations` | `TranslationFragment` | contributed by extensions that own UI copy |
-| `nox.authorities` | `AuthorityContribution` | declared alongside whatever they guard |
+| `nox.translations` | `TranslationFragment` | fragments owned by extensions |
+| `nox.authorities` | `AuthorityContribution` | authorities registered by their owning package |
 
-Declarations live in [`packages/extension-api/src/`](../packages/extension-api/src/),
-one file per domain: `providers.ts`, `brokers.ts`, `memory.ts`, `tools.ts`,
-`commands.ts`, `content.ts`, `artifacts.ts`, `schemas.ts`, `untrusted.ts`.
+Declarations are grouped by domain under
+[`packages/extension-api/src/`](../packages/extension-api/src/), including
+providers, brokers, memory, tools, commands, content, artifacts, schemas, and
+untrusted-data helpers.
 
-> **Note.** Not every extensible seam is a contribution point. Artifact
-> processors — the Sharp image builtin among them — register against a
-> *service* (`artifacts.processors.register(...)`) rather than a point, because
-> the pipeline owns their ordering and cache versioning. Both are public; they
-> differ in who owns the lifecycle.
+Not every extensible registry is a contribution point. Artifact processors, for
+example, register through the artifact-pipeline service because that service owns
+processor selection and rendition cache versioning. Both APIs are public, but
+their lifecycle owners differ.
 
 ---
 
-## Services
+## Host services
 
-A service is a host-owned dependency handed to an extension by token. There is
-no global, no ambient singleton, and no way to reach the host except through a
-token the activation context can resolve.
+An activation context contains a service container. Extensions resolve
+host-owned dependencies with public tokens rather than receiving the concrete
+application object.
 
-| Token | What it hands over |
+| Token | Value exposed through the host API |
 |---|---|
-| `configService` | The validated configuration snapshot |
-| `configAdminService` | The administration boundary: entry CRUD, reload, retry, revert |
-| `secretStoreService` | Secret *metadata* and redacted handles — never values |
-| `loggerService` | The structured logger |
-| `dataDirectoryService` | The resolved `DATA_DIR` path |
-| `artifactPipelineService` | Artifact ingestion, renditions and the processor registry |
-| `chatHubService` | The chat surface brokers and the API share |
-| `modelAccessService` | Model calls routed through the runtime's own policy |
-| `runtimeActivityService` | Whether the runtime is busy — what idle-triggered work waits on |
-| `scheduledRunHostService` | Opening a fresh session for a scheduled occurrence |
+| `configService` | Validated configuration snapshots |
+| `configAdminService` | Entry CRUD, reload, retry, and revert operations |
+| `secretStoreService` | Secret metadata and redacted handles, not values |
+| `loggerService` | Structured logger |
+| `dataDirectoryService` | Resolved `DATA_DIR` path |
+| `artifactPipelineService` | Artifact ingestion, renditions, and processor registry |
+| `chatHubService` | Chat surface shared by brokers and the API |
+| `modelAccessService` | Model calls routed through configured providers |
+| `runtimeActivityService` | Current runtime activity state |
+| `scheduledRunHostService` | Opening a new session for a scheduled occurrence |
 
-Host-side, each token is narrowed back to its concrete implementation type
-without widening the public API — see [`src/services.ts`](../src/services.ts).
+Host-side token narrowing is in [`src/services.ts`](../src/services.ts).
+
+Each extension manifest can declare a `services` list. At activation,
+`ServiceCollection.scoped` creates a container that resolves only those declared
+IDs. An undeclared token raises `UndeclaredServiceError`; a declared token the
+host does not provide follows the existing missing-service behavior. Installed
+extensions are also prevented from requesting tokens marked as control-plane
+services.
+
+This controls the service API handed to extension code. It does not prevent that
+code from using process-level APIs, so it should not be described as a sandbox.
+The distinction is covered further under [Trust boundary](#trust-boundary).
 
 ---
 
-## The composition root
+## Composition root
 
-[`src/application.ts`](../src/application.ts) is the only place that assembles
-the runtime. `NoxApplication` owns the registry, the service collection, the
-loaded extensions, the live sessions and one `DisposableStore` for everything
-that must be released.
+[`src/application.ts`](../src/application.ts) assembles the runtime.
+`NoxApplication` owns the contribution registry, service collection, loaded
+extensions, live sessions, and disposables.
 
 ```mermaid
 flowchart TB
-  BOOT["bootstrap.ts<br/><i>imports no concrete builtin</i>"] --> APP["NoxApplication"]
+  BOOT["bootstrap.ts"] --> APP["NoxApplication"]
   APP --> REG["ContributionRegistry"]
   APP --> SVC["ServiceCollection"]
-  APP --> LOAD["Extension loader"]
+  APP --> LOAD["Extension discovery"]
 
-  LOAD --> D1["extensions/builtin<br/>shipped in the image"]
-  LOAD --> D2["EXTENSIONS_DIR<br/>locally installed"]
+  LOAD --> D1["extensions/builtin"]
+  LOAD --> D2["EXTENSIONS_DIR"]
   D1 --> ACT["activate(context)"]
   D2 --> ACT
   ACT --> REG
-  SVC -.->|"by token"| ACT
+  SVC -.->|"declared token"| ACT
 
   REG --> AGENT["Agent · Session · Runner"]
   AGENT --> CTXE["Context engine"]
   AGENT --> ROUTER["Tool router"]
-  AGENT --> PROV["Provider adapter"]
+  AGENT --> PROV["Provider contribution"]
   GW["Message gateway"] --> AGENT
-  BRK["Brokers"] --> GW
+  BRK["Broker contribution"] --> GW
 ```
 
-Activation is transactional per package: a failure rolls back that package's
-contributions and leaves every healthy package running. Duplicate IDs disable
-every conflicting candidate rather than letting one win by load order.
+Activation is transactional per package in the current implementation: if
+activation fails, registrations from that activation are rolled back while
+other packages can continue. Duplicate manifest IDs are reported as conflicts
+instead of selecting a package by discovery order. Representative cases live in
+[`loader.test.ts`](../src/extensions/loader.test.ts) and
+[`application.test.ts`](../src/application.test.ts).
 
 ---
 
 ## Discovery
 
-Nox discovers extension packages at startup from two roots:
+At startup, Nox scans two roots:
 
-- **`extensions/builtin`**, beside the runtime — packages shipped in the image.
-  Its location is intentionally not configurable.
-- **`EXTENSIONS_DIR`** — locally installed packages, defaulting to
-  `DATA_DIR/extensions`.
+- `extensions/builtin`, beside the runtime image;
+- `EXTENSIONS_DIR`, defaulting to `DATA_DIR/extensions`.
 
-Origin is inventory metadata, not a different execution path. Both roots use the
-same manifest parser, compatibility checks, module loader, activation context,
-contribution registry and failure isolation. A broken or incompatible package is
-reported by the control plane without being activated.
+Both roots pass through the same manifest parser, compatibility checks, loader,
+activation context, and contribution registry. Their `origin` values are
+inventory metadata; they do not create separate process-level trust boundaries.
 
-Authenticated owners can inspect discovery and activation state through
-`GET /api/extensions`: Extension API version, package origin, version, state,
-sanitized errors and contributed IDs — but no absolute filesystem paths.
-Discovering an extension never silently creates a configured instance.
+The authenticated `GET /api/extensions` route exposes the Extension API version,
+origin, package version, state, sanitized error, and contributed IDs. Absolute
+filesystem paths are omitted. Discovery by itself does not create configured
+provider, memory, broker, or tool-set instances.
 
 ---
 
-## Multiplicity
+## Contribution multiplicity
 
-How many instances a contribution can have is the contribution's own
-declaration, not a property of the section it belongs to. `instances` defaults
-to `single`, because that is the ordinary case: a transport is bound to one
-credential, and a capability like scheduling or configuration access belongs to
-*this* Nox rather than to a service outside it.
+A contribution declares `instances: 'single' | 'many'`; the default is `single`.
+The declaration belongs to the contribution type, while configuration keys name
+configured instances.
 
-`many` is the exception a contribution states out loud. It is right when an
-instance is the address of an independent remote service a deployment genuinely
-wants several of, with consumers choosing between them — today, the
-OpenAI-compatible provider adapter.
+The current convention for a `single` contribution is that its configuration key
+matches its contribution ID. That prevents two entries for the same singleton
+and lets Settings show whether a known singleton has been configured. The
+OpenAI-compatible provider declares `many`, allowing several configured
+endpoints of that provider type.
 
-A `single` contribution **owns its own name**: its entry must be called exactly
-what the contribution is called, which is also its config `type`. One rule does
-two jobs. It reserves the name — `web` is the browser transport's by being
-called `web` — and it makes a second instance impossible, because two entries
-cannot share one key.
-
-Because a `single` contribution owns its name, a section can describe what it
-*could* hold and not only what it holds: `GET /api/config` carries a compact
-`contributions` list per section — type, extension, multiplicity, and whether it
-is configured. Settings draws the unconfigured singletons as rows to fill in.
-
-> **Upgrading.** The naming rule is enforced when a section loads, so a
-> configuration written before it existed can name a singleton's entry anything
-> and stop validating on upgrade. Renaming is the whole fix, and it is two edits:
-> the entry in its own file, and everything that referenced the old name — a
-> blueprint granting a tool set, a blueprint naming a provider. The failure is
-> reported per component rather than fatally, and the last working generation
-> stays in service while it is corrected.
+This naming convention is validated while loading configuration. An older or
+hand-written file that gives a singleton another key can fail validation after
+an upgrade. Correcting the entry key and references to it is the migration path;
+the failure remains visible through configuration status.
 
 ---
 
-## The message gateway
+## Message gateway
 
-A **broker** is a transport into the message gateway. It delivers what arrived
-and renders what it is handed, and knows nothing about agents, sessions or the
-transcript. Everything about which events a given transport draws is in
-[extensions/brokers.md](extensions/brokers.md).
+A broker is a transport into the message gateway. It delivers inbound content
+and renders outbound events according to its declared capabilities. Agent,
+session, and transcript behavior stays behind the gateway.
 
-Two things stay with the gateway rather than the transport, because they are not
-rendering questions: what another participant said, and which principal was
-allowed to use which authority. Both are about who may see what.
-
----
-
-## Trust boundary, stated plainly
-
-Extensions are trusted native code, not a sandbox.
-
-The loader `import()`s a package from disk into the Nox process, so an extension
-runs with everything the runtime has: the data directory and its `.secret-key`,
-the SQLite database, the network, the filesystem. `SecretMetadataReader`
-deliberately exposes metadata and never values, and `context.storage` is isolated
-per extension ID — but neither is a boundary. They are conveniences an extension
-can simply decline to use.
-
-That is acceptable while every package ships in the image. It stops being
-acceptable the moment a person can install a third-party one, and that is exactly
-what un-defers the work. It needs, at minimum:
-
-- a declared permission model in the manifest — filesystem, network, services —
-  that the host **enforces** rather than documents;
-- an execution boundary an extension cannot reach around: a worker with a
-  restricted module graph, a separate process behind the existing typed-token
-  RPC, or WASM for the pure cases;
-- `origin` meaning a privilege level instead of an inventory label;
-- an install-time disclosure that says plainly what the package will reach.
-
-Until then, installing an extension is granting the machine, and any UI that
-offers installation has to say so in those words.
+Principal identity and authority checks remain gateway/runtime concerns rather
+than presentation choices. Rendering differences between the web and Discord
+brokers are documented in [extensions/brokers.md](extensions/brokers.md).
 
 ---
 
-## The size of the public surface
+## Trust boundary
 
-`@nox/extension-api` is the single declaration of types the kernel also consumes
-— `Message`, `MessageContent`, `MessageOrigin` and the whole outbound event
-vocabulary live there rather than in `src/`. That removes duplication and the
-drift that comes with it, and it moves the coupling instead of removing it: a
-change to a kernel domain type is now a change to a versioned public contract.
+Extensions currently run as trusted in-process code.
 
-The contract tests cover schema behavior, not the shape of every exported
-interface, and the package is committed under semver before a single third-party
-extension has exercised it. `0.x` is the room to be wrong in; the discipline is
-to spend it deliberately. When a real external consumer appears, expect one
-compaction pass of the surface — and take it while the major is still `0`.
+The loader uses `import()` on an extension entry module. As a result, extension
+code executes with the operating-system permissions of the Nox process and can
+potentially access the filesystem, network, data directory, database files, and
+local secret key through process APIs. `context.storage`, redacted secret
+handles, declared host services, and namespace checks provide useful host
+contracts, but they do not contain code that bypasses those contracts.
+
+The current manifest and activation checks do provide narrower, testable
+behavior:
+
+- host service IDs are declared and scoped before activation;
+- installed packages cannot request control-plane service tokens, and one that
+  declares a control-plane service in its manifest is refused at discovery
+  rather than at its first call;
+- installed packages cannot take an ID inside the reserved `nox.` namespace;
+- host-provided package names and compatible versions are checked at discovery;
+- extension-owned storage is namespaced by extension ID through the supplied
+  storage API;
+- the extension inventory reports each package's declared `services` and
+  `hostPackages`, including for packages that failed to load, so what a package
+  reaches for can be read without opening its manifest.
+
+The namespace check matters because an extension owns authorities under its own
+ID. An installed package named `nox.impostor` would own `nox.impostor.*`, which
+an existing grant of `nox.*` already covers, and the ID is the only evidence
+downstream has. Inside `nox.` nobody owns the whole space: the core is
+`nox.core` and owns `nox.core.*` under the same rule extensions follow, and each
+builtin owns its own ID's namespace. That makes `nox.core.*` a grant meaning the
+core's own capabilities alone, and keeps a builtin from ever being named such
+that it covers them.
+
+Those checks reduce accidental coupling through supported APIs. They are not a
+permission model for filesystem or network access.
+
+For that reason, operators should review an installed extension as local code
+that will run under the Nox account. Supporting untrusted packages would require
+an enforceable execution boundary and a permission/disclosure design. None is
+implemented today, and the work is not primarily boundary code: the contract
+passes live objects by reference and calls synchronously in several places, so
+it has to be made able to cross a boundary before one can be added.
+
+A measured note on the options, because one of them does not work: a worker
+thread is not a boundary. An extension body in a Bun `Worker` can import
+`node:fs`, spawn a child process, read `process.env`, and open sockets. Only a
+process confined by the operating system — a dedicated uid, Landlock, seccomp,
+or a sibling container — makes filesystem and network declarations enforceable.
+
+The crossings, what each would have to become, and the open decisions are in
+[extension-isolation.md](extension-isolation.md).
+
+---
+
+## Public API status
+
+`@nox/extension-api` contains the shared message, event, contribution, service,
+and extension types used by both the kernel and extension packages. Keeping one
+versioned contract reduces duplicate type definitions, while also making changes
+to those domain types public API changes.
+
+The package is currently `0.x` and should be treated as evolving. Contract tests
+cover schema and runtime behavior, and the standalone greeting example checks an
+independently compiled consumer. They do not prove compatibility with every
+possible third-party extension. Before a stable release, changes to the surface
+should be expected and documented through semver and migration notes.

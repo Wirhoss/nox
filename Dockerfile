@@ -74,17 +74,10 @@ COPY scripts ./scripts
 COPY src ./src
 COPY --from=deps /build/src/ui/node_modules ./src/ui/node_modules
 
+# Both builds take the packages they leave external from one declaration in
+# @nox/extension-api, rather than from flags written out here.
 RUN bun run build:extensions \
- && bun build ./index.ts \
-      --target=bun \
-      --outfile ./dist/nox.js \
-      --external @huggingface/transformers \
-      --external playwright \
-      --external sharp \
-      --external sqlite-vec \
-      --external zod \
-      --minify-whitespace \
-      --minify-syntax \
+ && bun run build:host \
  && bun --cwd=src/ui run build-only \
  && cp -R ./src/database/migrations ./dist/migrations
 

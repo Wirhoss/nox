@@ -3,14 +3,14 @@ import { CORE_OWNER_ID } from './authority';
 import type { AuthorityDefinition } from './authority';
 
 /** Attaching a conversation-owned artifact to the user-facing response. */
-const ARTIFACT_ATTACH_AUTHORITY = 'nox.artifacts.attach';
+const ARTIFACT_ATTACH_AUTHORITY = 'nox.core.artifacts.attach';
 
 /** Reading bytes from an artifact already referenced by this conversation. */
-const ARTIFACT_READ_AUTHORITY = 'nox.artifacts.read';
+const ARTIFACT_READ_AUTHORITY = 'nox.core.artifacts.read';
 
 /** Reading the session's own transcript back. */
-const HISTORY_SEARCH_AUTHORITY = 'nox.history.search';
-const HISTORY_READ_AUTHORITY = 'nox.history.read';
+const HISTORY_SEARCH_AUTHORITY = 'nox.core.history.search';
+const HISTORY_READ_AUTHORITY = 'nox.core.history.read';
 
 /**
  * Reaching past this session, into the transcripts of the ones before it.
@@ -21,15 +21,15 @@ const HISTORY_READ_AUTHORITY = 'nox.history.read';
  * it has ever had. Authority is declared per tool, so keeping these apart is
  * what makes "search this session, but not the others" expressible at all.
  */
-const HISTORY_SESSIONS_AUTHORITY = 'nox.history.sessions';
-const HISTORY_SESSIONS_SEARCH_AUTHORITY = 'nox.history.sessions.search';
+const HISTORY_SESSIONS_AUTHORITY = 'nox.core.history.sessions';
+const HISTORY_SESSIONS_SEARCH_AUTHORITY = 'nox.core.history.sessions.search';
 
 /** Principal-scoped access to the editable memory selected by an agent. */
-const MEMORY_READ_AUTHORITY = 'nox.memory.read';
-const MEMORY_WRITE_AUTHORITY = 'nox.memory.write';
+const MEMORY_READ_AUTHORITY = 'nox.core.memory.read';
+const MEMORY_WRITE_AUTHORITY = 'nox.core.memory.write';
 
 /** The router's own two tools. */
-const TOOL_SEARCH_AUTHORITY = 'nox.tools.search';
+const TOOL_SEARCH_AUTHORITY = 'nox.core.tools.search';
 
 /**
  * `tool_call` is a doorway, not a capability: what it actually needs is the
@@ -37,11 +37,12 @@ const TOOL_SEARCH_AUTHORITY = 'nox.tools.search';
  * prepared execution. This exists so the doorway itself is never the unnamed
  * thing, and so an unbound router still asks for something nobody grants.
  */
-const TOOL_CALL_AUTHORITY = 'nox.tools.call';
+const TOOL_CALL_AUTHORITY = 'nox.core.tools.call';
 
 /**
  * What the core itself owns. Extensions contribute theirs; these belong to no
- * extension, so the core names itself as the owner and stays under `nox.`.
+ * extension, so the core names itself as the owner and stays inside its own
+ * `nox.core.` namespace, beside the builtins rather than over them.
  */
 const CORE_AUTHORITIES: readonly AuthorityDefinition[] = Object.freeze([
   Object.freeze({

@@ -44,7 +44,7 @@ async function secretNox(referenced: readonly SecretReference[] = []): Promise<S
     references: () => referenced,
   });
   const store = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
-  const account = await store.register('esteban', PASSWORD);
+  const account = await store.register('wirhoss', PASSWORD);
   const tokens = await store.openSession(account.accountId);
 
   const server = ApiServer.create({

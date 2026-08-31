@@ -275,7 +275,7 @@ async function configNox(options: NoxOptions = {}): Promise<ConfigNox> {
     logger: silentLogger,
   });
   const store = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
-  const account = await store.register('esteban', PASSWORD);
+  const account = await store.register('wirhoss', PASSWORD);
   const tokens = await store.openSession(account.accountId);
 
   const server = ApiServer.create({
@@ -884,7 +884,7 @@ describe('writing one entry', () => {
     const unknownAuthority = await fetch(`${nox.url}/config/brokers/discord`, {
       body: JSON.stringify({
         agent: 'nox',
-        grants: { esteban: ['nox.unknown'] },
+        grants: { wirhoss: ['nox.unknown'] },
         type: 'fake_broker',
       }),
       headers: nox.headers,

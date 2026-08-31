@@ -2,7 +2,7 @@
 
 <img src="src/ui/public/nox-logo.svg" alt="Nox" width="240">
 
-**A containerized, multi-agent runtime built so that a long-running session stays cheap.**
+**An early-stage, containerized runtime for multi-agent sessions and extension-based capabilities.**
 
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun&logoColor=white)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -10,30 +10,37 @@
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 ![Status](https://img.shields.io/badge/status-pre--1.0-lightgrey)
 
-[Quickstart](#quickstart) · [The three laws](#the-three-laws) · [Documentation](#documentation) · [Architecture](docs/architecture.md)
+[Overview](#overview) · [Design goals](#design-goals) · [Screenshots](#screenshots) · [Quickstart](#quickstart) · [Documentation](#documentation)
 
 </div>
 
 ---
 
-## What Nox is
+## Overview
 
-Most agent runtimes get more expensive the longer you talk to them. Every turn
-re-sends a slightly different prefix, so the provider's cache never hits; every
-tool result stays in the window until something summarizes the whole
-conversation away; and every capability that gets added is one more `import` in
-a file that already knows too much.
+Nox is a pre-1.0 agent runtime with sessions, tools, providers, memory,
+transports, scheduled jobs, artifacts, and a web interface. Its current design
+focuses on two areas:
 
-Nox is built the other way around. The beginning of every request is
-deterministic and append-stable, so a provider may reuse it. Mechanical traffic
-is collapsed by rule before anything is summarized. Work that a function can do
-is never asked of a model. And no concrete capability — no provider, no memory,
-no transport — is imported by the kernel: each one arrives as a *contribution*
-registered against a typed slot.
+- keeping the reusable part of a model request stable where the runtime can do
+  so, while reducing older tool traffic before using lossy compaction;
+- loading concrete capabilities through a public extension contract rather than
+  wiring each builtin directly into the kernel.
+
+A stable request prefix may help a provider reuse cached input, but the result
+depends on the provider, model, configuration, and workload. Nox does not yet
+publish a benchmark for token savings, latency, or cost, so this README does not
+claim a measured improvement.
+
+The extension boundary is visible in the current source and in
+[`src/boundaries.test.ts`](src/boundaries.test.ts): builtin packages register
+against typed contribution points and are discovered at startup. Extensions
+still execute in the Nox process; this is an API boundary, not a security
+sandbox. See [Known limitations](#known-limitations).
 
 ```mermaid
 flowchart LR
-  subgraph kernel["Kernel — imports no concrete capability"]
+  subgraph kernel["Kernel"]
     direction TB
     RUN["Agent · Runner · Session"]
     CTX["Context engine"]
@@ -50,7 +57,7 @@ flowchart LR
     PL["nox.languages"]
     PA["nox.authorities"]
   end
-  subgraph builtin["extensions/builtin — loaded, never imported"]
+  subgraph builtin["Builtin extension packages"]
     direction TB
     X1["web · discord"]
     X2["openai · local"]
@@ -72,90 +79,86 @@ flowchart LR
 
 ---
 
-## The three laws
+## Design goals
 
-These are the whole point. A feature that violates one of them is not a Nox
-feature, regardless of how useful it is.
+These are development goals, not claims that every edge case has been solved.
+The corresponding current behavior is documented in
+[docs/context-engine.md](docs/context-engine.md) and covered by the tests under
+[`src/agent/context/`](src/agent/context/).
 
-### Law 1 — The request head is stable infrastructure
+### 1. Favor stable request prefixes
 
-The beginning of every logical request is system instructions, tool schemas and
-settled history. Nox keeps that sequence deterministic and append-stable so a
-provider may reuse it. Whether it is cached, where the boundary falls and what a
-hit is worth belong entirely to the provider.
+Nox tries to keep stable session instructions and tool schemas at the beginning
+of a request, while appending information that changes during a session.
 
-- Tool schemas are presented in deterministic, name-sorted order. Map iteration
-  order is never trusted, and provider adapters preserve that order when they
-  serialize.
-- Messages are immutable snapshots once inserted. Nothing mutates a message in
-  place after the fact.
-- **New information enters at the suffix.** Anything that varies during a session
-  — recalled memory, tool results, fresh facts — is appended at the end of the
-  working set. It never edits the head.
-- **The fixed head may only contain what is stable for the whole session.** A
-  blueprint's persona and its tool schemas qualify. A recalled fact does not.
-- **Exactly two operations may replace active history: `fold` and `compact`.**
-  Not a recall, not a tool result, not a broker, not an extension. Everything
-  else appends.
-- **Prompt caching is provider behavior, not kernel state.** Nox does not declare
-  cache boundaries or estimate invalidation. An adapter reports actual cache-read
-  usage when its API exposes it; otherwise Nox makes no claim.
+Current implementation details include:
 
-### Law 2 — Fold first. Compaction is the last resort.
+- tool schemas are sorted by name before they are exposed to a provider;
+- transcript messages are stored as immutable snapshots;
+- recalled memory, tool results, and new messages enter the working history as
+  appended information;
+- fold and compaction events record replacements in the transcript;
+- prompt caching remains provider behavior. Nox records cache-read usage only
+  when an adapter reports it.
 
-Folding is deterministic and reversible-by-replay: mechanical traffic is
-collapsed by rule, and the original is still in the transcript. Compaction is
-model-assisted and **lossy** — what you do when folding has already run and the
-working set is still over budget.
+### 2. Prefer reversible reduction before lossy compaction
+
+Folding replaces settled tool traffic with a smaller, deterministic record while
+retaining the original events in the transcript. Compaction uses a model to
+summarize part of the working set and is therefore lossy. The intended order is
+to try folding first and compact only when a configured context budget still
+reports pressure.
 
 ```mermaid
 flowchart TB
-  M["new message"] --> A["appended to the suffix<br/><i>the head never moves — Law 1</i>"]
-  A --> B{"context budget<br/>configured?"}
-  B -->|no| S["request to provider"]
+  M["new message"] --> A["append to working history"]
+  A --> B{"context budget configured?"}
+  B -->|no| S["request provider"]
   B -->|yes| P{"over budget?"}
   P -->|no| S
-  P -->|yes| F["<b>fold</b><br/>deterministic, replayable"]
-  F --> G{"token reduction<br/>measured?"}
-  G -->|"no — rejected"| C
-  G -->|yes| ST{"still over?"}
+  P -->|yes| F["fold settled tool traffic"]
+  F --> G{"measured reduction?"}
+  G -->|no| C
+  G -->|yes| ST{"still over budget?"}
   ST -->|no| S
-  ST -->|yes| C["<b>compact</b><br/>model-assisted, lossy<br/>last resort"]
+  ST -->|yes| C["model-assisted compaction"]
   C --> S
 ```
 
-- A settled tool loop tries deterministic folding before a later request may
-  compact. Folding never runs mid-tool-loop just because token pressure rose.
-- **No budget, no compaction.** Without a configured context window there is no
-  pressure signal and `compact()` is a no-op. Summarizing lossily on a guess is
-  not a smaller version of compaction; it is the thing compaction is the last
-  resort *for*, performed for no reason.
-- A fold must **measurably** reduce the active context, in tokens, before it is
-  applied. A fold that merely breaks even is rejected.
-- Both are transcript events, not destructive mutations. "Deleted to save space"
-  is never the mechanism.
+The current implementation rejects folds that do not meet the configured
+reduction threshold. Without a context window there is no automatic pressure
+signal, so budget-triggered compaction does not run.
 
-### Law 3 — If it can be deterministic, it must not be a prompt
+### 3. Use code for deterministic operations
 
-Asking a model to do what a function can do costs tokens, costs latency, and
-produces a worse answer with a confidence interval attached.
+Where a task can be represented reliably as parsing, validation, sorting,
+routing, arithmetic, or a state transition, the project prefers ordinary code
+or a callable tool. Prompts are reserved for work that needs model judgment,
+language, or synthesis. This is a design preference rather than a prohibition;
+trade-offs can change as the project is tested in real workloads.
 
-- **Prefer tools over skills.** A capability the model *calls* beats a capability
-  the model must *follow*.
-- Parsing, formatting, sorting, filtering, arithmetic, validation, routing,
-  lookups and state transitions are code. They do not get prompt paragraphs.
-- The model is asked for judgment, language and synthesis. Not for work.
+### Related considerations
 
-### Supporting rules
+- Transcript history and provider-ready context are separate objects.
+- Retrieval is given a budget so it does not immediately refill reduced context.
+- Persisted fold and compaction events are used to rebuild active history.
+- Context pressure is estimated before a provider request; reported provider
+  usage can recalibrate later estimates.
 
-- **History is not context.** The transcript is permanent and complete; the
-  working set is bounded and provider-ready. They are different objects.
-- **Retrieval is bounded.** A recall must never quietly undo the space that
-  folding and compaction reclaimed.
-- **Replay is the source of truth.** A persisted transcript must reconstruct the
-  identical active history.
-- **The runtime owns memory policy, not the model.**
-- **Pressure is measured before the provider rejects the request**, not after.
+---
+
+## Screenshots
+
+These screenshots were captured from a clean local installation of the current
+development build. The interface is still evolving.
+
+### First-run claim screen
+
+![Nox first-run claim screen](docs/assets/screenshots/claim.png)
+
+### General settings
+
+![Nox general settings screen](docs/assets/screenshots/settings-general.png)
 
 ---
 
@@ -163,7 +166,7 @@ produces a worse answer with a confidence interval attached.
 
 ```bash
 bun install
-bun run check        # typecheck + lint + format + tests
+bun run check        # typecheck + lint + format check + tests
 ```
 
 ```bash
@@ -176,42 +179,47 @@ bun run build:ui
 bun run start
 ```
 
-The first run writes `app.json` into `CONFIG_DIR` with defaults and migrates a
-SQLite database into `DATA_DIR`. Type to talk; `/exit` or Ctrl-C ends the
-session. Replies stream to stdout and every log line goes to stderr, so
-`bun run start 2>/dev/null` gives you the conversation alone.
+The first run writes `app.json` into `CONFIG_DIR` with defaults and applies the
+SQLite migrations in `DATA_DIR`. The terminal surface accepts messages;
+`/exit` or Ctrl-C ends the session. Replies use stdout and logs use stderr.
 
-See **[docs/configuration.md](docs/configuration.md)** for every environment
-variable, the `app.json` sections, and how secrets are referenced.
+See [docs/configuration.md](docs/configuration.md) for the environment variables,
+configuration sections, and secret references.
 
 ---
 
-## What exists today
+## Current implementation
 
-Nox is pre-1.0. This table is kept honest — if something is listed here, it is
-built and covered by tests.
+Nox is pre-1.0 and its surface may change. The table below describes code in the
+current tree and links representative automated coverage. A passing test suite
+is useful evidence of implemented behavior, but it is not a performance,
+reliability, or security certification.
 
-| Area | State |
-|---|---|
-| Context engine — transcript, fold, compact, token accounting | Built and tested |
-| Agent, session, runner, event log, session store | Built and tested |
-| Contribution contract, extension loader, `NoxApplication` | Built and tested |
-| Tools, tool sets, and the `tool_search`/`tool_call` router | Built and tested |
-| Config (Zod-validated sections), SQLite via Drizzle, encrypted secret store | Built and tested |
-| Provider contract — `BaseProvider`, `ChatProvider`, streaming, retries | Built and tested |
-| Providers: OpenAI Chat Completions, and a local adapter | Built and tested |
-| Semantic memory — vector store, extraction, consolidation, contradictions | Built and tested |
-| Brokers: the `web` HTTP surface and a Discord transport | Built and tested |
-| Tool sets: web search/extraction, configuration administration, cron jobs | Built and tested |
-| Artifact pipeline — streamed ingestion, SHA-256 dedup, rendition cache, Sharp | Built and tested |
-| Scheduler — durable cron jobs in fresh sessions, with delivery targets | Built and tested |
-| Web UI — Vue 3 + Pinia: chat, sessions, settings, audit | Built and tested |
+| Area | Current state | Representative evidence |
+|---|---|---|
+| Context transcript, folding, compaction, and token estimates | Implemented | [`src/agent/context/`](src/agent/context/), [`context.test.ts`](src/agent/context/context.test.ts), [`transcript.test.ts`](src/agent/context/transcript.test.ts) |
+| Agents, sessions, runner, and persisted session history | Implemented | [`src/agent/`](src/agent/), [`src/application.test.ts`](src/application.test.ts), [`src/bootstrap.test.ts`](src/bootstrap.test.ts) |
+| Extension discovery, contribution points, scoped host services, host-package checks, and declaration disclosure | Implemented | [`src/extensions/`](src/extensions/), [`loader.test.ts`](src/extensions/loader.test.ts), [`service.test.ts`](src/extensions/service.test.ts), [`hostPackages.test.ts`](src/extensions/hostPackages.test.ts) |
+| Configuration, SQLite, authentication, and secret references | Implemented | [`src/config/`](src/config/), [`src/api/auth/`](src/api/auth/), [`src/config/config.test.ts`](src/config/config.test.ts), [`src/api/auth/auth.test.ts`](src/api/auth/auth.test.ts) |
+| OpenAI-compatible and local providers, semantic memory, and tool routing | Implemented | [`src/extensions/builtin/providers/`](src/extensions/builtin/providers/), [`src/extensions/builtin/memories/semantic/`](src/extensions/builtin/memories/semantic/), [`src/tool/router.test.ts`](src/tool/router.test.ts) |
+| Web and Discord brokers, artifacts, and scheduled runs | Implemented | [`src/extensions/builtin/brokers/`](src/extensions/builtin/brokers/), [`src/artifact/`](src/artifact/), [`src/scheduler/scheduledRun.test.ts`](src/scheduler/scheduledRun.test.ts) |
+| Vue web UI for access, chat, sessions, memory, settings, and audit data | Implemented; browser E2E coverage is still pending | [`src/ui/`](src/ui/), [`src/ui/routes/`](src/ui/routes/), [UI unit tests](src/ui/features/chat/stores/activeSession.store.vitest.ts) |
 
-**Not yet:** extension isolation and a declared permission model — installing an
-extension today grants it the whole process — and with it, installing
-third-party packages from outside the image. Artifacts have storage quotas but
-no retention or deletion lifecycle, so a full store refuses new blobs rather
-than evicting old ones. Each is described where it belongs in the docs.
+### Known limitations
+
+- **Extensions are not isolated.** Manifest service declarations restrict what
+  the host exposes through `context.services`, but extension code still runs in
+  the Nox process and can use process-level filesystem and network access.
+- **Arbitrary native extension dependencies are not installed.** Extensions can
+  bundle JavaScript dependencies; native packages outside the host-provided list
+  are not supported by the current packaging flow.
+- **Artifact retention is incomplete.** Storage quotas exist, but automatic
+  retention, deletion, and garbage collection do not.
+- **UI browser E2E coverage is not present yet.** The current UI suite is unit
+  and component oriented.
+- **No project performance benchmark is published yet.** Context and cache
+  behavior should be evaluated against the provider and workload used by a
+  deployment.
 
 ---
 
@@ -219,18 +227,19 @@ than evicting old ones. Each is described where it belongs in the docs.
 
 | Document | What is in it |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | The kernel, contribution points, services, and the composition root |
-| [docs/context-engine.md](docs/context-engine.md) | Transcript vs. working set, fold, compact, token accounting |
-| [docs/configuration.md](docs/configuration.md) | Environment, `app.json`, live reconciliation, secrets |
-| [docs/ui.md](docs/ui.md) | The web UI: stack, state ownership, theming, HTTP contract |
-| [docs/extensions/](docs/extensions/README.md) | Writing an extension, the manifest, the public API |
+| [docs/architecture.md](docs/architecture.md) | The kernel, contribution points, services, composition root, and trust boundary |
+| [docs/context-engine.md](docs/context-engine.md) | Transcript vs. working set, folding, compaction, and token accounting |
+| [docs/configuration.md](docs/configuration.md) | Environment, `app.json`, live reconciliation, and secrets |
+| [docs/ui.md](docs/ui.md) | The web UI: current stack, state ownership, HTTP contract, and testing status |
+| [docs/extension-isolation.md](docs/extension-isolation.md) | Design notes for the execution boundary: the crossings and the open decisions |
+| [docs/extensions/](docs/extensions/README.md) | Writing an extension, the manifest, and the public API |
 | [· memory.md](docs/extensions/memory.md) | The semantic memory builtin |
 | [· providers.md](docs/extensions/providers.md) | Provider adapters and model modalities |
-| [· brokers.md](docs/extensions/brokers.md) | The web and Discord transports, broker capabilities |
-| [· configuration.md](docs/extensions/configuration.md) | The `config` tool set: agent-managed desired state |
-| [· jobs.md](docs/extensions/jobs.md) | The `cronjobs` tool set: durable scheduled automation |
-| [· files.md](docs/extensions/files.md) | Artifacts: uploads, blobs, renditions, delivery |
-| [· models.md](docs/extensions/models.md) | Models for internal tasks |
+| [· brokers.md](docs/extensions/brokers.md) | The web and Discord transports and broker capabilities |
+| [· configuration.md](docs/extensions/configuration.md) | The `config` tool set and desired-state administration |
+| [· jobs.md](docs/extensions/jobs.md) | Durable scheduled automation |
+| [· files.md](docs/extensions/files.md) | Artifacts, uploads, blobs, renditions, and delivery |
+| [· models.md](docs/extensions/models.md) | Models used for internal tasks |
 
 ---
 
@@ -238,24 +247,24 @@ than evicting old ones. Each is described where it belongs in the docs.
 
 ```text
 src/agent/           agent, session, runner, and the context engine
-src/api/             the authenticated HTTP surface
-src/artifact/        the artifact pipeline: blobs, renditions, delivery
-src/auth/            account registration and access tokens
-src/config/          Zod-validated configuration sections and the loader
+src/api/             authenticated HTTP surface
+src/artifact/        artifact pipeline: blobs, renditions, delivery
+src/auth/            authorities and authorization policy
+src/config/          Zod-validated configuration sections and loader
 src/database/        Drizzle schema, migrations, session store, history index
-src/extensions/      the contribution registry, manifest parser and loader
+src/extensions/      contribution registry, manifest parser, and loader
 src/extensions/builtin/   builtins grouped by contribution point, then package
-src/gateway/         the message gateway brokers speak to
+src/gateway/         message gateway used by brokers
 src/i18n/            locale resolution and message catalogs
-src/provider/        the provider contract and streaming
+src/provider/        provider base contracts and streaming
 src/runtime/         process lifecycle and reconciliation
-src/scheduler/       durable cron jobs
-src/tool/            tools, tool sets, the router
-src/ui/              the Vue 3 web UI
-src/application.ts   the composition root
+src/scheduler/       durable scheduled runs
+src/tool/            tools, tool sets, gate, and router
+src/ui/              Vue 3 web UI
+src/application.ts   application composition root
 
-packages/extension-api/   the public, versioned extension contract
-examples/extensions/      an independently compiled consumer
+packages/extension-api/   public, versioned extension contract
+examples/extensions/      independently compiled extension example
 ```
 
 ---

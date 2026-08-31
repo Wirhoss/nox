@@ -19,11 +19,10 @@ Defined in
 | `maxRetryDelayMs` | `30000` | |
 | `timeoutMs` | — | |
 
-An endpoint and a credential are **deliberately absent from the base**. They
-belong to a provider reached over the network; one running inside this process
-has neither, and requiring them would force a local model to invent a URL it
-never calls. Retry settings stay in the base, because retrying is the streaming
-contract's concern, not HTTP's.
+Endpoint and credential fields are absent from the base contract because an
+in-process provider does not use them. Retry settings remain in the base because
+the provider streaming contract implements retry behavior for both local and
+remote adapters.
 
 A provider reached over HTTP adds exactly two things — where it is, and who it
 says it is:
@@ -33,18 +32,18 @@ says it is:
 | `baseUrl` | Required. The HTTP(S) base URL of the endpoint |
 | `apiKey` | Optional `{ "$secret": "ID" }` reference |
 
-`apiKey` is optional because `baseUrl` is free: a private-network endpoint
-commonly wants no credential at all, and requiring one would make every such
-deployment look permanently misconfigured.
+`apiKey` is optional so an endpoint that does not require a credential can be
+configured without a placeholder secret.
 
 ---
 
 ## `openai_completions`
 
-Anything that speaks the OpenAI Chat Completions API works — point `baseUrl` at
-it. This contribution declares `instances: many`, because an instance here is
-the address of an independent remote service, and a deployment may genuinely
-want several.
+The `openai_completions` adapter targets endpoints compatible with the OpenAI
+Chat Completions request and streaming formats. Compatibility can vary when an
+endpoint implements only part of that API, so deployments should verify the
+models and modalities they use. The contribution declares `instances: many`,
+allowing several configured endpoint instances.
 
 ```json
 {
@@ -70,9 +69,9 @@ so `providers.json` is validated against exactly what the adapter accepts. An
 extension that validated its own config would leave the file unvalidatable by
 anything but itself.
 
-The credential is handed over for the same reason. `OPENAI_API_KEY` is a shared
-name, so every adapter speaking to the same vendor merges into one credential an
-operator fills once.
+Secret references are resolved by the host when it constructs the configured
+provider. Reusing one secret ID across provider entries makes that sharing
+explicit in configuration.
 
 **Modality support:** this adapter encodes text and images. It does not silently
 discard declared audio, video or document input — it rejects what it cannot
@@ -99,17 +98,13 @@ model host. It serves chat and embedding models.
 `cacheDirectory` is where downloaded weights live; omitted, they land under the
 data directory.
 
-### It refuses to configure itself
+### Explicit local-model selection
 
-A single-instance contribution whose schema is satisfied by its `type` alone
-gets seeded into the config file on every boot — and Settings only offers what is
-*not* configured. An engine that accepted an empty entry would write itself in,
-disappear from the list of things you can add, and commit an installation that
-never wanted a local model to carrying one.
-
-So an entry that enables a slot without naming a model is a validation error.
-Nothing is loaded until a model is named: an entry naming none is not a
-configuration of this engine, it is the absence of one.
+Nox does not create a local-provider entry automatically. Settings can offer the
+singleton contribution while leaving it unconfigured. If an entry enables the
+embedding or chat slot, its model fields must pass validation before the provider
+is activated. This keeps model downloads and local resource use behind an
+explicit configuration choice.
 
 ---
 
@@ -131,12 +126,10 @@ else.
 `kind` defaults to `chat`, and the union is plain rather than discriminated, so a
 model declared before kinds existed still parses.
 
-For an embedding model, `dimensions` is **required** and declared rather than
-discovered: whatever holds the vectors must allocate for them before it has seen
-one. It is also half the identity a stored vector belongs to — re-embedding the
-same text with a different model produces a vector that is silently meaningless
-next to the old ones. Nothing fails; retrieval just quietly stops being about
-anything.
+For an embedding model, `dimensions` is required and declared rather than
+discovered because vector storage needs a width when it is initialized. Stored
+vectors also need model/version provenance: vectors from incompatible models
+should not be mixed in one index even when their dimensions happen to match.
 
 `maxInputTokens` is optional and says where the provider's line is. Splitting
 longer input is the caller's job.

@@ -104,7 +104,7 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
       await store.set(secretId, value);
     }
     const auth = await AuthStore.open({ database, dataDirectory: dataDir });
-    await auth.register('esteban', PASSWORD);
+    await auth.register('wirhoss', PASSWORD);
   } finally {
     await database.close();
   }
@@ -127,7 +127,7 @@ async function boot(options: BootOptions = {}): Promise<NoxApplication> {
 
 async function login(url: string): Promise<Record<string, string>> {
   const response = await fetch(`${url}/api/auth/login`, {
-    body: JSON.stringify({ password: PASSWORD, username: 'esteban' }),
+    body: JSON.stringify({ password: PASSWORD, username: 'wirhoss' }),
     headers: { 'content-type': 'application/json' },
     method: 'POST',
   });
@@ -489,8 +489,10 @@ describe('bootstrap', () => {
       extensionApiVersion: string;
       extensions: {
         contributions: { id: string; point: string }[];
+        hostPackages?: Record<string, string>;
         id: string;
         origin: string;
+        services?: string[];
         state: string;
       }[];
     };
@@ -500,6 +502,11 @@ describe('bootstrap', () => {
     );
     expect(configExtension).toMatchObject({ origin: 'builtin', state: 'active' });
     expect(configExtension?.contributions).toContainEqual({ id: 'config', point: 'nox.toolsets' });
+    // The inventory answers what a package reaches for, not only what it is.
+    expect(configExtension?.services).toEqual(['nox.config-admin', 'nox.secret-store']);
+    expect(
+      extensionInventory.extensions.find(({ id }) => id === 'nox.processor.sharp')?.hostPackages,
+    ).toEqual({ sharp: '^0.35.3', zod: '^4.4.3' });
 
     await application.stop();
 
@@ -994,7 +1001,7 @@ describe('bootstrap', () => {
       query: 'what did I say',
       scope: {
         agentId: 'nox',
-        principal: { issuer: 'web', subject: 'esteban' },
+        principal: { issuer: 'web', subject: 'wirhoss' },
         sessionId: 'session',
       },
       signal: AbortSignal.timeout(5_000),

@@ -48,13 +48,13 @@ async function freshNox(): Promise<{ code: string; url: string }> {
   return { code, url: `${server.url}/api` };
 }
 
-/** A Nox already claimed by `esteban`, and a live access token for them. */
+/** A Nox already claimed by `wirhoss`, and a live access token for them. */
 async function claimedNox(): Promise<{ accessToken: string; refreshCookie: string; url: string }> {
   const { code, url } = await freshNox();
   const response = await postJson(`${url}/auth/register`, {
     code,
     password: PASSWORD,
-    username: 'esteban',
+    username: 'wirhoss',
   });
 
   const body = (await response.json()) as { accessToken: string };
@@ -111,7 +111,7 @@ describe('the install flow', () => {
     const response = await postJson(`${url}/auth/register`, {
       code: 'NOX-AAAA-AAAA-AAAA',
       password: PASSWORD,
-      username: 'esteban',
+      username: 'wirhoss',
     });
 
     expect(response.status).toBe(403);
@@ -124,17 +124,17 @@ describe('the install flow', () => {
     const response = await postJson(`${url}/auth/register`, {
       code,
       password: PASSWORD,
-      username: 'esteban',
+      username: 'wirhoss',
     });
 
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({ account: { username: 'esteban' } });
+    expect(await response.json()).toMatchObject({ account: { username: 'wirhoss' } });
     expect(await fetch(`${url}/auth/status`).then((r) => r.json())).toEqual({ registered: true });
   });
 
   test('the code stops working the moment the account exists', async () => {
     const { code, url } = await freshNox();
-    await postJson(`${url}/auth/register`, { code, password: PASSWORD, username: 'esteban' });
+    await postJson(`${url}/auth/register`, { code, password: PASSWORD, username: 'wirhoss' });
 
     const second = await postJson(`${url}/auth/register`, {
       code,
@@ -151,7 +151,7 @@ describe('the install flow', () => {
     const response = await postJson(`${url}/auth/register`, {
       code,
       password: 'short',
-      username: 'esteban',
+      username: 'wirhoss',
     });
 
     expect(response.status).toBe(422);
@@ -166,7 +166,7 @@ describe('tokens on the wire', () => {
     const response = await postJson(`${url}/auth/register`, {
       code,
       password: PASSWORD,
-      username: 'esteban',
+      username: 'wirhoss',
     });
 
     const cookie = response.headers.get('set-cookie') ?? '';
@@ -187,11 +187,11 @@ describe('login', () => {
 
     const response = await postJson(`${url}/auth/login`, {
       password: PASSWORD,
-      username: 'esteban',
+      username: 'wirhoss',
     });
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ account: { username: 'esteban' } });
+    expect(await response.json()).toMatchObject({ account: { username: 'wirhoss' } });
   });
 
   test('a wrong password is 401 and says nothing about which half was wrong', async () => {
@@ -199,7 +199,7 @@ describe('login', () => {
 
     const wrongPassword = await postJson(`${url}/auth/login`, {
       password: 'wrong-password-entirely',
-      username: 'esteban',
+      username: 'wirhoss',
     });
     const wrongUser = await postJson(`${url}/auth/login`, {
       password: PASSWORD,
@@ -221,7 +221,7 @@ describe('the guard', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ account: { username: 'esteban' } });
+    expect(await response.json()).toMatchObject({ account: { username: 'wirhoss' } });
   });
 
   test('turns away a request with no token, a bad one, or the wrong scheme', async () => {

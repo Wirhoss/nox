@@ -1,8 +1,8 @@
 # Greeting Tool Set example
 
-A complete external extension consumer. It imports only `@nox/extension-api`,
-registers one authority and one configurable tool-set type, and leaves instance
-creation to Nox configuration.
+A small standalone extension consumer used to exercise the public package
+boundary. It imports `@nox/extension-api`, registers one authority and one
+configurable tool-set type, and leaves instance creation to Nox configuration.
 
 Build it with the Extension API installed as a development dependency:
 

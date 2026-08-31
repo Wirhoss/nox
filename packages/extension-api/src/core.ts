@@ -136,6 +136,20 @@ interface ExtensionStorage {
 declare const serviceType: unique symbol;
 
 interface ServiceToken<T> {
+  /**
+   * True when only Nox's own builtins may resolve this service.
+   *
+   * Some services are the control plane rather than a capability: writing
+   * configuration, enumerating which secrets exist and who consumes them,
+   * running an agent as anybody. A package that ships inside the image is part
+   * of Nox and holds them; one installed afterwards is a guest and does not,
+   * however loudly its manifest asks.
+   *
+   * Declared on the token because this is the one place both sides read: the
+   * host enforces it, and an extension author sees it in the same declaration
+   * that gave them the ID.
+   */
+  readonly controlPlane?: true;
   readonly id: string;
   readonly [serviceType]?: (value: T) => T;
 }
@@ -146,9 +160,9 @@ interface ServiceContainer {
   tryGet<T>(token: ServiceToken<T>): T | undefined;
 }
 
-function createServiceToken<T>(id: string): ServiceToken<T> {
+function createServiceToken<T>(id: string, options?: { controlPlane?: true }): ServiceToken<T> {
   assertIdentifier(id, 'service ID');
-  return Object.freeze({ id });
+  return Object.freeze(options?.controlPlane === true ? { controlPlane: true, id } : { id });
 }
 
 declare const contributionType: unique symbol;
@@ -248,6 +262,17 @@ interface ExtensionManifest {
     readonly extensionApi: string;
     readonly nox: string;
   };
+  /**
+   * Packages this extension imports from the host instead of bundling, each
+   * with the semver range it needs.
+   *
+   * Only the names in `HOST_PROVIDED_PACKAGES` may appear: everything else, an
+   * extension bundles itself. Declared with a range for the same reason
+   * `engines` is — a package that needs Zod 4 and finds Zod 3 should be told so
+   * while it is being loaded, by a message naming both versions, rather than at
+   * the first call that touches an API which moved.
+   */
+  readonly hostPackages?: Readonly<Record<string, string>>;
   readonly id: string;
   readonly main: string;
   /**
@@ -259,6 +284,21 @@ interface ExtensionManifest {
    */
   readonly migrations?: string;
   readonly schemaVersion: 1;
+  /**
+   * Host service IDs this package may resolve from its `ServiceContainer`.
+   *
+   * Declared rather than discovered, because a container that hands over
+   * everything makes the question unanswerable: what an installed extension can
+   * reach should be readable from the package, before it runs, by whoever is
+   * installing it. Asking for a service that is not listed here is an error at
+   * the point of the call, not a quiet `undefined` — an undeclared dependency
+   * is an authoring mistake, and a capability that silently turns itself off is
+   * the hardest kind to find.
+   *
+   * Absent means none. Declaring is only worth anything if declaring nothing
+   * grants nothing.
+   */
+  readonly services?: readonly string[];
   readonly version: string;
   /** Entry points loaded at runtime rather than imported; a build must emit them too. */
   readonly workers?: readonly string[];

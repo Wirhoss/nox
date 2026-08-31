@@ -137,6 +137,7 @@ describe('NoxApplication', () => {
           id: 'nox.reader',
           main: 'embedded.js',
           schemaVersion: 1,
+          services: ['nox.clock'],
           version: '0.0.0',
         },
         activate(context) {
@@ -147,6 +148,30 @@ describe('NoxApplication', () => {
     await app.start();
 
     expect(seen).toEqual({ id: 'nox.reader', now: 7 });
+  });
+
+  // The container an extension holds is its own view, not the host's registry:
+  // what it can reach is fixed by its manifest before it runs, so an installed
+  // package cannot widen its own reach by knowing a token ID.
+  test('fails activation when an extension reaches past what it declared', () => {
+    const app = new NoxApplication().provide(clockService, { now: () => 7 });
+
+    app.register(
+      defineExtension({
+        manifest: {
+          engines: { extensionApi: '*', nox: '*' },
+          id: 'nox.greedy',
+          main: 'embedded.js',
+          schemaVersion: 1,
+          version: '0.0.0',
+        },
+        activate(context) {
+          context.services.get(clockService);
+        },
+      }),
+    );
+
+    expect(app.start()).rejects.toThrow(ExtensionActivationError);
   });
 
   test('aborts the application signal before extension cleanup starts', async () => {

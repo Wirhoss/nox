@@ -14,21 +14,21 @@ describe('AuthorityCatalog', () => {
     const catalog = AuthorityCatalog.from(CORE_AUTHORITIES);
 
     expect(catalog.ids).toEqual([
-      'nox.artifacts.attach',
-      'nox.artifacts.read',
-      'nox.history.read',
-      'nox.history.search',
-      'nox.history.sessions',
-      'nox.history.sessions.search',
-      'nox.memory.read',
-      'nox.memory.write',
-      'nox.tools.call',
-      'nox.tools.search',
+      'nox.core.artifacts.attach',
+      'nox.core.artifacts.read',
+      'nox.core.history.read',
+      'nox.core.history.search',
+      'nox.core.history.sessions',
+      'nox.core.history.sessions.search',
+      'nox.core.memory.read',
+      'nox.core.memory.write',
+      'nox.core.tools.call',
+      'nox.core.tools.search',
     ]);
-    expect(catalog.has('nox.artifacts.attach')).toBeTrue();
-    expect(catalog.has('nox.artifacts.read')).toBeTrue();
-    expect(catalog.has('nox.history.read')).toBeTrue();
-    expect(catalog.has('nox.history.write')).toBeFalse();
+    expect(catalog.has('nox.core.artifacts.attach')).toBeTrue();
+    expect(catalog.has('nox.core.artifacts.read')).toBeTrue();
+    expect(catalog.has('nox.core.history.read')).toBeTrue();
+    expect(catalog.has('nox.core.history.write')).toBeFalse();
   });
 
   test('refuses an authority outside its owner namespace', () => {
@@ -39,18 +39,18 @@ describe('AuthorityCatalog', () => {
     expect(() =>
       AuthorityCatalog.from([definition('acme.tools.read', '@acme/tools')]),
     ).not.toThrow();
-    expect(() => AuthorityCatalog.from([definition('nox.history.read', '@acme/tools')])).toThrow(
-      'cannot own authority',
-    );
+    expect(() =>
+      AuthorityCatalog.from([definition('nox.core.history.read', '@acme/tools')]),
+    ).toThrow('cannot own authority');
   });
 
   test('refuses a duplicated name, and malformed names', () => {
     // Two *different* owners cannot collide at all — the namespace rule catches
     // that first — so the duplicate this guards against is one owner
     // registering the same name twice.
-    expect(() => AuthorityCatalog.from([definition('nox.a.b'), definition('nox.a.b')])).toThrow(
-      'is registered by both',
-    );
+    expect(() =>
+      AuthorityCatalog.from([definition('nox.core.a.b'), definition('nox.core.a.b')]),
+    ).toThrow('is registered by both');
     expect(() => AuthorityCatalog.from([definition('Nox.Shouty')])).toThrow('Invalid authority');
     // A single segment names a namespace, not an authority inside one.
     expect(() => AuthorityCatalog.from([definition('nox')])).toThrow('Invalid authority');
@@ -65,8 +65,8 @@ describe('AuthorityCatalog', () => {
 describe('grant patterns', () => {
   const catalog = AuthorityCatalog.from([
     ...CORE_AUTHORITIES,
-    definition('nox.files.read'),
-    definition('nox.files.write'),
+    definition('nox.files.read', 'nox.files'),
+    definition('nox.files.write', 'nox.files'),
   ]);
 
   test('a wildcard covers an authority added after the grant was written', () => {
@@ -77,7 +77,7 @@ describe('grant patterns', () => {
 
   test('a namespace wildcard covers future authorities of that namespace only', () => {
     expect(matchesPattern('nox.files.*', 'nox.files.delete')).toBeTrue();
-    expect(matchesPattern('nox.files.*', 'nox.history.read')).toBeFalse();
+    expect(matchesPattern('nox.files.*', 'nox.core.history.read')).toBeFalse();
     // It matches on a segment boundary, never mid-segment.
     expect(matchesPattern('nox.file.*', 'nox.files.read')).toBeFalse();
   });

@@ -30,7 +30,7 @@ async function memoryNox(calls: Calls) {
   const database = await Database.open({ logger: silentLogger, path: join(directory, 'nox.db') });
   databases.push(database);
   const auth = await AuthStore.open({ database, dataDirectory: directory, logger: silentLogger });
-  const account = await auth.register('esteban', PASSWORD);
+  const account = await auth.register('wirhoss', PASSWORD);
   const tokens = await auth.openSession(account.accountId);
 
   const memory: Memory = {

@@ -287,8 +287,14 @@ interface ScheduledRunHost {
 }
 
 const artifactPipelineService = createServiceToken<ArtifactPipeline>('nox.artifact-pipeline');
-const chatHubService = createServiceToken<ChatSurfaceHub>('nox.chat-hub');
-const configAdminService = createServiceToken<ConfigurationAdmin>('nox.config-admin');
+/** The conversation surface itself, which a transport joins rather than uses. */
+const chatHubService = createServiceToken<ChatSurfaceHub>('nox.chat-hub', {
+  controlPlane: true,
+});
+/** Writes this installation's configuration; the control plane by definition. */
+const configAdminService = createServiceToken<ConfigurationAdmin>('nox.config-admin', {
+  controlPlane: true,
+});
 const configService = createServiceToken<ExtensionConfiguration>('nox.config');
 /**
  * The directory this installation keeps its own files in.
@@ -318,8 +324,54 @@ const modelAccessService = createServiceToken<ModelAccess>('nox.model-access');
  * next one is most likely to start.
  */
 const runtimeActivityService = createServiceToken<RuntimeActivity>('nox.runtime-activity');
-const scheduledRunHostService = createServiceToken<ScheduledRunHost>('nox.scheduled-run-host');
-const secretStoreService = createServiceToken<SecretMetadataReader>('nox.secret-store');
+/** Runs an agent unattended, in a session of its own choosing. */
+const scheduledRunHostService = createServiceToken<ScheduledRunHost>('nox.scheduled-run-host', {
+  controlPlane: true,
+});
+/**
+ * Metadata only, and still control plane: the list of every secret this
+ * installation holds and which extension consumes each one is a map of the
+ * credentials worth going after, whether or not it carries their values.
+ */
+const secretStoreService = createServiceToken<SecretMetadataReader>('nox.secret-store', {
+  controlPlane: true,
+});
+
+/**
+ * Every service token this contract declares.
+ *
+ * Exists so nothing downstream has to keep a second copy of the roster. A
+ * contract test asserts this holds every token the module exports, which is
+ * what keeps a service added later from quietly falling out of the checks that
+ * read it.
+ */
+const HOST_SERVICE_TOKENS = Object.freeze([
+  artifactPipelineService,
+  chatHubService,
+  configAdminService,
+  configService,
+  dataDirectoryService,
+  loggerService,
+  modelAccessService,
+  runtimeActivityService,
+  scheduledRunHostService,
+  secretStoreService,
+]);
+
+/**
+ * The services only Nox's own builtins may resolve, derived from the tokens
+ * rather than listed again beside them.
+ *
+ * Published because the check that matters most happens where the tokens are
+ * not in hand: discovery reads a manifest, sees strings, and has to answer
+ * whether an installed package just asked for the control plane — before the
+ * package runs, rather than at whatever later moment it first calls `get`.
+ */
+const CONTROL_PLANE_SERVICE_IDS: readonly string[] = Object.freeze(
+  HOST_SERVICE_TOKENS.filter((token) => token.controlPlane === true)
+    .map((token) => token.id)
+    .sort((left, right) => left.localeCompare(right)),
+);
 
 export {
   artifactPipelineService,
@@ -327,7 +379,9 @@ export {
   CONFIG_KEYS,
   configAdminService,
   configService,
+  CONTROL_PLANE_SERVICE_IDS,
   dataDirectoryService,
+  HOST_SERVICE_TOKENS,
   loggerService,
   modelAccessService,
   runtimeActivityService,

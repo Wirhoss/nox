@@ -1,160 +1,147 @@
 # The web UI
 
-A Vue 3 single-page application served from the runtime. It is a *surface over
-Nox*, not a chat client: the runtime remains the source of truth, and the UI
-holds a projection of it.
+The current web interface is a Vue 3 single-page application served by the Nox
+runtime. It presents runtime state through HTTP DTOs and Server-Sent Events
+(SSE); it does not share kernel objects directly.
+
+This page separates current implementation from future direction. Source lives
+under [`src/ui/`](../src/ui/), and the import boundary is checked in
+[`src/boundaries.test.ts`](../src/boundaries.test.ts).
 
 ---
 
-## Stack
+## Current stack
 
-| Area | Choice |
+| Area | Current choice |
 |---|---|
-| Framework | Vue 3, Single File Components |
-| Language | TypeScript, strict |
+| Framework | Vue 3 Single File Components |
+| Language | TypeScript |
 | Build | Vite, run with Bun |
 | State | Pinia |
 | Routing | Vue Router |
-| Styles | SCSS + CSS Custom Properties |
-| Forms | VeeValidate + Zod |
-| Markdown | `markdown-it`, `highlight.js`, KaTeX |
-| HTTP surface | Elysia on Bun |
-| Real time | HTTP for commands, Server-Sent Events for streaming and events |
-| Unit tests | Vitest + Vue Testing Library, jsdom |
-| API mocks | MSW |
-| Quality | ESLint + oxlint + Prettier |
+| Styles | SCSS and CSS Custom Properties |
+| Forms | VeeValidate and Zod |
+| Markdown | `markdown-it`, `highlight.js`, and KaTeX |
+| HTTP server | Elysia on Bun |
+| Live updates | HTTP commands and SSE events |
+| Tests | Vitest, Vue Testing Library, jsdom, and MSW |
+| Static checks | TypeScript, ESLint, oxlint, and Prettier |
 
-React, JSX, and frameworks built around React are explicitly outside the Nox
-stack. So are Next.js, Tailwind, Redux, GraphQL, Electron, Tauri, microfrontends,
-and a separately packaged design system — none of them before a second real
-consumer exists.
+The UI is built as a client-only application because it is served by the local
+runtime and does not currently need server-side rendering. This describes the
+present implementation, not a permanent restriction on future work.
 
-Vite gives a small, direct client build without introducing SSR or SEO machinery
-that a local application served from Docker does not need.
-
-> **Not yet in the tree.** An accessible-primitives library (Reka UI), Stylelint,
-> and browser end-to-end tests are direction, not dependencies — none is
-> installed today. Playwright is present at the repository root, but for runtime
-> use rather than a UI e2e suite.
+Not currently present: browser end-to-end tests, Stylelint, a component
+workshop, or an accessible-primitives dependency. Playwright is a root runtime
+dependency for the browser tool, not evidence of a UI E2E suite.
 
 ---
 
 ## Layout
 
-The UI lives in `src/ui/` as an isolated workspace inside the single `src/` tree.
-The boundary keeps Vue out of the kernel and forbids the UI from importing kernel
-classes.
+The UI lives in `src/ui/` as a workspace inside the repository:
 
 ```text
 src/ui/
-├── app/            App.vue, AuthenticatedShell.vue, router.ts, bootstrap.ts, stores/
-├── routes/
-├── features/       audit · auth · chat · memory · sessions · settings
-├── shared/         api · i18n · styles · ui
-└── public/
+├── app/            application shell, router, bootstrap, app-wide stores
+├── routes/         access, chat, sessions, memory, settings
+├── features/       domain components, API modules, stores, model helpers
+├── shared/         API infrastructure, i18n, styles, reusable UI primitives
+└── public/         static files
 ```
 
-Stores, components and composables that belong to a feature stay with it. They
-move to `shared/` only when they have a **second real consumer**. Global `utils`,
-`hooks` or `components` folders without a clear domain are avoided.
+Feature-specific code generally stays with its feature. Shared primitives are
+introduced when more than one feature has a concrete use for them. The current
+shared UI directory contains components such as `NoxButton`, `NoxPanel`,
+`NoxNotice`, `NoxStatus`, and `NoxTextField`; larger domain components remain in
+their feature directories.
 
-### Component layers
+The desired dependency direction is:
 
-1. **Primitives** — Button, TextField, Dialog, Select, Tabs, Tooltip, Panel
-2. **Patterns** — SystemStatus, EmptyState, SettingsField, EventCard
-3. **Domain** — ChatMessage, ToolActivityCard, PermissionRequestCard, AuditDecisionCard
-4. **Features** — ChatTimeline, AgentEditor, AuditExplorer, ExtensionManager
+```text
+route or feature → shared UI / API modules
+UI DTOs          ← HTTP surface ← runtime
+```
 
-Primitives know nothing about features. Features compose primitives and patterns.
-A component does not become universal through a dozen boolean props.
+The boundary test checks that code outside `src/ui/` does not import UI modules
+and that UI code does not import kernel source modules.
 
 ---
 
-## State
+## State and data flow
 
 ```mermaid
 flowchart TB
-  W["HTTP / SSE"] --> C["API client"]
-  C --> V["DTO validation"]
+  W["HTTP / SSE"] --> C["API module"]
+  C --> V["Zod DTO parsing"]
   V --> A["Pinia action"]
-  A --> N["normalized state"]
-  N --> G["getters"]
-  G --> UI["Vue components"]
+  A --> N["feature state"]
+  N --> UI["Vue components"]
 ```
 
-Components do not `fetch`, and they do not interpret raw events.
+Current API modules perform requests and parse response DTOs. Components use
+stores and actions rather than issuing those requests independently.
 
-### Who owns what
+### State ownership
 
-| Owner | Holds |
+| Owner | Current responsibility |
 |---|---|
-| **Vue Router** | Selected session, Settings section, filters — anything that needs a recoverable URL |
-| **Pinia** | Runtime data, shared application state, event projections, global preferences |
-| **Component local** | Hover, tooltip, expansion, ephemeral values that need not outlive the component |
+| **Vue Router** | Active route and URL-addressable settings sections |
+| **Pinia** | Authentication state, chat projection, sessions, memory, settings catalogs |
+| **Component state** | Form drafts, expansion, hover, and other local interaction state |
 
-Nothing is duplicated into Pinia that can be derived from the route or another
-canonical value.
+Asynchronous stores use explicit status values such as `loading`, `ready`, and
+`failed`. The chat run state likewise uses named variants instead of unrelated
+booleans.
 
-### Explicit states
+### Chat history and events
 
-Asynchronous processes are discriminated unions, never several booleans that can
-contradict each other:
+The current chat store:
 
-```ts
-type RunStatus =
-  | { type: 'idle' }
-  | { type: 'submitting'; clientMessageId: string }
-  | { type: 'running'; runId: string }
-  | { type: 'waiting-permission'; requestId: string }
-  | { type: 'stopping'; runId: string }
-  | { type: 'failed'; error: NoxError };
-```
+1. opens the SSE connection;
+2. loads agent, command, and conversation catalogs;
+3. reads up to 1,000 history entries for the selected conversation;
+4. replays events buffered while the initial requests were in flight;
+5. applies subsequent events through the store's event handler.
 
-### Events and long sessions
+Messages and events carry IDs used for deduplication. If an SSE connection drops,
+the client reconnects with the most recent event cursor in `Last-Event-ID`. This
+behavior has coverage in
+[`activeSession.store.vitest.ts`](../src/ui/features/chat/stores/activeSession.store.vitest.ts)
+and the web broker tests.
 
-```text
-SSE event → validate → deduplicate → applyEvent(event) → update stores
-```
+The 1,000-entry history request is a current bound, not complete UI pagination.
+A paginated or virtualized conversation window remains possible future work for
+larger transcripts.
 
-One action applies every event. Components do not subscribe to the stream
-individually.
+### Browser persistence
 
-Sessions can hold hundreds of turns, so the session list keeps only summaries and
-metadata, while the active-session store keeps a **paginated window** of the
-transcript plus new events. Messages are identified by `messageId`, so a
-reconnection cannot duplicate them.
+The current browser-persisted preference is the selected locale, stored under an
+explicit key. Access tokens remain in the Pinia authentication store, while the
+refresh token is sent in a backend-issued HttpOnly cookie.
 
-`permissions` state is cross-cutting, because an authorization request can come
-from a session that is not on screen.
+Themes, density, panel state, and similar preferences may later use an explicit
+allowlist. Credentials, transcripts, permission requests, and tool results are
+not intended for browser persistence.
 
-### Local persistence
+### Working guidelines
 
-Explicit and by allowlist — theme, density, reduced motion, panel state. Never:
+These are project preferences rather than inflexible rules:
 
-- credentials or tokens
-- complete transcripts
-- permission requests
-- sensitive tool results
-- secret configuration
-
-### Rules
-
-1. Each store represents one concrete domain.
-2. HTTP calls live in typed API clients.
-3. Components call actions and never know endpoints.
-4. Getters have no side effects.
-5. Real-time events enter through a single point.
-6. Derivable information is not duplicated.
-7. No circular dependencies between stores.
-8. Only explicitly allowed fields are persisted.
-9. Stores and transitions are tested without mounting the whole application.
+1. Keep network calls in typed API modules.
+2. Let stores own shared feature state and event projection.
+3. Derive values instead of duplicating them when practical.
+4. Keep persistence explicit and narrow.
+5. Test state transitions without requiring the full application shell when
+   that gives useful coverage.
+6. Revisit an abstraction when a second concrete use appears.
 
 ---
 
-## The HTTP contract
+## HTTP contract
 
-JSON over HTTP handles commands; one authenticated SSE stream delivers what the
-web broker renders.
+JSON over HTTP handles commands. One authenticated SSE stream carries the events
+rendered by the web broker.
 
 ```text
 GET  /api/chat/agents
@@ -168,78 +155,81 @@ POST /api/chat/conversations/:conversationId/commands/:command
 POST /api/chat/conversations/:conversationId/permissions/:requestId
 ```
 
-Beyond chat, the surface groups into `/api/auth`, `/api/config`,
-`/api/artifacts`, `/api/sessions`, `/api/memories`, `/api/secrets`,
-`/api/extensions`, `/api/capabilities`, `/api/i18n` and `/api/health`.
+Other current groups include `/api/auth`, `/api/config`, `/api/artifacts`,
+`/api/sessions`, `/api/memories`, `/api/secrets`, `/api/extensions`,
+`/api/capabilities`, `/api/i18n`, and `/api/health`.
 
-**The client generates `conversationId`.** The conversation materializes in the
-runtime with its first message — there is no endpoint that creates one.
+The client generates `conversationId`. The runtime binds it to a session when the
+first message arrives; there is no separate conversation-creation endpoint.
 
-The stream is single for every conversation, and each event declares which one it
-belongs to. It carries fragments, settled messages, technical activity, run
-lifecycle, permissions and context state.
+Each SSE event identifies its conversation and event type. The stream can carry
+text fragments, settled messages, tool and reasoning activity, run lifecycle,
+permission requests, titles, and context usage according to broker capability.
 
-**Context counting happens inside the runtime**, calibrated against the provider
-when it reports usage, and is never re-estimated in the browser.
+Context estimates are produced by the runtime and exposed to the browser. The UI
+does not perform a separate token estimate.
 
-A dropped stream resumes through the standard `Last-Event-ID` header.
+The current transport is HTTP plus SSE. No WebSocket surface is implemented.
 
-WebSocket will be added only if a bidirectional requirement appears that HTTP +
-SSE cannot serve correctly.
-
-### The boundary
+### UI/runtime boundary
 
 ```text
-Kernel objects → HTTP surface → API DTOs → Web UI
+Runtime objects → HTTP routes → DTOs → UI API modules → Pinia
 ```
 
-The UI does not import `Session`, `Agent` or `SessionGate`. Every DTO received is
-validated before it enters Pinia.
+The UI does not import `Session`, `Agent`, or `SessionGate`. API modules define
+schemas for the payloads they accept before those values reach stores.
 
 ---
 
 ## Styling and themes
 
-SCSS and CSS Custom Properties have different jobs:
+SCSS currently holds component structure, responsive rules, and states. CSS
+Custom Properties hold the active design tokens and make runtime theme changes
+possible without rebuilding component styles.
 
-- **SCSS** — structure, responsive rules, states, mixins, local styles.
-- **CSS variables** — design tokens, themes, and anything changeable at runtime.
-
-Custom themes are declarative to begin with and execute no code.
+The repository currently ships the `machine` theme. Reduced-motion media queries
+are present in the shared motion tokens and several animated components. Broader
+theme and accessibility matrices still need browser-level verification.
 
 ---
 
-## Testing
+## Testing status
 
-- **Vitest + Vue Testing Library** — behavior, states, keyboard and
-  accessibility, for components and stores alike.
-- **MSW** — API contracts during development and in tests.
+The UI suite currently uses:
 
-Critical components are tested against at least the primary theme, an alternate
-theme, and high contrast.
+- **Vitest and Vue Testing Library** for stores, components, route behavior, and
+  interaction states;
+- **MSW** for HTTP fixtures in UI tests;
+- **jsdom** as the test environment.
 
-Browser end-to-end coverage (login, chat, streaming, permissions, configuration,
-audit), Stylelint, and a component workshop are planned rather than present. A
-workshop will be evaluated once the first primitives exist — not before there are
-components worth documenting.
+Representative coverage includes authentication, SSE parsing and reconnection,
+chat event projection, artifacts, settings schemas and catalogs, memory routes,
+session/audit routes, and i18n. The test files are visible under
+[`src/ui/`](../src/ui/).
+
+Browser E2E flows such as claim, login, chat streaming, permission handling, and
+configuration editing are not automated yet. Visual regression and tested theme
+coverage are also pending, so this documentation does not claim them.
 
 ---
 
 ## Authentication
 
-The first identity claims Nox with an **ephemeral code printed by the runtime**.
+A fresh installation presents a claim form that requires the ephemeral code
+printed by the runtime. After registration, the access token is held in memory
+and renewal uses the HttpOnly refresh cookie.
 
-The access token lives only in memory; renewal uses an HttpOnly cookie. See
-[configuration.md](configuration.md) for `auth.accessTtlSeconds`,
-`auth.refreshTtlSeconds` and `auth.secureCookies`.
+See [configuration.md](configuration.md) for `auth.accessTtlSeconds`,
+`auth.refreshTtlSeconds`, and `auth.secureCookies`.
 
 ---
 
 ## Internationalization
 
-The browser ships message *keys*, not an embedded English catalog. Catalogs come
-from the runtime over `/api/i18n`, which is public because the access screen
-needs a catalog before anyone can authenticate.
+The browser starts with message keys and obtains language catalogs from the
+runtime through `/api/i18n`. That route is public because the access screen needs
+localized text before authentication.
 
-Extensions that own UI copy contribute translation fragments — see
+Extensions can contribute translation fragments for UI copy they own. See
 [extensions/README.md](extensions/README.md#languages-and-extension-owned-ui-copy).
