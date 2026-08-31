@@ -1,0 +1,19 @@
+name: nox
+
+services:
+  nox:
+    image: ${NOX_IMAGE:-nox:local}
+    init: true
+    restart: unless-stopped
+    ports:
+      - '${NOX_BIND_ADDRESS:-127.0.0.1}:${NOX_PORT:-8080}:8080'
+    volumes:
+      - nox-config:/etc/nox/config
+      - nox-data:/var/lib/nox
+      - nox-extensions:/var/lib/nox/extensions
+    stop_grace_period: 15s
+
+volumes:
+  nox-config:
+  nox-data:
+  nox-extensions:

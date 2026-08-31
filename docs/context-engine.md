@@ -138,6 +138,34 @@ original refusal.
 The recovery flow has coverage in
 [`runner.test.ts`](../src/agent/runner.test.ts).
 
+### When the compaction request is itself too large
+
+The selected range is initially sent in one compaction request. If the
+compaction provider returns `context_limit`, Nox falls back to hierarchical
+compaction:
+
+1. Find a split near the range's estimated token midpoint.
+2. Move that split to a safe tool-call boundary.
+3. Prefer compacting the older side.
+4. Retry the complete range with that intermediate summary in place.
+5. Repeat if the compaction provider still rejects the request for length.
+
+This fallback is reactive to the provider's actual refusal; the token estimate
+only chooses a useful split. It does not assume that the estimate exactly matches
+the model tokenizer. Each generated summary must reduce the local estimate, and
+a pass is limited to 16 compaction requests so recursive retries cannot continue
+indefinitely.
+
+Intermediate summaries and their final replacement form an ordered chain of
+compaction events. Nox validates the complete chain against active history before
+appending it to the transcript, so replay reconstructs the same working history.
+If a range consists of one indivisible message, or has no safe split, the fallback
+leaves that range intact rather than looping or cutting a tool-call pair.
+
+The hierarchical path, replay, indivisible-range behavior, and safe boundaries
+have focused coverage in
+[`context.test.ts`](../src/agent/context/context.test.ts).
+
 ### Tool-call boundaries
 
 A selected compaction range cannot begin between a `toolCall` and its

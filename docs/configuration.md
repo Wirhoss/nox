@@ -10,30 +10,33 @@ restart is required. Representative behavior is covered in
 
 ## Environment
 
-Environment variables currently select storage locations, runtime mode, session
-resume, and optional file watching. Application behavior is otherwise described
-by the JSON configuration. Variables are defined in
-[`src/config/env.ts`](../src/config/env.ts):
+Environment variables select storage locations, runtime mode, session resume,
+and optional file watching. Application behavior is otherwise described by the
+JSON configuration. Nox is deployed only as a container; these are container
+environment values, not a host CLI setup:
 
-| Variable | Default | What it is |
+| Variable | Image value | What it is |
 |---|---|---|
 | `CONFIG_DIR` | `/etc/nox/config` | Where the JSON configuration files are read from |
-| `DATA_DIR` | `/var/lib/nox` | SQLite database, artifacts, and `.secret-key` |
-| `EXTENSIONS_DIR` | `DATA_DIR/extensions` | Locally installed extension packages |
-| `UI_DIR` | `/app/ui` | Built web UI assets — the output of `bun run build:ui` |
+| `DATA_DIR` | `/var/lib/nox` | SQLite databases, artifacts, and local keys |
+| `EXTENSIONS_DIR` | `/var/lib/nox/extensions` | Operator-installed extension packages |
+| `UI_DIR` | `/app/ui` | Web UI assets bundled into the image |
 | `CONFIG_WATCH` | off | `1` or `true` enables debounced filesystem reloads |
 | `CONFIG_WATCH_DEBOUNCE_MS` | `250` | Debounce window, between 50 and 60000 |
-| `NODE_ENV` | `development` | `development`, `production` or `test` |
+| `NODE_ENV` | `production` | `development`, `production` or `test` |
 | `NOX_SESSION_ID` | — | Resumes that session on start |
 
-The defaults are container paths. For local development, point them somewhere
-inside the repo:
+Keep the image paths stable and select their host storage with container mounts.
+The supplied [`compose.yaml`](../compose.yaml) persists them as follows:
 
-```bash
-export CONFIG_DIR=./.nox/config
-export DATA_DIR=./.nox/data
-export UI_DIR=./src/ui/dist
-```
+| Container path | Compose volume |
+|---|---|
+| `/etc/nox/config` | `nox-config` |
+| `/var/lib/nox` | `nox-data` |
+| `/var/lib/nox/extensions` | `nox-extensions` |
+
+See [deployment.md](deployment.md) for startup, volume, networking, backup, and
+update guidance.
 
 ---
 

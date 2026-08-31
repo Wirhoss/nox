@@ -19,7 +19,6 @@ package under `node_modules`.
 | `elysia` | MIT |
 | `jose` | MIT |
 | `nanoid` | MIT |
-| `playwright` | Apache-2.0 |
 | `semver` | ISC |
 | `sharp` | Apache-2.0 |
 | `sqlite-vec` | MIT OR Apache-2.0 |
@@ -71,12 +70,6 @@ not by this repository and not by the Apache-2.0 license of
 
 The embedding model referenced in the documentation, `all-MiniLM-L6-v2`, is
 Apache-2.0. Any other model you configure is yours to check.
-
-### Browsers, via `playwright`
-
-`playwright` is Apache-2.0, but the browser binaries it downloads are separate
-software under their own licenses (Chromium: BSD-3-Clause and others; Firefox:
-MPL-2.0; WebKit: LGPL and BSD).
 
 ### Services reached over the network
 

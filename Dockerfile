@@ -93,16 +93,12 @@ LABEL org.opencontainers.image.title="nox" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="${BUN_IMAGE}"
 
-# Playwright is a lazy client, but a configured local instance needs a browser
-# executable. Debian's Chromium uses the same glibc as ONNX Runtime; no
-# Playwright browser download is performed, and no browser process starts until
-# the first browser tool call.
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates chromium wget \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates wget \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 10001 nox \
  && useradd --uid 10001 --gid nox --no-create-home --home-dir /home/nox --shell /usr/sbin/nologin nox \
- && install -d -m 0750 -o nox -g nox /home/nox /etc/nox/config /var/lib/nox \
+ && install -d -m 0750 -o nox -g nox /home/nox /etc/nox/config /var/lib/nox /var/lib/nox/extensions \
  && install -d -m 0555 -o root -g root /app \
  && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
 
@@ -132,7 +128,6 @@ ENV NODE_ENV=production \
     UI_DIR=/app/ui \
     HOME=/home/nox \
     NODE_PATH=/app/node_modules \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     TZ=UTC
 
 USER 10001:10001

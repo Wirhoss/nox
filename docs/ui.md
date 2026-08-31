@@ -32,8 +32,7 @@ runtime and does not currently need server-side rendering. This describes the
 present implementation, not a permanent restriction on future work.
 
 Not currently present: browser end-to-end tests, Stylelint, a component
-workshop, or an accessible-primitives dependency. Playwright is a root runtime
-dependency for the browser tool, not evidence of a UI E2E suite.
+workshop, or an accessible-primitives dependency.
 
 ---
 
@@ -216,9 +215,9 @@ coverage are also pending, so this documentation does not claim them.
 
 ## Authentication
 
-A fresh installation presents a claim form that requires the ephemeral code
-printed by the runtime. After registration, the access token is held in memory
-and renewal uses the HttpOnly refresh cookie.
+A fresh container presents a claim form that requires the ephemeral code written
+to its logs. After registration, the access token is held in memory and renewal
+uses the HttpOnly refresh cookie.
 
 See [configuration.md](configuration.md) for `auth.accessTtlSeconds`,
 `auth.refreshTtlSeconds`, and `auth.secureCookies`.

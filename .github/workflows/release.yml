@@ -219,7 +219,9 @@ jobs:
 
       - name: Resolve image name
         id: names
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -228,7 +230,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             ```bash
-            docker pull ${{ steps.names.outputs.image }}:${{ github.ref_name }}
+            docker pull ${{ steps.names.outputs.image }}:${{ steps.names.outputs.version }}
             ```
 
             `linux/amd64` and `linux/arm64`. The attached tarball is the

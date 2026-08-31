@@ -119,6 +119,9 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - name: Validate Compose deployment
+        run: docker compose config >/dev/null
+
       # Built, never pushed: this job exists so a Dockerfile that no longer
       # assembles is a red pull request instead of a red release.
       - name: Build

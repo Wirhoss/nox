@@ -215,9 +215,15 @@ it has to be made able to cross a boundary before one can be added.
 
 A measured note on the options, because one of them does not work: a worker
 thread is not a boundary. An extension body in a Bun `Worker` can import
-`node:fs`, spawn a child process, read `process.env`, and open sockets. Only a
-process confined by the operating system — a dedicated uid, Landlock, seccomp,
-or a sibling container — makes filesystem and network declarations enforceable.
+`node:fs`, spawn a child process, read `process.env`, and open sockets. A
+process confined by the operating system is a boundary, and in the shipping
+image both mechanisms it needs are available unprivileged: Landlock at ABI 7
+for the filesystem, and a seccomp filter for network, since Landlock's own
+network rules address ports rather than destinations and leave UDP untouched.
+Both were measured denying what they should while a confined runtime kept
+working, native modules included, and both survive a spawned child. That makes
+filesystem and network declarations enforceable in principle; none of it is
+wired into the loader.
 
 The crossings, what each would have to become, and the open decisions are in
 [extension-isolation.md](extension-isolation.md).

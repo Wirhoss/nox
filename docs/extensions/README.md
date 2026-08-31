@@ -274,6 +274,9 @@ manifest and gets its own migrated schema instead.
 
 ## Building
 
+These are repository and extension-authoring commands. They do not install or
+run Nox on the host; deployment uses the container image.
+
 | Command | What it does |
 |---|---|
 | `bun run build:extension-api` | Builds the publishable public package |
@@ -290,8 +293,8 @@ dependencies unless Nox explicitly supplies them at runtime.
 
 The host-provided list is exported as `HOST_PROVIDED_PACKAGES` from
 `@nox/extension-api`. It currently includes packages that need shared runtime
-identity or host-installed native binaries, including Zod, Sharp, Playwright,
-and Transformers.
+identity or host-installed native binaries, including Zod, Sharp and
+Transformers.
 
 Extension builds can use `EXTENSION_EXTERNAL_PACKAGES`, which combines that list
 with `@nox/extension-api`. The
