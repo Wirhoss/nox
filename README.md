@@ -19,8 +19,11 @@
 ## Overview
 
 Nox is a pre-1.0 agent runtime with sessions, tools, providers, memory,
-transports, scheduled jobs, artifacts, and a web interface. Its current design
-focuses on two areas:
+transports, scheduled jobs, artifacts, and a web interface. It is distributed
+and supported as a Linux container, not as a host-installed CLI or a subprocess.
+Bun is source-development tooling; the Docker image is the deployment unit.
+
+Its current design focuses on two areas:
 
 - keeping the reusable part of a model request stable where the runtime can do
   so, while reducing older tool traffic before using lossy compaction;
@@ -150,6 +153,12 @@ calls `context.compact({ force: true })`. That forced pass rechecks folding and
 may run lossy compaction without a configured `contextWindow`; after a
 successful reduction, the provider request is retried once.
 
+If the compaction request itself receives `context_limit`, the context uses a
+bounded hierarchical fallback: it splits near an estimated token midpoint,
+adjusts to a safe tool-call boundary, summarizes the older range first, and then
+retries with that summary plus the remaining range. An indivisible range is left
+intact rather than retried indefinitely.
+
 A person can also request a forced compaction explicitly through the session
 command.
 
@@ -173,7 +182,7 @@ trade-offs can change as the project is tested in real workloads.
 
 ## Screenshots
 
-These screenshots were captured from a clean local installation of the current
+These screenshots were captured from a fresh container running the current
 development build. The interface is still evolving.
 
 ### First-run claim screen
@@ -188,27 +197,42 @@ development build. The interface is still evolving.
 
 ## Quickstart
 
+Nox has no host CLI installation. Build and start its container with Docker:
+
+```bash
+docker build --build-arg NOX_VERSION=0.1.0 -t nox:local .
+docker compose up -d
+docker compose logs nox
+```
+
+The included [`compose.yaml`](compose.yaml) uses that local image, publishes the
+web interface only on `127.0.0.1:8080`, and keeps configuration, application
+data, and installed extensions in named volumes. Open
+[http://localhost:8080](http://localhost:8080), then claim the fresh instance
+with the one-time code shown by `docker compose logs nox`.
+
+Tagged releases also publish images to GHCR. Select one without changing the
+Compose file:
+
+```bash
+NOX_IMAGE=ghcr.io/wirhoss/nox:0.1.0 docker compose up -d
+```
+
+The first start writes the default `app.json` and applies the SQLite migrations.
+Do not use `docker compose down -v` unless you intend to delete the Nox state.
+See [docs/deployment.md](docs/deployment.md) for networking, persistence,
+updates, and backups, and [docs/configuration.md](docs/configuration.md) for the
+runtime configuration and secret references.
+
+### Source development
+
+The repository uses Bun for builds, checks, and tests. These commands are a
+contributor workflow, not an alternative deployment method:
+
 ```bash
 bun install
-bun run check        # typecheck + lint + format check + tests
+bun run check
 ```
-
-```bash
-export CONFIG_DIR=./.nox/config          # optional, see src/config/env.ts
-export DATA_DIR=./.nox/data              # database and local secret key
-export EXTENSIONS_DIR=./.nox/extensions  # defaults to DATA_DIR/extensions
-export UI_DIR=./src/ui/dist              # output of `bun run build:ui`
-
-bun run build:ui
-bun run start
-```
-
-The first run writes `app.json` into `CONFIG_DIR` with defaults and applies the
-SQLite migrations in `DATA_DIR`. The terminal surface accepts messages;
-`/exit` or Ctrl-C ends the session. Replies use stdout and logs use stderr.
-
-See [docs/configuration.md](docs/configuration.md) for the environment variables,
-configuration sections, and secret references.
 
 ---
 
@@ -251,6 +275,7 @@ reliability, or security certification.
 
 | Document | What is in it |
 |---|---|
+| [docs/deployment.md](docs/deployment.md) | Container startup, persistence, networking, updates, and backups |
 | [docs/architecture.md](docs/architecture.md) | The kernel, contribution points, services, composition root, and trust boundary |
 | [docs/context-engine.md](docs/context-engine.md) | Transcript vs. working set, folding, compaction, and token accounting |
 | [docs/configuration.md](docs/configuration.md) | Environment, `app.json`, live reconciliation, and secrets |
@@ -289,6 +314,8 @@ src/application.ts   application composition root
 
 packages/extension-api/   public, versioned extension contract
 examples/extensions/      independently compiled extension example
+Dockerfile                 production image build
+compose.yaml               supported local container deployment
 ```
 
 ---
