@@ -28,6 +28,7 @@ import type {
   ProviderSourceEvent,
   TextGenerateOptions,
   Tool,
+  ToolDeclaration,
   ToolSetGrant,
 } from '@nox/extension-api';
 
@@ -94,7 +95,7 @@ class RecordingProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -122,7 +123,7 @@ class ToolCallingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -158,7 +159,7 @@ class RoutingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {

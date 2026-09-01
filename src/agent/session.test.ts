@@ -12,6 +12,7 @@ import {
   isInternalRequest,
   permissiveAuthorization,
   TEST_AUTHORITY,
+  testBoundTool,
   testCatalog,
   testOrigin,
 } from '../testFixtures';
@@ -25,6 +26,7 @@ import type {
   ProviderSourceEvent,
   TextGenerateOptions,
   Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
@@ -79,7 +81,7 @@ class ScriptedProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -226,7 +228,7 @@ describe('Session', () => {
         agentId: 'test',
         authorities: testCatalog(),
         authorization: permissiveAuthorization,
-        context: { tools: { echo: echoTool() } },
+        context: { tools: { echo: testBoundTool(echoTool()) } },
         systemPrompt: 'system',
       },
     );
@@ -259,7 +261,7 @@ describe('Session', () => {
         agentId: 'test',
         authorities: testCatalog(),
         authorization: permissiveAuthorization,
-        context: { tools: { echo: echoTool() } },
+        context: { tools: { echo: testBoundTool(echoTool()) } },
         systemPrompt: 'system',
       },
     );

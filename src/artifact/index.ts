@@ -11,11 +11,7 @@ export {
   ArtifactStorageQuotaError,
   ArtifactTooLargeError,
 } from './error';
-export {
-  ARTIFACT_TEXT_READ_PROFILE,
-  artifactConversationScope,
-  ArtifactOutputSink,
-} from './output';
+export { ARTIFACT_TEXT_READ_PROFILE, ArtifactOutputSink } from './output';
 export { ArtifactPipeline, artifactRef } from './pipeline';
 export {
   artifactProcessorIdSchema,
@@ -35,6 +31,7 @@ export {
 export {
   ARTIFACT_PROVENANCE_TYPES,
   ARTIFACT_SCOPE_TYPES,
+  artifactConversationScope,
   artifactIdSchema,
   artifactProvenanceSchema,
   artifactRefSchema,

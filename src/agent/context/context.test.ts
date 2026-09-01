@@ -1,18 +1,20 @@
-import { ChatProvider } from '@nox/extension-api';
+import { ChatProvider, ProviderError } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
-import { TEST_AUTHORITY, testOrigin } from '../../testFixtures';
+import { TEST_AUTHORITY, testBoundTool, testOrigin } from '../../testFixtures';
 import { Context } from './context';
 import { messageToString } from './message';
 import { TokenEstimator } from './tokens';
 
 import type {
   ChatModelConfig,
+  CompactedMessage,
   Message,
   ProviderSourceEvent,
   TextGenerateOptions,
   Tool,
+  ToolDeclaration,
   UserMessage,
 } from '@nox/extension-api';
 
@@ -72,7 +74,7 @@ interface CapturedRequest {
   history: Message[];
   model?: ChatModelConfig;
   systemPrompt: string;
-  tools: Tool[];
+  tools: readonly ToolDeclaration[];
 }
 
 class SummaryProvider extends ChatProvider {
@@ -97,7 +99,7 @@ class SummaryProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -115,6 +117,44 @@ class SummaryProvider extends ChatProvider {
       this.#active--;
       this.lifecycle.push(`end:${String(requestIndex)}`);
     }
+  }
+}
+
+class LimitedSummaryProvider extends ChatProvider {
+  public readonly requests: CapturedRequest[] = [];
+
+  readonly #maxPayloadCharacters: number;
+
+  constructor(maxPayloadCharacters: number) {
+    super({});
+    this.#maxPayloadCharacters = maxPayloadCharacters;
+  }
+
+  public override fetchModelIds(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  protected override async *attempt(
+    systemPrompt: string,
+    messageHistory: Message[],
+    tools: readonly ToolDeclaration[],
+    opts: TextGenerateOptions | undefined,
+    _signal: AbortSignal,
+  ): AsyncIterable<ProviderSourceEvent> {
+    await Promise.resolve();
+    const requestIndex = this.requests.length;
+    this.requests.push({ history: messageHistory, model: opts?.model, systemPrompt, tools });
+    // The last message is Context's small handoff request. Keep this fake limit
+    // focused on the transcript payload whose adaptive splitting is under test.
+    const payloadCharacters = messageHistory
+      .slice(0, -1)
+      .reduce((total, message) => total + messageToString(message).length, 0);
+    if (payloadCharacters > this.#maxPayloadCharacters) {
+      throw new ProviderError('context_limit', 'Summary input is too large for this model.');
+    }
+
+    yield { text: `handoff-${String(requestIndex)}`, type: 'textFragment' };
+    yield { type: 'end' };
   }
 }
 
@@ -156,7 +196,7 @@ describe('Context cache stability', () => {
     };
     const alpha: Tool<typeof parameters> = { ...zebra, description: 'a', name: 'alpha' };
     const context = new Context('system', new SummaryProvider([]), {
-      tools: { zebra, alpha },
+      tools: { alpha: testBoundTool(alpha), zebra: testBoundTool(zebra) },
     });
 
     const first = context.getTools();
@@ -186,7 +226,7 @@ describe('Context cache stability', () => {
     expect(
       () =>
         new Context('system', new SummaryProvider([]), {
-          tools: { history_sessions_search: conflicting },
+          tools: { history_sessions_search: testBoundTool(conflicting) },
         }),
     ).toThrow('conflicts with a context history tool');
   });
@@ -267,6 +307,96 @@ describe('Context compaction', () => {
 
     expect(bytes(replayed.getHistory())).toEqual(bytes(original.getHistory()));
     expect(bytes(replayed.getFullHistory())).toEqual(bytes(original.getFullHistory()));
+  });
+
+  test('a provider context refusal falls back to token-aware hierarchical compaction', async () => {
+    const messages = [
+      textMessage('user', 'u1', 'large first '.repeat(300)),
+      textMessage('assistant', 'a1', 'small tail '.repeat(70)),
+      textMessage('user', 'u2', 'small tail '.repeat(70)),
+      textMessage('assistant', 'a2', 'small tail '.repeat(70)),
+    ];
+    const firstPayloadCharacters = messageToString(requireValue(messages[0])).length;
+    const provider = new LimitedSummaryProvider(firstPayloadCharacters + 1_000);
+    const context = new Context('system', provider, {
+      compactGuardBeginningTokens: 0,
+      compactGuardEndTokens: 0,
+      compactMinTokens: 1,
+      fullHistory: messages,
+      tokenCounter: (text) => text.length,
+    });
+
+    const result = await context.compact({ force: true });
+
+    expect(result).toEqual({ compacted: true, reduced: true });
+    // The first message holds most of the estimated tokens, so the midpoint is
+    // after one message rather than halfway through the four-message array.
+    expect(provider.requests.map((request) => request.history.length - 1)).toEqual([4, 1, 4]);
+
+    const events = context
+      .getFullHistory()
+      .filter((message): message is CompactedMessage => message.role === 'compacted');
+    expect(events).toHaveLength(2);
+    const firstEvent = requireValue(events[0]);
+    const secondEvent = requireValue(events[1]);
+    expect(firstEvent.compactedMessageIds).toEqual(['u1']);
+    expect(secondEvent.compactedMessageIds).toEqual([firstEvent.messageId, 'a1', 'u2', 'a2']);
+    expect(context.getHistory().map((message) => message.role)).toEqual(['compacted']);
+
+    const replayed = new Context('system', new SummaryProvider([]), {
+      fullHistory: context.getFullHistory(),
+      tokenCounter: (text) => text.length,
+    });
+    expect(bytes(replayed.getHistory())).toEqual(bytes(context.getHistory()));
+  });
+
+  test('hierarchical splits keep a tool call and response on the same side', async () => {
+    const messages = [
+      textMessage('user', 'u1', 'x'.repeat(1_200)),
+      toolCall('call', 'track', 'x'.repeat(1_200)),
+      toolResponse('response', 'track', 'x'.repeat(1_200)),
+      textMessage('assistant', 'a1', 'x'.repeat(1_200)),
+    ];
+    const tailPayloadCharacters = messages
+      .slice(1)
+      .reduce((total, message) => total + messageToString(message).length, 0);
+    const provider = new LimitedSummaryProvider(tailPayloadCharacters + 1_000);
+    const context = new Context('system', provider, {
+      compactGuardBeginningTokens: 0,
+      compactGuardEndTokens: 0,
+      compactMinTokens: 1,
+      foldMinReductionRatio: 1,
+      fullHistory: messages,
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(await context.compact({ force: true })).toEqual({ compacted: true, reduced: true });
+
+    const events = context
+      .getFullHistory()
+      .filter((message): message is CompactedMessage => message.role === 'compacted');
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    for (const event of events) {
+      const ids = new Set(event.compactedMessageIds);
+      expect(ids.has('call')).toBe(ids.has('response'));
+    }
+  });
+
+  test('an indivisible range that exceeds the compaction model limit is a bounded no-op', async () => {
+    const message = textMessage('user', 'huge', 'x'.repeat(20_000));
+    const provider = new LimitedSummaryProvider(1);
+    const context = new Context('system', provider, {
+      compactGuardBeginningTokens: 0,
+      compactGuardEndTokens: 0,
+      compactMinTokens: 1,
+      fullHistory: [message],
+      tokenCounter: (text) => text.length,
+    });
+
+    expect(await context.compact({ force: true })).toEqual({ compacted: false, reduced: false });
+    expect(provider.requests).toHaveLength(1);
+    expect(context.getHistory()).toEqual([message]);
+    expect(context.getFullHistory()).toEqual([message]);
   });
 
   test('one oversized message can compact even when it exceeds both default token guards', async () => {

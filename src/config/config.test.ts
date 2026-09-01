@@ -655,6 +655,50 @@ async function loadedConfig(dir: string): Promise<Config> {
   });
 }
 
+describe('routing a configured entry to the contribution that declared it', () => {
+  // Validation happens beside the schema, so what comes back names the entry
+  // and the field rather than reporting that a union failed to match.
+  async function complaint(document: Record<string, unknown>): Promise<string> {
+    const dir = await configDir();
+    await write(dir, 'providers.json', document);
+    const config = await loadedConfig(dir);
+
+    const error = await rejection(config.resolve(registryWith('fake_provider')));
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  test('names the type nobody registered, and what is available instead', async () => {
+    const message = await complaint({ main: { baseUrl: 'https://x', type: 'anthropic' } });
+
+    expect(message).toContain('"anthropic" is not registered');
+    expect(message).toContain('fake_provider');
+  });
+
+  test('asks for a type when an entry carries none', async () => {
+    const message = await complaint({ main: { baseUrl: 'https://x' } });
+
+    expect(message).toContain('Needs a "type"');
+  });
+
+  test('reports the contribution own complaint under the entry it belongs to', async () => {
+    const message = await complaint({ main: { type: 'fake_provider' } });
+
+    expect(message).toContain('main.baseUrl');
+  });
+
+  test('accepts an entry its contribution accepts', async () => {
+    const dir = await configDir();
+    await write(dir, 'providers.json', { main: { baseUrl: 'https://x', type: 'fake_provider' } });
+    const config = await loadedConfig(dir);
+
+    await config.resolve(registryWith('fake_provider'));
+
+    expect(config.get('providers') as Record<string, unknown>).toMatchObject({
+      main: { type: 'fake_provider' },
+    });
+  });
+});
+
 describe('contributed sections', () => {
   test('has no value before the extensions that describe it have activated', async () => {
     const dir = await configDir();
@@ -798,6 +842,9 @@ describe('readEnvConfig', () => {
       dataDir: '/var/lib/nox',
       environment: 'development',
       extensionsDir: join('/var/lib/nox', 'extensions'),
+      // Confinement is the default, so an installation that cannot confine
+      // refuses installed extensions rather than quietly running them.
+      runUnconfinedExtensions: false,
       uiDir: '/app/ui',
     });
   });

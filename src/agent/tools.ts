@@ -1,10 +1,10 @@
-import { bindTool } from '@nox/extension-api';
+import { bindSetTool } from '@nox/extension-api';
 
 import { CORE_OWNER_ID } from '../auth/authority';
 import { ROUTER_TOOL_NAMES, ToolRouter } from '../tool/router';
 
 import type { AuthorityCatalog } from '../auth/authority';
-import type { Tool, ToolSetGrant } from '@nox/extension-api';
+import type { BoundTool, ToolSetGrant } from '@nox/extension-api';
 
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
 
@@ -24,8 +24,8 @@ function snapshotToolSets(
   grants: readonly ToolSetGrant[],
   kind: 'direct' | 'routed',
   authorities: AuthorityCatalog,
-): Readonly<Record<string, Tool>> {
-  const tools = new Map<string, Tool>();
+): Readonly<Record<string, BoundTool>> {
+  const tools = new Map<string, BoundTool>();
   const toolSetIds = new Set<string>();
 
   for (const { toolSet, toolSetId, tools: granted } of [...grants]) {
@@ -34,7 +34,10 @@ function snapshotToolSets(
     }
     toolSetIds.add(toolSetId);
 
-    const exposed = toolSet.tools;
+    // Declarations, not the tools themselves: everything checked below is
+    // declared, and the host has no business holding a granted extension's
+    // schema object or its closures.
+    const exposed = toolSet.declarations;
 
     // A named tool the set does not expose is a typo in a blueprint, and the
     // quiet reading of one — grant nothing — is the reading that costs an hour
@@ -73,7 +76,7 @@ function snapshotToolSets(
         );
       }
 
-      tools.set(name, bindTool(source, toolSetId));
+      tools.set(name, bindSetTool(toolSet, name, toolSetId));
     }
   }
 
@@ -90,7 +93,7 @@ function composeSessionTools(
   directSource: readonly ToolSetGrant[],
   routedSource: readonly ToolSetGrant[],
   authorities: AuthorityCatalog,
-): Readonly<Record<string, Tool>> {
+): Readonly<Record<string, BoundTool>> {
   const directTools = snapshotToolSets(directSource, 'direct', authorities);
   const routedTools = snapshotToolSets(routedSource, 'routed', authorities);
 
@@ -105,7 +108,7 @@ function composeSessionTools(
 
   const router = new ToolRouter(routed);
   const routerTools = Object.fromEntries(
-    Object.entries(router.tools).map(([name, tool]) => [name, bindTool(tool, 'nox.router')]),
+    Object.keys(router.declarations).map((name) => [name, bindSetTool(router, name, 'nox.router')]),
   );
   return Object.freeze({ ...directTools, ...routerTools });
 }

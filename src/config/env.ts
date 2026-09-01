@@ -15,6 +15,17 @@ const envConfigSchema = z.object({
   dataDir: z.string().min(1),
   environment: z.enum(['development', 'production', 'test']),
   extensionsDir: z.string().min(1),
+  /**
+   * Load installed extensions even where the kernel cannot confine them.
+   *
+   * A deliberate choice and never a fallback. On a kernel without Landlock or
+   * filter-mode seccomp — an older one, or a platform with a stricter profile
+   * of its own — an installed package would otherwise run in Nox's own process,
+   * with everything that process can reach, and look exactly like one that was
+   * confined. So the default is to refuse, and this is how somebody says
+   * otherwise out loud.
+   */
+  runUnconfinedExtensions: z.boolean(),
   uiDir: z.string().min(1),
 });
 
@@ -31,6 +42,8 @@ function readEnvConfig(env: EnvSource = process.env): EnvConfig {
     dataDir,
     environment: env.NODE_ENV ?? 'development',
     extensionsDir: env.EXTENSIONS_DIR ?? join(dataDir, 'extensions'),
+    runUnconfinedExtensions:
+      env.NOX_ALLOW_UNCONFINED_EXTENSIONS === '1' || env.NOX_ALLOW_UNCONFINED_EXTENSIONS === 'true',
     uiDir: env.UI_DIR ?? DEFAULT_UI_DIR,
   });
 }

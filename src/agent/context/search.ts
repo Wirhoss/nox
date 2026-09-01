@@ -1,4 +1,4 @@
-import { bindTool, ToolSet } from '@nox/extension-api';
+import { ToolSet } from '@nox/extension-api';
 import { z } from 'zod';
 
 import {
@@ -264,7 +264,7 @@ class HistorySearchToolSet extends ToolSet {
         type: 'immediate',
       }),
     };
-    this.registerTool(bindTool(readToolResult, HISTORY_TOOL_SET_ID));
+    this.registerTool(readToolResult);
 
     const archive = this.#archive;
     if (archive === undefined) return;
@@ -290,7 +290,7 @@ class HistorySearchToolSet extends ToolSet {
         type: 'immediate',
       }),
     };
-    this.registerTool(bindTool(searchHistory, HISTORY_TOOL_SET_ID));
+    this.registerTool(searchHistory);
 
     const listSessions: Tool<typeof listSessionsSchema> = {
       authority: HISTORY_SESSIONS_AUTHORITY,
@@ -311,7 +311,7 @@ class HistorySearchToolSet extends ToolSet {
         type: 'immediate',
       }),
     };
-    this.registerTool(bindTool(listSessions, HISTORY_TOOL_SET_ID));
+    this.registerTool(listSessions);
 
     const searchSessions: Tool<typeof searchSessionsSchema> = {
       authority: HISTORY_SESSIONS_SEARCH_AUTHORITY,
@@ -333,11 +333,11 @@ class HistorySearchToolSet extends ToolSet {
         type: 'immediate',
       }),
     };
-    this.registerTool(bindTool(searchSessions, HISTORY_TOOL_SET_ID));
+    this.registerTool(searchSessions);
   }
 }
 
-export { HISTORY_TOOL_NAMES, HistorySearchToolSet };
+export { HISTORY_TOOL_NAMES, HISTORY_TOOL_SET_ID, HistorySearchToolSet };
 
 export type {
   HistoryArchive,

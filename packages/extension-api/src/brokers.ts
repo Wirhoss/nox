@@ -1,6 +1,6 @@
 import type { ArtifactScope } from './artifacts.js';
 import type { MessageContent, PrincipalRef, ToolResponseExecution } from './content.js';
-import type { Logger } from './core.js';
+import type { Logger, MaybePromise } from './core.js';
 import type { Usage } from './providers.js';
 import type { JsonSchema, ToolRisk } from './tools.js';
 
@@ -302,12 +302,28 @@ interface BrokerHost {
    * about.
    */
   artifactScope(conversationId: string): ArtifactScope;
-  command(invocation: CommandInvocation): CommandRejection | undefined;
+  /**
+   * Offer one command invocation to the host, and learn whether it was taken.
+   *
+   * Asynchronous because the answer is a decision the host makes — whether this
+   * transport is still running, whether the command exists, whether its
+   * arguments parse — and a transport whose host is in another process learns
+   * that decision the same way it learns everything else.
+   */
+  command(invocation: CommandInvocation): Promise<CommandRejection | undefined>;
   history(
     conversationId: string,
     options?: BrokerHistoryOptions,
   ): Promise<BrokerHistory | undefined>;
-  receive(event: InboundEvent): InboundRejection | undefined;
+  /**
+   * Hand one inbound event to the host, and learn whether it was refused.
+   *
+   * The rejection is a decision, not a status: whether an agent was named, and
+   * whether this transport may name one at all. Awaiting it costs a transport
+   * nothing it did not already need — the work the event starts was already
+   * queued behind this answer.
+   */
+  receive(event: InboundEvent): Promise<InboundRejection | undefined>;
   sessions(): Promise<readonly BrokerSession[]>;
 }
 
@@ -361,7 +377,7 @@ interface Broker {
    * transport whose channels are real places, which is the position every
    * broker was in before.
    */
-  openScheduledConversation?(): string;
+  openScheduledConversation?(): MaybePromise<string>;
   /**
    * The groups this sender belongs to, as extra subjects its grants may be
    * written against — Discord roles, and whatever the equivalent is elsewhere.
@@ -375,7 +391,7 @@ interface Broker {
    * `grants` also apply to this sender, and an unknown sender is an empty list
    * rather than an error — nothing here can widen authority by failing.
    */
-  principalGroups?(subject: string): readonly string[];
+  principalGroups?(subject: string): MaybePromise<readonly string[]>;
   start(host: BrokerHost): Promise<void>;
   stop(): Promise<void>;
 }

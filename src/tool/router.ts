@@ -1,12 +1,11 @@
-import { prepareTool, ToolSet, UnknownToolError } from '@nox/extension-api';
+import { renderDeclaration, ToolSet, UnknownToolError } from '@nox/extension-api';
 import { z } from 'zod';
 
 import { TOOL_CALL_AUTHORITY, TOOL_SEARCH_AUTHORITY } from '../auth/coreAuthorities';
 import { BM25 } from '../utils/bm25';
 import { stableStringify } from '../utils/json';
-import { renderTool } from './render';
 
-import type { MessageContent, Tool, ToolExecution } from '@nox/extension-api';
+import type { BoundTool, MessageContent, PreparedToolCall, Tool } from '@nox/extension-api';
 
 const ROUTER_TOOL_NAMES = Object.freeze(['tool_call', 'tool_search'] as const);
 const ROUTER_TOOL_NAME_SET = new Set<string>(ROUTER_TOOL_NAMES);
@@ -44,22 +43,24 @@ function asTextToolResponse(value: unknown): MessageContent[] {
  */
 class ToolRouter extends ToolSet {
   readonly #bm25 = new BM25();
-  readonly #toolsByIndex: Tool[] = [];
-  readonly #toolsByName = new Map<string, Tool>();
+  readonly #toolsByIndex: BoundTool[] = [];
+  readonly #toolsByName = new Map<string, BoundTool>();
 
-  constructor(tools: readonly Tool[]) {
+  constructor(tools: readonly BoundTool[]) {
     super('Tool router', 'Searches and invokes tools from the routed tool catalog.');
 
-    for (const source of [...tools].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (ROUTER_TOOL_NAME_SET.has(source.name)) {
-        throw new Error(`Routed tool ${source.name} conflicts with a tool router tool.`);
+    for (const tool of [...tools].sort((a, b) =>
+      a.declaration.name.localeCompare(b.declaration.name),
+    )) {
+      const { name } = tool.declaration;
+      if (ROUTER_TOOL_NAME_SET.has(name)) {
+        throw new Error(`Routed tool ${name} conflicts with a tool router tool.`);
       }
-      if (this.#toolsByName.has(source.name)) {
-        throw new Error(`Routed tool ${source.name} is registered more than once.`);
+      if (this.#toolsByName.has(name)) {
+        throw new Error(`Routed tool ${name} is registered more than once.`);
       }
 
-      const tool = Object.freeze({ ...source });
-      this.#toolsByName.set(tool.name, tool);
+      this.#toolsByName.set(name, tool);
       const index = this.#bm25.addDocument(ToolRouter.#buildDocument(tool));
       this.#toolsByIndex[index] = tool;
     }
@@ -67,7 +68,7 @@ class ToolRouter extends ToolSet {
     this.addTools();
   }
 
-  public prepareRouted(name: string, params: string): ToolExecution {
+  public async prepareRouted(name: string, params: string): Promise<PreparedToolCall> {
     const tool = this.#toolsByName.get(name);
     if (tool === undefined) throw new UnknownToolError(name);
 
@@ -78,11 +79,11 @@ class ToolRouter extends ToolSet {
       throw new SyntaxError(`Invalid JSON params for ${name}.`, { cause: error });
     }
 
-    return prepareTool(tool, rawParams);
+    return tool.prepare(rawParams);
   }
 
-  public search(query: string): Tool[] {
-    const found: Tool[] = [];
+  public search(query: string): BoundTool[] {
+    const found: BoundTool[] = [];
 
     for (const { docIndex, score } of this.#bm25.search(query, SEARCH_RESULT_LIMIT)) {
       const tool = this.#toolsByIndex[docIndex];
@@ -116,7 +117,9 @@ class ToolRouter extends ToolSet {
       parameters: searchToolSchema,
       prepare: ({ query }) => ({
         run: () => {
-          const rendered = this.search(query).map((tool) => renderTool(tool));
+          const rendered = this.search(query).map(({ declaration }) =>
+            renderDeclaration(declaration),
+          );
           return Promise.resolve(
             asTextToolResponse({
               tools: rendered.join('\n--------------------------------------------------\n'),
@@ -137,10 +140,11 @@ class ToolRouter extends ToolSet {
     this.registerTool(searchTool);
   }
 
-  static #buildDocument(tool: Tool): string {
-    // renderTool includes nested parameter names and descriptions, so discovery
-    // indexes the same contract that tool_search returns to the model.
-    return [tool.name, tool.name, renderTool(tool)].join('\n');
+  static #buildDocument(tool: BoundTool): string {
+    // The rendering includes nested parameter names and descriptions, so
+    // discovery indexes the same contract tool_search returns to the model.
+    const { declaration } = tool;
+    return [declaration.name, declaration.name, renderDeclaration(declaration)].join('\n');
   }
 }
 

@@ -46,34 +46,34 @@ describe('GrantAuthorizationProvider', () => {
     CATALOG,
   );
 
-  test('allows a granted authority and names the entry that matched', () => {
-    expect(provider.authorize(request())).toMatchObject({
+  test('allows a granted authority and names the entry that matched', async () => {
+    expect(await provider.authorize(request())).toMatchObject({
       allowed: true,
       matchedGrant: 'nox.files.read',
     });
     expect(
-      provider.authorize(
+      await provider.authorize(
         request({ authority: 'nox.files.write', principal: testPrincipal('root') }),
       ),
     ).toMatchObject({ allowed: true, matchedGrant: '*' });
   });
 
-  test('denies an authority the principal was not granted', () => {
-    expect(provider.authorize(request({ authority: 'nox.files.write' }))).toMatchObject({
+  test('denies an authority the principal was not granted', async () => {
+    expect(await provider.authorize(request({ authority: 'nox.files.write' }))).toMatchObject({
       allowed: false,
     });
   });
 
-  test('denies a principal with no grants at all', () => {
-    const decision = provider.authorize(request({ principal: testPrincipal('stranger') }));
+  test('denies a principal with no grants at all', async () => {
+    const decision = await provider.authorize(request({ principal: testPrincipal('stranger') }));
 
     expect(decision.allowed).toBeFalse();
     expect(decision.reason).toContain('no grants configured');
   });
 
-  test('denies a principal issued by another transport', () => {
+  test('denies a principal issued by another transport', async () => {
     // The same subject on a different broker is a different person.
-    const decision = provider.authorize(
+    const decision = await provider.authorize(
       request({ principal: { issuer: 'other-broker', subject: 'alice' } }),
     );
 
@@ -150,51 +150,89 @@ describe('GrantAuthorizationProvider with groups', () => {
     (subject) => GROUPS[subject] ?? [],
   );
 
-  test('grants through a group the sender belongs to', () => {
-    expect(provider.authorize(request({ principal: testPrincipal('alice') }))).toMatchObject({
+  test('grants through a group the sender belongs to', async () => {
+    expect(await provider.authorize(request({ principal: testPrincipal('alice') }))).toMatchObject({
       allowed: true,
       matchedGrant: 'nox.files.read',
     });
   });
 
-  test('names the key that granted it, not only the pattern', () => {
-    const decision = provider.authorize(request({ principal: testPrincipal('alice') }));
+  test('names the key that granted it, not only the pattern', async () => {
+    const decision = await provider.authorize(request({ principal: testPrincipal('alice') }));
 
     // With roles in play, "granted nox.files.read" does not tell an auditor
     // whether it was this person or a role they happened to hold.
     expect(decision.reason).toContain('role:ops');
   });
 
-  test('takes the union across groups rather than stopping at the first', () => {
+  test('takes the union across groups rather than stopping at the first', async () => {
     expect(
-      provider.authorize(request({ authority: 'nox.files.read', principal: testPrincipal('bob') })),
+      await provider.authorize(
+        request({ authority: 'nox.files.read', principal: testPrincipal('bob') }),
+      ),
     ).toMatchObject({ allowed: true });
   });
 
-  test('still denies an authority no group of theirs was granted', () => {
+  test('still denies an authority no group of theirs was granted', async () => {
     expect(
-      provider.authorize(
+      await provider.authorize(
         request({ authority: 'nox.files.write', principal: testPrincipal('alice') }),
       ),
     ).toMatchObject({ allowed: false });
   });
 
-  test('grants directly to a sender with no groups at all', () => {
+  test('grants directly to a sender with no groups at all', async () => {
     expect(
-      provider.authorize(
+      await provider.authorize(
         request({ authority: 'nox.files.write', principal: testPrincipal('carol') }),
       ),
     ).toMatchObject({ allowed: true, matchedGrant: 'nox.files.write' });
   });
 
-  test('denies a sender that neither is nor belongs to anything granted', () => {
-    const decision = provider.authorize(request({ principal: testPrincipal('dave') }));
+  test('denies a sender that neither is nor belongs to anything granted', async () => {
+    const decision = await provider.authorize(request({ principal: testPrincipal('dave') }));
 
     expect(decision).toMatchObject({ allowed: false });
     expect(decision.reason).toContain('no grants configured');
   });
 
-  test('denies rather than widens when the group lookup throws', () => {
+  // The same rule, over a boundary: a transport in another process reports a
+  // failure by rejecting, and a rejection that escaped the guard would turn
+  // "could not read roles" into a thrown authorization instead of a denial.
+  test('denies rather than widens when the group lookup rejects', async () => {
+    const unreachable = new GrantAuthorizationProvider(
+      'test-broker',
+      { 'role:ops': ['nox.files.read'] },
+      CATALOG,
+      'grants',
+      () => Promise.reject(new Error('the transport is gone')),
+    );
+
+    expect(
+      await unreachable.authorize(request({ principal: testPrincipal('alice') })),
+    ).toMatchObject({ allowed: false });
+  });
+
+  test('waits for groups a transport answers asynchronously', async () => {
+    const remote = new GrantAuthorizationProvider(
+      'test-broker',
+      { 'role:ops': ['nox.files.read'] },
+      CATALOG,
+      'grants',
+      async (subject) => {
+        await Promise.resolve();
+        return subject === 'alice' ? ['role:ops'] : [];
+      },
+    );
+
+    expect(
+      await remote.authorize(
+        request({ authority: 'nox.files.read', principal: testPrincipal('alice') }),
+      ),
+    ).toMatchObject({ allowed: true });
+  });
+
+  test('denies rather than widens when the group lookup throws', async () => {
     // A transport that cannot say which roles someone holds has not said they
     // hold one. Failing closed here is the same rule as everywhere else.
     const unreadable = new GrantAuthorizationProvider(
@@ -207,12 +245,14 @@ describe('GrantAuthorizationProvider with groups', () => {
       },
     );
 
-    expect(unreadable.authorize(request({ principal: testPrincipal('alice') }))).toMatchObject({
+    expect(
+      await unreadable.authorize(request({ principal: testPrincipal('alice') })),
+    ).toMatchObject({
       allowed: false,
     });
   });
 
-  test('reflects a group removed since the session started', () => {
+  test('reflects a group removed since the session started', async () => {
     const held = new Set(['role:ops']);
     const live = new GrantAuthorizationProvider(
       'test-broker',
@@ -222,8 +262,8 @@ describe('GrantAuthorizationProvider with groups', () => {
       () => [...held],
     );
 
-    expect(live.authorize(request())).toMatchObject({ allowed: true });
+    expect(await live.authorize(request())).toMatchObject({ allowed: true });
     held.delete('role:ops');
-    expect(live.authorize(request())).toMatchObject({ allowed: false });
+    expect(await live.authorize(request())).toMatchObject({ allowed: false });
   });
 });

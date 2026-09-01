@@ -8,7 +8,13 @@ import { z } from 'zod';
 
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
-import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
+import {
+  permissiveAuthorization,
+  TEST_AUTHORITY,
+  testBoundTool,
+  testCatalog,
+  testOrigin,
+} from '../testFixtures';
 import { COMPACT_PROMPT } from './context/prompt';
 import { Session } from './session';
 
@@ -18,6 +24,7 @@ import type {
   ProviderSourceEvent,
   TextGenerateOptions,
   Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
@@ -79,7 +86,7 @@ class RuleProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -153,7 +160,7 @@ describe('a session that runs long enough to fold and compact', () => {
       agentId: 'test',
       authorities: testCatalog(),
       authorization: permissiveAuthorization,
-      context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
+      context: { contextWindow: CONTEXT_WINDOW, tools: { work: testBoundTool(workTool()) } },
       sessionId: 'long-run',
       systemPrompt: 'system',
     });
@@ -192,7 +199,7 @@ describe('a session that runs long enough to fold and compact', () => {
       agentId: 'test',
       authorities: testCatalog(),
       authorization: permissiveAuthorization,
-      context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
+      context: { contextWindow: CONTEXT_WINDOW, tools: { work: testBoundTool(workTool()) } },
       sessionId: 'long-run',
       systemPrompt: 'system',
     });
@@ -209,7 +216,7 @@ describe('a session that runs long enough to fold and compact', () => {
       agentId: 'test',
       authorities: testCatalog(),
       authorization: permissiveAuthorization,
-      context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
+      context: { contextWindow: CONTEXT_WINDOW, tools: { work: testBoundTool(workTool()) } },
       systemPrompt: 'system',
     });
 
@@ -248,7 +255,7 @@ describe('a session that runs long enough to fold and compact', () => {
       agentId: 'test',
       authorities: testCatalog(),
       authorization: permissiveAuthorization,
-      context: { contextWindow: CONTEXT_WINDOW, tools: { work: workTool() } },
+      context: { contextWindow: CONTEXT_WINDOW, tools: { work: testBoundTool(workTool()) } },
       sessionId: 'durable',
       systemPrompt: 'system',
     });
@@ -273,7 +280,7 @@ describe('a session that runs long enough to fold and compact', () => {
       authorities: testCatalog(),
       authorization: permissiveAuthorization,
       // No contextWindow: the default an agent gets when nobody configures one.
-      context: { tools: { work: workTool() } },
+      context: { tools: { work: testBoundTool(workTool()) } },
       systemPrompt: 'system',
     });
 

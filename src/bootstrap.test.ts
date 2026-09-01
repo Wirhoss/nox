@@ -117,6 +117,11 @@ async function seed(options: BootOptions = {}): Promise<EnvSource> {
     DATA_DIR: dataDir,
     ...(options.extensionsDir === undefined ? {} : { EXTENSIONS_DIR: options.extensionsDir }),
     NODE_ENV: 'test',
+    // These boot a whole Nox and measure what it composes. The suite runs where
+    // Landlock does not exist — every developer machine that is not Linux — so
+    // without the operator's opt-in the confinement gate would turn away every
+    // installed fixture before any of it ran.
+    NOX_ALLOW_UNCONFINED_EXTENSIONS: '1',
   };
 }
 
@@ -991,7 +996,7 @@ describe('bootstrap', () => {
       .find((component) => component.kind === 'memory' && component.id === 'embedding_test');
     expect(status?.state).toBe('active');
 
-    const memory = application.contributions.get(memories, 'embedding_test')?.value.create({
+    const memory = await application.contributions.get(memories, 'embedding_test')?.value.create({
       embedding: { model: 'counting', provider: 'counting_test' },
       type: 'embedding_test',
     } as never);

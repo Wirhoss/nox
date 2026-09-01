@@ -1,7 +1,8 @@
+import { declareTool } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
-import { TEST_AUTHORITY } from '../../testFixtures';
+import { TEST_AUTHORITY, testBoundTool } from '../../testFixtures';
 import { freezeMessage } from './immutable';
 import { resolveContextOptions } from './options';
 import { estimateTokensByCharacters, TokenEstimator } from './tokens';
@@ -100,7 +101,7 @@ describe('TokenEstimator', () => {
         type: 'immediate' as const,
       }),
     };
-    const estimator = new TokenEstimator('system', [tool], (text) => text.length);
+    const estimator = new TokenEstimator('system', [declareTool(tool)], (text) => text.length);
     const message = callWithArguments({});
 
     expect(estimator.prefixTokens).toBeGreaterThan(0);
@@ -184,8 +185,8 @@ describe('context token policy', () => {
     };
     const options = resolveContextOptions({
       tools: {
-        zebra: { ...base, name: 'zebra' },
-        alpha: { ...base, name: 'alpha' },
+        alpha: testBoundTool({ ...base, name: 'alpha' }),
+        zebra: testBoundTool({ ...base, name: 'zebra' }),
       },
     });
 

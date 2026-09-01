@@ -21,7 +21,7 @@ import type {
   ModelKind,
   ProviderSourceEvent,
   TextGenerateOptions,
-  Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 /**
@@ -285,7 +285,7 @@ class LocalProvider extends ChatProvider implements EmbeddingCapable {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     options: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {

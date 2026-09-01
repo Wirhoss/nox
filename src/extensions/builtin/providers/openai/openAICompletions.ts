@@ -9,8 +9,6 @@ import {
   modelAcceptsInput,
   ProviderError,
   silentLogger,
-  toolDescription,
-  toolParametersSchema,
   toolResponseContentForModel,
   untrustedFence,
   userContentForModel,
@@ -28,9 +26,9 @@ import type {
   ProviderSourceEvent,
   RepresentationProfile,
   TextGenerateOptions,
-  Tool,
   ToolCallDraft,
   ToolCallMessage,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 const openAICompletionsConfigSchema = httpProviderConfigSchema.extend({
@@ -346,7 +344,7 @@ class OpenAICompletions extends HttpChatProvider {
   private async request(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): Promise<Response> {
@@ -428,7 +426,7 @@ class OpenAICompletions extends HttpChatProvider {
   private async buildBody(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     opts: TextGenerateOptions | undefined,
   ): Promise<Record<string, unknown>> {
     const { model, modelId } = this.resolveModel(opts);
@@ -722,12 +720,12 @@ class OpenAICompletions extends HttpChatProvider {
     };
   }
 
-  private toOpenAITools(tools: Tool[]): Record<string, unknown>[] {
-    return tools.map((tool) => ({
+  private toOpenAITools(tools: readonly ToolDeclaration[]): Record<string, unknown>[] {
+    return tools.map((declared) => ({
       function: {
-        description: toolDescription(tool),
-        name: tool.name,
-        parameters: toolParametersSchema(tool),
+        description: declared.description,
+        name: declared.name,
+        parameters: declared.parameters,
       },
       type: 'function',
     }));
@@ -762,7 +760,7 @@ class OpenAICompletions extends HttpChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncGenerator<ProviderSourceEvent> {

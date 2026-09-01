@@ -1,9 +1,8 @@
 import { UNTRUSTED_FENCE_TEXT } from '@nox/extension-api';
 
-import { toolParametersSchema } from '../../tool/render';
 import { messageToString } from './message';
 
-import type { Message, Tool } from '@nox/extension-api';
+import type { Message, ToolDeclaration } from '@nox/extension-api';
 
 const DEFAULT_CHARACTERS_PER_TOKEN = 3;
 const MESSAGE_TOKEN_OVERHEAD = 6;
@@ -77,7 +76,7 @@ class TokenEstimator {
 
   constructor(
     systemPrompt: string,
-    tools: Iterable<Tool>,
+    tools: Iterable<ToolDeclaration>,
     tokenCounter: (text: string) => number = estimateTokensByCharacters,
   ) {
     this.#count = tokenCounter;
@@ -126,12 +125,12 @@ class TokenEstimator {
     return Math.ceil(count);
   }
 
-  #estimateTool(tool: Tool): number {
+  #estimateTool(declared: ToolDeclaration): number {
     const descriptor = {
       function: {
-        description: tool.description,
-        name: tool.name,
-        parameters: toolParametersSchema(tool),
+        description: declared.description,
+        name: declared.name,
+        parameters: declared.parameters,
       },
       type: 'function',
     };

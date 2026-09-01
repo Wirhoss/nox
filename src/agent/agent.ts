@@ -1,9 +1,12 @@
+import { bindTool } from '@nox/extension-api';
+
 import {
   ARTIFACT_ATTACH_TOOL_NAME,
   ARTIFACT_READ_TOOL_NAME,
   attachArtifactTool,
   readArtifactTool,
 } from './artifactTool';
+import { SESSION_TOOL_SET_ID } from './context/context';
 import { Session } from './session';
 import { composeSessionTools } from './tools';
 
@@ -93,7 +96,7 @@ function withRoutedToolSetCatalog(systemPrompt: string, grants: readonly ToolSet
 
   for (const grant of grants) {
     const allowed = grant.tools === undefined ? undefined : new Set(grant.tools);
-    const contributesTool = Object.keys(grant.toolSet.tools).some(
+    const contributesTool = Object.keys(grant.toolSet.declarations).some(
       (name) => allowed === undefined || allowed.has(name),
     );
     if (!contributesTool) continue;
@@ -232,10 +235,13 @@ class Agent {
           throw new Error(`Configured tool ${tool.name} conflicts with Nox's core artifact tools.`);
         }
       }
+      // Bound like every other tool in the table: Nox's own artifact tools are
+      // granted through the session set, and authorization is written against
+      // that pair the same way.
       tools = Object.freeze({
         ...configuredTools,
-        [ARTIFACT_ATTACH_TOOL_NAME]: attachmentTool,
-        [ARTIFACT_READ_TOOL_NAME]: readerTool,
+        [ARTIFACT_ATTACH_TOOL_NAME]: bindTool(attachmentTool, SESSION_TOOL_SET_ID),
+        [ARTIFACT_READ_TOOL_NAME]: bindTool(readerTool, SESSION_TOOL_SET_ID),
       });
     }
     const systemPrompt = withRoutedToolSetCatalog(this.#systemPrompt, this.#routedToolSets);

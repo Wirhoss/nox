@@ -151,6 +151,29 @@ function key(kind: RuntimeComponentKind, id: string): string {
  * components. Failed candidates never evict the last generation that worked.
  */
 /** Stable API-facing handle connected once the concrete runtime has composed. */
+/**
+ * Whether a memory instance and its contribution disagree about editing.
+ *
+ * The question is answered twice: the contribution declares support for the
+ * agentic memory tools, and the instance either exposes an editor or does not.
+ * Blueprints are validated against the declaration, long before any instance
+ * exists, so a disagreement meant a blueprint that passed validation and an
+ * agent that then refused to compose. This is checked where both halves are in
+ * hand for the first time.
+ */
+function memoryCapabilityMismatch(
+  memoryId: string,
+  type: string,
+  found: { readonly declaresTools: boolean; readonly hasEditor: boolean },
+): string | undefined {
+  if (found.declaresTools === found.hasEditor) return undefined;
+  return `Memory "${memoryId}" of type "${type}" ${
+    found.declaresTools
+      ? 'declares support for agentic memory tools but exposes no editor'
+      : 'exposes an editor but does not declare support for agentic memory tools'
+  }. The declaration is what blueprints are validated against, so the two have to agree.`;
+}
+
 class ConfigurationRuntimeRelay implements ConfigurationRuntime, MemoryRuntime {
   #host?: ConfigurationRuntime & MemoryRuntime;
 
@@ -664,12 +687,20 @@ class ConfigurationRuntimeController
         `Memory "${memoryId}" is of type "${entry.type}", which no extension contributed.`,
       );
     }
-    return composeWithSecrets(
+    const memory = await composeWithSecrets(
       entry,
       this.#secretStore,
       { extensionId: contribution.extensionId, location: `memories.${memoryId}` },
       (resolved) => contribution.value.create(resolved),
     );
+
+    const mismatch = memoryCapabilityMismatch(memoryId, entry.type, {
+      declaresTools: contribution.value.capabilities?.tools === true,
+      hasEditor: memory.editor !== undefined,
+    });
+    if (mismatch !== undefined) throw new Error(mismatch);
+
+    return memory;
   }
 
   async #reconcileToolSets(generation: number): Promise<void> {
@@ -1084,7 +1115,7 @@ function modelConfigFor(provider: ChatProvider, modelId: string): ChatModelConfi
   );
 }
 
-export { ConfigurationRuntimeController, ConfigurationRuntimeRelay };
+export { ConfigurationRuntimeController, ConfigurationRuntimeRelay, memoryCapabilityMismatch };
 
 export type {
   ConfigurationRuntime,

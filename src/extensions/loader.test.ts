@@ -60,6 +60,11 @@ async function discover(builtin: string, installed: string) {
     ],
     logger: silentLogger,
     noxVersion: '0.1.0',
+    // These exercise discovery, not the kernel. The suite runs where Landlock
+    // does not exist — every developer machine that is not Linux — and without
+    // this the confinement gate would turn every installed fixture away before
+    // the thing under test ran.
+    runUnconfined: true,
   });
 }
 

@@ -36,6 +36,22 @@ const artifactProvenanceSchema = z
   })
   .readonly();
 
+/**
+ * Collision-free stable ownership for output produced inside one broker
+ * conversation.
+ *
+ * Beside the schema rather than beside the sink that first needed it, because
+ * the broker transport needs it too — and that half runs inside the confined
+ * child, where importing the artifact pipeline to reach one pure function
+ * would drag the whole store across a boundary built to keep it out.
+ */
+function artifactConversationScope(brokerId: string, conversationId: string): ArtifactScope {
+  return artifactScopeSchema.parse({
+    id: JSON.stringify([brokerId, conversationId]),
+    type: 'conversation',
+  });
+}
+
 type ArtifactRef = z.infer<typeof artifactRefSchema>;
 type ArtifactScope = z.infer<typeof artifactScopeSchema>;
 type ArtifactScopeType = (typeof ARTIFACT_SCOPE_TYPES)[number];
@@ -70,6 +86,7 @@ interface ArtifactPayload {
 export {
   ARTIFACT_PROVENANCE_TYPES,
   ARTIFACT_SCOPE_TYPES,
+  artifactConversationScope,
   artifactIdSchema,
   artifactProvenanceSchema,
   artifactRefSchema,

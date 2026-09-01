@@ -417,6 +417,44 @@ describe('composeWithSecrets', () => {
     expect(failure).rejects.toBe(thrown);
   });
 
+  // The whole reason the factory is awaited inside the guard rather than
+  // returned from it. A returned promise rejects after the try block has been
+  // left, and the caller gets a bare error with no mention of the credential.
+  test('explains a missing secret even when the factory fails asynchronously', async () => {
+    const { store } = await openStore();
+
+    const failure = composeWithSecrets(
+      { apiKey: ref('DISCORD_TOKEN') },
+      store,
+      { extensionId: 'nox.broker.discord', location: 'brokers.relay' },
+      async (config) => {
+        await Promise.resolve();
+        if (!('apiKey' in config)) throw new TypeError('apiKey is required');
+        throw new TypeError('the credential was rejected on connect');
+      },
+    );
+
+    expect(failure).rejects.toThrow('brokers.relay');
+    expect(failure).rejects.toThrow('DISCORD_TOKEN');
+  });
+
+  test('accepts a factory that builds asynchronously', async () => {
+    const { store } = await openStore();
+    await store.set('API_TOKEN', 'live-value');
+
+    const built = await composeWithSecrets(
+      { apiKey: ref('API_TOKEN'), baseUrl: 'https://api.example' },
+      store,
+      CONSUMER,
+      async (config) => {
+        await Promise.resolve();
+        return config.apiKey.reveal();
+      },
+    );
+
+    expect(built).toBe('live-value');
+  });
+
   test('does not disguise a failure that happens to coincide with a missing secret', async () => {
     const { store } = await openStore();
 

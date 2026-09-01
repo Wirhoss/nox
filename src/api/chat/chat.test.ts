@@ -76,23 +76,23 @@ class RecordingTransport implements ChatTransport {
     return Promise.resolve(this.history);
   }
 
-  public submitCommand(input: ChatCommandInput): ChatCommandRejection | undefined {
+  public submitCommand(input: ChatCommandInput): Promise<ChatCommandRejection | undefined> {
     this.invocations.push(input);
-    return this.rejection;
+    return Promise.resolve(this.rejection);
   }
 
   public submitDecision(input: ChatDecisionInput): void {
     this.decisions.push(input);
   }
 
-  public submitMessage(input: ChatMessageInput): ChatMessageRejection | undefined {
+  public submitMessage(input: ChatMessageInput): Promise<ChatMessageRejection | undefined> {
     this.messages.push(input);
-    return this.messageRejection;
+    return Promise.resolve(this.messageRejection);
   }
 
-  public submitSteer(input: ChatMessageInput): ChatMessageRejection | undefined {
+  public submitSteer(input: ChatMessageInput): Promise<ChatMessageRejection | undefined> {
     this.steers.push(input);
-    return this.messageRejection;
+    return Promise.resolve(this.messageRejection);
   }
 
   public subscribe(listener: ChatListener): () => void {

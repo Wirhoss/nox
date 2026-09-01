@@ -147,7 +147,7 @@ describe('CronJobsToolSet', () => {
       manager,
       'America/Mexico_City',
     );
-    const execution = toolSet.prepare('cron_create', {
+    const execution = await toolSet.prepare('cron_create', {
       agentId: 'mail-agent',
       delivery: { brokerId: 'discord', channelId: 'mail-alerts' },
       name: 'Morning brief',
@@ -172,7 +172,7 @@ describe('CronJobsToolSet', () => {
 
   test('lists configured agents through the host', async () => {
     const toolSet = new CronJobsToolSet({ type: 'cronjobs' }, new RecordingManager());
-    const content = await output(toolSet.prepare('cron_agents', {}));
+    const content = await output(await toolSet.prepare('cron_agents', {}));
     expect(content[0]).toMatchObject({ type: 'text' });
     expect(textOf(content)).toContain('mail-agent');
     expect(textOf(content)).toContain('discord');
@@ -181,7 +181,7 @@ describe('CronJobsToolSet', () => {
   test('names the channel this conversation is already on, and omits it when there is none', async () => {
     const toolSet = new CronJobsToolSet({ type: 'cronjobs' }, new RecordingManager());
 
-    const onDiscord = await output(toolSet.prepare('cron_agents', {}), {
+    const onDiscord = await output(await toolSet.prepare('cron_agents', {}), {
       ...SESSION,
       sessionId: 'session-on-discord',
     });
@@ -191,40 +191,40 @@ describe('CronJobsToolSet', () => {
 
     // A session no transport owns offers no address. The absence is the point:
     // it is what stops the answer from being a channel ID that was made up.
-    const headless = await output(toolSet.prepare('cron_agents', {}));
+    const headless = await output(await toolSet.prepare('cron_agents', {}));
     expect(JSON.parse(textOf(headless))).not.toHaveProperty('deliveryHere');
   });
 
   test('rejects malformed expressions, missing agent IDs, and per-job non-IANA zones', () => {
     const toolSet = new CronJobsToolSet({ type: 'cronjobs' }, new RecordingManager());
-    expect(() =>
+    expect(
       toolSet.prepare('cron_create', {
         agentId: 'mail-agent',
         name: 'Broken',
         prompt: 'Never.',
         schedule: { expression: 'sometimes', type: 'cron' },
       }),
-    ).toThrow('Invalid params');
-    expect(() =>
+    ).rejects.toThrow('Invalid params');
+    expect(
       toolSet.prepare('cron_create', {
         name: 'No agent',
         prompt: 'Never.',
         schedule: { at: '2030-01-01T00:00:00Z', type: 'at' },
       }),
-    ).toThrow('Invalid params');
-    expect(() =>
+    ).rejects.toThrow('Invalid params');
+    expect(
       toolSet.prepare('cron_create', {
         agentId: 'mail-agent',
         name: 'Wrong zone',
         prompt: 'Never.',
         schedule: { expression: '0 9 * * *', timeZone: 'Mars/Olympus', type: 'cron' },
       }),
-    ).toThrow('Invalid params');
+    ).rejects.toThrow('Invalid params');
   });
 
-  test('requires a host-bound session only to audit who authored the job', () => {
+  test('requires a host-bound session only to audit who authored the job', async () => {
     const toolSet = new CronJobsToolSet({ type: 'cronjobs' }, new RecordingManager());
-    const execution = toolSet.prepare('cron_create', {
+    const execution = await toolSet.prepare('cron_create', {
       agentId: 'mail-agent',
       name: 'Detached',
       prompt: 'No author.',

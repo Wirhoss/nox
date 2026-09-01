@@ -134,6 +134,7 @@ async function bootstrap(options: BootstrapOptions = {}): Promise<NoxApplication
     ],
     logger: logger.child('extensions'),
     noxVersion: NOX_VERSION,
+    ...(env.runUnconfinedExtensions ? { runUnconfined: true } : {}),
   });
 
   const application = new NoxApplication({
@@ -419,7 +420,8 @@ async function composeBrokerGrant(
   // Late-bound on purpose. The broker is asked at the moment of the call, so
   // membership that changed mid-session is reflected without anything having to
   // rebuild a provider.
-  const groups = (subject: string): readonly string[] => broker.principalGroups?.(subject) ?? [];
+  const groups = async (subject: string): Promise<readonly string[]> =>
+    (await broker.principalGroups?.(subject)) ?? [];
 
   const conversationGrants = Object.fromEntries(
     Object.entries(entry.conversations).map(([conversationId, override]) => {

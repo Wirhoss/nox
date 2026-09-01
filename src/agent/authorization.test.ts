@@ -6,14 +6,20 @@ import { ChatProvider, ToolSet, userContentForModel } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
-import { artifactConversationScope } from '../artifact/output';
 import { ArtifactPipeline } from '../artifact/pipeline';
+import { artifactConversationScope } from '../artifact/types';
 import { GrantAuthorizationProvider } from '../auth/authorization';
 import { TOOL_CALL_AUTHORITY, TOOL_SEARCH_AUTHORITY } from '../auth/coreAuthorities';
 import { SYSTEM_CRON } from '../auth/principal';
 import { Database } from '../database/database';
 import { SessionStore } from '../database/sessionStore';
-import { isInternalRequest, TEST_AUTHORITY, testCatalog, testPrincipal } from '../testFixtures';
+import {
+  isInternalRequest,
+  TEST_AUTHORITY,
+  testBoundTool,
+  testCatalog,
+  testPrincipal,
+} from '../testFixtures';
 import { ToolRouter } from '../tool/router';
 import { Agent } from './agent';
 
@@ -28,6 +34,7 @@ import type {
   ProviderSourceEvent,
   TextGenerateOptions,
   Tool,
+  ToolDeclaration,
   ToolEffect,
   ToolResponseMessage,
   ToolSetGrant,
@@ -81,7 +88,7 @@ class EchoingProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -140,7 +147,7 @@ class SelectiveToolProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -184,7 +191,7 @@ class AttachingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -225,7 +232,7 @@ class RoutingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -266,7 +273,7 @@ class DeferringProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -689,7 +696,7 @@ describe('what a tool asks for', () => {
   });
 
   test('the router own tools declare explicit authorities rather than inheriting one', () => {
-    const router = new ToolRouter([versionTool({ count: 0 })]);
+    const router = new ToolRouter([testBoundTool(versionTool({ count: 0 }))]);
 
     expect(router.tools.tool_search?.authority).toBe(TOOL_SEARCH_AUTHORITY);
     expect(router.tools.tool_call?.authority).toBe(TOOL_CALL_AUTHORITY);
@@ -1382,12 +1389,12 @@ describe('shared-conversation permission floor', () => {
 });
 
 describe('runs nobody sent a message to start', () => {
-  test('a system principal is explicit, and holds nothing by default', () => {
+  test('a system principal is explicit, and holds nothing by default', async () => {
     expect(SYSTEM_CRON).toEqual({ issuer: 'nox.system', subject: 'cron' });
 
     const provider = grantsFor({ alice: ['*'] });
     expect(
-      provider.authorize({
+      await provider.authorize({
         authority: TEST_AUTHORITY,
         principal: SYSTEM_CRON,
         runId: 'run-1',

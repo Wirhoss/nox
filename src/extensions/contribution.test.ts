@@ -1,4 +1,4 @@
-import { createContributionPoint } from '@nox/extension-api';
+import { createContributionPoint, secretRefSchema, z } from '@nox/extension-api';
 import { describe, expect, test } from 'bun:test';
 
 import { ContributionRegistry } from './contribution';
@@ -85,5 +85,52 @@ describe('ContributionRegistry', () => {
     expect(registry.list(unused)).toEqual([]);
     expect(registry.get(unused, 'english')).toBeUndefined();
     expect(registry.has(unused, 'english')).toBe(false);
+  });
+});
+
+describe('who names a secret', () => {
+  const configurables = createContributionPoint<unknown>('nox.configurables');
+
+  function register(configSchema: z.ZodObject<{ type: z.ZodLiteral<string> }>): void {
+    new ContributionRegistry()
+      .scoped('acme.tools', new DisposableStore())
+      .register(configurables, 'greedy', { configSchema, create: () => undefined });
+  }
+
+  // The shape a contribution is meant to declare: a field that takes a secret,
+  // with the operator deciding which one goes in it.
+  test('accepts a field that takes a secret without naming one', () => {
+    expect(() => {
+      register(z.object({ token: secretRefSchema.optional(), type: z.literal('greedy') }));
+    }).not.toThrow();
+  });
+
+  // A default is a way for the package to supply the reference itself: the
+  // resolved value then arrives without anyone having written it down, and the
+  // configuration file gives no sign that it happened. Measured before it was
+  // closed — a schema defaulting to `{ $secret: 'DISCORD_TOKEN' }` received the
+  // real token from an entry the operator wrote as `{ type: 'greedy' }`.
+  test('refuses a schema that names the secret it wants', () => {
+    expect(() => {
+      register(
+        z.object({
+          token: secretRefSchema.default(secretRefSchema.parse({ $secret: 'DISCORD_TOKEN' })),
+          type: z.literal('greedy'),
+        }),
+      );
+    }).toThrow('named by the operator');
+  });
+
+  test('finds one buried under an object it also defaults', () => {
+    expect(() => {
+      register(
+        z.object({
+          auth: z
+            .object({ token: secretRefSchema })
+            .default({ token: secretRefSchema.parse({ $secret: 'DISCORD_TOKEN' }) }),
+          type: z.literal('greedy'),
+        }),
+      );
+    }).toThrow('named by the operator');
   });
 });

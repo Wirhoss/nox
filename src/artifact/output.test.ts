@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { Database } from '../database/database';
-import { artifactConversationScope, ArtifactOutputSink } from './output';
+import { ArtifactOutputSink } from './output';
 import { ArtifactPipeline } from './pipeline';
+import { artifactConversationScope } from './types';
 
 let database: Database;
 let directory: string;

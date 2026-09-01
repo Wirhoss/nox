@@ -4,7 +4,13 @@ import { z } from 'zod';
 
 import { ConversationParticipants } from '../auth/conversation';
 import { SYSTEM_CRON } from '../auth/principal';
-import { permissiveAuthorization, TEST_AUTHORITY, testCatalog, testOrigin } from '../testFixtures';
+import {
+  permissiveAuthorization,
+  TEST_AUTHORITY,
+  testBoundTool,
+  testCatalog,
+  testOrigin,
+} from '../testFixtures';
 import { ToolRouter } from '../tool/router';
 import { EventLog } from '../utils/eventLog';
 import { attachArtifactTool, readArtifactTool } from './artifactTool';
@@ -28,6 +34,7 @@ import type {
   TextGenerateOptions,
   Tool,
   ToolContext,
+  ToolDeclaration,
   UserMessage,
 } from '@nox/extension-api';
 
@@ -83,7 +90,7 @@ class ScriptedProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -191,7 +198,7 @@ function setup(
   const provider = new ScriptedProvider(scripts);
   const context = new Context('system', provider, {
     contextWindow,
-    tools: Object.fromEntries(tools.map((tool) => [tool.name, tool])),
+    tools: Object.fromEntries(tools.map((tool) => [tool.name, testBoundTool(tool)])),
   });
   const events = new EventLog<AgentEvent>();
   const runner = new Runner(context, events, provider, MODEL, {

@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { ChatProvider } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { artifactConversationScope } from '../artifact/output';
 import { ArtifactPipeline, artifactRef } from '../artifact/pipeline';
+import { artifactConversationScope } from '../artifact/types';
 import { Database } from '../database/database';
 import { messages } from '../database/schema';
 import { permissiveAuthorization, testCatalog, testOrigin } from '../testFixtures';
@@ -17,7 +17,7 @@ import type {
   Message,
   ProviderSourceEvent,
   TextGenerateOptions,
-  Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 const MODEL: ChatModelConfig = {
@@ -45,7 +45,7 @@ class ArtifactReadingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     history: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     _options: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -81,7 +81,7 @@ class ArtifactReadingProvider extends ChatProvider {
 }
 
 class ArtifactProvider extends ChatProvider {
-  public readonly requestedTools: Tool[][] = [];
+  public readonly requestedTools: ToolDeclaration[][] = [];
 
   constructor() {
     super({ maxRetries: 0 });
@@ -94,7 +94,7 @@ class ArtifactProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     _history: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     options: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {

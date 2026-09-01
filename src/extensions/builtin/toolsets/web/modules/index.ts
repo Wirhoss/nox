@@ -1,5 +1,4 @@
 import { camoufoxModule } from './browser/camoufox';
-import { playwrightModule } from './browser/playwright';
 import { crawl4aiModule } from './extract/crawl4ai';
 import { searxngModule } from './search/searxng';
 
@@ -15,7 +14,7 @@ import type { WebModule, WebSlot } from '../module';
  * teach or runtime branch to add.
  */
 const webModules = Object.freeze({
-  browser: Object.freeze([camoufoxModule, playwrightModule]),
+  browser: Object.freeze([camoufoxModule]),
   extract: Object.freeze([crawl4aiModule]),
   search: Object.freeze([searxngModule]),
 }) satisfies { readonly [TSlot in WebSlot]: readonly WebModule<TSlot>[] };

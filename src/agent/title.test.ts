@@ -9,7 +9,7 @@ import type {
   Message,
   ProviderSourceEvent,
   TextGenerateOptions,
-  Tool,
+  ToolDeclaration,
   UserMessage,
 } from '@nox/extension-api';
 
@@ -33,7 +33,7 @@ class AnsweringProvider extends ChatProvider {
   protected override async *attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {

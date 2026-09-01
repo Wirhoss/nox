@@ -14,7 +14,7 @@ import type {
   ModelReference,
   ProviderStream,
   TextGenerateOptions,
-  Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 /**
@@ -68,7 +68,7 @@ class ModelAccessRelay implements ModelAccess {
       stream: (
         systemPrompt: string,
         history: readonly Message[],
-        tools: readonly Tool[],
+        tools: readonly ToolDeclaration[],
         options?: Omit<TextGenerateOptions, 'model'>,
       ): ProviderStream => {
         const resolved = this.#chat(reference);

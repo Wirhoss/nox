@@ -73,7 +73,7 @@ async function call(
   name: string,
   params: Record<string, unknown>,
 ): Promise<string> {
-  const execution = tools.prepare(name, params);
+  const execution = await tools.prepare(name, params);
   if (execution.type !== 'immediate') throw new Error('Expected an immediate execution.');
 
   const content: MessageContent[] = await execution.run({ abortSignal: AbortSignal.abort() });
@@ -277,7 +277,7 @@ describe('history_read_result', () => {
   test('names what it could not find instead of returning nothing', () => {
     const tools = toolSet(fakeArchive());
 
-    expect(() => tools.prepare('history_read_result', { trackId: 'missing' })).not.toThrow();
+    expect(tools.prepare('history_read_result', { trackId: 'missing' })).resolves.toBeDefined();
     expect(call(tools, 'history_read_result', { trackId: 'missing' })).rejects.toThrow('missing');
   });
 

@@ -4,7 +4,7 @@ import { parseOrThrow } from '../../utils/validate';
 
 import type { Logger } from '../../logger/logger';
 import type { HistoryArchive } from './search';
-import type { ChatModelConfig, Message, Tool } from '@nox/extension-api';
+import type { BoundTool, ChatModelConfig, Message } from '@nox/extension-api';
 
 const DEFAULT_COMPACT_AT_RATIO = 0.8;
 const DEFAULT_COMPACT_GUARD_BEGINNING_RATIO = 0.1;
@@ -74,7 +74,7 @@ interface ContextOptions extends ContextPolicy {
   /** The zone the history is timestamped in when a model is shown it. */
   timeZone?: string;
   tokenCounter?: (text: string) => number;
-  tools?: Readonly<Record<string, Tool>>;
+  tools?: Readonly<Record<string, BoundTool>>;
 }
 
 interface ContextUsage {
@@ -101,7 +101,7 @@ interface ResolvedContextOptions {
   sessionId?: string;
   timeZone?: string;
   tokenCounter?: (text: string) => number;
-  tools: Readonly<Record<string, Tool>>;
+  tools: Readonly<Record<string, BoundTool>>;
 }
 
 function resolvePressureTokenLimit(
@@ -135,7 +135,9 @@ function resolveDefaultTokenBudget(
 }
 
 /** Tools are name-sorted here so the serialized prefix never depends on insertion order. */
-function resolveTools(tools: Readonly<Record<string, Tool>> = {}): Readonly<Record<string, Tool>> {
+function resolveTools(
+  tools: Readonly<Record<string, BoundTool>> = {},
+): Readonly<Record<string, BoundTool>> {
   return Object.freeze(
     Object.fromEntries(
       Object.entries(tools)

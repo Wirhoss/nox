@@ -3,10 +3,11 @@ import { mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import {
-  contributionInstances,
+  declareContribution,
   entryIdSchema,
   instanceIdSchema,
   isConfigurable,
+  validateContribution,
 } from '@nox/extension-api';
 import { z } from 'zod';
 
@@ -127,10 +128,15 @@ async function materialize<T>(
 }
 
 /**
- * Assembles a contribution section's exact schema from what is registered right
- * now: a record of instance ID to the discriminated union of every declared
- * `configSchema`. This is the only schema in the system that cannot be written
- * down ahead of time, because its alternatives arrive with the extensions.
+ * A contribution section's schema, assembled from what is registered right now.
+ *
+ * Every entry is routed by its `type` to the contribution that declared it, and
+ * that contribution validates its own entry. The alternative — one discriminated
+ * union across every contributed `configSchema` — required the host to hold all
+ * of their Zod objects at once, which is exactly what a contribution running
+ * behind a boundary cannot hand over. Routing asks the same question from the
+ * other end, and it also names the entry that is wrong instead of reporting a
+ * union that failed to match.
  */
 function contributionSchema<T>(
   section: ContributionSection<T>,
@@ -140,7 +146,17 @@ function contributionSchema<T>(
     .list(section.point)
     .map((contribution) => contribution.value)
     .filter(isConfigurable);
-  const schemas = configurable.map((value) => value.configSchema);
+
+  if (configurable.length === 0) {
+    return z.record(
+      instanceIdSchema,
+      z.never({ error: `Nothing is registered at ${section.point.id} to configure.` }),
+    );
+  }
+
+  const owners = new Map(
+    configurable.map((value) => [declareContribution(value).type, value] as const),
+  );
 
   // A contribution that exists once owns its own name. Enforcing it as "the
   // entry key must equal the type" also makes a second instance impossible,
@@ -148,38 +164,71 @@ function contributionSchema<T>(
   // reserved name a singleton transport needs comes out of the same sentence.
   const singletons = new Set(
     configurable
-      .filter((value) => contributionInstances(value) === 'single')
-      .map((value) => value.configSchema.shape.type.value),
+      .map((value) => declareContribution(value))
+      .filter((declared) => declared.instances === 'single')
+      .map((declared) => declared.type),
   );
 
-  const entry =
-    schemas.length === 0
-      ? z.never({ error: `Nothing is registered at ${section.point.id} to configure.` })
-      : z.discriminatedUnion('type', schemas as [(typeof schemas)[number]]);
+  const known = [...owners.keys()].sort((left, right) => left.localeCompare(right)).join(', ');
 
-  // The union is built from values only known at runtime, so its inferred type
-  // cannot meet the section's declared floor by inference. It does meet it by
-  // construction: the point only accepts contributions whose config extends it.
   return z
-    .record(instanceIdSchema, entry)
-    .superRefine((record: Record<string, unknown>, context) => {
+    .record(instanceIdSchema, z.unknown())
+    .transform((record: Record<string, unknown>, context): Record<string, unknown> => {
+      const parsed: Record<string, unknown> = {};
+
       for (const [instanceId, value] of Object.entries(record)) {
         const type =
           typeof value === 'object' && value !== null && 'type' in value
             ? String(value.type)
             : undefined;
-        if (type === undefined || !singletons.has(type) || instanceId === type) continue;
 
-        context.addIssue({
-          code: 'custom',
-          message:
-            `"${type}" is configured once and its entry must be named "${type}". ` +
-            `Rename "${instanceId}" to "${type}", and update anything that names ` +
-            `"${instanceId}" — a blueprint granting it, for example — or whatever ` +
-            'referenced it will stop resolving.',
-          path: [instanceId],
-        });
+        if (type === undefined) {
+          context.addIssue({
+            code: 'custom',
+            message: `Needs a "type" naming what it configures. One of: ${known}.`,
+            path: [instanceId],
+          });
+          continue;
+        }
+
+        const owner = owners.get(type);
+        if (owner === undefined) {
+          context.addIssue({
+            code: 'custom',
+            message: `"${type}" is not registered at ${section.point.id}. One of: ${known}.`,
+            path: [instanceId, 'type'],
+          });
+          continue;
+        }
+
+        if (singletons.has(type) && instanceId !== type) {
+          context.addIssue({
+            code: 'custom',
+            message:
+              `"${type}" is configured once and its entry must be named "${type}". ` +
+              `Rename "${instanceId}" to "${type}", and update anything that names ` +
+              `"${instanceId}" — a blueprint granting it, for example — or whatever ` +
+              'referenced it will stop resolving.',
+            path: [instanceId],
+          });
+        }
+
+        const checked = validateContribution(owner, value);
+        if (!checked.ok) {
+          for (const issue of checked.issues) {
+            context.addIssue({
+              code: 'custom',
+              message: issue.message,
+              path: [instanceId, ...issue.path],
+            });
+          }
+          continue;
+        }
+
+        parsed[instanceId] = checked.value;
       }
+
+      return parsed;
     }) as unknown as z.ZodType<Record<string, T>>;
 }
 
@@ -205,11 +254,13 @@ function seededEntries(configurable: readonly UnknownConfigurable[]): Record<str
   const seeded: Record<string, unknown> = {};
 
   for (const value of configurable) {
-    if (contributionInstances(value) !== 'single') continue;
+    const { instances, type } = declareContribution(value);
+    if (instances !== 'single') continue;
 
-    const type = value.configSchema.shape.type.value;
-    if (typeof type !== 'string') continue;
-    if (!value.configSchema.safeParse({ type }).success) continue;
+    // Asked of the contribution rather than of its schema: whether the bare
+    // type is already a complete entry is a question only the thing that owns
+    // the schema can answer, here and behind a boundary alike.
+    if (!validateContribution(value, { type }).ok) continue;
 
     seeded[type] = { type };
   }

@@ -441,10 +441,14 @@ async function composeWithSecrets<TConfig, TValue>(
   store: SecretStore,
   consumer: SecretConsumer,
   create: (config: ResolvedSecrets<TConfig>) => TValue,
-): Promise<TValue> {
+): Promise<Awaited<TValue>> {
   const resolved = await resolveSecrets(entry, store, consumer);
   try {
-    return create(resolved.value);
+    // Awaited inside the guard, not returned from it. A contribution that
+    // builds asynchronously fails asynchronously, and a returned promise would
+    // reject after this try block had already been left — losing the one
+    // explanation that says which secret was missing.
+    return await create(resolved.value);
   } catch (error) {
     if (resolved.missing.length === 0) throw error;
     const named = resolved.missing

@@ -5,7 +5,7 @@ import { matchesPattern } from './authority';
 
 import type { Logger } from '../logger/logger';
 import type { AuthorityCatalog, GrantPattern } from './authority';
-import type { PrincipalRef } from '@nox/extension-api';
+import type { MaybePromise, PrincipalRef } from '@nox/extension-api';
 
 /**
  * One question, asked once per tool call: may this principal use this authority?
@@ -166,7 +166,7 @@ class OwnerAuthorizationProvider implements AuthorizationProvider {
  * changes while a session is still going and the answer that matters is the one
  * true at the moment of the call.
  */
-type SubjectGroups = (subject: string) => readonly string[];
+type SubjectGroups = (subject: string) => MaybePromise<readonly string[]>;
 
 /**
  * Authorization from configured grants, scoped to a single issuer. One instance
@@ -218,17 +218,21 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
    * throws while trying, contributes nothing — a group lookup can only ever add
    * authority, so failing to resolve one denies rather than widens.
    */
-  #keysFor(subject: string): readonly string[] {
+  async #keysFor(subject: string): Promise<readonly string[]> {
     if (this.#groups === undefined) return [subject];
 
     try {
-      return [subject, ...this.#groups(subject)];
+      // Awaited inside the guard: a transport that answers over a boundary
+      // fails by rejecting, and a returned promise would reject after this
+      // catch had been left — turning "could not resolve" into a thrown error
+      // where the rule is that it contributes nothing.
+      return [subject, ...(await this.#groups(subject))];
     } catch {
       return [subject];
     }
   }
 
-  public authorize(request: AuthorizationRequest): AuthorizationDecision {
+  public async authorize(request: AuthorizationRequest): Promise<AuthorizationDecision> {
     const { authority, principal } = request;
 
     if (principal.issuer !== this.#issuer) {
@@ -239,7 +243,7 @@ class GrantAuthorizationProvider implements AuthorizationProvider {
     }
 
     let configured = false;
-    for (const key of this.#keysFor(principal.subject)) {
+    for (const key of await this.#keysFor(principal.subject)) {
       const patterns = this.#grants.get(key);
       if (patterns === undefined) continue;
       configured = true;

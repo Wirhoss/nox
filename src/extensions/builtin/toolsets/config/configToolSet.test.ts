@@ -166,8 +166,10 @@ const secretMetadata: SecretMetadataReader = {
     ]),
 };
 
-async function result(execution: ToolExecution): Promise<Record<string, unknown>> {
-  const content = await execution.run({ abortSignal: new AbortController().signal });
+async function result(
+  pending: Promise<ToolExecution> | ToolExecution,
+): Promise<Record<string, unknown>> {
+  const content = await (await pending).run({ abortSignal: new AbortController().signal });
   const settled = 'ack' in content ? await content.result : content;
   const first = settled[0];
   if (first?.type !== 'text') throw new Error('Expected a text tool result.');
@@ -230,24 +232,26 @@ describe('ConfigToolSet', () => {
   test('reads schemas, entries, runtime status, and secret metadata without secret values', async () => {
     const toolSet = new ConfigToolSet({ type: 'config' }, new RecordingAdmin(), secretMetadata);
 
-    expect(await result(toolSet.prepare('config_schema', { section: 'providers' }))).toMatchObject({
+    expect(
+      await result(await toolSet.prepare('config_schema', { section: 'providers' })),
+    ).toMatchObject({
       key: 'providers',
       types: [{ extensionId: 'nox.provider.openai', type: 'openai_completions' }],
     });
-    expect(await result(toolSet.prepare('config_list', { section: 'providers' }))).toEqual({
+    expect(await result(await toolSet.prepare('config_list', { section: 'providers' }))).toEqual({
       count: 1,
       entries: [{ entryId: 'main', type: 'openai_completions' }],
       section: 'providers',
     });
     expect(
-      await result(toolSet.prepare('config_get', { entryId: 'main', section: 'providers' })),
+      await result(await toolSet.prepare('config_get', { entryId: 'main', section: 'providers' })),
     ).toMatchObject({ entryId: 'main', section: 'providers' });
-    expect(await result(toolSet.prepare('config_status', {}))).toMatchObject({
+    expect(await result(await toolSet.prepare('config_status', {}))).toMatchObject({
       components: [{ id: 'main', kind: 'provider' }],
       revertAvailable: false,
     });
 
-    const secrets = await result(toolSet.prepare('config_secrets', {}));
+    const secrets = await result(await toolSet.prepare('config_secrets', {}));
     expect(secrets).toMatchObject({
       secrets: [
         {
@@ -264,7 +268,7 @@ describe('ConfigToolSet', () => {
     const admin = new RecordingAdmin();
     const toolSet = new ConfigToolSet({ type: 'config' }, admin, secretMetadata);
 
-    expect(await result(toolSet.prepare('config_providers', {}))).toEqual({
+    expect(await result(await toolSet.prepare('config_providers', {}))).toEqual({
       providers: [
         {
           available: true,
@@ -281,7 +285,7 @@ describe('ConfigToolSet', () => {
     });
     expect(admin.providerInventoryRefreshes).toBe(0);
 
-    await result(toolSet.prepare('config_providers', { refresh: true }));
+    await result(await toolSet.prepare('config_providers', { refresh: true }));
     expect(admin.providerInventoryRefreshes).toBe(1);
   });
 
@@ -295,7 +299,7 @@ describe('ConfigToolSet', () => {
       systemPrompt: 'Work.',
     };
 
-    const create = toolSet.prepare('config_create', {
+    const create = await toolSet.prepare('config_create', {
       entryId: 'worker',
       section: 'blueprints',
       value: createdValue,
@@ -309,7 +313,7 @@ describe('ConfigToolSet', () => {
 
     const replacement = { ...createdValue, description: 'Updated worker' };
     await result(
-      toolSet.prepare('config_replace', {
+      await toolSet.prepare('config_replace', {
         entryId: 'worker',
         section: 'blueprints',
         value: replacement,
@@ -317,7 +321,7 @@ describe('ConfigToolSet', () => {
     );
     expect(admin.entries.blueprints.worker).toEqual(replacement);
 
-    const remove = toolSet.prepare('config_delete', {
+    const remove = await toolSet.prepare('config_delete', {
       entryId: 'worker',
       section: 'blueprints',
     });
@@ -339,20 +343,20 @@ describe('ConfigToolSet', () => {
       secretMetadata,
     );
 
-    await result(toolSet.prepare('config_reload', {}));
+    await result(await toolSet.prepare('config_reload', {}));
     expect(admin.reloaded).toEqual(['providers']);
     expect(
       result(
-        toolSet.prepare('config_create', {
+        await toolSet.prepare('config_create', {
           entryId: 'worker',
           section: 'blueprints',
           value: { model: 'm', provider: 'main', systemPrompt: 'Work.' },
         }),
       ),
     ).rejects.toThrow('does not permit writing section "blueprints"');
-    await result(toolSet.prepare('config_retry', {}));
+    await result(await toolSet.prepare('config_retry', {}));
     expect(admin.retries).toBe(1);
-    await result(toolSet.prepare('config_revert', {}));
+    await result(await toolSet.prepare('config_revert', {}));
     expect(admin.reverted).toBe(1);
   });
 });

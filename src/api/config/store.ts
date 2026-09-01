@@ -1,4 +1,9 @@
-import { brokers, contributionInstances, isConfigurable } from '@nox/extension-api';
+import {
+  brokers,
+  contributionInstances,
+  declareContribution,
+  isConfigurable,
+} from '@nox/extension-api';
 import { z } from 'zod';
 
 import { sections } from '../../config/sections';
@@ -269,15 +274,13 @@ class ConfigStore implements ConfigurationAdmin {
         .flatMap((contribution) => {
           const configurable = contribution.value;
           if (!isConfigurable(configurable)) return [];
+          const declared = declareContribution(configurable);
           return [
             Object.freeze({
               extensionId: contribution.extensionId,
               ...brokerHost(section, configurable),
-              instances: contributionInstances(configurable),
-              schema: z.toJSONSchema(configurable.configSchema, {
-                io: 'input',
-                unrepresentable: 'any',
-              }),
+              instances: declared.instances,
+              schema: declared.schema,
               type: contribution.id,
             }),
           ];

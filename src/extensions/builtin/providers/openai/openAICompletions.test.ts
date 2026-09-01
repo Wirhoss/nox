@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { isProviderError } from '@nox/extension-api';
+import { ARTIFACT_OUTPUT_NOTICE, declareTool, isProviderError } from '@nox/extension-api';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 
@@ -14,10 +14,10 @@ import { Database } from '../../../../database/database';
 import {
   permissiveAuthorization,
   TEST_AUTHORITY,
+  testBoundTool,
   testCatalog,
   testOrigin,
 } from '../../../../testFixtures';
-import { ARTIFACT_OUTPUT_NOTICE } from '../../../../tool/render';
 import { OpenAICompletions } from './openAICompletions';
 
 import type {
@@ -26,6 +26,7 @@ import type {
   ProviderErrorCode,
   ProviderStreamEvent,
   Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 interface RecordedRequest {
@@ -93,7 +94,7 @@ async function collect(stream: AsyncIterable<ProviderStreamEvent>): Promise<Prov
 async function run(
   instance: OpenAICompletions,
   history: Message[] = [],
-  tools: Tool[] = [],
+  tools: readonly ToolDeclaration[] = [],
   model?: ChatModelConfig,
 ): Promise<ProviderStreamEvent[]> {
   return collect(instance.getMessageStream('be brief', history, tools, { model }));
@@ -197,7 +198,7 @@ describe('OpenAICompletions request body', () => {
   test('renders tools as JSON schema functions without the $schema draft URL', async () => {
     stubFetch(() => sse(textDelta('hi')));
 
-    await run(provider(), [], [echoTool]);
+    await run(provider(), [], [declareTool(echoTool)]);
 
     expect(requests[0]?.body.tools).toEqual([
       {
@@ -219,7 +220,7 @@ describe('OpenAICompletions request body', () => {
     stubFetch(() => sse(textDelta('hi')));
     const artifactTool: Tool = { ...echoTool, output: { artifacts: true } };
 
-    await run(provider(), [], [artifactTool]);
+    await run(provider(), [], [declareTool(artifactTool)]);
 
     const tools = requests[0]?.body.tools as { function: { description: string } }[];
     expect(tools[0]?.function.description).toBe(
@@ -971,7 +972,7 @@ describe('OpenAICompletions session regression', () => {
         authorization: permissiveAuthorization,
         // Folding would replace the pair with a placeholder and there would be
         // no second rendering of it to compare against.
-        context: { foldMinReductionRatio: 1, tools: { echo: echoTool } },
+        context: { foldMinReductionRatio: 1, tools: { echo: testBoundTool(echoTool) } },
         sessionId: 'stable-boundary-nonce',
         systemPrompt: 'be brief',
       });
@@ -1056,7 +1057,7 @@ describe('OpenAICompletions session regression', () => {
         agentId: 'test',
         authorities: testCatalog(),
         authorization: permissiveAuthorization,
-        context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
+        context: { foldMinReductionRatio: 0.01, tools: { echo: testBoundTool(bulkyEcho) } },
         sessionId: 'folded-reasoning-turn',
         systemPrompt: 'be brief',
       });
@@ -1077,7 +1078,7 @@ describe('OpenAICompletions session regression', () => {
         agentId: 'test',
         authorities: testCatalog(),
         authorization: permissiveAuthorization,
-        context: { foldMinReductionRatio: 0.01, tools: { echo: bulkyEcho } },
+        context: { foldMinReductionRatio: 0.01, tools: { echo: testBoundTool(bulkyEcho) } },
         sessionId: session.sessionId,
         systemPrompt: 'be brief',
       });

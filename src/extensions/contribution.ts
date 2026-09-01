@@ -1,4 +1,9 @@
-import { assertDiscriminator, assertIdentifier, isConfigurable } from '@nox/extension-api';
+import {
+  assertDiscriminator,
+  assertIdentifier,
+  assertNoDefaultedSecrets,
+  isConfigurable,
+} from '@nox/extension-api';
 
 import { toDisposable } from './disposable';
 import { DuplicateContributionError } from './error';
@@ -58,7 +63,10 @@ class ContributionRegistry implements ContributionReader {
         this.ownedBy(extensionIdToRead),
       register: <T>(point: ContributionPoint<T>, contributionId: string, value: T): Disposable => {
         assertIdentifier(contributionId, 'contribution ID');
-        if (isConfigurable(value)) assertDiscriminator(value, contributionId);
+        if (isConfigurable(value)) {
+          assertDiscriminator(value, contributionId);
+          assertNoDefaultedSecrets(value, contributionId);
+        }
         return resources.add(this.#register(extensionId, point, contributionId, value));
       },
     });

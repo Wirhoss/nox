@@ -539,7 +539,7 @@ class DiscordBroker implements Broker {
     const name = displayNameOf(author, member);
 
     if (decision.kind === 'observe') {
-      host.receive({
+      void host.receive({
         content: parts,
         conversationId: channelId,
         messageId,
@@ -554,7 +554,7 @@ class DiscordBroker implements Broker {
     // Speaking mid-thought steers the run at its next safe opening; speaking to
     // an idle one is an ordinary message. Same words, only the moment differs.
     const type = this.#running.has(channelId) ? 'steer' : 'message';
-    const rejection = host.receive({
+    const rejection = await host.receive({
       content: parts,
       conversationId: channelId,
       messageId,
@@ -707,7 +707,7 @@ class DiscordBroker implements Broker {
         this.#logger.warn({ err: error }, 'Could not acknowledge a Discord button.');
       });
 
-    this.#host?.receive({
+    void this.#host?.receive({
       conversationId: posted.channelId,
       requestId,
       resolution:
@@ -768,7 +768,7 @@ class DiscordBroker implements Broker {
       return;
     }
 
-    const rejection = host.command({
+    const rejection = await host.command({
       arguments: commandArguments(options),
       command: asString(payload.name) ?? '',
       conversationId: channelId,

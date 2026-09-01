@@ -67,7 +67,7 @@ function context() {
 async function run(toolSet: MemoryToolSet, name: string, params: unknown) {
   const tool = toolSet.tools[name];
   if (tool === undefined) throw new Error(`Memory tool ${name} is not registered.`);
-  const prepared = prepareToolCall(tool, params).execution;
+  const prepared = await prepareToolCall(tool, params);
   if (prepared.type !== 'immediate') throw new Error('Expected an immediate memory tool.');
   return prepared.run(context());
 }
@@ -105,10 +105,12 @@ describe('MemoryToolSet', () => {
     const write = tools.tools.memory_write;
     if (write === undefined) throw new Error('memory_write is not registered.');
 
-    expect(() => prepareToolCall(write, { kind: 'plan', text: 'Alice will do the QA.' })).toThrow();
-    expect(() =>
+    expect(
+      prepareToolCall(write, { kind: 'plan', text: 'Alice will do the QA.' }),
+    ).rejects.toThrow();
+    expect(
       prepareToolCall(write, { kind: 'preference', text: 'Alice prefers jasmine tea.' }),
-    ).not.toThrow();
+    ).resolves.toBeDefined();
   });
 
   test('writes, replaces, and retires opaque fact IDs through the editor only', async () => {
@@ -156,14 +158,14 @@ describe('MemoryToolSet', () => {
       'memory_write',
     ]);
     expect(Object.keys(visible)).toEqual(['memory_search']);
-    expect(visible.memory_search?.authority).toBe('nox.core.memory.read');
+    expect(visible.memory_search?.declaration.authority).toBe('nox.core.memory.read');
   });
 
-  test('refuses execution without a host session instead of inventing a memory owner', () => {
+  test('refuses execution without a host session instead of inventing a memory owner', async () => {
     const tools = new MemoryToolSet(fakeEditor());
     const search = tools.tools.memory_search;
     if (search === undefined) throw new Error('Memory search tool is not registered.');
-    const prepared = prepareToolCall(search, { query: 'tea' }).execution;
+    const prepared = await prepareToolCall(search, { query: 'tea' });
     if (prepared.type !== 'immediate') throw new Error('Expected an immediate memory tool.');
 
     const execution = prepared.run({

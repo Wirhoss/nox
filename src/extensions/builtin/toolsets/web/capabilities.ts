@@ -1,9 +1,9 @@
 /**
  * What the three web tools need from whatever is behind them.
  *
- * A tool talks to a capability, never to a service. SearXNG, Crawl4AI,
- * camoufox and Playwright implement these; they do not define the shapes the
- * tools use. Everything specific to one service — its routes, its request
+ * A tool talks to a capability, never to a service. SearXNG, Crawl4AI and
+ * camoufox implement these; they do not define the shapes the tools use.
+ * Everything specific to one service — its routes, its request
  * body, the name it gives a field — stops at the module boundary, and what
  * crosses is this.
  *

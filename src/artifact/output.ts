@@ -270,15 +270,7 @@ class ArtifactOutputSink implements ArtifactContentReader, ArtifactOutputHost {
   }
 }
 
-/** Collision-free stable ownership for output produced inside one broker conversation. */
-function artifactConversationScope(brokerId: string, conversationId: string): ArtifactScope {
-  return artifactScopeSchema.parse({
-    id: JSON.stringify([brokerId, conversationId]),
-    type: 'conversation',
-  });
-}
-
-export { ARTIFACT_TEXT_READ_PROFILE, artifactConversationScope, ArtifactOutputSink };
+export { ARTIFACT_TEXT_READ_PROFILE, ArtifactOutputSink };
 
 export type {
   ArtifactContentReader,

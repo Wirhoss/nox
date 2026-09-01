@@ -376,11 +376,11 @@ interface ChatTransport {
    * Invokes a command. It answers why the invocation was refused, or nothing
    * when it was accepted — accepted meaning queued, not finished.
    */
-  submitCommand(input: ChatCommandInput): ChatCommandRejection | undefined;
+  submitCommand(input: ChatCommandInput): Promise<ChatCommandRejection | undefined>;
   submitDecision(input: ChatDecisionInput): void;
-  submitMessage(input: ChatMessageInput): ChatMessageRejection | undefined;
+  submitMessage(input: ChatMessageInput): Promise<ChatMessageRejection | undefined>;
   /** Adds direction at the next safe opening in the run in flight. */
-  submitSteer(input: ChatMessageInput): ChatMessageRejection | undefined;
+  submitSteer(input: ChatMessageInput): Promise<ChatMessageRejection | undefined>;
   /** Everything the transport renders, until the returned function is called. */
   subscribe(listener: ChatListener, options?: ChatSubscriptionOptions): () => void;
 }

@@ -6,7 +6,7 @@ import type {
   ProviderSourceEvent,
   ProviderStreamEvent,
   TextGenerateOptions,
-  Tool,
+  ToolDeclaration,
 } from '@nox/extension-api';
 
 type Attempt = () => AsyncIterable<ProviderSourceEvent>;
@@ -29,7 +29,7 @@ class ScriptedProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     _messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {

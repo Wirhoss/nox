@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { TEST_AUTHORITY } from '../testFixtures';
 import { ToolRouter } from './router';
 
-import type { MessageContent, Tool, ToolContext } from '@nox/extension-api';
+import type { BoundTool, MessageContent, Tool, ToolContext } from '@nox/extension-api';
 
 function text(value: string): MessageContent[] {
   return [{ text: value, type: 'text' }];
@@ -15,14 +15,19 @@ function immediateTool(
   name: string,
   description = `${name} capability`,
   run: (ctx: ToolContext) => Promise<MessageContent[]> = () => Promise.resolve(text(name)),
-): Tool {
-  return {
-    authority: TEST_AUTHORITY,
-    description,
-    name,
-    parameters: z.object({}),
-    prepare: () => ({ run, title: name, type: 'immediate' }),
-  };
+  output?: { readonly artifacts: true },
+): BoundTool {
+  return bindTool(
+    {
+      authority: TEST_AUTHORITY,
+      description,
+      name,
+      ...(output === undefined ? {} : { output }),
+      parameters: z.object({}),
+      prepare: () => ({ run, title: name, type: 'immediate' }),
+    },
+    'test.routed',
+  );
 }
 
 describe('ToolRouter', () => {
@@ -33,17 +38,17 @@ describe('ToolRouter', () => {
     expect(Object.isFrozen(router.tools)).toBe(true);
   });
 
-  test('routes a call under the routed tool own trust, not the router own', () => {
+  test('routes a call under the routed tool own trust, not the router own', async () => {
     // `tool_call` is a doorway: it returns the routed tool's execution, already
     // stamped. If the router restamped it, every scraped page would arrive
     // wearing the trust of a core tool.
     const scraper = immediateTool('fetch_page');
-    const router = new ToolRouter([bindTool(scraper, 'scraper')]);
+    const router = new ToolRouter([scraper]);
     const callTool = router.tools.tool_call;
     if (callTool === undefined) throw new Error('The router exposes tool_call.');
     const routed = bindTool(callTool, 'nox.router');
 
-    const execution = routed.prepare({ name: 'fetch_page', params: '{}' });
+    const execution = await routed.prepare({ name: 'fetch_page', params: '{}' });
     expect(execution.gateSubject?.toolName).toBe('fetch_page');
     expect(execution.gateSubject?.trust).toBe('untrusted');
 
@@ -52,23 +57,25 @@ describe('ToolRouter', () => {
     const searchTool = router.tools.tool_search;
     if (searchTool === undefined) throw new Error('The router exposes tool_search.');
     const search = bindTool(searchTool, 'nox.router');
-    expect(search.prepare({ query: 'fetch' }).gateSubject?.trust).toBe('trusted');
+    expect((await search.prepare({ query: 'fetch' })).gateSubject?.trust).toBe('trusted');
   });
 
   test('searches deterministically and returns exact rendered tool definitions', async () => {
-    const weather: Tool = {
-      ...immediateTool('weather_forecast', 'Get a weather forecast for a city.'),
-      output: { artifacts: true },
-    };
+    const weather = immediateTool(
+      'weather_forecast',
+      'Get a weather forecast for a city.',
+      undefined,
+      { artifacts: true },
+    );
     const calendar = immediateTool('calendar_events', 'List appointments by date.');
     const forward = new ToolRouter([weather, calendar]);
     const reverse = new ToolRouter([calendar, weather]);
 
-    expect(forward.search('weather city').map((tool) => tool.name)).toEqual(
-      reverse.search('weather city').map((tool) => tool.name),
+    expect(forward.search('weather city').map((tool) => tool.declaration.name)).toEqual(
+      reverse.search('weather city').map((tool) => tool.declaration.name),
     );
 
-    const execution = forward.prepare('tool_search', { query: 'weather city' });
+    const execution = await forward.prepare('tool_search', { query: 'weather city' });
     expect(execution.type).toBe('immediate');
     if (execution.type !== 'immediate') throw new Error('Expected immediate execution.');
     const response = await execution.run({ abortSignal: new AbortController().signal });
@@ -95,7 +102,7 @@ describe('ToolRouter', () => {
       prepare: ({ path }) => {
         preparedPath = path;
         return {
-          run: ({ abortSignal }) => {
+          run: async ({ abortSignal }) => {
             receivedSignal = abortSignal;
             return Promise.resolve(text(`read ${path}`));
           },
@@ -104,9 +111,9 @@ describe('ToolRouter', () => {
         };
       },
     };
-    const router = new ToolRouter([readFile]);
+    const router = new ToolRouter([bindTool(readFile, 'test.routed')]);
 
-    const execution = router.prepare('tool_call', {
+    const execution = await router.prepare('tool_call', {
       name: 'read_file',
       params: '{"path":"README.md"}',
     });
@@ -132,9 +139,9 @@ describe('ToolRouter', () => {
         type: 'deferred',
       }),
     };
-    const router = new ToolRouter([deferred]);
+    const router = new ToolRouter([bindTool(deferred, 'test.routed')]);
 
-    const execution = router.prepare('tool_call', { name: 'background_job', params: '{}' });
+    const execution = await router.prepare('tool_call', { name: 'background_job', params: '{}' });
     expect(execution.type).toBe('deferred');
     if (execution.type !== 'deferred') throw new Error('Expected deferred execution.');
 
@@ -156,15 +163,15 @@ describe('ToolRouter', () => {
         type: 'immediate',
       }),
     };
-    const router = new ToolRouter([counted]);
+    const router = new ToolRouter([bindTool(counted, 'test.routed')]);
 
-    expect(() => router.prepare('tool_call', { name: 'count', params: '{not json}' })).toThrow(
+    expect(router.prepare('tool_call', { name: 'count', params: '{not json}' })).rejects.toThrow(
       SyntaxError,
     );
-    expect(() =>
+    expect(
       router.prepare('tool_call', { name: 'count', params: '{"count":"many"}' }),
-    ).toThrow(InvalidToolParamsError);
-    expect(() => router.prepare('tool_call', { name: 'missing', params: '{}' })).toThrow(
+    ).rejects.toThrow(InvalidToolParamsError);
+    expect(router.prepare('tool_call', { name: 'missing', params: '{}' })).rejects.toThrow(
       UnknownToolError,
     );
   });

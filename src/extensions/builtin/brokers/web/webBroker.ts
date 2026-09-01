@@ -248,7 +248,7 @@ class WebBroker implements Broker, ChatTransport {
    * catalog and posts it here — what a surface does with what someone types is
    * the surface's business, never the runtime's.
    */
-  public submitCommand(input: ChatCommandInput): ChatCommandRejection | undefined {
+  public async submitCommand(input: ChatCommandInput): Promise<ChatCommandRejection | undefined> {
     // Explicitly, because nothing is the answer for an accepted invocation:
     // coalescing it would report every accepted command as a refused one.
     const host = this.#host;
@@ -268,7 +268,9 @@ class WebBroker implements Broker, ChatTransport {
     const resolution =
       input.decision === 'approve' ? ({ approved: input.scope ?? 'once' } as const) : 'denied';
 
-    this.#host?.receive({
+    // Deliberately not awaited: a decision is an answer to work already
+    // waiting, and the surface that gave it has nothing to learn back.
+    void this.#host?.receive({
       conversationId: input.conversationId,
       requestId: input.requestId,
       resolution,
@@ -277,7 +279,7 @@ class WebBroker implements Broker, ChatTransport {
     });
   }
 
-  public submitMessage(input: ChatMessageInput): ChatMessageRejection | undefined {
+  public async submitMessage(input: ChatMessageInput): Promise<ChatMessageRejection | undefined> {
     const host = this.#host;
     if (host === undefined) return { reason: 'unavailable' };
     return host.receive({
@@ -297,7 +299,7 @@ class WebBroker implements Broker, ChatTransport {
    * anything else someone said, and its UI is the message box rather than a
    * palette.
    */
-  public submitSteer(input: ChatMessageInput): ChatMessageRejection | undefined {
+  public async submitSteer(input: ChatMessageInput): Promise<ChatMessageRejection | undefined> {
     const host = this.#host;
     if (host === undefined) return { reason: 'unavailable' };
     return host.receive({

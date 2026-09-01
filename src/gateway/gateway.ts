@@ -5,7 +5,7 @@ import {
 } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
-import { artifactConversationScope } from '../artifact/output';
+import { artifactConversationScope } from '../artifact/types';
 import { ConversationStore } from '../database/conversationStore';
 import { SessionStore } from '../database/sessionStore';
 import { silentLogger } from '../logger/logger';
@@ -438,8 +438,11 @@ class Gateway implements MessageGateway, ScheduledRunHost {
       agentIds: () => this.#application.agentIds,
       artifactScope: (conversationId: string): ArtifactScope =>
         artifactConversationScope(grant.brokerId, conversationId),
-      command: (invocation: CommandInvocation): CommandRejection | undefined =>
-        this.#command(grant, invocation),
+      // Resolved rather than awaited: the host's answer is a decision it can
+      // make on the spot today, and the contract is a promise because a
+      // transport that is not in this process has to be able to wait for one.
+      command: (invocation: CommandInvocation): Promise<CommandRejection | undefined> =>
+        Promise.resolve(this.#command(grant, invocation)),
       commands: this.#commands.specs,
       ...(grant.agentId === undefined ? {} : { defaultAgentId: grant.agentId }),
       history: (
@@ -447,7 +450,8 @@ class Gateway implements MessageGateway, ScheduledRunHost {
         options?: BrokerHistoryOptions,
       ): Promise<BrokerHistory | undefined> => this.#history(grant, conversationId, options),
       logger: this.#logger.child(grant.brokerId),
-      receive: (event: InboundEvent): InboundRejection | undefined => this.#receive(grant, event),
+      receive: (event: InboundEvent): Promise<InboundRejection | undefined> =>
+        Promise.resolve(this.#receive(grant, event)),
       sessions: (): Promise<readonly BrokerSession[]> => this.#sessions(grant),
       signal: this.#application.signal,
     });
@@ -569,7 +573,7 @@ class Gateway implements MessageGateway, ScheduledRunHost {
     // because a transport that answers here is saying the run belongs to a
     // conversation of its own — which is a thing the session has to be opened
     // into, artifacts and all, not somewhere to forward its last message.
-    const ownConversation = addressed?.broker.openScheduledConversation?.();
+    const ownConversation = await addressed?.broker.openScheduledConversation?.();
 
     const session = await this.#application.openSession(request.agentId, {
       ...(addressed === undefined || ownConversation === undefined

@@ -8,7 +8,7 @@ import { httpUrlSchema, runtimeSecretSchema, secretRefSchema } from './schemas.j
 import type { ArtifactOutputPublisher, ArtifactRef } from './artifacts.js';
 import type { ContentModality, Message, MessageContent, ToolCallMessage } from './content.js';
 import type { SecretHandle } from './schemas.js';
-import type { Tool } from './tools.js';
+import type { ToolDeclaration } from './tools.js';
 
 /** Per-request generation policy, owned by an agent rather than by a provider model. */
 const samplingParametersConfigSchema = z.object({
@@ -585,7 +585,7 @@ abstract class ChatProvider extends BaseProvider {
   public getMessageStream(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     options?: TextGenerateOptions,
   ): ProviderStream {
     const signal = options?.signal ?? new AbortController().signal;
@@ -598,7 +598,7 @@ abstract class ChatProvider extends BaseProvider {
   protected abstract attempt(
     systemPrompt: string,
     messageHistory: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     options: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent>;
@@ -606,7 +606,7 @@ abstract class ChatProvider extends BaseProvider {
   async *#streamWithRetries(
     systemPrompt: string,
     history: Message[],
-    tools: Tool[],
+    tools: readonly ToolDeclaration[],
     options: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncGenerator<ProviderSourceEvent> {
@@ -773,7 +773,7 @@ interface ChatModel extends ModelHandle {
   stream(
     systemPrompt: string,
     history: readonly Message[],
-    tools: readonly Tool[],
+    tools: readonly ToolDeclaration[],
     options?: Omit<TextGenerateOptions, 'model'>,
   ): ProviderStream;
 }

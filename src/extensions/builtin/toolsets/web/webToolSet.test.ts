@@ -49,8 +49,11 @@ function context(artifacts?: ArtifactOutputPublisher) {
 }
 
 /** Runs a prepared call whichever way it answers, and reads its text part. */
-async function ran(execution: ToolExecution, ctx: ToolContext): Promise<MessageContent[]> {
-  const output = await execution.run(ctx);
+async function ran(
+  pending: Promise<ToolExecution> | ToolExecution,
+  ctx: ToolContext,
+): Promise<MessageContent[]> {
+  const output = await (await pending).run(ctx);
   return Array.isArray(output) ? output : await output.result;
 }
 
@@ -70,6 +73,13 @@ describe('WebToolSet configuration', () => {
       () =>
         new WebToolSet({
           search: { module: 'firecrawl', url: 'https://search.example.test' },
+          type: 'web',
+        } as never),
+    ).toThrow();
+    expect(
+      () =>
+        new WebToolSet({
+          browser: { module: 'playwright' },
           type: 'web',
         } as never),
     ).toThrow();
@@ -152,7 +162,9 @@ describe('web_search over the searxng module', () => {
       type: 'web',
     });
 
-    const body = parsed(await ran(tools.prepare('web_search', { query: 'nox agents' }), context()));
+    const body = parsed(
+      await ran(await tools.prepare('web_search', { query: 'nox agents' }), context()),
+    );
 
     expect(body.results).toEqual([
       { snippet: 'One', source: 'brave', title: 'First', url: 'https://example.test/1' },
@@ -165,7 +177,7 @@ describe('web_search over the searxng module', () => {
       search: { maxResults: 5, module: 'searxng', url: 'https://search.example.test' },
       type: 'web',
     });
-    expect(() => tools.prepare('web_search', { maxResults: 50, query: 'x' })).toThrow();
+    expect(tools.prepare('web_search', { maxResults: 50, query: 'x' })).rejects.toThrow();
   });
 });
 
@@ -183,7 +195,7 @@ describe('web_extract over the crawl4ai module', () => {
   };
 
   test('publishes the page and its images as artifacts and reports them', async () => {
-    const fetchMock = mock((input: Request | string | URL) => {
+    const fetchMock = mock(async (input: Request | string | URL) => {
       const value =
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (value.includes('/crawl')) return Promise.resolve(Response.json(crawled));
@@ -201,7 +213,7 @@ describe('web_extract over the crawl4ai module', () => {
     });
 
     const content = await ran(
-      tools.prepare('web_extract', { urls: ['https://example.test/nox'] }),
+      await tools.prepare('web_extract', { urls: ['https://example.test/nox'] }),
       context(publisher),
     );
 
@@ -245,7 +257,7 @@ describe('web_extract over the crawl4ai module', () => {
     });
 
     const content = await ran(
-      tools.prepare('web_extract', {
+      await tools.prepare('web_extract', {
         capture: ['html'],
         urls: ['https://dead.example.test', 'https://example.test/nox'],
       }),
@@ -262,7 +274,7 @@ describe('web_extract over the crawl4ai module', () => {
 
   test('never fetches an image a page pointed at Nox’s own network', async () => {
     const requested: string[] = [];
-    globalThis.fetch = mock((input: Request | string | URL) => {
+    globalThis.fetch = mock(async (input: Request | string | URL) => {
       const value =
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       requested.push(value);
@@ -287,7 +299,7 @@ describe('web_extract over the crawl4ai module', () => {
     });
 
     const content = await ran(
-      tools.prepare('web_extract', { urls: ['https://example.test/nox'] }),
+      await tools.prepare('web_extract', { urls: ['https://example.test/nox'] }),
       context(publisher),
     );
 
@@ -297,12 +309,12 @@ describe('web_extract over the crawl4ai module', () => {
     expect(pages[0]?.images[0]?.skipped).toBe('not a public address');
   });
 
-  test('refuses to run without artifact output, which is what it produces', () => {
+  test('refuses to run without artifact output, which is what it produces', async () => {
     const tools = new WebToolSet({
       extract: { module: 'crawl4ai', url: 'https://crawl.example.test' },
       type: 'web',
     });
-    const execution = tools.prepare('web_extract', { urls: ['https://example.test'] });
+    const execution = await tools.prepare('web_extract', { urls: ['https://example.test'] });
 
     expect(ran(execution, context())).rejects.toThrow('Artifact output is not available');
   });
@@ -320,27 +332,29 @@ describe('browser over the camoufox module', () => {
     const tools = browserTools();
 
     // A click needs a target, and the schema is what says so.
-    expect(() => tools.prepare('browser_click', { tabId: 'tab-1' })).toThrow();
-    expect(() => tools.prepare('browser_click', { ref: 'e3', tabId: 'tab-1' })).not.toThrow();
+    expect(tools.prepare('browser_click', { tabId: 'tab-1' })).rejects.toThrow();
+    expect(tools.prepare('browser_click', { ref: 'e3', tabId: 'tab-1' })).resolves.toBeDefined();
     // A tab is not optional anywhere but open.
-    expect(() => tools.prepare('browser_navigate', { url: 'https://example.test/' })).toThrow();
-    expect(() => tools.prepare('browser_open', {})).not.toThrow();
+    expect(tools.prepare('browser_navigate', { url: 'https://example.test/' })).rejects.toThrow();
+    expect(tools.prepare('browser_open', {})).resolves.toBeDefined();
     // Inspecting needs a DOM selector, text, or both.
-    expect(() => tools.prepare('browser_inspect', { tabId: 'tab-1' })).toThrow();
-    expect(() =>
+    expect(tools.prepare('browser_inspect', { tabId: 'tab-1' })).rejects.toThrow();
+    expect(
       tools.prepare('browser_inspect', { tabId: 'tab-1', text: 'availability' }),
-    ).not.toThrow();
-    expect(() =>
+    ).resolves.toBeDefined();
+    expect(
       tools.prepare('browser_evaluate', { expression: '1 + 1', tabId: 'tab-1' }),
-    ).toThrow();
+    ).rejects.toThrow();
     // Waiting for nothing at all is not a wait.
-    expect(() => tools.prepare('browser_wait', { tabId: 'tab-1' })).toThrow();
-    expect(() => tools.prepare('browser_wait', { tabId: 'tab-1', timeoutMs: 500 })).not.toThrow();
+    expect(tools.prepare('browser_wait', { tabId: 'tab-1' })).rejects.toThrow();
+    expect(
+      tools.prepare('browser_wait', { tabId: 'tab-1', timeoutMs: 500 }),
+    ).resolves.toBeDefined();
   });
 
   test('opens a tab, then reads the page it landed on', async () => {
     const calls: string[] = [];
-    globalThis.fetch = mock((input: Request | string | URL) => {
+    globalThis.fetch = mock(async (input: Request | string | URL) => {
       const value =
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       calls.push(value);
@@ -374,7 +388,7 @@ describe('browser over the camoufox module', () => {
 
   test('follows an interaction with the page it produced', async () => {
     const calls: string[] = [];
-    globalThis.fetch = mock((input: Request | string | URL) => {
+    globalThis.fetch = mock(async (input: Request | string | URL) => {
       const value =
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       calls.push(value);
@@ -430,7 +444,7 @@ describe('browser over the camoufox module', () => {
 
   test('inspects DOM text through a fixed expression and returns a unique selector', async () => {
     let expression = '';
-    globalThis.fetch = mock((_input: Request | string | URL, init?: RequestInit) => {
+    globalThis.fetch = mock(async (_input: Request | string | URL, init?: RequestInit) => {
       const request = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
         expression?: string;
       };
@@ -487,13 +501,13 @@ describe('browser over the camoufox module', () => {
     });
     expect(tools.tools.browser_evaluate?.authority).toBe('nox.toolset.web.browser.evaluate');
 
-    globalThis.fetch = mock((_input: Request | string | URL, init?: RequestInit) => {
+    globalThis.fetch = mock(async (_input: Request | string | URL, init?: RequestInit) => {
       const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as unknown;
       expect(body).toMatchObject({ expression: 'document.title' });
       return Promise.resolve(Response.json({ ok: true, result: 'Example' }));
     }) as unknown as typeof fetch;
 
-    const execution = tools.prepare('browser_evaluate', {
+    const execution = await tools.prepare('browser_evaluate', {
       expression: 'document.title',
       tabId: 'tab-7',
     });
@@ -586,7 +600,7 @@ describe('browser over the camoufox module', () => {
   test('runs one call at a time against one tab, and both tabs at once', async () => {
     const open: string[] = [];
     let overlapped = false;
-    globalThis.fetch = mock((input: Request | string | URL) => {
+    globalThis.fetch = mock(async (input: Request | string | URL) => {
       const value =
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const tab = value.split('/tabs/')[1]?.split('/')[0] ?? '';
@@ -611,11 +625,11 @@ describe('browser over the camoufox module', () => {
     expect(overlapped).toBe(false);
   });
 
-  test('separates looking at a page from acting on one', () => {
+  test('separates looking at a page from acting on one', async () => {
     const tools = browserTools();
 
-    const click = tools.prepare('browser_click', { ref: 'e3', tabId: 'tab-7' });
-    const snapshot = tools.prepare('browser_snapshot', { tabId: 'tab-7' });
+    const click = await tools.prepare('browser_click', { ref: 'e3', tabId: 'tab-7' });
+    const snapshot = await tools.prepare('browser_snapshot', { tabId: 'tab-7' });
 
     expect(click.risk?.effects).toContain('write');
     expect(click.risk?.reversible).toBe(false);

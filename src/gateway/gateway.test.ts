@@ -41,6 +41,7 @@ import type {
   ProviderSourceEvent,
   TextGenerateOptions,
   Tool,
+  ToolDeclaration,
   ToolSetGrant,
 } from '@nox/extension-api';
 
@@ -91,7 +92,7 @@ class TwoFragmentProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     _messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -115,7 +116,7 @@ class VerboseProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -155,7 +156,7 @@ class SayingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     _messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -178,7 +179,7 @@ class ToolCallingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     _signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -216,7 +217,7 @@ class SlowProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     _messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -270,7 +271,7 @@ class PausingProvider extends ChatProvider {
   protected override async *attempt(
     _systemPrompt: string,
     messageHistory: Message[],
-    _tools: Tool[],
+    _tools: readonly ToolDeclaration[],
     _opts: TextGenerateOptions | undefined,
     signal: AbortSignal,
   ): AsyncIterable<ProviderSourceEvent> {
@@ -358,7 +359,7 @@ class TestBroker implements Broker {
   /** Someone says something. The id is the transport's own, reused to retry. */
   public say(conversationId: string, text: string, messageId?: string, senderId = 'someone'): void {
     this.#messages += 1;
-    this.#host?.receive({
+    void this.#host?.receive({
       content: [{ text, type: 'text' }],
       conversationId,
       messageId: messageId ?? `m${String(this.#messages)}`,
@@ -373,7 +374,7 @@ class TestBroker implements Broker {
     senderId = 'someone',
   ): void {
     this.#messages += 1;
-    this.#host?.receive({
+    void this.#host?.receive({
       content,
       conversationId,
       messageId: `m${String(this.#messages)}`,
@@ -388,13 +389,19 @@ class TestBroker implements Broker {
     senderId: string,
     resolution: 'denied' | { approved: 'once' | 'session' },
   ): void {
-    this.#host?.receive({ conversationId, requestId, resolution, senderId, type: 'permission' });
+    void this.#host?.receive({
+      conversationId,
+      requestId,
+      resolution,
+      senderId,
+      type: 'permission',
+    });
   }
 
   /** Adds direction at the next opening in the run in flight. */
   public steer(conversationId: string, text: string, senderId = 'someone'): void {
     this.#messages += 1;
-    this.#host?.receive({
+    void this.#host?.receive({
       content: [{ text, type: 'text' }],
       conversationId,
       messageId: `s${String(this.#messages)}`,
@@ -409,12 +416,15 @@ class TestBroker implements Broker {
     command: string,
     args?: Readonly<Record<string, unknown>>,
     senderId = 'someone',
-  ): CommandRejection | undefined {
+  ): Promise<CommandRejection | undefined> {
     return this.#requireHost().command({ arguments: args, command, conversationId, senderId });
   }
 
   /** Stops the run in flight, which is what a bare stop means. */
-  public halt(conversationId: string, scope?: 'run' | 'session'): CommandRejection | undefined {
+  public halt(
+    conversationId: string,
+    scope?: 'run' | 'session',
+  ): Promise<CommandRejection | undefined> {
     return this.invoke(conversationId, 'stop', scope === undefined ? undefined : { scope });
   }
 
@@ -1366,7 +1376,7 @@ describe('Gateway', () => {
         () => broker.delivered.find((event) => event.type === 'runStarted'),
         'A started run',
       );
-      broker.halt('chat-1');
+      await broker.halt('chat-1');
       await settle(harnessed);
       await waitFor(() => (finished(broker).length === 1 ? true : undefined), 'A finished run');
 
@@ -1385,7 +1395,7 @@ describe('Gateway', () => {
       await settle(harnessed);
       const sessionId = harnessed.application.sessions[0]?.session.sessionId;
 
-      broker.halt('chat-1', 'session');
+      await broker.halt('chat-1', 'session');
       await harnessed.gateway.drain();
       expect(harnessed.application.sessions).toHaveLength(0);
 
@@ -1543,7 +1553,7 @@ describe('Gateway', () => {
       const [session] = await broker.sessions();
       expect(session?.state).toBe('running');
 
-      broker.halt('chat-1');
+      await broker.halt('chat-1');
       await settle(harnessed);
     });
 
@@ -1609,7 +1619,7 @@ describe('Gateway', () => {
       broker.say('chat-1', 'hola');
       await settle(harnessed);
 
-      expect(broker.invoke('chat-1', 'selfDestruct')).toEqual({ reason: 'unknownCommand' });
+      expect(await broker.invoke('chat-1', 'selfDestruct')).toEqual({ reason: 'unknownCommand' });
     });
 
     test('refuses arguments that do not fit, and says why', async () => {
@@ -1619,7 +1629,7 @@ describe('Gateway', () => {
       broker.say('chat-1', 'hola');
       await settle(harnessed);
 
-      const rejection = broker.invoke('chat-1', 'stop', { scope: 'everything' });
+      const rejection = await broker.invoke('chat-1', 'stop', { scope: 'everything' });
 
       // The two things a client can act on come back straight away, checked
       // against the very schema it rendered from.
@@ -1642,7 +1652,7 @@ describe('Gateway', () => {
 
       // No scope named at all: the schema says `run`, so the conversation
       // survives a bare stop rather than being ended by an omission.
-      expect(broker.invoke('chat-1', 'stop')).toBeUndefined();
+      expect(await broker.invoke('chat-1', 'stop')).toBeUndefined();
       await settle(harnessed);
 
       expect(finished(broker).map((run) => run.status)).toEqual(['aborted']);
@@ -1693,7 +1703,9 @@ describe('Gateway', () => {
       await settle(harnessed);
 
       expect(broker.commands().map((command) => command.name)).toEqual(['stop', 'tag']);
-      expect(broker.invoke('chat-1', 'tag', { tags: ['urgent', 'done'] }, 'alice')).toBeUndefined();
+      expect(
+        await broker.invoke('chat-1', 'tag', { tags: ['urgent', 'done'] }, 'alice'),
+      ).toBeUndefined();
       await harnessed.gateway.drain();
 
       expect(seen).toEqual([
@@ -1708,8 +1720,10 @@ describe('Gateway', () => {
         type: 'commandResult',
       });
       // A multiple choice is checked like anything else.
-      expect(broker.invoke('chat-1', 'tag', { tags: [] })?.reason).toBe('invalidArguments');
-      expect(broker.invoke('chat-1', 'tag', { tags: ['nope'] })?.reason).toBe('invalidArguments');
+      expect((await broker.invoke('chat-1', 'tag', { tags: [] }))?.reason).toBe('invalidArguments');
+      expect((await broker.invoke('chat-1', 'tag', { tags: ['nope'] }))?.reason).toBe(
+        'invalidArguments',
+      );
     });
 
     test('retries generation under the command sender without adding a command message', async () => {
@@ -1746,7 +1760,7 @@ describe('Gateway', () => {
 
       broker.say('chat-1', 'hello', undefined, 'alice');
       await settle(harnessed);
-      expect(broker.invoke('chat-1', 'retry', undefined, 'alice')).toBeUndefined();
+      expect(await broker.invoke('chat-1', 'retry', undefined, 'alice')).toBeUndefined();
       await gateway.drain();
 
       expect(application.sessions[0]?.session.getTranscript().map(({ role }) => role)).toEqual([
@@ -1828,7 +1842,7 @@ describe('Gateway', () => {
 
       broker.say('chat-1', 'hello', undefined, 'alice');
       await settle(harnessed);
-      expect(broker.invoke('chat-1', 'secure', { value: 'x' }, 'alice')).toBeUndefined();
+      expect(await broker.invoke('chat-1', 'secure', { value: 'x' }, 'alice')).toBeUndefined();
       const permission = await waitFor(
         () => broker.delivered.find((event) => event.type === 'permission'),
         'A command permission request',
@@ -1892,7 +1906,7 @@ describe('Gateway', () => {
       const previous = (await broker.sessions())[0];
       expect(previous?.agentId).toBe('first');
 
-      expect(broker.invoke('chat-1', 'agent', { agent: 'second' })).toBeUndefined();
+      expect(await broker.invoke('chat-1', 'agent', { agent: 'second' })).toBeUndefined();
       await gateway.drain();
       const replacement = (await broker.sessions())[0];
       expect(replacement?.agentId).toBe('second');
@@ -1944,7 +1958,7 @@ describe('Gateway', () => {
       await settle(harnessed);
       const before = (await broker.sessions())[0];
 
-      expect(broker.invoke('chat-1', 'model', { model: 'other-model' })).toBeUndefined();
+      expect(await broker.invoke('chat-1', 'model', { model: 'other-model' })).toBeUndefined();
       await gateway.drain();
       const after = (await broker.sessions())[0];
       expect(after?.sessionId).toBe(before?.sessionId);
@@ -2006,7 +2020,7 @@ describe('Gateway', () => {
         () => broker.delivered.find((event) => event.type === 'runStarted'),
         'A started run',
       );
-      broker.halt('chat-1', 'session');
+      await broker.halt('chat-1', 'session');
       broker.say('chat-1', 'segunda');
       await settle(harnessed);
 
@@ -2026,7 +2040,7 @@ describe('Gateway', () => {
 
       // Accepted — the catalog is what a synchronous answer can speak to — and
       // then quietly dropped, because there is nothing to stop.
-      expect(broker.halt('never-spoken-in')).toBeUndefined();
+      expect(await broker.halt('never-spoken-in')).toBeUndefined();
       await harnessed.gateway.drain();
 
       expect(harnessed.application.sessions).toHaveLength(0);
@@ -2040,7 +2054,7 @@ describe('Gateway', () => {
       await settle(harnessed);
       await harnessed.gateway.stop();
 
-      expect(broker.halt('chat-1')).toEqual({ reason: 'unavailable' });
+      expect(await broker.halt('chat-1')).toEqual({ reason: 'unavailable' });
     });
   });
 });

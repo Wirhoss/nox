@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { artifactConversationScope } from '../../artifact/output';
 import { ArtifactPipeline } from '../../artifact/pipeline';
+import { artifactConversationScope } from '../../artifact/types';
 import { Database } from '../../database/database';
 import { artifactBlobs, artifacts } from '../../database/schema';
 import { silentLogger } from '../../logger/logger';

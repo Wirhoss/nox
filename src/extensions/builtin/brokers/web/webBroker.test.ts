@@ -40,7 +40,7 @@ function testHost(received: InboundEvent[], answers: HostAnswers = {}): BrokerHo
     }),
     command: (invocation) => {
       answers.invoked?.push(invocation);
-      return answers.rejection;
+      return Promise.resolve(answers.rejection);
     },
     commands: answers.commands ?? [],
     history: (conversationId, options) => {
@@ -50,7 +50,7 @@ function testHost(received: InboundEvent[], answers: HostAnswers = {}): BrokerHo
     logger: silentLogger,
     receive: (event: InboundEvent) => {
       received.push(event);
-      return undefined;
+      return Promise.resolve(undefined);
     },
     sessions: () => Promise.resolve(answers.sessions ?? []),
     signal: new AbortController().signal,
@@ -544,7 +544,7 @@ describe('the web broker', () => {
   test('hands a message to the gateway as the sender the surface authenticated', async () => {
     const { broker, received } = await startedBroker();
 
-    broker.submitMessage({
+    await broker.submitMessage({
       content: [{ text: 'hola', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
@@ -593,7 +593,7 @@ describe('the web broker', () => {
     const { broker, received } = await startedBroker();
     await broker.stop();
 
-    broker.submitMessage({
+    await broker.submitMessage({
       content: [{ text: 'hola', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
@@ -606,7 +606,7 @@ describe('the web broker', () => {
   test('hands a steer over as a steer, not as a message', async () => {
     const { broker, received } = await startedBroker();
 
-    broker.submitSteer({
+    await broker.submitSteer({
       content: [{ text: 'mejor no', type: 'text' }],
       conversationId: CONVERSATION,
       messageId: 'm-1',
@@ -640,7 +640,7 @@ describe('the web broker', () => {
   test('hands an invocation over untouched and returns what came back', async () => {
     const { broker, invoked } = await startedBroker();
 
-    const accepted = broker.submitCommand({
+    const accepted = await broker.submitCommand({
       arguments: { tags: ['urgent', 'done'] },
       command: 'tag',
       conversationId: CONVERSATION,
@@ -666,7 +666,7 @@ describe('the web broker', () => {
     await broker.start(testHost([], { rejection: { reason: 'unknownCommand' } }));
 
     expect(
-      broker.submitCommand({
+      await broker.submitCommand({
         command: 'selfDestruct',
         conversationId: CONVERSATION,
         senderId: 'account-1',
@@ -857,7 +857,7 @@ describe('the web broker', () => {
     // Not silently dropped: a command is the one thing a transport gets an
     // answer to, so "there is no gateway" is an answer it has to give.
     expect(
-      broker.submitCommand({
+      await broker.submitCommand({
         command: 'stop',
         conversationId: CONVERSATION,
         senderId: 'account-1',

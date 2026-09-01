@@ -227,7 +227,15 @@ type ContributionInstances = 'many' | 'single';
 interface ConfigurableContribution<TSchema extends ContributionConfigSchema, TValue> {
   readonly configSchema: TSchema;
   readonly instances?: ContributionInstances;
-  create(config: ResolvedSecrets<z.infer<TSchema>>): TValue;
+  /**
+   * Build one configured instance.
+   *
+   * May return a promise: a contribution whose package runs behind a boundary
+   * answers over it, and one that has real work to do at construction no longer
+   * has to pretend otherwise. Whatever it throws — or rejects with — is
+   * reported as that entry failing to build.
+   */
+  create(config: ResolvedSecrets<z.infer<TSchema>>): MaybePromise<TValue>;
 }
 
 /** What a contribution declared, or the default nothing has to declare. */
@@ -237,9 +245,121 @@ function contributionInstances(value: UnknownConfigurable): ContributionInstance
 
 type UnknownConfigurable = ConfigurableContribution<ContributionConfigSchema, unknown>;
 
+/**
+ * A configurable contribution as anything that only reads one should see it.
+ *
+ * The surfaces that describe what can be configured — the settings editor, the
+ * schema catalogue — want the conversion of the schema, not the schema. Doing
+ * it per request rebuilt the same JSON for every contribution every time the
+ * catalogue was drawn, and it is work the host will not be able to do at all
+ * once the Zod object belongs to another process.
+ *
+ * What still needs the live schema is validating the configuration file, which
+ * composes one discriminated union across every contribution. That is the
+ * remaining reason this type is a view and not a replacement.
+ */
+interface ContributionDeclaration {
+  readonly instances: ContributionInstances;
+  readonly schema: Readonly<Record<string, unknown>>;
+  readonly type: string;
+}
+
+/** One thing wrong with a configured entry, said where it went wrong. */
+interface ContributionIssue {
+  readonly message: string;
+  readonly path: readonly PropertyKey[];
+}
+
+type ContributionValidation =
+  | { readonly issues: readonly ContributionIssue[]; readonly ok: false }
+  | { readonly ok: true; readonly value: unknown };
+
+/**
+ * Check one configured entry against the contribution that declared it.
+ *
+ * Validation belongs beside the schema, and the schema belongs to the
+ * contribution. The host used to compose one discriminated union across every
+ * contributed schema and validate the whole file against it, which required
+ * holding all of their Zod objects at once — the one thing a package running
+ * elsewhere cannot hand over. Routing an entry by its `type` and asking its
+ * owner is the same check from the other end, and it is the only version of it
+ * that survives a boundary.
+ *
+ * Issues come back as data, with their paths intact, so the host can report
+ * them under the entry they belong to without knowing anything about Zod.
+ */
+function validateContribution(value: UnknownConfigurable, entry: unknown): ContributionValidation {
+  const parsed = value.configSchema.safeParse(entry);
+  if (parsed.success) return { ok: true, value: parsed.data };
+  return {
+    issues: parsed.error.issues.map((issue) => ({
+      message: issue.message,
+      path: [...issue.path],
+    })),
+    ok: false,
+  };
+}
+
+const contributionDeclarations = new WeakMap<UnknownConfigurable, ContributionDeclaration>();
+
+function declareContribution(value: UnknownConfigurable): ContributionDeclaration {
+  const existing = contributionDeclarations.get(value);
+  if (existing !== undefined) return existing;
+  const declaration = Object.freeze({
+    instances: contributionInstances(value),
+    schema: z.toJSONSchema(value.configSchema, { io: 'input', unrepresentable: 'any' }),
+    type: value.configSchema.shape.type.value,
+  });
+  contributionDeclarations.set(value, declaration);
+  return declaration;
+}
+
 function isConfigurable(value: unknown): value is UnknownConfigurable {
   if (typeof value !== 'object' || value === null || !('configSchema' in value)) return false;
   return value.configSchema instanceof z.ZodObject;
+}
+
+/** Every `default` a JSON Schema declares, at any depth. */
+function schemaDefaults(schema: unknown): unknown[] {
+  if (typeof schema !== 'object' || schema === null) return [];
+  const found: unknown[] = [];
+  for (const [key, nested] of Object.entries(schema)) {
+    if (key === 'default') found.push(nested);
+    else if (Array.isArray(nested)) for (const item of nested) found.push(...schemaDefaults(item));
+    else found.push(...schemaDefaults(nested));
+  }
+  return found;
+}
+
+function namesSecret(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  if ('$secret' in value) return true;
+  return Object.values(value).some((nested) => namesSecret(nested));
+}
+
+/**
+ * Refuse a schema that names a secret in a default.
+ *
+ * Secrets reach a contribution one way: an operator stores one under a name of
+ * their choosing, and points a field of their own configuration entry at it.
+ * The contribution never asks. A `$secret` sitting in a schema default breaks
+ * exactly that — the reference is supplied by the package rather than by the
+ * person, the resolved value arrives without anyone having written it down, and
+ * the configuration file gives no sign that it happened.
+ *
+ * Checked against the converted schema rather than the Zod object, so the same
+ * check reads a declaration that arrived over a boundary.
+ */
+function assertNoDefaultedSecrets(value: UnknownConfigurable, contributionId: string): void {
+  const named = schemaDefaults(declareContribution(value).schema).find((entry) =>
+    namesSecret(entry),
+  );
+  if (named === undefined) return;
+  throw new TypeError(
+    `Contribution "${contributionId}" defaults a field to a secret reference. A secret is ` +
+      'named by the operator in their own configuration entry, never by the package that ' +
+      'would read it.',
+  );
 }
 
 function assertDiscriminator(value: UnknownConfigurable, contributionId: string): void {
@@ -336,9 +456,11 @@ function defineExtension<const T extends ExtensionDefinition>(extension: T): T {
 
 export {
   assertDiscriminator,
+  assertNoDefaultedSecrets,
   contributionInstances,
   createContributionPoint,
   createServiceToken,
+  declareContribution,
   defineExtension,
   EXTENSION_API_VERSION,
   isConfigurable,
@@ -347,16 +469,20 @@ export {
   Mutex,
   silentLogger,
   stableStringify,
+  validateContribution,
 };
 
 export type {
   ConfigurableContribution,
   Contribution,
   ContributionConfigSchema,
+  ContributionDeclaration,
   ContributionDescriptor,
   ContributionInstances,
+  ContributionIssue,
   ContributionPoint,
   ContributionReader,
+  ContributionValidation,
   Disposable,
   DisposableRegistry,
   ExtensionContext,

@@ -12,8 +12,8 @@
  *   discovery asks `instanceof z.ZodObject` and `instanceof z.ZodLiteral`; a
  *   second copy passes every type check and then silently fails to be
  *   recognised, which is the worst shape a failure can take.
- * - **Native binaries.** `sharp`, `playwright` and Transformers load platform
- *   binaries that a bundler cannot carry, and that an image builds exactly once
+ * - **Native binaries.** `sharp` and Transformers load platform binaries that a
+ *   bundler cannot carry, and that an image builds exactly once
  *   for the architecture it targets.
  *
  * Being a package the host happens to have installed is not enough to be on
@@ -28,7 +28,6 @@
  */
 const HOST_PROVIDED_PACKAGES: readonly string[] = Object.freeze([
   '@huggingface/transformers',
-  'playwright',
   'sharp',
   'sqlite-vec',
   'zod',

@@ -1,3 +1,5 @@
+import { bindTool } from '@nox/extension-api';
+
 import { COMPACT_PROMPT } from './agent/context/prompt';
 import { TITLE_PROMPT } from './agent/title';
 import { AuthorityCatalog } from './auth/authority';
@@ -5,7 +7,7 @@ import { CORE_AUTHORITIES } from './auth/coreAuthorities';
 import { principal } from './auth/principal';
 
 import type { AuthorizationDecision, AuthorizationProvider } from './auth/authorization';
-import type { MessageOrigin, PrincipalRef } from '@nox/extension-api';
+import type { BoundTool, MessageOrigin, PrincipalRef, Tool } from '@nox/extension-api';
 
 /**
  * Shared fixtures for the test suite — imported by tests, never a test itself,
@@ -74,10 +76,22 @@ function isInternalRequest(systemPrompt: string): boolean {
   return systemPrompt === COMPACT_PROMPT || systemPrompt === TITLE_PROMPT;
 }
 
+/**
+ * A tool as the session table holds it.
+ *
+ * Production binds every tool to the set it was granted through, because the
+ * gate subject is that pair. A test that hands a bare tool to a session would
+ * be exercising a table shape that cannot occur.
+ */
+function testBoundTool(tool: Tool, toolSetId = 'test.tools'): BoundTool {
+  return bindTool(tool, toolSetId);
+}
+
 export {
   isInternalRequest,
   permissiveAuthorization,
   TEST_AUTHORITY,
+  testBoundTool,
   testCatalog,
   testOrigin,
   testPrincipal,

@@ -9,6 +9,8 @@ import {
 } from '@nox/extension-api';
 
 import { ExtensionCatalog } from './catalog';
+import { confinedExtension } from './confined/confinedExtension';
+import { unconfinableReason } from './confinement';
 import { bindExtensionManifest } from './extension';
 import { unsatisfiedHostPackages } from './hostPackages';
 import {
@@ -21,7 +23,7 @@ import {
 import type { Logger } from '../logger/logger';
 import type { ExtensionOrigin } from './catalog';
 import type { NoxExtension } from './extension';
-import type { ExtensionManifest } from '@nox/extension-api';
+import type { ExtensionDefinition, ExtensionManifest } from '@nox/extension-api';
 
 interface ExtensionDirectory {
   readonly directory: string;
@@ -32,6 +34,14 @@ interface DiscoverExtensionsOptions {
   readonly directories: readonly ExtensionDirectory[];
   readonly logger: Logger;
   readonly noxVersion: string;
+  /**
+   * Load installed extensions even where the kernel cannot confine them.
+   *
+   * The operator's deliberate choice, and the only way past the refusal below.
+   * Never a fallback: an installation that quietly ran guests in Nox's own
+   * process would look exactly like one that confined them.
+   */
+  readonly runUnconfined?: boolean;
 }
 
 interface DiscoveredExtensions {
@@ -135,6 +145,32 @@ async function discoverExtensions(
       options.logger.error({ extensionId: manifest.id, origin }, error);
       continue;
     }
+    // The refusal this whole design was built to be able to make, and the one
+    // place it can be made honestly: before a guest's code has run at all.
+    //
+    // Refusing is the default because the alternative is indistinguishable from
+    // success at every later point. The operator can choose it, and then it is
+    // a choice somebody made rather than something that happened.
+    const confine = origin !== 'builtin' && options.runUnconfined !== true;
+    if (confine) {
+      const unconfinable = unconfinableReason();
+      if (unconfinable !== undefined) {
+        const error =
+          `${unconfinable} Set NOX_ALLOW_UNCONFINED_EXTENSIONS=1 to load installed ` +
+          'extensions into the Nox process anyway, which grants them everything it can reach.';
+        catalog.fail(key, error);
+        options.logger.error({ extensionId: manifest.id, origin }, error);
+        continue;
+      }
+    } else if (origin !== 'builtin') {
+      // Every start, not once. An installation running guests in its own
+      // process should never be able to forget that it is.
+      options.logger.warn(
+        { extensionId: manifest.id, origin },
+        'Loading an installed extension into the Nox process, unconfined, because this ' +
+          'installation was configured to. It can reach everything Nox can reach.',
+      );
+    }
     if (!isCompatible(manifest, options.noxVersion)) {
       catalog.incompatible(
         key,
@@ -165,14 +201,20 @@ async function discoverExtensions(
         manifest.migrations === undefined
           ? undefined
           : await packagePath(candidate, manifest.migrations, 'migrations directory');
-      const loaded: unknown = await import(pathToFileURL(entryPoint).href);
-      const definition =
-        typeof loaded === 'object' && loaded !== null
-          ? (loaded as { readonly default?: unknown }).default
-          : undefined;
-      if (!isExtensionDefinition(definition)) {
-        throw new TypeError('The entry module must default-export an extension definition.');
-      }
+      // Where the two origins finally part. A builtin ships inside the image
+      // and is part of Nox, so it is imported here and runs in this process. An
+      // installed package is a guest: it is never imported here at all — the
+      // path is handed to a process that confines itself first and imports
+      // afterwards, which is the whole of the isolation the README promised.
+      //
+      // The one exception is the operator's opt-out, and it is a full one: it
+      // means the old behaviour, in this process, with everything that used to
+      // work still working. An unconfined *child* would have been a third thing
+      // — no kernel restriction, and none of the crossings either — which is
+      // strictly worse than both.
+      const definition = confine
+        ? confinedExtension({ entryPoint, logger: options.logger, manifest })
+        : await importDefinition(entryPoint);
       extensions.push(
         bindExtensionManifest(
           manifest,
@@ -203,6 +245,19 @@ async function discoverExtensions(
   }
 
   return Object.freeze({ catalog, extensions: Object.freeze(extensions) });
+}
+
+/** A builtin's definition, imported into this process because it is part of it. */
+async function importDefinition(entryPoint: string): Promise<ExtensionDefinition> {
+  const loaded: unknown = await import(pathToFileURL(entryPoint).href);
+  const definition =
+    typeof loaded === 'object' && loaded !== null
+      ? (loaded as { readonly default?: unknown }).default
+      : undefined;
+  if (!isExtensionDefinition(definition)) {
+    throw new TypeError('The entry module must default-export an extension definition.');
+  }
+  return definition;
 }
 
 async function extensionCandidates(

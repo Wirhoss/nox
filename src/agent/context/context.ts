@@ -1,4 +1,4 @@
-import { bindTool } from '@nox/extension-api';
+import { bindSetTool, isProviderError } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import { SYSTEM_INTERNAL } from '../../auth/principal';
@@ -8,7 +8,7 @@ import { applyFold, foldHistory } from './fold';
 import { freezeMessage } from './immutable';
 import { resolveContextOptions } from './options';
 import { COMPACT_PROMPT } from './prompt';
-import { HISTORY_TOOL_NAMES, HistorySearchToolSet } from './search';
+import { HISTORY_TOOL_NAMES, HISTORY_TOOL_SET_ID, HistorySearchToolSet } from './search';
 import { TokenEstimator } from './tokens';
 import { Transcript } from './transcript';
 
@@ -17,15 +17,16 @@ import type { FoldOptions } from './fold';
 import type { ContextOptions, ContextUsage } from './options';
 import type {
   AssistantMessage,
+  BoundTool,
   ChatModelConfig,
   ChatProvider,
   CompactedMessage,
   Message,
-  Tool,
   UserMessage,
 } from '@nox/extension-api';
 
 const HANDOFF_REQUEST_PREFIX = 'compaction-request';
+const MAX_HIERARCHICAL_COMPACTION_ATTEMPTS = 16;
 
 /**
  * What a tool handed straight to a context is attributed to. An agent binds its
@@ -53,6 +54,17 @@ interface CompactOptions {
   readonly force?: boolean;
 }
 
+interface CompactionAttemptState {
+  attempts: number;
+  attemptLimitReported: boolean;
+  contextLimitReported: boolean;
+}
+
+interface CompactionPlan {
+  readonly events: readonly CompactedMessage[];
+  readonly history: readonly Message[];
+}
+
 /**
  * Nox asking itself for a summary. It never enters the transcript and never
  * starts a run, but it is still a message from somebody: the internal system
@@ -78,7 +90,7 @@ function hasUsableText(message: Message): message is AssistantMessage {
 
 class Context {
   readonly #systemPrompt: string;
-  readonly #tools: Readonly<Record<string, Tool>>;
+  readonly #tools: Readonly<Record<string, BoundTool>>;
 
   readonly #compactGuardBeginningTokens: number;
   readonly #compactGuardEndTokens: number;
@@ -132,20 +144,24 @@ class Context {
     if (duplicateToolName !== undefined) {
       throw new Error(`Tool ${duplicateToolName} conflicts with a context history tool.`);
     }
+    // Both halves are bound here, and only here. The history tools used to bind
+    // themselves at registration while everything else was bound while the
+    // table was composed, which meant two answers to "where does a tool acquire
+    // the set it was granted through".
     this.#tools = Object.freeze(
       Object.fromEntries(
         [
-          ...Object.entries(options.tools).map(
-            ([name, tool]) => [name, bindTool(tool, SESSION_TOOL_SET_ID)] as const,
+          ...Object.entries(options.tools),
+          ...Object.keys(this.#historyTools.declarations).map(
+            (name) => [name, bindSetTool(this.#historyTools, name, HISTORY_TOOL_SET_ID)] as const,
           ),
-          ...Object.entries(this.#historyTools.tools),
         ].sort(([a], [b]) => a.localeCompare(b)),
       ),
     );
 
     this.#estimator = new TokenEstimator(
       systemPrompt,
-      Object.values(this.#tools),
+      Object.values(this.#tools).map(({ declaration }) => declaration),
       options.tokenCounter,
     );
 
@@ -191,21 +207,20 @@ class Context {
       const middle = this.#selectCompactionRange();
       if (middle === undefined) return Object.freeze({ compacted: false, reduced: folded });
 
-      const compacted = await this.#summarize(middle);
-      if (compacted === undefined) return Object.freeze({ compacted: false, reduced: folded });
-
-      const replacedTokens = this.#estimateMessages(middle);
-      const compactedTokens = this.#estimator.estimateMessage(compacted);
-      if (compactedTokens >= replacedTokens) {
-        this.#logger?.warn(
-          { compactedTokens, messageCount: middle.length, replacedTokens },
-          'Compaction did not reduce the context; keeping the range intact.',
-        );
+      const plan = await this.#planCompaction(middle, {
+        attempts: 0,
+        attemptLimitReported: false,
+        contextLimitReported: false,
+      });
+      if (plan.events.length === 0) {
         return Object.freeze({ compacted: false, reduced: folded });
       }
 
-      const history = applyCompaction(this.#activeHistory, compacted);
-      this.#transcript.append(compacted);
+      // Validate the complete event chain before appending any of it. A later
+      // hierarchical event may replace an earlier summary, so order matters.
+      let history = this.#activeHistory;
+      for (const event of plan.events) history = applyCompaction(history, event);
+      for (const event of plan.events) this.#transcript.append(event);
       this.#rewriteHistory(history);
       return Object.freeze({ compacted: true, reduced: true });
     });
@@ -264,7 +279,7 @@ class Context {
     this.#providerTokenOffset = inputTokens - requestTokenEstimate;
   }
 
-  public getTools(): Readonly<Record<string, Tool>> {
+  public getTools(): Readonly<Record<string, BoundTool>> {
     return this.#tools;
   }
 
@@ -388,6 +403,120 @@ class Context {
     return this.#estimateMessages(middle) >= this.#compactMinTokens ? middle : undefined;
   }
 
+  async #planCompaction(
+    middle: readonly Message[],
+    state: CompactionAttemptState,
+  ): Promise<CompactionPlan> {
+    const unchanged = (): CompactionPlan => ({ events: [], history: [...middle] });
+
+    if (state.attempts >= MAX_HIERARCHICAL_COMPACTION_ATTEMPTS) {
+      if (!state.attemptLimitReported) {
+        state.attemptLimitReported = true;
+        this.#logger?.warn(
+          { attempts: state.attempts, messageCount: middle.length },
+          'Hierarchical compaction reached its attempt limit; keeping the remaining range intact.',
+        );
+      }
+      return unchanged();
+    }
+
+    state.attempts++;
+    let compacted: CompactedMessage | undefined;
+    try {
+      compacted = await this.#summarize(middle);
+    } catch (error) {
+      if (!isProviderError(error) || error.code !== 'context_limit') throw error;
+
+      if (!state.contextLimitReported) {
+        state.contextLimitReported = true;
+        this.#logger?.warn(
+          {
+            estimatedTokens: this.#estimateMessages(middle),
+            messageCount: middle.length,
+          },
+          'Compaction exceeded the provider context; retrying with hierarchical ranges.',
+        );
+      }
+
+      const split = this.#tokenMidpointSplit(middle);
+      if (split === undefined) {
+        this.#logger?.warn(
+          {
+            estimatedTokens: this.#estimateMessages(middle),
+            messageCount: middle.length,
+          },
+          'Compaction range exceeded the provider context and has no safe smaller range.',
+        );
+        return unchanged();
+      }
+
+      const leftSource = middle.slice(0, split);
+      const rightSource = middle.slice(split);
+      const left = await this.#planCompaction(leftSource, state);
+      let events = [...left.events];
+      let combined: readonly Message[] = [...left.history, ...rightSource];
+
+      // Prefer reducing the older half. If it cannot be reduced at all, the
+      // other safe half may still make the complete range fit.
+      if (events.length === 0) {
+        const right = await this.#planCompaction(rightSource, state);
+        events = [...right.events];
+        combined = [...leftSource, ...right.history];
+      }
+      if (events.length === 0) return unchanged();
+
+      // This is the hierarchical step: retry the original range with its
+      // reduced half in place. Further context refusals recurse the same way.
+      const merged = await this.#planCompaction(combined, state);
+      return {
+        events: [...events, ...merged.events],
+        history: merged.history,
+      };
+    }
+
+    if (compacted === undefined) return unchanged();
+
+    const replacedTokens = this.#estimateMessages(middle);
+    const compactedTokens = this.#estimator.estimateMessage(compacted);
+    if (compactedTokens >= replacedTokens) {
+      this.#logger?.warn(
+        { compactedTokens, messageCount: middle.length, replacedTokens },
+        'Compaction did not reduce the context; keeping the range intact.',
+      );
+      return unchanged();
+    }
+
+    return { events: [compacted], history: [compacted] };
+  }
+
+  #tokenMidpointSplit(history: readonly Message[]): number | undefined {
+    if (history.length < 2) return undefined;
+
+    const prefixTokens = [0];
+    for (const message of history) {
+      prefixTokens.push(
+        (prefixTokens[prefixTokens.length - 1] ?? 0) + this.#estimator.estimateMessage(message),
+      );
+    }
+    const midpoint = (prefixTokens[prefixTokens.length - 1] ?? 0) / 2;
+    const distance = (index: number): number => Math.abs((prefixTokens[index] ?? 0) - midpoint);
+
+    let nearest = 1;
+    for (let index = 2; index < history.length; index++) {
+      if (distance(index) < distance(nearest)) nearest = index;
+    }
+
+    const candidates = [
+      ...new Set([seekSafeCut(history, nearest, -1), seekSafeCut(history, nearest, 1)]),
+    ]
+      .filter((index) => index > 0 && index < history.length)
+      .sort((a, b) => {
+        const distanceDelta = distance(a) - distance(b);
+        return distanceDelta === 0 ? a - b : distanceDelta;
+      });
+    return candidates[0];
+  }
+
   async #summarize(middle: readonly Message[]): Promise<CompactedMessage | undefined> {
     const stream = this.#compactProvider.getMessageStream(
       COMPACT_PROMPT,
@@ -418,6 +547,6 @@ class Context {
   }
 }
 
-export { Context };
+export { Context, SESSION_TOOL_SET_ID };
 
 export type { CompactOptions, CompactResult, ContextUsage };

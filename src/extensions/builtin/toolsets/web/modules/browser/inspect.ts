@@ -1,12 +1,10 @@
 import type { BrowserInspection, BrowserRequest } from '../../capabilities';
 
 /**
- * Fixed page-side routine used by every browser module.
+ * Fixed page-side routine used by browser modules.
  *
  * This is deliberately not caller-supplied JavaScript: browser_inspect remains
- * a read capability even when arbitrary evaluation is disabled. Keeping one
- * routine also means camoufox and Playwright suggest selectors by the same
- * rules.
+ * a read capability even when arbitrary evaluation is disabled.
  */
 const INSPECT_FUNCTION = String.raw`function noxBrowserInspect(input) {
   const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim();

@@ -70,6 +70,8 @@ async function compileExtension(
     directories: [{ directory: root, origin: 'installed' }],
     logger: silentLogger,
     noxVersion: '0.1.0',
+    // See the note in `loader.test.ts`: the kernel is not what these measure.
+    runUnconfined: true,
   });
 }
 
@@ -97,8 +99,8 @@ describe('external Extension API consumers', () => {
       salutation: 'Hola',
       type: 'greeting',
     });
-    const toolSet = contribution.value.create(greetingConfig);
-    const execution = toolSet.prepare('greet', { name: 'Nox' });
+    const toolSet = await contribution.value.create(greetingConfig);
+    const execution = await toolSet.prepare('greet', { name: 'Nox' });
     const response: MessageContent[] =
       execution.type === 'immediate'
         ? await execution.run({ abortSignal: new AbortController().signal })

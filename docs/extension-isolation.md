@@ -56,6 +56,53 @@ question this section used to leave open, and it is a good one:
   its own ruleset, and only then imports the extension. Everything after that
   point is confined, including anything the extension imports.
 
+### Both mechanisms restrict a thread, not a process
+
+This one cost a working implementation, and it is the single most important
+thing on this page to not forget.
+
+`landlock_restrict_self` binds to the **calling thread**. So does
+`PR_SET_SECCOMP` without `SECCOMP_FILTER_FLAG_TSYNC`. Threads created
+afterwards inherit; threads that already existed do not. Every runtime has a
+thread pool by the time any of this code runs, and `node:fs/promises`
+dispatches to it — so a process that confines itself in place gets exactly
+this:
+
+| In a process that confined itself in place | |
+|---|---|
+| `readFileSync` a file outside the allowlist | `EACCES` |
+| `await readFile` the same file | **allowed** |
+| `socket()` on the calling thread | `EACCES` |
+| `fetch` on an HTTP thread created afterwards | `FailedToOpenSocket` |
+| `fetch` on an HTTP thread that already existed | **`ConnectionRefused`** |
+
+Which is worse than no confinement, because it looks like confinement. The
+denied half is the half a probe written by hand reaches for first, and the
+allowed half is the half an extension actually writes.
+
+The last two rows are the same call, and which one you get depends on whether
+anything happened to use the network earlier in that process's life — because
+that is what decides whether the runtime's HTTP thread is older or younger than
+the filter. A security property that turns on that is not a security property.
+
+Both rows are measured. The seccomp stage of the probe deliberately makes a
+request *before* installing the filter, precisely so the thread is on the older
+side and the hole is visible; without that warm-up the same stage passes and
+proves nothing. That is not a hypothetical failure mode either — the first
+version of this measurement did exactly that.
+
+The fix is not a bigger ruleset, and it is not `TSYNC` either — that would
+cover seccomp and leave Landlock, which has no equivalent flag. It is to
+confine and then **become**: apply both mechanisms, then `execve` the same
+binary. The new image starts with one
+thread, the Landlock domain and the seccomp filter both survive into it, and
+every thread the runtime then spawns inherits them. `execSelf()` is that call,
+and the extension child does exactly this — confine, exec, and only then read
+its first message.
+
+The IPC channel survives the exec, which was the open question and is now a
+measured row: a call reaches the confined extension and comes back.
+
 Bun has no Landlock bindings, so the calls go through `bun:ffi`. That is how
 the measurement above was taken.
 
@@ -64,14 +111,23 @@ exists so these claims stay claims rather than becoming folklore — a kernel
 upgrade, a new base image or a change to Docker's seccomp profile can each
 falsify one of them without touching a line of Nox:
 
-    docker run --rm --entrypoint bun \n      -v "$PWD/scripts:/repo/scripts:ro" -w /app \n      nox:local run /repo/scripts/probe-confinement.ts
+    docker run --rm --entrypoint bun \
+      -v "$PWD/scripts:/repo/scripts:ro" -v "$PWD/src:/repo/src:ro" \
+      -v "$PWD/packages/extension-api/dist:/app/node_modules/@nox/extension-api/dist:ro" \
+      nox:local run /repo/scripts/probe-confinement.ts
 
-The image carries the built runtime and not the repository, so the probes are
-mounted in rather than shipped. Each stage runs in its own child process and
-measures the unconfined case
+The image carries the built runtime and not the repository, so the probes and
+the modules they measure are mounted in rather than shipped — including a fresh
+`@nox/extension-api`, since the one baked into the image is as old as the image
+and the point is to measure what is checked in. Run `bun run
+build:extension-api` first. What they measure
+is `src/extensions/confinement.ts` — the host's own Landlock and seccomp calls,
+not a second copy written to be measured.
+
+Each stage runs in its own child process and measures the unconfined case
 before applying anything, because both mechanisms are one-way — a confined
 process cannot go back and ask what it used to be able to do. Last run: all
-twenty-eight rows held, at Landlock ABI 7, with `CapEff` empty.
+forty-seven rows held, at Landlock ABI 7, with `CapEff` empty.
 
 Enforcement was measured too, with a real ruleset applied through `bun:ffi`
 inside the running image. Writes were handled and allowed only beneath one
@@ -109,6 +165,7 @@ on one storage directory; nothing else, and in particular nothing under
 | Read its own program, read and write its storage directory | works |
 | Read `.secret-key`, `.auth-key`, or the SQLite database | `EACCES` |
 | Write anywhere outside its storage directory | `EACCES` |
+| Write outside it from the thread pool | allowed — see above |
 
 The runtime survives its own confinement, native modules included. That was the
 open question, and the answer is that the allowed set is small and ordinary:
@@ -186,15 +243,64 @@ Two artifacts would drift. This codebase has already paid for that once, in
 miniature, with four hand-written copies of the host package list that
 disagreed with each other before anybody noticed.
 
+### What happens to an installed extension
+
+Whether a kernel can confine one is now a question the host can answer without
+applying anything: `confinementSupport()` in `src/extensions/confinement.ts`
+reads the Landlock ABI and looks for filter-mode seccomp. It is read-only on
+purpose — a host that tested seccomp by installing a filter would confine
+itself to find out.
+
+Three outcomes, and none of them stops Nox from starting. Every other refusal
+in discovery drops one package, says why, and rolls the rest forward; this is
+the same:
+
+| The kernel | The installed extension |
+|---|---|
+| has Landlock ABI 4 or later and filter-mode seccomp | runs in the confined child |
+| is missing either half | does not load, and the log names which half |
+| is missing either half, and `NOX_ALLOW_UNCONFINED_EXTENSIONS=1` | loads into the Nox process, warning at every start |
+
+Builtins never reach this. They run in process by design, and `origin` is what
+grants them that — the same distinction that already decides who may declare a
+control-plane service.
+
+The third row is not a fallback. It is a sentence an operator has to write,
+and it is what makes it possible to develop an extension on a machine that has
+no Landlock at all — which is every machine that is not Linux, including the
+one this is being written on. A quiet downgrade would have covered exactly the
+same case while removing the part where somebody agreed to it.
+
+The opt-out is a **full** one: it means the old behaviour, in this process,
+with everything that used to work still working. An unconfined *child* would
+have been a third thing — no kernel restriction, and none of the crossings
+either — which is strictly worse than both. It is also what makes it possible
+to develop an extension on a machine that has no Landlock at all, which is
+every machine that is not Linux, including the one this is being written on.
+
+### What confinement costs today
+
+An installed extension that runs confined reaches only what has been built to
+cross. That list is short, and every gap in it fails loudly rather than
+quietly:
+
+| | |
+|---|---|
+| Tool sets, memories, brokers | cross |
+| Authorities, language packs, translations | cross, as data |
+| **Providers** | do **not** cross; the package is refused when it activates, by name |
+| `nox.logger` | crosses |
+| Every other host service | refused by name at the `get` |
+| Extension storage | refused by name |
+
+Providers stream, and streaming is its own crossing. Storage is a database.
+Neither is hard in the way the kernel work was hard — they are simply not
+built, and until they are, a package that needs one either runs as a builtin or
+runs under the operator's opt-out.
+
 ### Remaining questions
 
-The first is what happens where these mechanisms are not available — an older
-kernel, or a platform with a stricter seccomp profile of its own. Refusing to
-load installed extensions is the honest default; running them unconfined with a
-loud warning is the other option, and it should be a deliberate choice rather
-than a fallback that happens quietly.
-
-The second is what an extension's filesystem declaration is allowed to name. A
+The first is what an extension's filesystem declaration is allowed to name. A
 package that only ever touches its own storage needs no declaration at all,
 which should be the common case and the default. Anything wider is a request an
 operator has to read and agree to, so the vocabulary should stay small — and it
@@ -205,6 +311,50 @@ considering as a second, narrower kind of extension rather than as a migration
 target for this one.
 
 ---
+
+### One type beyond JSON crosses, and it is named
+
+`MemoryRetainRequest` carries two `Date`s. Sent plainly they arrive as ISO
+strings: the same shape, the wrong type, and nothing on either side to say so
+until something calls `.getTime()` on a string. So a date is tagged on the way
+out and rebuilt on the way in.
+
+This is not structured clone by the back door. What was refused was live host
+objects — closures, class instances, anything holding a reference into Nox. A
+date is plain data that JSON has no notation for, it is named in the contract's
+own types, and the list of exceptions is this one. The test asks the far side
+what it actually received rather than trusting that it received it.
+
+### A broker calls back, so the channel goes both ways
+
+A tool set and a memory are asked questions and answer them. A transport is
+*given* a host — that is what `start(host)` hands over — and calls into it for
+every message that arrives and every command a person types. So the channel
+grew a second direction, with its own correlation space: the child's requests
+and the host's requests can never be mistaken for one another, because the
+kinds differ and the counters are separate.
+
+Two members of `BrokerHost` are answered inside the child rather than over the
+channel, and both for the same reason: they are not decisions, they are facts
+the host already stated.
+
+- `commands` and `defaultAgentId` arrive once, in the start plan.
+- `artifactScope(conversationId)` is a pure function of the broker id the host
+  assigned. The transport still cannot choose its own scope — asking would be a
+  round trip to recompute something already known. That function moved next to
+  the schema it parses with, because reaching it from the child through the
+  artifact sink would have dragged the whole store across a boundary built to
+  keep it out.
+
+`agentIds()` is the one synchronous member left, and it is read on the hot path
+of every inbound message. It is fetched once before the transport is told to
+start, so the first message cannot arrive before the list it is matched against
+exists.
+
+The host registers what the child may call back into, under a prefix, and a
+method nobody registered is refused **by name**. A transport waiting forever on
+a callback the host never wired is the exact failure this direction exists to
+make visible.
 
 ## The crossings
 
@@ -541,11 +691,33 @@ looked. The remaining work is not in this list: it is the transport, and the
 2. ~~Decide migrate-versus-fork.~~ Decided, and it was a false choice: one
    message-shaped contract, two transports. Still open beside it — what an
    installation without Landlock or seccomp does about installed extensions.
+   Half of that is settled: `confinementSupport()` answers whether this kernel
+   has both, without applying anything, because applying seccomp to ask would
+   confine the host. The policy is deliberately not written yet — a refusal
+   that gates nothing would be theatre while installed extensions still run in
+   process, so it lands with the transport in step 4.
 3. ~~Convert the crossings.~~ Done, all nine, with the in-process loader still
    behind them, which is why each landed with the suite green.
-4. Add the process boundary: a child process, a message channel, and
-   implementations of `ToolSet`, `Broker` and `Memory` that answer over it. The
-   confinement is two syscalls in that child before it imports anything.
+4. ~~Add the process boundary.~~ The channel and the confined child exist:
+   `src/extensions/confined/`. A call leaves Nox, reaches an extension inside a
+   process that can read neither the database nor a key file and can open no
+   internet socket at all, and comes back — measured end to end by the probe's
+   `transport` stage. It was not two syscalls in the end but three: the third
+   is `execve`, without which the ruleset covers one thread and every
+   asynchronous read escapes it.
+
+   All three contracts answer over it, and the loader routes by origin: a
+   builtin is imported into this process, an installed package is never
+   imported here at all. `RemoteToolSet` is a real `ToolSet`, so `bindSetTool`
+   and the tool table cannot tell where its tools are; `connectMemory` and
+   `connectBroker` report the far side's optional members rather than offering
+   them. `Broker` needed the channel to go both ways — see below.
+
+   A confined extension is an `ExtensionDefinition` whose `activate` starts a
+   process, which is why the loader change is small: ordering, disposal,
+   reporting a failed activation to the catalog and tearing down in reverse all
+   already worked, because none of it was ever specific to running the package
+   in this process.
 5. Add the filesystem and network declarations to the manifest, compile the
    ruleset from them, and add the host network service the second one is
    enforced through — since Landlock addresses ports rather than destinations

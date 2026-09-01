@@ -1,9 +1,4 @@
-import {
-  contentToString,
-  fenceUntrustedText,
-  isProviderError,
-  prepareToolCall,
-} from '@nox/extension-api';
+import { contentToString, fenceUntrustedText, isProviderError } from '@nox/extension-api';
 import { nanoid } from 'nanoid';
 
 import { authorize } from '../auth/authorization';
@@ -45,12 +40,12 @@ import type {
   MemoryMessage,
   Message,
   MessageContent,
+  PreparedToolCall,
   ProviderError,
   RecalledMemory,
   SamplingParametersConfig,
   ToolCallMessage,
   ToolContext,
-  ToolExecution,
   ToolExecutionSubject,
   ToolOutputTrust,
   ToolResponseExecution,
@@ -138,7 +133,7 @@ interface PendingOwnedOperation {
   readonly authority: RunAuthority;
   readonly authorityGrants?: readonly GrantPattern[];
   readonly call: ToolCallMessage;
-  readonly execution: ToolExecution;
+  readonly execution: PreparedToolCall;
   readonly pendingResponseId: string;
   readonly publish: () => void;
   readonly responseAttachments: Map<string, ArtifactRef>;
@@ -632,7 +627,8 @@ class Runner {
     const stream = this.#provider.getMessageStream(
       this.#systemPrompt(),
       requestHistory,
-      Object.values(this.#context.getTools()),
+      // A provider only reads a tool, so it is handed the reading half.
+      Object.values(this.#context.getTools()).map(({ declaration }) => declaration),
       {
         ...this.#generation,
         ...(artifactOutput === undefined ? {} : { artifactOutput }),
@@ -1048,8 +1044,10 @@ class Runner {
     try {
       // Preparation is side-effect free by contract, so it is safe before anyone
       // has decided this call may happen at all.
-      const prepared = prepareToolCall(tool, call.arguments);
-      const execution = freezeValue(prepared.execution);
+      const prepared = await tool.prepare(call.arguments);
+      // The prepared call, not the tool's own object: what the runner reads
+      // and what it later runs are already separated for it.
+      const execution = freezeValue(prepared);
       const subject = execution.gateSubject;
       if (subject === undefined) {
         // A wiring bug, and the only safe reading of it is no.
@@ -1365,7 +1363,7 @@ class Runner {
 
   async #gateCall(
     call: ToolCallMessage,
-    execution: ToolExecution,
+    execution: PreparedToolCall,
     subject: ToolExecutionSubject,
   ): Promise<ToolResponseMessage | undefined> {
     if (this.#gate === undefined) return undefined;
@@ -1453,7 +1451,7 @@ class Runner {
 
   #detachPermission(
     call: ToolCallMessage,
-    execution: ToolExecution,
+    execution: PreparedToolCall,
     subject: ToolExecutionSubject,
     authority: RunAuthority,
     runId: string,

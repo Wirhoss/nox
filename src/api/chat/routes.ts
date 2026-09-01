@@ -230,7 +230,7 @@ function createChatRoutes(options: ChatRoutesOptions) {
           const messageId = body.messageId ?? nanoid();
           const content = await canonicalContent(body.content, account.accountId);
           if (content === undefined) return status(400, INVALID_ARTIFACT);
-          const rejection = transport.submitMessage({
+          const rejection = await transport.submitMessage({
             ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
             content,
             conversationId: params.conversationId,
@@ -270,7 +270,7 @@ function createChatRoutes(options: ChatRoutesOptions) {
           const messageId = body.messageId ?? nanoid();
           const content = await canonicalContent(body.content, account.accountId);
           if (content === undefined) return status(400, INVALID_ARTIFACT);
-          const rejection = transport.submitSteer({
+          const rejection = await transport.submitSteer({
             ...(body.agentId === undefined ? {} : { agentId: body.agentId }),
             content,
             conversationId: params.conversationId,
@@ -304,11 +304,11 @@ function createChatRoutes(options: ChatRoutesOptions) {
        */
       .post(
         '/chat/conversations/:conversationId/commands/:command',
-        ({ account, body, params, status }) => {
+        async ({ account, body, params, status }) => {
           const transport = hub.transport;
           if (transport === undefined) return status(503, UNAVAILABLE);
 
-          const rejection = transport.submitCommand({
+          const rejection = await transport.submitCommand({
             arguments: body,
             command: params.command,
             conversationId: params.conversationId,

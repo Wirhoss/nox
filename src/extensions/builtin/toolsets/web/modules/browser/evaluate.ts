@@ -3,10 +3,9 @@ const MAX_EVALUATION_CHARACTERS = 100_000;
 /**
  * Makes arbitrary page results safe for the tool's JSON report.
  *
- * Playwright can reconstruct values JSON cannot represent (cycles and bigint),
- * while camoufox has already passed through JSON. Normalizing both here keeps a
- * valid expression from failing later in stableStringify and bounds a page that
- * tries to return an enormous value into the transcript.
+ * Normalizing here keeps unusual page values from failing later in
+ * stableStringify and bounds a page that tries to return an enormous value into
+ * the transcript.
  */
 function evaluationResult(value: unknown): unknown {
   if (value === undefined) return null;
